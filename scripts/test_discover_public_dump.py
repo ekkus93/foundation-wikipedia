@@ -56,13 +56,13 @@ class PublicDumpDiscoveryTests(unittest.TestCase):
     def test_official_sha1s_fill_missing_status_checksums(self):
         filename = "enwiki-20261001-pages-articles-multistream.xml.bz2"
         report = parse_status(status(sha1=False), "enwiki", "20261001", "articlesmultistreamdump")
-        enriched = attach_official_sha1s(report, "b" * 40 + "  " + filename + "\\n")
+        enriched = attach_official_sha1s(report, "b" * 40 + "  " + filename + "\n")
         self.assertEqual(enriched["files"][0]["sha1"], "b" * 40)
         self.assertTrue(enriched["all_files_have_upstream_checksums"])
         with self.assertRaises(DiscoveryError):
             attach_official_sha1s(
                 parse_status(status(), "enwiki", "20261001", "articlesmultistreamdump"),
-                "b" * 40 + "  " + filename + "\\n",
+                "b" * 40 + "  " + filename + "\n",
             )
 
     def test_rejects_forged_paths_and_malformed_metadata(self):
