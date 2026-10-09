@@ -67,7 +67,12 @@ impl ArticleLexicalIndex {
         results
     }
 
-    pub fn search_with_word_budget(&self, query: &str, limit: usize, budget: usize) -> Vec<EvidenceHit> {
+    pub fn search_with_word_budget(
+        &self,
+        query: &str,
+        limit: usize,
+        budget: usize,
+    ) -> Vec<EvidenceHit> {
         let mut used = 0;
         let mut selected = Vec::new();
         for hit in self.search(query, 100) {
