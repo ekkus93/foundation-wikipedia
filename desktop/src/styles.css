@@ -22,9 +22,10 @@ main a { color: #36c; }
 .hub { position: fixed; right: 30px; bottom: 28px; display: flex; align-items: flex-end; flex-direction: column; gap: 12px; }
 .fab { cursor: pointer; border: 0; border-radius: 22px; background: #4b3a8b; color: white; width: 68px; height: 68px; font-size: 32px; box-shadow: 0 8px 26px #24154650; }
 .fab[aria-expanded=true] { border-radius: 50%; }
-.speed-dial { display: flex; flex-direction: column; gap: 8px; }
+.speed-dial { display: flex; flex-direction: column-reverse; gap: 8px; }
 .speed-dial button { cursor: pointer; border: none; border-radius: 24px 8px 24px 24px; background: #ede6ff; color: #2a2156; padding: 13px 28px; }
 .speed-dial button:hover { background: #dcd0ff; }
+.fab:focus-visible, .speed-dial button:focus-visible { outline: 3px solid #202122; outline-offset: 4px; }
 .notice { position: fixed; left: 24px; bottom: 28px; max-width: 480px; border-radius: 18px; background: #f1ebff; padding: 16px; font-size: 14px; }
 .notice button { border: 0; background: transparent; cursor: pointer; margin-left: 14px; }
 @media (max-width: 800px) { .contents, .status { display: none; } .columns { display: block; padding: 20px 24px 110px; } .topbar { flex-wrap: wrap; } }

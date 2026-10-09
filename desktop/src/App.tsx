@@ -1,12 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const hubRef = useRef<HTMLDivElement>(null);
+  const mainActionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setExpanded(false);
+        mainActionRef.current?.focus();
+      }
+    }
+    function onOutsidePointer(event: PointerEvent) {
+      if (!hubRef.current?.contains(event.target as Node)) {
+        setExpanded(false);
+      }
+    }
+
+    document.addEventListener("keydown", onEscape);
+    document.addEventListener("pointerdown", onOutsidePointer);
+    return () => {
+      document.removeEventListener("keydown", onEscape);
+      document.removeEventListener("pointerdown", onOutsidePointer);
+    };
+  }, [expanded]);
 
   function activate(action: ReaderAction) {
     setExpanded(false);
+    mainActionRef.current?.focus();
     setMessage(`${action} is not implemented yet. This screen is a development shell.`);
   }
 
@@ -37,13 +63,14 @@ export default function App() {
       {message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>
       </div>}
-      <div className="hub">
-        {expanded && <div className="speed-dial" aria-label="Reader actions">
+      <div className="hub" ref={hubRef}>
+        {expanded && <div className="speed-dial" role="group" aria-label="Reader actions" id="reader-action-menu">
           {READER_ACTIONS.map((action) => <button key={action} onClick={() => activate(action)}>{action}</button>)}
         </div>}
-        <button className="fab"
+        <button className="fab" ref={mainActionRef}
           aria-label={expanded ? "Close reader actions" : "Open reader actions"}
           aria-expanded={expanded}
+          aria-controls="reader-action-menu"
           onClick={() => setExpanded(!expanded)}>{expanded ? "×" : "✦"}</button>
       </div>
     </div>
