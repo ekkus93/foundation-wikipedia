@@ -86,6 +86,27 @@ signature verification. The upstream SHA-1 is a legacy integrity check, not
 a modern cryptographic authenticity guarantee. The local input must be a
 regular non-symlink file; the staging destination must not be a symlink.
 
+
+### Finalizing a complete public dump staging set
+
+After all members from one completed official discovery report have been
+downloaded or staged locally, derive a complete SHA-256 manifest from the
+actual bytes (without accepting a partial source generation):
+
+```sh
+python3 scripts/finalize_public_dump_staging.py \
+  completed-report.json /path/to/staging /path/to/source-manifest.json
+python3 scripts/verify_source_staging.py \
+  /path/to/source-manifest.json /path/to/staging
+```
+
+Finalization checks **every** declared member against the upstream size and
+SHA-1 and rejects missing, corrupt, duplicate or symlinked files. The
+output manifest is published without overwriting an existing manifest.
+It is still **not authenticated publication metadata**: discovery-report
+authenticity and legacy SHA-1 limitations remain separate trust concerns.
+No snapshot activation or import is performed.
+
 ## Public Wikimedia dump discovery (read-only metadata)
 
 Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
