@@ -16,6 +16,8 @@ fn article(project: &str, page_id: u64, revision_id: u64) -> Article {
         title: "Gravité".into(),
         display_title: "Gravité".into(),
         language: "fr".into(),
+        namespace: 0,
+        aliases: vec![],
         wikidata_id: None,
         lead: vec![Block {
             ordinal: 0,
