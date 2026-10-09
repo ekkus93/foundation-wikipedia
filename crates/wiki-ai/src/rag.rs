@@ -9,7 +9,9 @@ use crate::{
     OutboundPolicy, ProviderError, StreamEvent,
 };
 use wiki_model::{Article, ModelError};
-use wiki_search::{validate_grounded_answer, ArticleLexicalIndex, CitationError, GroundedAnswer};
+use wiki_search::{
+    validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit, GroundedAnswer,
+};
 
 const MAX_RESPONSE_BYTES: usize = 131_072;
 const MAX_CONTEXT_BYTES: usize = 65_536;
@@ -21,6 +23,8 @@ pub struct ArticleQuestion<'a> {
     pub model: &'a str,
     pub passage_limit: usize,
     pub context_word_budget: usize,
+    /// Optional exact-revision selection validated against the article index.
+    pub selected_evidence: Option<&'a EvidenceHit>,
     pub max_output_tokens: u32,
     pub outbound_policy: OutboundPolicy,
 }
@@ -33,6 +37,8 @@ pub enum RagError {
     Citation(CitationError),
     MalformedCitation,
     ContextTooLarge,
+    InvalidSelection,
+    SelectionTooLarge,
     ResponseTooLarge,
     IncompleteStream,
 }
@@ -70,11 +76,39 @@ pub fn answer_article(
         return Err(RagError::InvalidQuestion);
     }
     let index = ArticleLexicalIndex::build(article).map_err(RagError::InvalidArticle)?;
-    let evidence = index.search_with_word_budget(
-        question.question,
-        question.passage_limit,
-        question.context_word_budget,
-    );
+    let mut evidence = Vec::new();
+    let mut used_words = 0;
+    if let Some(selected) = question.selected_evidence {
+        if !index.contains_evidence(selected) {
+            return Err(RagError::InvalidSelection);
+        }
+        used_words = selected
+            .excerpt
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .count();
+        if used_words > question.context_word_budget {
+            return Err(RagError::SelectionTooLarge);
+        }
+        evidence.push(selected.clone());
+    }
+    for hit in index.search(question.question, 100) {
+        if evidence.len() >= question.passage_limit {
+            break;
+        }
+        if evidence.iter().any(|existing| existing.block_id == hit.block_id) {
+            continue;
+        }
+        let words = hit
+            .excerpt
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .count();
+        if words <= question.context_word_budget.saturating_sub(used_words) {
+            used_words += words;
+            evidence.push(hit);
+        }
+    }
     if evidence.is_empty() {
         return Ok(GroundedAnswer::InsufficientEvidence);
     }

@@ -7,7 +7,7 @@ use wiki_ai::{
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
-use wiki_search::{CitationError, GroundedAnswer};
+use wiki_search::{ArticleLexicalIndex, CitationError, GroundedAnswer};
 
 struct FixtureProvider<'a> {
     output: &'a str,
@@ -100,6 +100,7 @@ fn question<'a>() -> ArticleQuestion<'a> {
         model: "fixture-model",
         passage_limit: 2,
         context_word_budget: 32,
+        selected_evidence: None,
         max_output_tokens: 80,
         outbound_policy: OutboundPolicy::OnDeviceOnly,
     }
@@ -226,4 +227,53 @@ fn provider_abstention_has_explicit_insufficient_evidence_state() {
         ),
         Ok(GroundedAnswer::InsufficientEvidence)
     );
+}
+
+#[test]
+fn validated_text_selection_is_kept_even_without_keyword_overlap() {
+    let article = sample();
+    let index = ArticleLexicalIndex::build(&article).unwrap();
+    let selected = index.search("spacetime", 1).remove(0);
+    let mut requested = question();
+    requested.question = "Please explain the selected text";
+    requested.selected_evidence = Some(&selected);
+    let calls = AtomicUsize::new(0);
+    let provider = FixtureProvider {
+        output: "Gravity bends spacetime. [[cite:wkb:enwiki:9:12:1:b0]]",
+        locality: Locality::OnDevice,
+        calls: &calls,
+    };
+    assert!(matches!(
+        answer_article(&article, &provider, &requested, &CancellationToken::default()),
+        Ok(GroundedAnswer::Supported { .. })
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn selected_block_must_match_exact_article_revision_and_word_budget() {
+    let article = sample();
+    let index = ArticleLexicalIndex::build(&article).unwrap();
+    let original = index.search("spacetime", 1).remove(0);
+    let calls = AtomicUsize::new(0);
+    let provider = FixtureProvider {
+        output: "Unsupported [[cite:wkb:enwiki:9:12:1:b0]]",
+        locality: Locality::OnDevice,
+        calls: &calls,
+    };
+    let mut question = question();
+    let mut tampered = original.clone();
+    tampered.revision_id += 1;
+    question.selected_evidence = Some(&tampered);
+    assert_eq!(
+        answer_article(&article, &provider, &question, &CancellationToken::default()),
+        Err(RagError::InvalidSelection)
+    );
+    question.selected_evidence = Some(&original);
+    question.context_word_budget = 1;
+    assert_eq!(
+        answer_article(&article, &provider, &question, &CancellationToken::default()),
+        Err(RagError::SelectionTooLarge)
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
 }
