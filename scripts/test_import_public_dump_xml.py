@@ -80,6 +80,20 @@ class DumpImportTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpImportError, "foreign XML namespace"):
             self.parse(BODY.replace(b"<page><title>Gravity",
                                     b'<page xmlns="urn:attacker"><title>Gravity', 1))
+        for malformed in (
+            b"http://www.mediawiki.org/xml/export-0.attacker/",
+            b"http://www.mediawiki.org/xml/export-0.11/extra/",
+            b"http://www.mediawiki.org/xml/export-0.11something/",
+            b"http://www.mediawiki.org/xml/export-0./",
+        ):
+            with self.subTest(malformed=malformed):
+                with self.assertRaisesRegex(DumpImportError, "official MediaWiki XML export namespace"):
+                    self.parse(BODY.replace(official, malformed, 1))
+        # A newer syntactically versioned official XML namespace can still be
+        # parsed; a matching URL alone is not publisher authentication.
+        self.assertEqual(len(self.parse(BODY.replace(
+            official, b"http://www.mediawiki.org/xml/export-0.12/", 1
+        ))), 2)
 
     def test_decoded_xml_budget_blocks_metadata_and_compression_bombs(self):
         with self.assertRaisesRegex(DumpImportError, "decoded-input byte budget"):

@@ -11,6 +11,7 @@ from datetime import datetime
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 import stat
@@ -87,8 +88,10 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
             namespace = ""
         if not path:
             if (element != "mediawiki"
-                    or not namespace.startswith("http://www.mediawiki.org/xml/export-0.")
-                    or not namespace.endswith("/")):
+                    or re.fullmatch(
+                        r"http://www\\.mediawiki\\.org/xml/export-0\\.[0-9]+/",
+                        namespace,
+                    ) is None):
                 raise DumpImportError("not an official MediaWiki XML export namespace")
             root_namespace = namespace
         elif namespace != root_namespace:
