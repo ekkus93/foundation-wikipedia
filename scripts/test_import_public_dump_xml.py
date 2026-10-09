@@ -7,7 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from import_public_dump_xml import DumpImportError, import_verified_member, parse_xml
+from import_public_dump_xml import (DumpImportError, import_verified_member,
+                                    import_verified_members, parse_xml)
 
 BODY = b'''<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">
 <page><title>Gravity</title><ns>0</ns><id>42</id>
@@ -107,6 +108,56 @@ class DumpImportTests(unittest.TestCase):
             (stage / "articles.xml.bz2").write_bytes(b"bad")
             with self.assertRaises(ValueError):
                 import_verified_member(manifest, stage, "articles.xml.bz2", out)
+            self.assertFalse(out.exists())
+
+
+    def test_verified_xml_shards_combine_atomically_without_cross_member_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stage = root / "stage"
+            stage.mkdir()
+            split = BODY.index(b"<page><title>Redirect")
+            first = BODY[:split] + b"</mediawiki>"
+            second = BODY[:BODY.index(b"<page>")] + BODY[split:]
+            files = []
+            for name, body in (("part-1.xml.bz2", first), ("part-2.xml.bz2", second)):
+                data = bz2.compress(body)
+                (stage / name).write_bytes(data)
+                files.append({"name": name, "bytes": len(data),
+                              "sha256": hashlib.sha256(data).hexdigest()})
+            manifest = {
+                "project": "enwiki", "generation_id": "20261009",
+                "source_url": "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json",
+                "completed": True, "files": files,
+            }
+            names = [entry["name"] for entry in files]
+            out = root / "combined.jsonl"
+            self.assertEqual(import_verified_members(manifest, stage, names, out), 2)
+            rows = [json.loads(line) for line in out.read_text().splitlines()]
+            self.assertEqual([row["page_id"] for row in rows], [42, 43])
+            self.assertEqual({row["generation_id"] for row in rows}, {"20261009"})
+            with self.assertRaisesRegex(DumpImportError, "already exists"):
+                import_verified_members(manifest, stage, names, out)
+            out.unlink()
+
+            with self.assertRaisesRegex(DumpImportError, "duplicate XML member"):
+                import_verified_members(manifest, stage, [names[0]] * 2, out)
+            self.assertFalse(out.exists())
+            with self.assertRaisesRegex(DumpImportError, "combined page count"):
+                import_verified_members(manifest, stage, names, out, max_pages=1)
+            self.assertFalse(out.exists())
+            with self.assertRaisesRegex(DumpImportError, "not a verified XML"):
+                import_verified_members(manifest, stage, ["unknown.xml"], out)
+            self.assertFalse(out.exists())
+
+            # Both files individually valid, but combining overlapping pages
+            # must never publish an apparently complete snapshot.
+            overlap = bz2.compress(first)
+            (stage / names[1]).write_bytes(overlap)
+            manifest["files"][1]["bytes"] = len(overlap)
+            manifest["files"][1]["sha256"] = hashlib.sha256(overlap).hexdigest()
+            with self.assertRaisesRegex(DumpImportError, "duplicate page ID across"):
+                import_verified_members(manifest, stage, names, out)
             self.assertFalse(out.exists())
 
 

@@ -171,17 +171,30 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
     return total
 
 
-def import_verified_member(manifest, staging, member, output):
-    """Verify all staged members before parsing; atomically publish raw NDJSON."""
+def import_verified_members(manifest, staging, members, output, *, max_pages=1000000):
+    """Atomically combine explicitly selected, verified, non-overlapping XML shards.
+
+    Caller must select shards from one dump product. A completed generation
+    may contain *different* dump products with overlapping pages; silently
+    importing every XML file would duplicate or mix source semantics.
+    """
     verify_source_bytes(manifest, staging)
-    if not isinstance(member, str) or member not in {
-        entry["name"] for entry in manifest["files"]
-    } or not (member.endswith(".xml") or member.endswith(".xml.bz2")):
-        raise DumpImportError("member is not a verified XML dump")
-    source = Path(staging) / member
+    if (isinstance(members, (str, bytes)) or not isinstance(members, (list, tuple))
+            or not members or type(max_pages) is not int or max_pages <= 0):
+        raise DumpImportError("invalid XML member selection or page budget")
+    allowed = {entry["name"] for entry in manifest["files"]}
+    if len(set(members)) != len(members):
+        raise DumpImportError("duplicate XML member selection")
+    for member in members:
+        if (not isinstance(member, str) or member not in allowed
+                or not member.endswith((".xml", ".xml.bz2"))):
+            raise DumpImportError("member is not a verified XML dump")
+
     output = Path(output)
     if output.parent.is_symlink() or not output.parent.is_dir():
         raise DumpImportError("unsafe output directory")
+    seen_pages = set()
+    total = 0
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -189,12 +202,25 @@ def import_verified_member(manifest, staging, member, output):
             prefix=".raw-dump.", suffix=".tmp", delete=False
         ) as writer:
             temporary = Path(writer.name)
+
             def emit(record):
+                nonlocal total
+                identity = (record["project"], record["page_id"])
+                if identity in seen_pages:
+                    raise DumpImportError("duplicate page ID across dump members")
+                if total >= max_pages:
+                    raise DumpImportError("combined page count budget exceeded")
+                seen_pages.add(identity)
+                total += 1
                 writer.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-            stream_open = bz2.open if member.endswith(".bz2") else open
-            with stream_open(source, "rb") as stream:
-                count = parse_xml(stream, emit, project=manifest["project"],
-                                  generation=manifest["generation_id"])
+
+            for member in members:
+                source = Path(staging) / member
+                stream_open = bz2.open if member.endswith(".bz2") else open
+                with stream_open(source, "rb") as stream:
+                    parse_xml(stream, emit, project=manifest["project"],
+                              generation=manifest["generation_id"],
+                              max_pages=max_pages)
             writer.flush()
             os.fsync(writer.fileno())
         try:
@@ -206,10 +232,15 @@ def import_verified_member(manifest, staging, member, output):
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-        return count
+        return total
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def import_verified_member(manifest, staging, member, output):
+    """Backward-compatible single-member raw import."""
+    return import_verified_members(manifest, staging, [member], output)
 
 
 def main():
@@ -217,12 +248,15 @@ def main():
     parser.add_argument("source_manifest", type=Path)
     parser.add_argument("staging_directory", type=Path)
     parser.add_argument("dump_member")
+    parser.add_argument("--additional-member", action="append", default=[],
+                        help="Additional non-overlapping XML shard (repeatable)")
     parser.add_argument("raw_ndjson_output", type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.source_manifest.read_text(encoding="utf-8"))
     try:
-        count = import_verified_member(
-            manifest, args.staging_directory, args.dump_member, args.raw_ndjson_output
+        count = import_verified_members(
+            manifest, args.staging_directory,
+            [args.dump_member, *args.additional_member], args.raw_ndjson_output
         )
     except (DumpImportError, OSError, ValueError) as error:
         parser.exit(2, f"Raw XML import failed: {error}\n")
