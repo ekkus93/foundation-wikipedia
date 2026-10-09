@@ -103,6 +103,74 @@ class ModernExportStagingTests(unittest.TestCase):
         self.stage()
         self.assertEqual((self.dest / NAMES[0]).read_bytes(), BODY_A)
 
+    def test_explicit_mirror_uses_pinned_official_sha256_and_no_redirects(self):
+        mirror = "https://mirror.example.test/wikimedia/"
+        observed = []
+
+        def mirrored_response(request, timeout):
+            observed.append(request.full_url)
+            name = request.full_url.rsplit("/", 1)[-1]
+            payload = dict(zip(NAMES, (BODY_A, BODY_B)))[name]
+            return Response(payload, request.full_url,
+                            headers={"Content-Length": str(len(payload))})
+
+        result = stage_export(
+            self.report, self.dest, self.output, fetcher=self.fetch,
+            opener=mirrored_response, mirror_base=mirror,
+        )
+        self.assertEqual(observed, [mirror + name for name in NAMES])
+        self.assertEqual(result["files"][0]["url"], URL + NAMES[0])
+        self.assertFalse(any(mirror in str(entry) for entry in result["files"]))
+
+    def test_mirror_corruption_rejected_and_no_manifest(self):
+        mirror = "https://mirror.example.test/"
+
+        def corrupt(request, timeout):
+            name = request.full_url.rsplit("/", 1)[-1]
+            body = b"bad mirrors" if name == NAMES[0] else BODY_B
+            return Response(body, request.full_url,
+                            headers={"Content-Length": str(len(body))})
+
+        with self.assertRaisesRegex(ExportStagingError, "SHA-256 mismatch"):
+            stage_export(
+                self.report, self.dest, self.output, fetcher=self.fetch,
+                opener=corrupt, mirror_base=mirror,
+            )
+        self.assertFalse(self.output.exists())
+
+    def test_unsafe_mirror_rejected_before_any_network_request(self):
+        unsafe = [
+            "http://mirror.example.test/",
+            "https://user@mirror.example.test/",
+            "https://mirror.example.test/%2e%2e/",
+            "https://mirror.example.test/../",
+            "https://mirror.example.test/?token=1",
+            "https://mirror.example.test/#fragment",
+            "https://mirror.example.test/\\evil/",
+            "https://mirror.example.test:8443/",
+            "https://mirror.example.test/not-a-directory",
+        ]
+        for base in unsafe:
+            with self.subTest(base=base), self.assertRaisesRegex(ExportStagingError, "mirror base"):
+                stage_export(
+                    self.report, self.dest, self.output,
+                    fetcher=lambda _url: self.fail("unexpected source lookup"),
+                    opener=lambda *_args, **_kw: self.fail("unexpected download"),
+                    mirror_base=base,
+                )
+        self.assertFalse(self.dest.exists())
+
+    def test_mirror_cannot_bypass_required_official_sha256_preflight(self):
+        forged = copy.deepcopy(self.report)
+        forged["files"][0]["sha256"] = "f" * 64
+        with self.assertRaisesRegex(ExportStagingError, "does not match"):
+            stage_export(
+                forged, self.dest, self.output, fetcher=self.fetch,
+                opener=lambda *_args, **_kw: self.fail("download before preflight"),
+                mirror_base="https://mirror.example.test/",
+            )
+        self.assertFalse(self.dest.exists())
+
     def test_corruption_does_not_publish_manifest(self):
         def bad(request, timeout):
             name = request.full_url.rsplit("/", 1)[-1]

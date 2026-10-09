@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from discover_current_content_export import (
@@ -77,6 +78,34 @@ def _publish(part, target, directory):
         os.close(directory_fd)
 
 
+def _validate_mirror(mirror_base):
+    """Require explicit HTTPS mirror root, with no credentials or URL tricks."""
+    if mirror_base is None:
+        return None
+    if not isinstance(mirror_base, str) or len(mirror_base) > 2048:
+        raise ExportStagingError("invalid HTTPS mirror base")
+    try:
+        parsed = urlsplit(mirror_base)
+        valid = (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+            and parsed.path.endswith("/")
+            and not any(segment in (".", "..") for segment in parsed.path.split("/"))
+            and not any(ch.isspace() or ord(ch) < 33 or ch in "\\%" for ch in mirror_base)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.\-]*", parsed.hostname) is not None
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ExportStagingError("invalid HTTPS mirror base")
+    return mirror_base
+
+
 def _receipt(item, size):
     return {
         "name": item["path"].rsplit("/", 1)[-1],
@@ -87,8 +116,8 @@ def _receipt(item, size):
     }
 
 
-def _transfer(item, directory, *, opener):
-    url, digest = item["url"], item["sha256"]
+def _transfer(item, directory, *, opener, download_url=None):
+    url, digest = download_url or item["url"], item["sha256"]
     name = item["path"].rsplit("/", 1)[-1]
     target, part = directory / name, directory / (name + ".part")
     if _ordinary_file(target):
@@ -190,8 +219,10 @@ def _preflight(report, fetcher):
     return fresh
 
 
-def stage_export(report, directory, output_manifest, *, fetcher=fetch_official, opener=_open):
+def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
+                 opener=_open, mirror_base=None):
     """Stage complete verified inventory before no-clobber manifest publication."""
+    mirror_base = _validate_mirror(mirror_base)
     fresh = _preflight(report, fetcher)
     directory = Path(directory)
     output = Path(output_manifest)
@@ -200,7 +231,11 @@ def stage_export(report, directory, output_manifest, *, fetcher=fetch_official, 
     directory.mkdir(parents=True, exist_ok=True)
     if output.exists() or output.is_symlink():
         raise ExportStagingError("output manifest already exists")
-    entries = [_transfer(item, directory, opener=opener) for item in fresh["files"]]
+    entries = [
+        _transfer(item, directory, opener=opener,
+                  download_url=mirror_base + item["path"] if mirror_base else None)
+        for item in fresh["files"]
+    ]
     entries.sort(key=lambda item: item["name"])
     manifest = {
         "project": fresh["project"], "generation_id": fresh["generation_id"],
@@ -242,10 +277,13 @@ def main():
     parser.add_argument("completed_export_report", type=Path)
     parser.add_argument("staging_directory", type=Path)
     parser.add_argument("source_manifest", type=Path)
+    parser.add_argument("--mirror-base", default=None,
+                        help="Explicit HTTPS mirror directory (official SHA256SUMS still required)")
     args = parser.parse_args()
     try:
         report = json.loads(args.completed_export_report.read_text(encoding="utf-8"))
-        manifest = stage_export(report, args.staging_directory, args.source_manifest)
+        manifest = stage_export(report, args.staging_directory, args.source_manifest,
+                                mirror_base=args.mirror_base)
     except (ExportStagingError, OSError, ValueError) as error:
         parser.exit(2, f"Current-content staging failed: {error}\n")
     print(f"Staged {len(manifest['files'])} SHA-256-verified member(s), without activation")

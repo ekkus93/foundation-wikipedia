@@ -213,6 +213,17 @@ python3 scripts/verify_source_staging.py \
   /path/to/current-content-manifest.json /path/to/current-content-staging
 ```
 
+To download from an explicitly configured HTTPS mirror instead of the
+original member host, append `--mirror-base https://mirror.example.test/exports/`.
+The mirror URL is validated before any I/O, redirects are rejected, and the
+official Wikimedia SHA256SUMS inventory is **still retrieved directly from
+Wikimedia** and pinned before contacting the mirror. A mirror cannot supply
+expected checksums or change the canonical source URLs recorded in the
+manifest. Corrupt or truncated mirror bytes fail closed with no manifest
+publication. Existing resumable partials may contain mixed transport bytes;
+only the complete official SHA-256 digest is treated as verified. This does
+not imply a mirror is a verified publisher.
+
 The stager re-fetches and compares official SHA256SUMS metadata before any
 member transfer, rejects altered member inventories, checks exact HTTPS URLs,
 validates resume ranges and SHA-256, and refuses incomplete manifest publication.
