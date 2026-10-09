@@ -12,7 +12,7 @@ import re
 import stat
 from pathlib import Path
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from verify_source_staging import (
     CHUNK, HEX_SHA256, IDENTITY, MAX_MEMBERS, NAME,
@@ -24,6 +24,15 @@ RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
 class SourceDownloadError(SourceVerificationError):
     pass
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise SourceDownloadError("source redirects require explicit approval")
+
+
+def _open_official(request, timeout):
+    return build_opener(_RejectRedirects()).open(request, timeout=timeout)
 
 
 def _preflight(manifest):
@@ -150,9 +159,11 @@ def _download(base, item, directory, opener, timeout):
     os.replace(partial, target)
 
 
-def stage_generation(manifest, directory, opener=urlopen, timeout=30):
+def stage_generation(manifest, directory, opener=None, timeout=30):
     """Stage complete verified bytes; never touch an active snapshot."""
     base, files = _preflight(manifest)
+    if opener is None:
+        opener = _open_official
     directory = Path(directory)
     if directory.is_symlink() or not directory.is_dir():
         raise SourceDownloadError("staging directory missing or unsafe")

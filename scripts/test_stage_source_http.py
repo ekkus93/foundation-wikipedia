@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from stage_source_http import SourceDownloadError, stage_generation
+from stage_source_http import _RejectRedirects, SourceDownloadError, stage_generation
 
 
 class Response(io.BytesIO):
@@ -122,6 +122,12 @@ class SourceDownloadTests(unittest.TestCase):
         self.manifest["files"][0]["name"] = "../escape"
         with self.assertRaises(SourceDownloadError):
             self.stage(forbidden)
+
+    def test_redirect_handler_rejects_before_following(self):
+        with self.assertRaisesRegex(SourceDownloadError, "redirects"):
+            _RejectRedirects().redirect_request(
+                None, None, 302, "Found", {}, "https://attacker.example/data",
+            )
 
     def test_symlinked_partial_and_existing_mismatch(self):
         outside = self.directory / "outside"
