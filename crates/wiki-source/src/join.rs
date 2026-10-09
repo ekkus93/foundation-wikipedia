@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PageKey { pub project: String, pub page_id: u64 }
+pub struct PageKey {
+    pub project: String,
+    pub page_id: u64,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Component {
@@ -25,20 +28,36 @@ pub struct JoinedPage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JoinError {
-    InvalidIdentity, EmptyPayload, Duplicate(PageKey),
-    RevisionMismatch(PageKey), GenerationMismatch(PageKey),
+    InvalidIdentity,
+    EmptyPayload,
+    Duplicate(PageKey),
+    RevisionMismatch(PageKey),
+    GenerationMismatch(PageKey),
     MissingComponent(PageKey),
 }
 
-fn collect(items: Vec<Component>) -> Result<BTreeMap<PageKey, Component>, JoinError> {
+fn collect(
+    items: Vec<Component>,
+    allow_empty_payload: bool,
+) -> Result<BTreeMap<PageKey, Component>, JoinError> {
     let mut result = BTreeMap::new();
     for item in items {
-        if item.page.page_id == 0 || item.revision_id == 0
+        if item.page.page_id == 0
+            || item.revision_id == 0
             || item.page.project.is_empty()
-            || !item.page.project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            || !item
+                .page
+                .project
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
             || item.generation_id.trim().is_empty()
-            || item.payload.trim().is_empty()
-        { return Err(JoinError::InvalidIdentity); }
+            || item.generation_id != item.generation_id.trim()
+        {
+            return Err(JoinError::InvalidIdentity);
+        }
+        if !allow_empty_payload && item.payload.trim().is_empty() {
+            return Err(JoinError::EmptyPayload);
+        }
         if result.insert(item.page.clone(), item.clone()).is_some() {
             return Err(JoinError::Duplicate(item.page));
         }
@@ -48,16 +67,23 @@ fn collect(items: Vec<Component>) -> Result<BTreeMap<PageKey, Component>, JoinEr
 
 /// Require every page to have matching exact-revision structured, HTML and
 /// category records. Never silently join by title or use partial data.
+/// An explicit empty category payload is valid; a missing record is not.
 pub fn join_pages(
-    structured: Vec<Component>, rendered: Vec<Component>, categories: Vec<Component>,
+    structured: Vec<Component>,
+    rendered: Vec<Component>,
+    categories: Vec<Component>,
 ) -> Result<Vec<JoinedPage>, JoinError> {
-    let s = collect(structured)?;
-    let mut r = collect(rendered)?;
-    let mut c = collect(categories)?;
+    let s = collect(structured, false)?;
+    let mut r = collect(rendered, false)?;
+    let mut c = collect(categories, true)?;
     let mut joined = Vec::new();
     for (key, source) in s {
-        let html = r.remove(&key).ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
-        let cats = c.remove(&key).ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
+        let html = r
+            .remove(&key)
+            .ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
+        let cats = c
+            .remove(&key)
+            .ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
         for part in [&html, &cats] {
             if part.revision_id != source.revision_id {
                 return Err(JoinError::RevisionMismatch(key));
@@ -67,9 +93,12 @@ pub fn join_pages(
             }
         }
         joined.push(JoinedPage {
-            page: key, revision_id: source.revision_id,
-            generation_id: source.generation_id, structured: source.payload,
-            rendered_html: html.payload, categories: cats.payload,
+            page: key,
+            revision_id: source.revision_id,
+            generation_id: source.generation_id,
+            structured: source.payload,
+            rendered_html: html.payload,
+            categories: cats.payload,
         });
     }
     if let Some((key, _)) = r.into_iter().next().or_else(|| c.into_iter().next()) {
@@ -81,34 +110,72 @@ pub fn join_pages(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn part(page_id: u64, payload: &str) -> Component {
-        Component { page: PageKey { project: "enwiki".into(), page_id },
-            revision_id: 17, generation_id: "20261009".into(), payload: payload.into() }
+        Component {
+            page: PageKey {
+                project: "enwiki".into(),
+                page_id,
+            },
+            revision_id: 17,
+            generation_id: "20261009".into(),
+            payload: payload.into(),
+        }
     }
+
     #[test]
     fn joins_sorted_and_preserves_exact_provenance() {
-        let result = join_pages(vec![part(2, "s2"), part(1, "s1")],
+        let result = join_pages(
+            vec![part(2, "s2"), part(1, "s1")],
             vec![part(1, "h1"), part(2, "h2")],
-            vec![part(2, "c2"), part(1, "c1")]).unwrap();
-        assert_eq!(result.iter().map(|p| p.page.page_id).collect::<Vec<_>>(), vec![1,2]);
+            vec![part(2, ""), part(1, "c1")],
+        )
+        .unwrap();
+        assert_eq!(
+            result.iter().map(|p| p.page.page_id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
         assert_eq!(result[0].rendered_html, "h1");
+        assert!(result[1].categories.is_empty());
     }
+
     #[test]
     fn rejects_mismatched_revision_and_generation() {
         let mut html = part(1, "html");
         html.revision_id += 1;
-        assert_eq!(join_pages(vec![part(1,"s")],vec![html.clone()],vec![part(1,"c")]),
-            Err(JoinError::RevisionMismatch(html.page.clone())));
+        assert_eq!(
+            join_pages(vec![part(1, "s")], vec![html.clone()], vec![part(1, "c")]),
+            Err(JoinError::RevisionMismatch(html.page.clone()))
+        );
         html.revision_id -= 1;
         html.generation_id = "different".into();
-        assert_eq!(join_pages(vec![part(1,"s")],vec![html.clone()],vec![part(1,"c")]),
-            Err(JoinError::GenerationMismatch(html.page)));
+        assert_eq!(
+            join_pages(vec![part(1, "s")], vec![html.clone()], vec![part(1, "c")]),
+            Err(JoinError::GenerationMismatch(html.page))
+        );
     }
+
     #[test]
     fn rejects_missing_or_duplicate_components() {
-        assert_eq!(join_pages(vec![part(1,"s")],vec![part(1,"h")],vec![]),
-            Err(JoinError::MissingComponent(part(1,"s").page)));
-        assert_eq!(join_pages(vec![part(1,"s"),part(1,"s")],vec![],vec![]),
-            Err(JoinError::Duplicate(part(1,"s").page)));
+        assert_eq!(
+            join_pages(vec![part(1, "s")], vec![part(1, "h")], vec![]),
+            Err(JoinError::MissingComponent(part(1, "s").page))
+        );
+        assert_eq!(
+            join_pages(vec![part(1, "s"), part(1, "s")], vec![], vec![]),
+            Err(JoinError::Duplicate(part(1, "s").page))
+        );
+    }
+
+    #[test]
+    fn rejects_unmatched_html_or_empty_evidence() {
+        assert_eq!(
+            join_pages(vec![], vec![part(1, "html")], vec![]),
+            Err(JoinError::MissingComponent(part(1, "html").page))
+        );
+        assert_eq!(
+            join_pages(vec![part(1, "")], vec![], vec![]),
+            Err(JoinError::EmptyPayload)
+        );
     }
 }
