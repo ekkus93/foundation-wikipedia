@@ -53,7 +53,10 @@ fn article() -> Article {
             section(
                 2,
                 "Heat",
-                vec![paragraph(0, "Heat transfers thermal energy between bodies.")],
+                vec![paragraph(
+                    0,
+                    "Heat transfers thermal energy between bodies.",
+                )],
                 vec![],
             ),
             section(
@@ -63,7 +66,10 @@ fn article() -> Article {
                 vec![section(
                     1,
                     "Reflection",
-                    vec![paragraph(0, "Reflection occurs when light returns from a surface.")],
+                    vec![paragraph(
+                        0,
+                        "Reflection occurs when light returns from a surface.",
+                    )],
                     vec![],
                 )],
             ),
