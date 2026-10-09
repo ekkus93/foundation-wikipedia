@@ -47,6 +47,28 @@ class DumpImportTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpImportError, "DOCTYPE"):
             self.parse(b'<!DOCTYPE mediawiki [<!ENTITY x "boom">]>' + BODY)
 
+    def test_accepts_modern_main_slot_and_rejects_ambiguous_content(self):
+        old = b'<text xml:space="preserve">Force &amp; mass</text>'
+        nested = (b'<slots><slot role="main"><model>wikitext</model>'
+                  b'<format>text/x-wiki</format>'
+                  b'<text xml:space="preserve">Force &amp; mass</text>'
+                  b'</slot></slots>')
+        rows = self.parse(BODY.replace(old, nested))
+        self.assertEqual(rows[0]["wikitext"], "Force & mass")
+        with self.assertRaisesRegex(DumpImportError, "ambiguous"):
+            self.parse(BODY.replace(old, old + nested))
+        with self.assertRaisesRegex(DumpImportError, "duplicate main"):
+            self.parse(BODY.replace(old, nested.replace(b'</slots>', b'') +
+                                    nested.replace(b'<slots>', b'')))
+        with self.assertRaisesRegex(DumpImportError, "non-main"):
+            self.parse(BODY.replace(old, nested.replace(b'role="main"', b'role="aux"')))
+
+    def test_rejects_unsupported_content_model(self):
+        old = b'<text xml:space="preserve">Force &amp; mass</text>'
+        bad = b'<model>json</model><format>application/json</format>' + old
+        with self.assertRaisesRegex(DumpImportError, "content model"):
+            self.parse(BODY.replace(old, bad))
+
     def test_page_and_total_budgets_fail_closed(self):
         with self.assertRaisesRegex(DumpImportError, "byte budget"):
             self.parse(max_page_bytes=10)

@@ -24,6 +24,11 @@ FIELDS = {
     ("mediawiki", "page", "revision", "id"): "revision_id",
     ("mediawiki", "page", "revision", "timestamp"): "timestamp",
     ("mediawiki", "page", "revision", "text"): "wikitext",
+    ("mediawiki", "page", "revision", "model"): "model",
+    ("mediawiki", "page", "revision", "format"): "format",
+    ("mediawiki", "page", "revision", "slots", "slot", "text"): "slot_wikitext",
+    ("mediawiki", "page", "revision", "slots", "slot", "model"): "slot_model",
+    ("mediawiki", "page", "revision", "slots", "slot", "format"): "slot_format",
 }
 
 
@@ -43,6 +48,7 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
     chunks = []
     page_bytes = 0
     revisions = 0
+    main_slots = 0
     total = 0
     parser = expat.ParserCreate(namespace_separator="}")
 
@@ -53,7 +59,7 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
         return tag.rsplit("}", 1)[-1]
 
     def start(tag, attrs):
-        nonlocal page, field, chunks, page_bytes, revisions
+        nonlocal page, field, chunks, page_bytes, revisions, main_slots
         element = local(tag)
         path.append(element)
         if len(path) > 32:
@@ -63,11 +69,18 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
         if path == ["mediawiki", "page"]:
             page = {}
             revisions = 0
+            main_slots = 0
             page_bytes = 0
         elif path == ["mediawiki", "page", "revision"]:
             revisions += 1
             if revisions > 1:
                 raise DumpImportError("multiple revisions in current-content dump")
+        elif path == ["mediawiki", "page", "revision", "slots", "slot"]:
+            if attrs.get("role") != "main":
+                raise DumpImportError("unsupported non-main MediaWiki content slot")
+            main_slots += 1
+            if main_slots > 1:
+                raise DumpImportError("duplicate main content slot")
         elif path == ["mediawiki", "page", "redirect"]:
             if page is not None:
                 page["redirect_title"] = attrs.get("title")
@@ -109,10 +122,16 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
                 revision_id = int(page["revision_id"])
                 namespace = int(page["namespace"])
                 timestamp = page["timestamp"]
-                wikitext = page["wikitext"]
+                if "wikitext" in page and "slot_wikitext" in page:
+                    raise DumpImportError("ambiguous direct and slot text")
+                wikitext = page.get("slot_wikitext", page.get("wikitext"))
+                model = page.get("slot_model", page.get("model", "wikitext"))
+                content_format = page.get("slot_format", page.get("format", "text/x-wiki"))
                 title = page["title"]
             except (KeyError, ValueError, TypeError) as error:
                 raise DumpImportError("missing or invalid page metadata") from error
+            if model != "wikitext" or content_format != "text/x-wiki":
+                raise DumpImportError("unsupported content model or format")
             if page_id <= 0 or revision_id <= 0 or not title.strip() or not timestamp or not wikitext:
                 raise DumpImportError("invalid or empty current-content record")
             if page_id in seen:
