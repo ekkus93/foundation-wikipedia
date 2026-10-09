@@ -1,6 +1,5 @@
 use wiki_model::{
-    Article, ArticleKey, Block, BlockContent, MediaAsset, Revision, Section,
-    ARTICLE_SCHEMA_VERSION,
+    Article, ArticleKey, Block, BlockContent, MediaAsset, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
 use wiki_pack_builder::media_inventory::{collect_structured_media, InventoryError};
 
