@@ -131,6 +131,38 @@ class SourceStagingTests(unittest.TestCase):
         self.assertTrue(swapped)
         self.assertEqual(outside.read_bytes(), b"<mediawiki>fixed revision</mediawiki>")
 
+    def test_hardlinked_member_is_not_verified(self):
+        outside = Path(self.tempdir.name) / "outside"
+        outside.write_bytes(self.member.read_bytes())
+        self.member.unlink()
+        os.link(outside, self.member)
+        self.reject("hardlink")
+        self.assertEqual(outside.read_bytes(), b"<mediawiki>fixed revision</mediawiki>")
+
+    def test_in_place_mutation_during_hashing_is_rejected(self):
+        # A hostile writer can change a source inode without changing its
+        # length or the bytes that the verifier already read.
+        original_sha256 = hashlib.sha256
+        path = self.member
+
+        class ChangingDigest:
+            def __init__(self):
+                self.digest = original_sha256()
+                self.changed = False
+
+            def update(self, block):
+                self.digest.update(block)
+                if not self.changed:
+                    self.changed = True
+                    path.write_bytes(b"Z" * len(block))
+                    os.utime(path, ns=(1_600_000_000_000_000_000, 1_600_000_000_000_000_000))
+
+            def hexdigest(self):
+                return self.digest.hexdigest()
+
+        with patch("verify_source_staging.hashlib.sha256", side_effect=ChangingDigest):
+            self.reject("changed during hashing")
+
     def test_empty_manifest_and_root_symlink_rejected(self):
         self.manifest["files"] = []
         self.reject("bounded nonempty")

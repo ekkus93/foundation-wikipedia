@@ -121,11 +121,28 @@ def verify_source_bytes(manifest, directory):
             descriptor = os.open(path, flags)
             with os.fdopen(descriptor, "rb") as handle:
                 st = os.fstat(handle.fileno())
-                if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                    raise SourceVerificationError(f"unsafe staged member type or hardlink: {name}")
+                if st.st_size != size:
                     raise SourceVerificationError(f"byte length mismatch: {name}")
                 actual = hashlib.sha256()
+                read_bytes = 0
                 for block in iter(lambda: handle.read(CHUNK), b""):
+                    read_bytes += len(block)
+                    if read_bytes > size:
+                        raise SourceVerificationError(f"staged member changed during hashing: {name}")
                     actual.update(block)
+                final = os.fstat(handle.fileno())
+                if (
+                    read_bytes != size
+                    or final.st_dev != st.st_dev
+                    or final.st_ino != st.st_ino
+                    or final.st_size != st.st_size
+                    or final.st_mtime_ns != st.st_mtime_ns
+                    or final.st_ctime_ns != st.st_ctime_ns
+                    or final.st_nlink != 1
+                ):
+                    raise SourceVerificationError(f"staged member changed during hashing: {name}")
         except OSError as error:
             raise SourceVerificationError(f"missing or unsafe staged member: {name}") from error
         if actual.hexdigest() != digest:
