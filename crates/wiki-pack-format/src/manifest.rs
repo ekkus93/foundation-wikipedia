@@ -84,6 +84,13 @@ impl Manifest {
         if !origin_valid || self.objects.is_empty() {
             return Err(ManifestError::MissingMetadata);
         }
+        let origin_safe = match &self.origin {
+            Origin::Official { publisher } => safe_id(publisher),
+            Origin::Custom { definition_id } => safe_id(definition_id),
+        };
+        if !origin_safe {
+            return Err(ManifestError::UnsafeMetadata);
+        }
         let mut paths = BTreeSet::new();
         for object in &self.objects {
             if object.bytes == 0

@@ -78,3 +78,22 @@ fn unsafe_pack_and_snapshot_identifiers_fail_closed() {
     bad.snapshot = "2026/10/09".into();
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeMetadata));
 }
+
+#[test]
+fn origin_metadata_is_not_a_trusted_filesystem_path() {
+    let mut manifest = sample();
+    for invalid in ["../escape", "bad\\\\name", "bad:name", " padded ", ".."] {
+        manifest.origin = Origin::Custom {
+            definition_id: invalid.into(),
+        };
+        assert_eq!(manifest.validate(), Err(ManifestError::UnsafeMetadata));
+        manifest.origin = Origin::Official {
+            publisher: invalid.into(),
+        };
+        assert_eq!(manifest.validate(), Err(ManifestError::UnsafeMetadata));
+    }
+    manifest.origin = Origin::Official {
+        publisher: "Example Publisher".into(),
+    };
+    assert_eq!(manifest.validate(), Ok(()));
+}
