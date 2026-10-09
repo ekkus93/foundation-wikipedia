@@ -18,6 +18,8 @@ fn article() -> Article {
         title: "Gravity".into(),
         display_title: "Gravity".into(),
         language: "en".into(),
+        namespace: 0,
+        aliases: vec![],
         wikidata_id: None,
         lead: vec![Block {
             ordinal: 0,

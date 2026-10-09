@@ -224,6 +224,8 @@ mod tests {
             title: "Physics".into(),
             display_title: "Physics".into(),
             language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
             wikidata_id: None,
             lead: vec![Block {
                 ordinal: 0,

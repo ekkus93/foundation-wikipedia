@@ -31,6 +31,8 @@ pub struct Article {
     pub title: String,
     pub display_title: String,
     pub language: String,
+    pub namespace: i32,
+    pub aliases: Vec<String>,
     pub wikidata_id: Option<String>,
     pub lead: Vec<Block>,
     pub sections: Vec<Section>,
@@ -119,6 +121,7 @@ pub enum ModelError {
     InvalidReferenceLabel,
     InvalidLinkLabel,
     InvalidWikidataId,
+    InvalidAlias,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
@@ -219,6 +222,12 @@ impl Article {
             || self.language.trim().is_empty()
         {
             return Err(ModelError::MissingTitle);
+        }
+        let mut aliases = HashSet::new();
+        for alias in &self.aliases {
+            if alias.trim().is_empty() || !aliases.insert(alias.trim().to_lowercase()) {
+                return Err(ModelError::InvalidAlias);
+            }
         }
         if let Some(id) = &self.wikidata_id {
             let digits = id.strip_prefix('Q').unwrap_or("");
@@ -343,6 +352,10 @@ mod tests {
             title: "Gravity".into(),
             display_title: "Gravity".into(),
             language: "en".into(),
+
+            namespace: 0,
+
+            aliases: vec!["Gravity (physics)".into()],
             wikidata_id: Some("Q1140".into()),
             lead: vec![Block {
                 ordinal: 0,
@@ -458,6 +471,17 @@ mod tests {
             subsections: vec![],
         });
         assert_eq!(a.validate(), Err(ModelError::InvalidSectionHeading));
+    }
+
+    #[test]
+    fn aliases_preserve_unicode_and_reject_blanks_and_collisions() {
+        let mut a = article();
+        a.aliases = vec!["Gravité".into(), "引力".into()];
+        assert_eq!(a.validate(), Ok(()));
+        a.aliases.push(" GRAVITÉ ".into());
+        assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
+        a.aliases = vec!["  ".into()];
+        assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
     }
 
     #[test]
