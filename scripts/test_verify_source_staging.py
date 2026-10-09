@@ -19,7 +19,7 @@ class SourceStagingTests(unittest.TestCase):
         self.manifest = {
             "project": "enwiki",
             "generation_id": "20261009",
-            "source_url": "https://dumps.wikimedia.org/enwiki/20261009/",
+            "source_url": "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json",
             "completed": True,
             "files": [{
                 "name": self.member.name,
@@ -52,6 +52,21 @@ class SourceStagingTests(unittest.TestCase):
         ]:
             self.manifest["source_url"] = url
             self.reject("generation metadata")
+
+    def test_dump_status_url_is_bound_to_exact_project_and_generation(self):
+        accepted = self.manifest["source_url"]
+        for forgery in [
+            "https://dumps.wikimedia.org/frwiki/20261009/dumpstatus.json",
+            "https://dumps.wikimedia.org/enwiki/20261008/dumpstatus.json",
+            "https://dumps.wikimedia.org/enwiki/20261009/",
+            "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json?alt=1",
+            "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json#alternate",
+            "https://dumps.wikimedia.org/enwiki/20261009/../20261009/dumpstatus.json",
+        ]:
+            self.manifest["source_url"] = forgery
+            self.reject("generation metadata")
+        self.manifest["source_url"] = accepted
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
 
     def test_bad_ids_names_and_duplicate_case_aliases(self):
         self.manifest["project"] = "en/wiki"

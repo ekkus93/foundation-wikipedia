@@ -24,7 +24,7 @@ class SourceVerificationError(ValueError):
     pass
 
 
-def _official_url(value):
+def _official_url(value, project, generation):
     if not isinstance(value, str):
         return False
     try:
@@ -35,8 +35,15 @@ def _official_url(value):
             and url.port in (None, 443)
             and url.username is None
             and url.password is None
-            and bool(url.path.strip("/"))
+            and not url.query
             and not url.fragment
+            and not any(char.isspace() or ord(char) < 32 or char == "\\\\" for char in value)
+            and (
+                (url.hostname == "dumps.wikimedia.org"
+                 and url.path == f"/{project}/{generation}/dumpstatus.json")
+                or (url.hostname == "enterprise.wikimedia.com"
+                    and bool(url.path.strip("/")))
+            )
         )
     except ValueError:
         return False
@@ -70,7 +77,7 @@ def verify_source_bytes(manifest, directory):
         or not isinstance(manifest.get("generation_id"), str)
         or not GENERATION.fullmatch(manifest["generation_id"])
         or manifest["generation_id"].endswith(".")
-        or not _official_url(manifest.get("source_url"))
+        or not _official_url(manifest.get("source_url"), manifest["project"], manifest["generation_id"])
     ):
         raise SourceVerificationError("invalid or incomplete upstream generation metadata")
     members = manifest.get("files")

@@ -208,6 +208,12 @@ authentic expected member SHA-256 digests, use a JSON manifest containing
 python3 scripts/verify_source_staging.py source-manifest.json /path/to/staged-files
 ```
 
+For public dump manifests, `source_url` must match the exact
+`https://dumps.wikimedia.org/PROJECT/GENERATION/dumpstatus.json` identity.
+Unrelated paths, query parameters and identity mismatches fail closed. This
+binds reported metadata to a consistent source identity **but cannot certify
+that the caller-supplied SHA-256 values came from Wikimedia**.
+
 The verifier rejects truncated or corrupted bytes, symlinks, unsafe filenames,
 case-colliding members, and incomplete publication metadata. **It does not
 authenticate the manifest or discover Wikimedia releases**; those SRC-001
