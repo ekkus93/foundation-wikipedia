@@ -51,10 +51,16 @@ jobs:
             --device "pixel_6"
       - name: Boot emulator
         run: |
+          ACCEL=off
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            ACCEL=on
+          fi
+          echo "Android emulator acceleration: $ACCEL"
           "$ANDROID_HOME/emulator/emulator" \
             -avd foundation-wikipedia-ci \
-            -no-window -no-audio -no-boot-anim \
-            -gpu swiftshader_indirect -accel off -wipe-data \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect -accel "$ACCEL" -wipe-data \
             > /tmp/foundation-emulator.log 2>&1 &
           echo $! > /tmp/foundation-emulator.pid
           adb wait-for-device
