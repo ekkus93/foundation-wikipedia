@@ -1,8 +1,8 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wiki_ai::{
     stream_selected, CancellationToken, GenerateRequest, LlmProvider, Locality, Message,
     MessageRole, ModelInfo, OutboundPolicy, ProviderCapabilities, ProviderError, StreamEvent,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct FakeProvider<'a> {
     locality: Locality,
