@@ -145,6 +145,24 @@ when every member has passed. Interrupted network transfers leave resumable
 It does not authenticate a caller-supplied discovery report, import articles,
 or activate a snapshot. Run the separate staging verifier before ingestion.
 
+## Preliminary verified public-dump XML import (SRC-003 partial)
+
+After completing full source staging, raw wikitext revisions can be extracted
+from a staged official pages XML/XML.bz2 member without activating any snapshot:
+
+```sh
+python3 scripts/import_public_dump_xml.py source-manifest.json \
+  /path/to/staging enwiki-YYYYMMDD-pages-articles-multistream.xml.bz2 \
+  /path/to/raw-revisions.ndjson
+```
+
+The import verifies the **full staged manifest** before consuming input,
+rejects XML doctypes/entities, duplicate page IDs, multi-revision records,
+unbounded page text and malformed revision metadata. Output is atomically
+published without clobbering an existing result. Raw wikitext is **not**
+rendered article HTML; template/Lua/math expansion, revision joins, sanitized
+rendering and actual pack installation are still incomplete.
+
 ## Public Wikimedia dump discovery (read-only metadata)
 
 Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
