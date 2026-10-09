@@ -9,9 +9,7 @@ use crate::{
     OutboundPolicy, ProviderError, StreamEvent,
 };
 use wiki_model::{Article, ModelError};
-use wiki_search::{
-    validate_grounded_answer, ArticleLexicalIndex, CitationError, GroundedAnswer,
-};
+use wiki_search::{validate_grounded_answer, ArticleLexicalIndex, CitationError, GroundedAnswer};
 
 const MAX_RESPONSE_BYTES: usize = 131_072;
 const MAX_CONTEXT_BYTES: usize = 65_536;

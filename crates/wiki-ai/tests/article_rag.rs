@@ -43,7 +43,9 @@ impl LlmProvider for FixtureProvider<'_> {
         on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
     ) -> Result<(), ProviderError> {
         assert!(request.messages[1].content.contains("revision: 12"));
-        assert!(request.messages[1].content.contains("Evidence ID: wkb:enwiki:9:12:1:b0"));
+        assert!(request.messages[1]
+            .content
+            .contains("Evidence ID: wkb:enwiki:9:12:1:b0"));
         self.calls.fetch_add(1, Ordering::Relaxed);
         on_event(StreamEvent::TextDelta(self.output.to_string()))?;
         on_event(StreamEvent::Completed {
@@ -111,8 +113,13 @@ fn exact_retrieved_revision_can_be_cited() {
         locality: Locality::OnDevice,
         calls: &calls,
     };
-    let answer = answer_article(&sample(), &provider, &question(), &CancellationToken::default())
-        .unwrap();
+    let answer = answer_article(
+        &sample(),
+        &provider,
+        &question(),
+        &CancellationToken::default(),
+    )
+    .unwrap();
     match answer {
         GroundedAnswer::Supported { citations, text } => {
             assert_eq!(citations.len(), 1);
@@ -164,7 +171,12 @@ fn missing_evidence_blocks_dispatch_and_hosted_fallback() {
     );
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     assert_eq!(
-        answer_article(&sample(), &provider, &question(), &CancellationToken::default()),
+        answer_article(
+            &sample(),
+            &provider,
+            &question(),
+            &CancellationToken::default()
+        ),
         Err(RagError::Provider(ProviderError::DestinationNotAllowed))
     );
     assert_eq!(calls.load(Ordering::Relaxed), 0);
@@ -186,7 +198,12 @@ fn no_claims_or_unclosed_claims_cannot_be_displayed_as_grounded() {
             calls: &calls,
         };
         assert_eq!(
-            answer_article(&sample(), &provider, &question(), &CancellationToken::default()),
+            answer_article(
+            &sample(),
+            &provider,
+            &question(),
+            &CancellationToken::default()
+        ),
             Err(error)
         );
     }
@@ -201,7 +218,12 @@ fn provider_abstention_has_explicit_insufficient_evidence_state() {
         calls: &calls,
     };
     assert_eq!(
-        answer_article(&sample(), &provider, &question(), &CancellationToken::default()),
+        answer_article(
+            &sample(),
+            &provider,
+            &question(),
+            &CancellationToken::default()
+        ),
         Ok(GroundedAnswer::InsufficientEvidence)
     );
 }
