@@ -50,8 +50,5 @@ fn selection_is_deterministic_across_graph_orderings() {
     let mut reordered = original.clone();
     reordered.get_mut("Root").unwrap().articles.reverse();
     reordered.get_mut("Root").unwrap().children.reverse();
-    assert_eq!(
-        resolve(&original, &rules()),
-        resolve(&reordered, &rules())
-    );
+    assert_eq!(resolve(&original, &rules()), resolve(&reordered, &rules()));
 }
