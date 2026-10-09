@@ -63,6 +63,22 @@ gradle :app:buildRustArm64
 
 This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust. No exported UniFFI API, generated Kotlin bindings, coroutine bridge, lifecycle cancellation or device verification exists yet. The bridge and actual app integration remain MOB-001 work. See `android/README.md` for limitations.
 
+## Bytewise verification of staged Wikimedia source files
+
+After separately obtaining completed official-source release metadata and
+authentic expected member SHA-256 digests, use a JSON manifest containing
+`project`, `generation_id`, `source_url`, `completed: true`, and `files`
+(entries with `name`, `bytes`, `sha256`) to verify locally staged files:
+
+```sh
+python3 scripts/verify_source_staging.py source-manifest.json /path/to/staged-files
+```
+
+The verifier rejects truncated or corrupted bytes, symlinks, unsafe filenames,
+case-colliding members, and incomplete publication metadata. **It does not
+authenticate the manifest or discover Wikimedia releases**; those SRC-001
+requirements remain open. No active snapshot is mutated by this check.
+
 ## CI and evidence
 
 `.github/workflows/rust.yml` checks root Rust fmt, Clippy, unit tests and exact Git SHA. `.github/workflows/platform-shells.yml` builds the desktop frontend, Android debug APK/tests and checks Tauri native Rust dependencies on Ubuntu 24.04. A clean CI build does not mean the prototype shell has been installed or exercised on a device.
