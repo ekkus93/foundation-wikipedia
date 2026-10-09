@@ -107,7 +107,10 @@ impl ActiveSnapshotStore {
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
         let result = (|| -> Result<(), ActivationError> {
-            let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)?;
             file.write_all(id.as_bytes())?;
             file.write_all(b"\n")?;
             file.sync_all()?;

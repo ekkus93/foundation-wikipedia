@@ -7,11 +7,12 @@ struct TestRoot(PathBuf);
 
 impl TestRoot {
     fn new() -> Self {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "wiki-snapshot-test-{}-{stamp}",
-            std::process::id()
-        ));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("wiki-snapshot-test-{}-{stamp}", std::process::id()));
         fs::create_dir_all(dir.join("snapshots")).unwrap();
         Self(dir)
     }
@@ -45,7 +46,10 @@ fn verified_candidates_switch_atomically_and_preserve_old_snapshot() {
     store.switch_to_prevalidated("new-2").unwrap();
     assert_eq!(store.current().unwrap(), Some("new-2".into()));
     assert!(root.0.join("snapshots/old-1/manifest.json").exists());
-    assert_eq!(fs::read_to_string(root.0.join("current")).unwrap(), "new-2\n");
+    assert_eq!(
+        fs::read_to_string(root.0.join("current")).unwrap(),
+        "new-2\n"
+    );
 }
 
 #[test]
@@ -92,7 +96,11 @@ fn symlinked_candidate_is_rejected() {
     root.stage("safe");
     let store = root.store();
     store.switch_to_prevalidated("safe").unwrap();
-    symlink(root.0.join("snapshots/safe"), root.0.join("snapshots/alias")).unwrap();
+    symlink(
+        root.0.join("snapshots/safe"),
+        root.0.join("snapshots/alias"),
+    )
+    .unwrap();
     assert!(matches!(
         store.switch_to_prevalidated("alias"),
         Err(ActivationError::CandidateNotStaged)
