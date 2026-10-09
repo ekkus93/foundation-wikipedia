@@ -158,7 +158,9 @@ mod interruption_tests {
         let store = ActiveSnapshotStore::new(&root);
         store.switch_to_prevalidated("old").unwrap();
         let error = store.switch_with_precommit_gate("new", || {
-            Err(ActivationError::Io(io::Error::other("injected interruption")))
+            Err(ActivationError::Io(io::Error::other(
+                "injected interruption",
+            )))
         });
         assert!(matches!(error, Err(ActivationError::Io(_))));
         assert_eq!(store.current().unwrap(), Some("old".into()));
