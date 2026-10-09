@@ -13,6 +13,7 @@ from download_public_dump import (
 )
 from finalize_public_dump_staging import finalize_public_dump, save_manifest
 from stage_local_dump import stage_local_dump_member
+from verify_public_dump_publication import PublicationError, verify_publication
 
 
 def stage_generation(report, staging, output_manifest, *, local_directory=None,
@@ -44,6 +45,14 @@ def stage_generation(report, staging, output_manifest, *, local_directory=None,
             raise DownloadError("missing or unsafe local source directory")
     elif not isinstance(user_agent, str) or len(user_agent.strip()) < 10:
         raise DownloadError("network transfer requires descriptive --user-agent")
+
+    if local_directory is None:
+        # Network mode must bind caller metadata to a fresh official HTTPS
+        # publication before any member download or staged filesystem write.
+        try:
+            verify_publication(report)
+        except PublicationError as error:
+            raise DownloadError("official publication revalidation failed") from error
 
     for name in sorted(names):
         if local_directory is None:

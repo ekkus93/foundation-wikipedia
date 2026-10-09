@@ -124,6 +124,20 @@ python3 scripts/stage_public_dump_generation.py \
   --user-agent 'FoundationWikipedia/0.1 (contact: you@example.org)'
 ```
 
+Network mode additionally re-fetches official dump status (and SHA-1 sums as
+needed) over HTTPS before staging any members, rejecting altered inventories or
+checksums; if upstream metadata is unavailable it fails closed. Offline
+--local-directory mode intentionally does not make network requests. For an
+independent preflight check of an archived discovery report, use:
+
+```sh
+python3 scripts/verify_public_dump_publication.py completed-report.json
+```
+
+This revalidation binds the report to currently published official HTTPS
+metadata, but upstream SHA-1 and TLS do **not** provide signed historical
+publisher authentication. Do not claim verified publisher trust from it.
+
 It validates the full inventory before copying, verifies each member against
 the report's upstream SHA-1 and size, and publishes a SHA-256 manifest only
 when every member has passed. Interrupted network transfers leave resumable

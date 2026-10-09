@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 import tempfile
 import unittest
 
@@ -82,6 +83,16 @@ class GenerationStagingTests(unittest.TestCase):
         with self.assertRaisesRegex(DownloadError, "status URL"):
             self.stage()
         self.assertFalse(self.staging.exists())
+
+    def test_network_mode_revalidates_before_staging(self):
+        with patch("stage_public_dump_generation.verify_publication",
+                   side_effect=PublicationError("upstream mismatch")) as verify:
+            with self.assertRaisesRegex(DownloadError, "revalidation failed"):
+                stage_generation(self.report, self.staging, self.manifest,
+                                 user_agent="FoundationWikipedia 0.1")
+            verify.assert_called_once_with(self.report)
+        self.assertFalse(self.staging.exists())
+        self.assertFalse(self.manifest.exists())
 
     def test_no_implicit_network_without_user_agent(self):
         with self.assertRaisesRegex(DownloadError, "user-agent"):
