@@ -115,6 +115,7 @@ pub enum ModelError {
     InvalidHash,
     MissingTitle,
     InvalidSectionHeading,
+    InvalidBlockContent,
     InvalidReferenceLabel,
     InvalidLinkLabel,
     InvalidWikidataId,
@@ -270,9 +271,38 @@ fn check_blocks(blocks: &[Block], media_len: usize) -> Result<(), ModelError> {
         if !ordinals.insert(block.ordinal) {
             return Err(ModelError::DuplicateOrdinal);
         }
-        if let BlockContent::Media { media_index } = &block.content {
-            if *media_index >= media_len {
-                return Err(ModelError::InvalidMediaIndex(*media_index));
+        match &block.content {
+            BlockContent::Media { media_index } => {
+                if *media_index >= media_len {
+                    return Err(ModelError::InvalidMediaIndex(*media_index));
+                }
+            }
+            BlockContent::Paragraph(text)
+            | BlockContent::Quote(text)
+            | BlockContent::HtmlFallback(text) => {
+                if text.trim().is_empty() {
+                    return Err(ModelError::InvalidBlockContent);
+                }
+            }
+            BlockContent::List(items) => {
+                if items.is_empty() || items.iter().any(|item| item.trim().is_empty()) {
+                    return Err(ModelError::InvalidBlockContent);
+                }
+            }
+            BlockContent::Table(rows) => {
+                if rows.is_empty() || rows.iter().any(Vec::is_empty) {
+                    return Err(ModelError::InvalidBlockContent);
+                }
+            }
+            BlockContent::Math { source, html } => {
+                if source.trim().is_empty() && html.trim().is_empty() {
+                    return Err(ModelError::InvalidBlockContent);
+                }
+            }
+            BlockContent::Infobox(fields) => {
+                if fields.is_empty() || fields.iter().any(|(name, _)| name.trim().is_empty()) {
+                    return Err(ModelError::InvalidBlockContent);
+                }
             }
         }
     }
@@ -438,6 +468,48 @@ mod tests {
         a.revision.timestamp = "2026-10-09T00:00:00Z".into();
         a.display_title.clear();
         assert_eq!(a.validate(), Err(ModelError::MissingTitle));
+    }
+
+    #[test]
+    fn rejects_structurally_empty_article_blocks() {
+        let invalid = [
+            BlockContent::Paragraph(" ".into()),
+            BlockContent::Quote("".into()),
+            BlockContent::HtmlFallback("\t".into()),
+            BlockContent::List(vec![]),
+            BlockContent::List(vec!["valid".into(), " ".into()]),
+            BlockContent::Table(vec![]),
+            BlockContent::Table(vec![vec![]]),
+            BlockContent::Math {
+                source: " ".into(),
+                html: "".into(),
+            },
+            BlockContent::Infobox(vec![]),
+            BlockContent::Infobox(vec![(" ".into(), "value".into())]),
+        ];
+        for content in invalid {
+            let mut a = article();
+            a.lead[0].content = content;
+            assert_eq!(a.validate(), Err(ModelError::InvalidBlockContent));
+        }
+    }
+
+    #[test]
+    fn accepts_sparse_but_structurally_present_complex_blocks() {
+        let valid = [
+            BlockContent::List(vec!["Einstein — Énergie".into()]),
+            BlockContent::Table(vec![vec!["".into(), "Value".into()]]),
+            BlockContent::Math {
+                source: "E = mc²".into(),
+                html: String::new(),
+            },
+            BlockContent::Infobox(vec![("Name".into(), "".into())]),
+        ];
+        for content in valid {
+            let mut a = article();
+            a.sections[0].blocks[0].content = content;
+            assert_eq!(a.validate(), Ok(()));
+        }
     }
 
     #[test]
