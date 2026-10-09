@@ -103,6 +103,8 @@ pub enum CitationError {
     DuplicateRetrievedEvidence(String),
     UnretrievedCitation(String),
     DuplicateCitation(String),
+    EmptyAnswer,
+    UnsupportedAnswer,
 }
 
 /// Return only the exact supplied evidence for model-claimed citation IDs.
@@ -140,6 +142,46 @@ pub fn validate_claimed_citations(
         validated.push((*hit).clone());
     }
     Ok(validated)
+}
+
+/// Structurally grounded answer after checking its exact supplied citations.
+/// This enforces provenance, not factual entailment of the generated text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GroundedAnswer {
+    Supported {
+        text: String,
+        citations: Vec<EvidenceHit>,
+    },
+    InsufficientEvidence,
+}
+
+/// Require a cited substantive answer, or an explicit empty abstention.
+/// The caller must not display an unsupported answer as source-grounded.
+pub fn validate_grounded_answer(
+    index: &ArticleLexicalIndex,
+    retrieved: &[EvidenceHit],
+    generated_text: &str,
+    claimed_ids: &[String],
+    abstained: bool,
+) -> Result<GroundedAnswer, CitationError> {
+    if abstained {
+        if !generated_text.trim().is_empty() || !claimed_ids.is_empty() {
+            return Err(CitationError::UnsupportedAnswer);
+        }
+        validate_claimed_citations(index, retrieved, claimed_ids)?;
+        return Ok(GroundedAnswer::InsufficientEvidence);
+    }
+    if generated_text.trim().is_empty() {
+        return Err(CitationError::EmptyAnswer);
+    }
+    if claimed_ids.is_empty() {
+        return Err(CitationError::UnsupportedAnswer);
+    }
+    let citations = validate_claimed_citations(index, retrieved, claimed_ids)?;
+    Ok(GroundedAnswer::Supported {
+        text: generated_text.to_string(),
+        citations,
+    })
 }
 
 fn append_section(
@@ -353,6 +395,70 @@ mod tests {
         assert_eq!(
             validate_claimed_citations(&index, &supplied, &["fabricated-id".into()]),
             Err(CitationError::UnretrievedCitation("fabricated-id".into()))
+        );
+    }
+
+    #[test]
+    fn supported_answers_require_exact_supplied_citations() {
+        let index = ArticleLexicalIndex::build(&sample()).unwrap();
+        let supplied = index.search("spacetime", 1);
+        let id = supplied[0].block_id.clone();
+        let answer = validate_grounded_answer(
+            &index,
+            &supplied,
+            "Gravity bends spacetime.",
+            &[id],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            answer,
+            GroundedAnswer::Supported {
+                text: "Gravity bends spacetime.".into(),
+                citations: supplied.clone(),
+            }
+        );
+        assert_eq!(
+            validate_grounded_answer(&index, &supplied, "Unsupported claim.", &[], false),
+            Err(CitationError::UnsupportedAnswer)
+        );
+        assert_eq!(
+            validate_grounded_answer(&index, &supplied, " ", &[], false),
+            Err(CitationError::EmptyAnswer)
+        );
+        assert_eq!(
+            validate_grounded_answer(
+                &index,
+                &supplied,
+                "Invented claim.",
+                &["fabricated".into()],
+                false
+            ),
+            Err(CitationError::UnretrievedCitation("fabricated".into()))
+        );
+    }
+
+    #[test]
+    fn abstention_is_explicit_and_cannot_carry_hidden_claims() {
+        let index = ArticleLexicalIndex::build(&sample()).unwrap();
+        let supplied = index.search("physics", 1);
+        assert_eq!(
+            validate_grounded_answer(&index, &supplied, "", &[], true),
+            Ok(GroundedAnswer::InsufficientEvidence)
+        );
+        assert_eq!(
+            validate_grounded_answer(&index, &supplied, "Uncited content", &[], true),
+            Err(CitationError::UnsupportedAnswer)
+        );
+        assert_eq!(
+            validate_grounded_answer(
+                &index,
+                &supplied,
+                "",
+                &[supplied[0].block_id.clone()],
+                true
+            ),
+            Err(CitationError::UnsupportedAnswer)
         );
     }
 
