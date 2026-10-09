@@ -67,6 +67,19 @@ impl ArticleLexicalIndex {
         results
     }
 
+    pub fn search_with_word_budget(&self, query: &str, limit: usize, budget: usize) -> Vec<EvidenceHit> {
+        let mut used = 0;
+        let mut selected = Vec::new();
+        for hit in self.search(query, 100) {
+            let count = tokenize(&hit.excerpt).len();
+            if count <= budget.saturating_sub(used) && selected.len() < limit {
+                used += count;
+                selected.push(hit);
+            }
+        }
+        selected
+    }
+
     pub fn contains_evidence(&self, hit: &EvidenceHit) -> bool {
         hit.revision_id == self.revision_id
             && self.entries.iter().any(|entry| {
