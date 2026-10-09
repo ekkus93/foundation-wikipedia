@@ -119,6 +119,7 @@ pub enum ModelError {
     InvalidSectionHeading,
     InvalidBlockContent,
     InvalidReferenceLabel,
+    InvalidReferenceUrl(String),
     InvalidLinkLabel,
     InvalidWikidataId,
     InvalidAlias,
@@ -139,6 +140,26 @@ impl Error for ModelError {}
 
 fn valid_hash(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Reject executable/opaque URL schemes and authority confusion before
+/// exposing upstream attribution or reference URLs to a renderer. This is
+/// syntactic validation only, not an outbound network allowlist.
+fn valid_external_url(value: &str) -> bool {
+    let Some(rest) = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !authority.is_empty()
+        && !authority.starts_with('.')
+        && !authority.ends_with('.')
+        && !authority.contains('@')
+        && !value
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
 }
 
 impl ArticleKey {
@@ -252,9 +273,14 @@ impl Article {
             if reference.id.trim().is_empty() || !refs.insert(&reference.id) {
                 return Err(ModelError::DuplicateReference(reference.id.clone()));
             }
+            if let Some(url) = &reference.source_url {
+                if !valid_external_url(url) {
+                    return Err(ModelError::InvalidReferenceUrl(reference.id.clone()));
+                }
+            }
         }
         for (index, media) in self.media.iter().enumerate() {
-            if media.source_url.trim().is_empty()
+            if !valid_external_url(&media.source_url)
                 || media.mime_type.trim().is_empty()
                 || media.license.trim().is_empty()
                 || media.creator.trim().is_empty()
@@ -558,6 +584,42 @@ mod tests {
             a.validate(),
             Err(ModelError::DuplicateReference("  ".into()))
         );
+    }
+
+    #[test]
+    fn source_and_reference_urls_reject_executable_or_ambiguous_origins() {
+        let mut a = article();
+        a.references[0].source_url = Some("https://example.org/source".into());
+        assert_eq!(a.validate(), Ok(()));
+        for url in [
+            "javascript:alert(1)",
+            "data:text/html,unsafe",
+            "file:///etc/passwd",
+            "https://user@example.org/path",
+            "https://example.org\\\\evil.test/",
+            "https://example.org/white space",
+            "https://",
+        ] {
+            a.references[0].source_url = Some(url.into());
+            assert_eq!(
+                a.validate(),
+                Err(ModelError::InvalidReferenceUrl("ref1".into())),
+                "unsafe reference URL: {url}"
+            );
+        }
+        a.references[0].source_url = None;
+        a.media.push(MediaAsset {
+            source_url: "https://upload.wikimedia.org/example.svg".into(),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some("b".repeat(64)),
+            license: "CC BY-SA 4.0".into(),
+            creator: "Contributor".into(),
+            attribution: "Contributor, CC BY-SA 4.0".into(),
+            is_av_preview: false,
+        });
+        assert_eq!(a.validate(), Ok(()));
+        a.media[0].source_url = "javascript:alert(1)".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
     }
 
     #[test]
