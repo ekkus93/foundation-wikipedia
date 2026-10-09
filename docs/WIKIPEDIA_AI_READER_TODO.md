@@ -33,7 +33,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 - [ ] **BOOT-003** Establish exact-head CI and documentation discipline. **Depends:** BOOT-002.  
   - [ ] Rust fmt/clippy/test, frontend lint/typecheck/test, Android tests/lint, dependency/license audit.
   - [ ] Fixture data provenance and test artifact retention.
-  - [ ] Add ADR and requirement-to-TODO traceability checklist.
+  - [x] Add ADR and requirement-to-TODO traceability checklist.
   - **Accept:** CI detects intentionally introduced failures and reports exact commit SHA.
 
 ## Phase 1 — Canonical model and provenance
@@ -443,6 +443,19 @@ Spec deviation/ADR:
 - Platform CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37915637440 on exact commit `d73b91c9daa4f0941ba5e12116b69c143fcef64c`; all three jobs passed: desktop React/TypeScript production bundle, Android SDK 35/JDK17 Gradle `assembleDebug` + unit tests, and native Tauri Rust 1.90 `cargo check` on Ubuntu 24.04 with WebKitGTK dependencies.
 - Docs: `README.md`, `docs/DEVELOPMENT.md` and `android/README.md` describe Rust toolchains, native dependencies, Gradle and Node build instructions, limitations and Android UniFFI/ABI integration plan. Android APK artifact retention added to CI.
 - Remaining: actual UniFFI Android binding/build integration, **real desktop launch**, **real Android debug APK installation and lifecycle smoke test**, and reproducible transitive npm/Gradle dependency locks. BOOT-002 **parent stays unchecked** until required acceptance is evidenced; passing compilation is not proof of launch or on-device installation.
+
+### BOOT-002 — partial Android arm64 native ABI scaffold (not complete)
+
+- Implemented at `2c001f60e1abcaaebc9d47e413b3c57bd2e6a2d4`: `wiki-ffi` rlib/cdylib crate types, opt-in Gradle `buildRustArm64` task and NDK API-26 cross-build script with ignored arm64-v8a output. Docs explain prerequisites and limitations.
+- Exact-head CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37918701483 (Rust workspace) and https://github.com/ekkus93/foundation-wikipedia/actions/runs/37918701458 (platform shells), both passed.
+- **Not yet qualified:** the CI checks Rust workspace and Gradle shell but does not cross-compile using a real NDK; there are no UniFFI-generated bindings, exported API, device installation or desktop launch checks. BOOT-002 and its remaining integration subtask stay unchecked.
+
+### BOOT-003 — partial ADR, fixture provenance and evidence retention (not complete)
+
+- `docs/adr/0001-shared-rust-boundary.md`, `docs/adr/README.md` and `docs/REQUIREMENTS_TRACEABILITY.md` document architecture rationale and map SPEC sections to canonical TODO/qualification.
+- `scripts/verify_fixture_provenance.py` validates committed fixture source/license/byte hash and requires official-source identity for Wikimedia fixtures. `fixtures/synthetic/gravity.txt` has a byte-verified sidecar. Rust CI now retains test logs for 14 days.
+- Exact-head CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37919628903 (Rust workspace including fixture check) and https://github.com/ekkus93/foundation-wikipedia/actions/runs/37919628827 (platform shells), both passed at `e3d4258539ecebaadf1e0230880fee9f023980ea`.
+- **Remaining:** robust fixture-checker negative tests, frontend lint/tests, Android lint, dependency/license audit and intentional-failure CI qualification. BOOT-003 stays unchecked.
 
 ## Blockers requiring owner action
 
