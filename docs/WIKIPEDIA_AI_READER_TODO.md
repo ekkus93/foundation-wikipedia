@@ -464,6 +464,12 @@ Spec deviation/ADR:
 - **RAG-002:** Added fail-closed validation that model-claimed citation IDs belong to exact retrieved, untampered, revision-matched evidence, including a regression case where article text attempts to instruct the model to cite a fabricated ID. Retrieval, provider integration and rendered citation links remain open.
 - **Exact-head qualification:** `29fbe3c3597c2f9a3585079675b0fd6aadea1f66` passed Rust workspace run 37953325502 and Platform shells run 37953325478. The interim model source truncation was repaired before this qualification; the optional Wikidata-ID validator was not retained.
 
+### PACK-001 / TRUST-003 — partial hostile manifest validation (not complete)
+
+- Manifest structural checks now reject control characters in object paths and blank metadata/origin names, with regression tests for NUL/newline path injection and whitespace-only publisher names.
+- Qualified on exact master `fd367ad5e4012c00632d4883a041989382ca8754`: Rust workspace CI 37953712494 and Platform shells CI 37953712461 both passed.
+- **Remaining:** canonical pack serialization and signing, bounded archive streaming, byte/hash verification, object media completeness, hostile archive/HTML/SVG fixtures and independent Android importer. PACK-001 and TRUST-003 stay unchecked.
+
 ## Blockers requiring owner action
 
 _None at initial creation._ If a blocker arises, record exact failing operation, evidence, why independent progress cannot continue, the specific permission/input/hardware needed and the next action. Technical evaluations, normal code defects and running CI belong in the task notes, not here.
