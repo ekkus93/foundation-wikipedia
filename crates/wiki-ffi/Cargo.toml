@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+# rlib keeps workspace tests and Rust consumers usable; cdylib is the Android ABI artifact.
+crate-type = ["rlib", "cdylib"]
+
 [lints]
 workspace = true
 

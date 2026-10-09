@@ -10,11 +10,30 @@ From `android/`:
 gradle :app:assembleDebug :app:testDebugUnitTest
 ```
 
-The shared Rust Android library and UniFFI Kotlin generated bindings are not
-present yet. MOB-001 must implement a reproducible Rust `aarch64-linux-android`
-build, NDK linking, UniFFI generation, JNI/native packaging and lifecycle-safe
-coroutine adapters before the Android app calls the Rust core.
+## Rust arm64-v8a ABI build (integration stub)
 
-No third-party content is allowed to call privileged native APIs directly. The
-bootstrap WebView has JavaScript disabled; future source content needs explicit
-sanitization and tightly scoped URI/selection bridges.
+The `wiki-ffi` crate now produces both an `rlib` and an Android-loadable
+`cdylib`. Install the Android NDK, Rust's `aarch64-linux-android` target
+for the pinned root Rust toolchain, and export `ANDROID_NDK_HOME`.
+
+```sh
+rustup target add aarch64-linux-android
+export ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/<installed-version>"
+cd android
+gradle :app:buildRustArm64
+# Equivalent: bash scripts/build-rust-android.sh
+```
+
+The opt-in task uses NDK clang for API 26 and copies the output to
+`app/src/main/jniLibs/arm64-v8a/libwiki_ffi.so`. That directory is ignored
+by Git. The task deliberately does not run on ordinary `assembleDebug` yet.
+
+**Not a working UniFFI integration:** no UniFFI-generated Kotlin bindings,
+versioned exported DTOs, JNI call path, coroutine adapter or device-tested
+loading exists. MOB-001 must implement and test these before any app call
+can use the shared Rust core. An APK compiling without this library is not
+proof of a native bridge.
+
+No third-party content is allowed to call privileged native APIs directly.
+The bootstrap WebView has JavaScript disabled; future source content needs
+explicit sanitization and tightly scoped URI/selection bridges.

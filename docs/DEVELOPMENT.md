@@ -49,9 +49,18 @@ gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon
 
 Debug APK expected at `android/app/build/outputs/apk/debug/app-debug.apk` after a successful build. This is not proof of real-device installation until tested. Android shell shows a static local article placeholder with JavaScript disabled and file/content access blocked. No Internet permission is requested yet.
 
-### Planned shared Rust integration
+### Shared Rust arm64 build stub
 
-MOB-001 remains pending. Target `aarch64-linux-android` via Android NDK and `cargo-ndk` or equivalent reproducible cross compilation; produce an Android-safe Rust shared library in the ABI-specific `jniLibs` location, generate UniFFI Kotlin bindings from versioned Rust DTO/use cases, and expose coroutine-safe async calls with lifecycle cancellation. Android must not load raw desktop Tauri APIs. Validate the bridge on a real Android device and on CI.
+The `wiki-ffi` crate is configured as both `rlib` and `cdylib`. On a supported NDK host, install the pinned Rust target and use the explicit Gradle task:
+
+```sh
+rustup target add aarch64-linux-android
+export ANDROID_NDK_HOME="$HOME/Android/Sdk/ndk/<installed-version>"
+cd android
+gradle :app:buildRustArm64
+```
+
+This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust. No exported UniFFI API, generated Kotlin bindings, coroutine bridge, lifecycle cancellation or device verification exists yet. The bridge and actual app integration remain MOB-001 work. See `android/README.md` for limitations.
 
 ## CI and evidence
 

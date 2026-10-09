@@ -34,6 +34,15 @@ android {
     }
 }
 
+// Explicit opt-in native build. Do not make assembleDebug depend on this until
+// UniFFI-generated Kotlin bindings and a tested JNI contract are available.
+tasks.register<Exec>("buildRustArm64") {
+    group = "build"
+    description = "Cross-compile wiki-ffi as an Android arm64-v8a native library"
+    workingDir = rootProject.projectDir
+    commandLine("bash", "scripts/build-rust-android.sh")
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
