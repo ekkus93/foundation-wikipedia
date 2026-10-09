@@ -117,10 +117,10 @@ pub fn validate_claimed_citations(
     let mut supplied = BTreeMap::new();
     for hit in retrieved {
         if !index.contains_evidence(hit) {
-            return Err(CitationError::InvalidRetrievedEvidence(hit.block_id.clone()));
+            return Err(CitationError::InvalidRetrievedEvidence(\n                hit.block_id.clone()\n            ));
         }
         if supplied.insert(hit.block_id.as_str(), hit).is_some() {
-            return Err(CitationError::DuplicateRetrievedEvidence(hit.block_id.clone()));
+            return Err(CitationError::DuplicateRetrievedEvidence(\n                hit.block_id.clone()\n            ));
         }
     }
 
@@ -281,16 +281,12 @@ mod tests {
         let index = ArticleLexicalIndex::build(&sample()).unwrap();
         let supplied = index.search("spacetime", 1);
         let other = index.search("physics", 1);
-        let cited = validate_claimed_citations(
-            &index,
-            &supplied,
-            &[supplied[0].block_id.clone()],
-        )
-        .unwrap();
+        let cited =
+            validate_claimed_citations(&index, &supplied, &[supplied[0].block_id.clone()]).unwrap();
         assert_eq!(cited, supplied);
         assert_eq!(
             validate_claimed_citations(&index, &supplied, &[other[0].block_id.clone()]),
-            Err(CitationError::UnretrievedCitation(other[0].block_id.clone()))
+            Err(CitationError::UnretrievedCitation(\n                other[0].block_id.clone()\n            ))
         );
         assert_eq!(
             validate_claimed_citations(&index, &supplied, &["invented".into()]),
@@ -302,7 +298,7 @@ mod tests {
                 &supplied,
                 &[supplied[0].block_id.clone(), supplied[0].block_id.clone()]
             ),
-            Err(CitationError::DuplicateCitation(supplied[0].block_id.clone()))
+            Err(CitationError::DuplicateCitation(\n                supplied[0].block_id.clone()\n            ))
         );
     }
 
@@ -314,18 +310,18 @@ mod tests {
         altered.excerpt.push_str(" invented");
         assert_eq!(
             validate_claimed_citations(&index, &[altered], &[]),
-            Err(CitationError::InvalidRetrievedEvidence(hits[0].block_id.clone()))
+            Err(CitationError::InvalidRetrievedEvidence(\n                hits[0].block_id.clone()\n            ))
         );
         let mut newer = sample();
         newer.revision.revision_id += 1;
         let newer_index = ArticleLexicalIndex::build(&newer).unwrap();
         assert_eq!(
             validate_claimed_citations(&newer_index, &hits, &[]),
-            Err(CitationError::InvalidRetrievedEvidence(hits[0].block_id.clone()))
+            Err(CitationError::InvalidRetrievedEvidence(\n                hits[0].block_id.clone()\n            ))
         );
         assert_eq!(
             validate_claimed_citations(&index, &[hits[0].clone(), hits[0].clone()], &[]),
-            Err(CitationError::DuplicateRetrievedEvidence(hits[0].block_id.clone()))
+            Err(CitationError::DuplicateRetrievedEvidence(\n                hits[0].block_id.clone()\n            ))
         );
         assert_eq!(validate_claimed_citations(&index, &hits, &[]), Ok(vec![]));
     }
