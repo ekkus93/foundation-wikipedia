@@ -6,6 +6,9 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const MAX_PACK_OBJECTS: usize = 1_000_000;
 pub const MAX_OBJECT_BYTES: u64 = 1_u64 << 40;
 pub const MAX_DECLARED_BYTES: u64 = 4_u64 << 40;
+pub const MAX_OBJECT_PATH_BYTES: usize = 4096;
+pub const MAX_OBJECT_PATH_COMPONENTS: usize = 64;
+pub const MAX_OBJECT_PATH_COMPONENT_BYTES: usize = 255;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
@@ -146,10 +149,18 @@ impl Manifest {
             if object.bytes == 0
                 || object.sha256.len() != 64
                 || !object.sha256.bytes().all(|c| c.is_ascii_hexdigit())
+                || object.path.len() > MAX_OBJECT_PATH_BYTES
                 || object.path.contains('\\')
                 || object.path.chars().any(char::is_control)
                 || object.path.contains(':')
-                || object.path.split('/').any(unsafe_component)
+                || object.path.split('/').count() > MAX_OBJECT_PATH_COMPONENTS
+                || object
+                    .path
+                    .split('/')
+                    .any(|component| {
+                        component.len() > MAX_OBJECT_PATH_COMPONENT_BYTES
+                            || unsafe_component(component)
+                    })
             {
                 return Err(ManifestError::UnsafeObject);
             }

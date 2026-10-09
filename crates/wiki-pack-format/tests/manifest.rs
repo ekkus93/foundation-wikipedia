@@ -1,4 +1,7 @@
-use wiki_pack_format::manifest::{Manifest, ManifestError, Object, Origin, FORMAT_VERSION};
+use wiki_pack_format::manifest::{
+    Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_OBJECT_PATH_BYTES,
+    MAX_OBJECT_PATH_COMPONENTS, MAX_OBJECT_PATH_COMPONENT_BYTES,
+};
 
 fn sample() -> Manifest {
     Manifest {
@@ -77,6 +80,28 @@ fn unsafe_pack_and_snapshot_identifiers_fail_closed() {
     bad.project = "enwiki".into();
     bad.snapshot = "2026/10/09".into();
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeMetadata));
+}
+
+#[test]
+fn object_paths_have_bounded_length_depth_and_components() {
+    let mut bad = sample();
+    bad.objects[0].path = "a".repeat(MAX_OBJECT_PATH_BYTES + 1);
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
+
+    bad = sample();
+    bad.objects[0].path = format!("{}/x", "a".repeat(MAX_OBJECT_PATH_COMPONENT_BYTES + 1));
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
+
+    bad = sample();
+    bad.objects[0].path =
+        std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS + 1).collect::<Vec<_>>().join("/");
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
+
+    let mut boundary = sample();
+    boundary.objects[0].path =
+        std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS).collect::<Vec<_>>().join("/");
+    assert!(boundary.objects[0].path.len() <= MAX_OBJECT_PATH_BYTES);
+    assert_eq!(boundary.validate(), Ok(()));
 }
 
 #[test]
