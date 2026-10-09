@@ -4,7 +4,7 @@
 //! search engine. Evidence IDs are revision-bound, not persistent bookmarks.
 
 use std::collections::{BTreeMap, BTreeSet};
-use wiki_model::{Article, Block, BlockContent, ModelError, Section};
+use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvidenceHit {
@@ -92,6 +92,69 @@ impl ArticleLexicalIndex {
                     && entry.excerpt == hit.excerpt
                     && entry.heading_path == hit.heading_path
             })
+    }
+}
+
+/// Multi-article deterministic lexical retrieval. This is not yet BM25 or
+/// a persisted multi-project inverted index; every article must be validated.
+#[derive(Clone, Debug)]
+pub struct CorpusLexicalIndex {
+    articles: BTreeMap<(String, u64), ArticleLexicalIndex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CorpusHit {
+    pub article: ArticleKey,
+    pub evidence: EvidenceHit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CorpusError {
+    InvalidArticle(ModelError),
+    DuplicateArticle(ArticleKey),
+}
+
+impl CorpusLexicalIndex {
+    pub fn build(articles: &[Article]) -> Result<Self, CorpusError> {
+        let mut entries = BTreeMap::new();
+        for article in articles {
+            let index = ArticleLexicalIndex::build(article)
+                .map_err(CorpusError::InvalidArticle)?;
+            let key = (article.key.project.clone(), article.key.page_id);
+            if entries.insert(key, index).is_some() {
+                return Err(CorpusError::DuplicateArticle(article.key.clone()));
+            }
+        }
+        Ok(Self { articles: entries })
+    }
+
+    /// Return a stable global ranking, bounded to 100 results.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<CorpusHit> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for ((project, page_id), index) in &self.articles {
+            for evidence in index.search(query, 100) {
+                hits.push(CorpusHit {
+                    article: ArticleKey {
+                        project: project.clone(),
+                        page_id: *page_id,
+                    },
+                    evidence,
+                });
+            }
+        }
+        hits.sort_by(|a, b| {
+            b.evidence
+                .score
+                .cmp(&a.evidence.score)
+                .then_with(|| a.article.project.cmp(&b.article.project))
+                .then_with(|| a.article.page_id.cmp(&b.article.page_id))
+                .then_with(|| a.evidence.block_id.cmp(&b.evidence.block_id))
+        });
+        hits.truncate(limit.min(100));
+        hits
     }
 }
 
@@ -448,6 +511,40 @@ mod tests {
         assert_eq!(
             validate_grounded_answer(&index, &supplied, "", &[supplied[0].block_id.clone()], true),
             Err(CitationError::UnsupportedAnswer)
+        );
+    }
+
+    #[test]
+    fn corpus_retrieval_ranks_multiple_articles_deterministically() {
+        let a = sample();
+        let mut b = sample();
+        b.key.page_id = 5;
+        b.lead[0].content = BlockContent::Paragraph("Physics studies matter.".into());
+        b.sections.clear();
+        let left = CorpusLexicalIndex::build(&[a.clone(), b.clone()]).unwrap();
+        let right = CorpusLexicalIndex::build(&[b, a]).unwrap();
+        let lhs = left.search("physics", 10);
+        assert_eq!(lhs, right.search("physics", 10));
+        assert_eq!(lhs.len(), 2);
+        assert_eq!(lhs[0].article.page_id, 5);
+        assert_eq!(lhs[1].article.page_id, 9);
+        assert!(left.search("", 50).is_empty());
+        assert!(left.search("physics", 0).is_empty());
+        assert_eq!(left.search("physics", 1).len(), 1);
+    }
+
+    #[test]
+    fn corpus_rejects_duplicate_articles_and_invalid_revisions() {
+        let a = sample();
+        assert_eq!(
+            CorpusLexicalIndex::build(&[a.clone(), a.clone()]).unwrap_err(),
+            CorpusError::DuplicateArticle(a.key.clone())
+        );
+        let mut invalid = a;
+        invalid.revision.revision_id = 0;
+        assert_eq!(
+            CorpusLexicalIndex::build(&[invalid]).unwrap_err(),
+            CorpusError::InvalidArticle(ModelError::InvalidRevision)
         );
     }
 
