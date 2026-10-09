@@ -72,7 +72,7 @@ impl ArticleLexicalIndex {
             && self
                 .entries
                 .iter()
-                .any(|entry| entry.block_id == hit.block_id)
+                .any(|entry| entry.block_id == hit.block_id && entry.excerpt == hit.excerpt && entry.heading_path == hit.heading_path)
     }
 }
 
