@@ -457,6 +457,13 @@ Spec deviation/ADR:
 - Exact-head CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37919628903 (Rust workspace including fixture check) and https://github.com/ekkus93/foundation-wikipedia/actions/runs/37919628827 (platform shells), both passed at `e3d4258539ecebaadf1e0230880fee9f023980ea`.
 - **Remaining:** robust fixture-checker negative tests, frontend lint/tests, Android lint, dependency/license audit and intentional-failure CI qualification. BOOT-003 stays unchecked.
 
+### 2026-10-09 — Additional partial qualification; parents remain unchecked
+
+- **BOOT-003:** Platform CI now runs `gradle :app:lintDebug` alongside Android debug APK assembly and unit tests, retaining the Android lint HTML report and debug APK as CI artifacts. Rust CI still runs exact-head fmt/Clippy/tests and provenance checker with 14-day Rust test evidence retention. Frontend typecheck/bundle and its existing action regression test also run in CI. Full frontend lint, dependency/license auditing and deliberate-failure CI exercises remain open; do not mark BOOT-003 complete.
+- **MOD-001:** Added validation and regression coverage rejecting blank article-link labels. The broader canonical model, serde/Unicode roundtrips and rendering acceptance remain open.
+- **RAG-002:** Added fail-closed validation that model-claimed citation IDs belong to exact retrieved, untampered, revision-matched evidence, including a regression case where article text attempts to instruct the model to cite a fabricated ID. Retrieval, provider integration and rendered citation links remain open.
+- **Exact-head qualification:** `29fbe3c3597c2f9a3585079675b0fd6aadea1f66` passed Rust workspace run 37953325502 and Platform shells run 37953325478. The interim model source truncation was repaired before this qualification; the optional Wikidata-ID validator was not retained.
+
 ## Blockers requiring owner action
 
 _None at initial creation._ If a blocker arises, record exact failing operation, evidence, why independent progress cannot continue, the specific permission/input/hardware needed and the next action. Technical evaluations, normal code defects and running CI belong in the task notes, not here.
