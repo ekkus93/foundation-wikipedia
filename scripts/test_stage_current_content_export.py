@@ -2,10 +2,12 @@
 import copy
 import hashlib
 import io
+import os
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from discover_current_content_export import parse_checksums
 from stage_current_content_export import ExportStagingError, stage_export
@@ -113,6 +115,40 @@ class ModernExportStagingTests(unittest.TestCase):
             self.stage(opener=bad)
         self.assertFalse(self.output.exists())
         self.assertFalse((self.dest / NAMES[0]).exists())
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow")
+    def test_symlink_swap_at_hash_open_is_rejected(self):
+        self.dest.mkdir()
+        target = self.dest / NAMES[0]
+        target.write_bytes(BODY_A)
+        external = self.root / "external"
+        external.write_bytes(BODY_A)
+        true_open = os.open
+        changed = False
+
+        def replace_on_open(path, flags, *args, **kwargs):
+            nonlocal changed
+            if Path(path) == target and not changed:
+                changed = True
+                target.unlink()
+                target.symlink_to(external)
+            return true_open(path, flags, *args, **kwargs)
+
+        with patch("stage_current_content_export.os.open", side_effect=replace_on_open):
+            with self.assertRaisesRegex(ExportStagingError, "unsafe source member"):
+                self.stage()
+        self.assertTrue(changed)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(external.read_bytes(), BODY_A)
+
+    def test_hardlinked_member_does_not_get_verification_receipt(self):
+        self.dest.mkdir()
+        external = self.root / "original"
+        external.write_bytes(BODY_A)
+        os.link(external, self.dest / NAMES[0])
+        with self.assertRaisesRegex(ExportStagingError, "hardlink"):
+            self.stage()
+        self.assertFalse(self.output.exists())
 
     def test_forged_inventory_rejected_before_download(self):
         bad = copy.deepcopy(self.report)

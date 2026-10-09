@@ -47,10 +47,20 @@ def _ordinary_file(path):
 
 
 def _hash(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(CHUNK), b""):
-            digest.update(block)
+    """Hash one regular unlinked-from-elsewhere inode via a no-follow FD."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ExportStagingError("unsafe source member file type or hardlink")
+            digest = hashlib.sha256()
+            for block in iter(lambda: stream.read(CHUNK), b""):
+                digest.update(block)
+    except OSError as error:
+        raise ExportStagingError("unsafe source member changed during verification") from error
     return digest.hexdigest()
 
 
