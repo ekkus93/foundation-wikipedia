@@ -8,7 +8,6 @@ pub struct EvidenceBlock<'a> {
     pub block: &'a Block,
 }
 
-
 #[derive(Debug)]
 pub struct EvidenceSection<'a> {
     pub id: String,
@@ -51,13 +50,7 @@ fn collect_evidence_sections<'a>(
             headings: new_headings.clone(),
             section,
         });
-        collect_evidence_sections(
-            article,
-            &section.subsections,
-            &new_path,
-            &new_headings,
-            out,
-        );
+        collect_evidence_sections(article, &section.subsections, &new_path, &new_headings, out);
     }
 }
 
