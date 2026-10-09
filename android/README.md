@@ -37,11 +37,29 @@ The workspace's strict `unsafe_code = "forbid"` lint currently prevents
 exporting unmangled C symbols without a separately reviewed safety boundary.
 Normal debug APK assembly does not build Rust unless explicitly requested.
 
-**Not a working UniFFI integration:** no UniFFI-generated Kotlin bindings,
-versioned exported DTOs, JNI call path, coroutine adapter or device-tested
-loading exists. MOB-001 must implement and test these before any app call
-can use the shared Rust core. An APK compiling without this library is not
-proof of a native bridge.
+### UniFFI code-generation integration stub
+
+A versioned bootstrap UDL now lives at
+`crates/wiki-ffi/src/foundation_wikipedia.udl`. It intentionally exports no
+callable functions yet. To exercise the Android build integration with an
+explicit, pinned `uniffi-bindgen` executable:
+
+```sh
+export UNIFFI_BINDGEN=/path/to/pinned/uniffi-bindgen
+gradle :app:generateUniFfiKotlin
+```
+
+The Gradle task calls `android/scripts/generate-uniffi-kotlin.sh` and writes to
+`app/build/generated/source/uniffi`. The generator is caller-supplied during
+BOOT-002 so this scaffold does not silently add or update Rust dependencies.
+Automated tests exercise the task's UDL/output arguments with a fake generator
+and its fail-closed missing-tool path.
+
+**Not a working UniFFI runtime integration:** generated Kotlin is not compiled
+into the app, the Rust library has no UniFFI scaffolding/exported API, and
+there are no versioned DTOs, coroutine adapters, cancellation bridge or
+device-tested Rust calls. MOB-001 owns that production boundary. An APK or
+generated Kotlin file alone is not proof of a native bridge.
 
 The Android development shell's reader FAB exposes four labeled, touchable
 action buttons (nearest FAB: Chat, Bookmark, Offline, Settings) and responds

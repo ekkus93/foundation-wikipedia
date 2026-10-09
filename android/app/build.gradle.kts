@@ -43,6 +43,15 @@ tasks.register<Exec>("buildRustArm64") {
     commandLine("bash", "scripts/build-rust-android.sh")
 }
 
+tasks.register<Exec>("generateUniFfiKotlin") {
+    group = "build"
+    description = "Generate provisional Kotlin bindings from the versioned wiki-ffi UniFFI UDL"
+    workingDir = rootProject.projectDir
+    commandLine("bash", "scripts/generate-uniffi-kotlin.sh")
+    inputs.file(rootProject.file("../crates/wiki-ffi/src/foundation_wikipedia.udl"))
+    outputs.dir(layout.buildDirectory.dir("generated/source/uniffi"))
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")

@@ -61,7 +61,16 @@ cd android
 gradle :app:buildRustArm64
 ```
 
-This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust. No exported UniFFI API, generated Kotlin bindings, coroutine bridge, lifecycle cancellation or device verification exists yet. The bridge and actual app integration remain MOB-001 work. See `android/README.md` for limitations.
+This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust.
+
+BOOT-002 also carries an opt-in UniFFI **code-generation stub**, not a runtime
+bridge. The checked-in `crates/wiki-ffi/src/foundation_wikipedia.udl` currently
+exports no callables; point `UNIFFI_BINDGEN` at an explicitly provisioned
+generator and run `gradle :app:generateUniFfiKotlin`. Generated sources go
+under `app/build/generated/source/uniffi` and are not compiled into the app.
+Production UniFFI Rust scaffolding, versioned DTOs/errors, Kotlin compilation,
+async/cancellation behavior and device-tested shared-core calls remain MOB-001.
+See `android/README.md` for the exact boundary.
 
 
 ### Offline local-file source staging (SRC-001 partial)

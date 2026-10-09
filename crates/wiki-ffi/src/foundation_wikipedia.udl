@@ -1,0 +1,7 @@
+// Bootstrap UniFFI contract for Android build integration.
+//
+// This intentionally exports no callable API yet. MOB-001 adds versioned DTOs,
+// errors, cancellation and async functions after the shared use-case boundary is
+// ready. Keeping a valid UDL in-tree lets Gradle/codegen wiring be qualified
+// independently from the eventual Kotlin-to-Rust runtime contract.
+namespace foundation_wikipedia {};
