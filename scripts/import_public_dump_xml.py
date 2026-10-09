@@ -50,6 +50,7 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
     revisions = 0
     main_slots = 0
     total = 0
+    root_namespace = None
     parser = expat.ParserCreate(namespace_separator="}")
 
     def reject_dtd(*_args):
@@ -59,8 +60,18 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
         return tag.rsplit("}", 1)[-1]
 
     def start(tag, attrs):
-        nonlocal page, field, chunks, page_bytes, revisions, main_slots
-        element = local(tag)
+        nonlocal page, field, chunks, page_bytes, revisions, main_slots, root_namespace
+        namespace, separator, element = tag.rpartition("}")
+        if not separator:
+            namespace = ""
+        if not path:
+            if (element != "mediawiki"
+                    or not namespace.startswith("http://www.mediawiki.org/xml/export-0.")
+                    or not namespace.endswith("/")):
+                raise DumpImportError("not an official MediaWiki XML export namespace")
+            root_namespace = namespace
+        elif namespace != root_namespace:
+            raise DumpImportError("foreign XML namespace in MediaWiki dump")
         path.append(element)
         if len(path) > 32:
             raise DumpImportError("XML nesting depth exceeded")

@@ -156,6 +156,16 @@ python3 scripts/import_public_dump_xml.py source-manifest.json \
   /path/to/raw-revisions.ndjson
 ```
 
+For a single *non-overlapping* dump product split across XML shards, specify
+the first member as usual and repeat `--additional-member` for each further
+shard (in desired output order). The importer verifies the complete staged
+manifest, rejects duplicate page IDs across shards and atomically publishes
+one combined NDJSON only after every selected member succeeds. Do **not**
+combine alternative dump products (e.g. pages-articles and pages-meta-current)
+whose article inventories overlap. The parser requires a MediaWiki export
+namespace and rejects foreign-namespace elements; this is input validation,
+not a substitute for provenance verification.
+
 The import verifies the **full staged manifest** before consuming input,
 rejects XML doctypes/entities, duplicate page IDs, multi-revision records,
 unbounded page text and malformed revision metadata. Output is atomically

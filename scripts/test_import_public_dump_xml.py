@@ -70,6 +70,16 @@ class DumpImportTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpImportError, "content model"):
             self.parse(BODY.replace(old, bad))
 
+    def test_rejects_foreign_and_missing_xml_namespaces(self):
+        official = b"http://www.mediawiki.org/xml/export-0.11/"
+        with self.assertRaisesRegex(DumpImportError, "official MediaWiki XML export namespace"):
+            self.parse(BODY.replace(official, b"urn:attacker", 1))
+        with self.assertRaisesRegex(DumpImportError, "official MediaWiki XML export namespace"):
+            self.parse(BODY.replace(b' xmlns="' + official + b'"', b"", 1))
+        with self.assertRaisesRegex(DumpImportError, "foreign XML namespace"):
+            self.parse(BODY.replace(b"<page><title>Gravity",
+                                    b'<page xmlns="urn:attacker"><title>Gravity', 1))
+
     def test_page_and_total_budgets_fail_closed(self):
         with self.assertRaisesRegex(DumpImportError, "byte budget"):
             self.parse(max_page_bytes=10)
