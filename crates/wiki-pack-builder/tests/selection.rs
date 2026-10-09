@@ -44,10 +44,7 @@ fn rules() -> Rules {
 fn stable_cycle_safe_selection_and_admin_filter() {
     let outcome = resolve(&graph(), &rules()).unwrap();
     assert_eq!(outcome.page_ids, vec![5, 7, 11]);
-    assert_eq!(
-        outcome.warnings,
-        ["Skipped administrative category: Admin"]
-    );
+    assert_eq!(outcome.warnings, ["Skipped administrative category: Admin"]);
     assert_eq!(outcome, resolve(&graph(), &rules()).unwrap());
 }
 
@@ -57,10 +54,7 @@ fn strict_limits_and_missing_categories() {
     limits.depth_limit = 0;
     assert_eq!(resolve(&graph(), &limits).unwrap().page_ids, vec![7, 11]);
     limits.page_limit = 1;
-    assert_eq!(
-        resolve(&graph(), &limits),
-        Err(ResolveError::TooManyPages)
-    );
+    assert_eq!(resolve(&graph(), &limits), Err(ResolveError::TooManyPages));
     limits.page_limit = 20;
     limits.roots = vec!["Missing".into()];
     assert_eq!(
@@ -73,5 +67,8 @@ fn strict_limits_and_missing_categories() {
 fn explicit_exclusion_takes_precedence() {
     let mut selection = rules();
     selection.include = vec![3, 11];
-    assert_eq!(resolve(&graph(), &selection).unwrap().page_ids, vec![5, 7, 11]);
+    assert_eq!(
+        resolve(&graph(), &selection).unwrap().page_ids,
+        vec![5, 7, 11]
+    );
 }

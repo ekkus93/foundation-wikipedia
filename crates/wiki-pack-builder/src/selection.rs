@@ -38,7 +38,12 @@ pub fn resolve(
     if rules.page_limit == 0 || rules.depth_limit > 100 {
         return Err(ResolveError::BadLimit);
     }
-    if rules.include.iter().chain(&rules.exclude).any(|id| *id == 0) {
+    if rules
+        .include
+        .iter()
+        .chain(&rules.exclude)
+        .any(|id| *id == 0)
+    {
         return Err(ResolveError::InvalidPage);
     }
     let excluded: BTreeSet<_> = rules.exclude.iter().copied().collect();
@@ -50,7 +55,9 @@ pub fn resolve(
         if !visited.insert(name.clone()) {
             continue;
         }
-        let node = graph.get(&name).ok_or(ResolveError::Missing(name.clone()))?;
+        let node = graph
+            .get(&name)
+            .ok_or(ResolveError::Missing(name.clone()))?;
         if node.administrative {
             warnings.insert(format!("Skipped administrative category: {name}"));
             continue;
@@ -72,7 +79,13 @@ pub fn resolve(
             warnings.insert(format!("Depth limit reached: {name}"));
         }
     }
-    pages.extend(rules.include.iter().copied().filter(|id| !excluded.contains(id)));
+    pages.extend(
+        rules
+            .include
+            .iter()
+            .copied()
+            .filter(|id| !excluded.contains(id)),
+    );
     if pages.len() > rules.page_limit {
         return Err(ResolveError::TooManyPages);
     }
