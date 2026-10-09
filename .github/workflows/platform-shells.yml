@@ -53,6 +53,14 @@ jobs:
       - name: Build debug APK and unit tests
         working-directory: android
         run: gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --no-daemon
+      - name: Preserve Android lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint-report
+          path: android/app/build/reports/lint-results-debug.html
+          retention-days: 14
+          if-no-files-found: warn
       - name: Preserve debug APK
         uses: actions/upload-artifact@v4
         with:
