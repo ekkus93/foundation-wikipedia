@@ -135,7 +135,10 @@ impl ArticleKey {
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.page_id == 0
             || self.project.is_empty()
-            || !self.project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            || !self
+                .project
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
         {
             return Err(ModelError::InvalidIdentity);
         }
@@ -223,7 +226,10 @@ mod tests {
     fn article() -> Article {
         Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: 42 },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
             revision: Revision {
                 revision_id: 7,
                 timestamp: "2026-10-09T00:00:00Z".into(),
@@ -233,17 +239,27 @@ mod tests {
             display_title: "Gravity".into(),
             language: "en".into(),
             wikidata_id: Some("Q1140".into()),
-            lead: vec![Block { ordinal: 0, content: BlockContent::Paragraph("Gravité 🌍".into()) }],
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravité 🌍".into()),
+            }],
             sections: vec![Section {
                 ordinal: 1,
                 heading: "Physics".into(),
-                blocks: vec![Block { ordinal: 0, content: BlockContent::Math {
-                    source: "F = ma".into(),
-                    html: "<math>F = ma</math>".into(),
-                }}],
+                blocks: vec![Block {
+                    ordinal: 0,
+                    content: BlockContent::Math {
+                        source: "F = ma".into(),
+                        html: "<math>F = ma</math>".into(),
+                    },
+                }],
                 subsections: vec![],
             }],
-            references: vec![Reference { id: "ref1".into(), label: "Source".into(), source_url: None }],
+            references: vec![Reference {
+                id: "ref1".into(),
+                label: "Source".into(),
+                source_url: None,
+            }],
             links: vec![],
             media: vec![],
             rendered_html: "<article>Gravité 🌍</article>".into(),
