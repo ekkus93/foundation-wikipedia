@@ -8,3 +8,6 @@ The canonical checklist is docs/WIKIPEDIA_AI_READER_TODO.md. All related parent 
 - MOD-002: revision-scoped reference handles and enumeration at 4825481136f2c4d06a1463e3cee606b05fdfb598. CI 37931418794 and 37931418832 passed.
 
 Next: continue unchecked BOOT-002/BOOT-003 and MOD-001, then dependent tasks. Do not mark completion without full acceptance evidence.
+
+- PACK-002: category resolver regression coverage for cycles, deterministic order, depth/page bounds, invalid input and exclusion precedence; latest test commit `bd48228bea17aeaed14f1ef681fd9a4968755856`. Rust CI `37960766495` passed at that exact SHA. The resolver still lacks official category integration and snapshot/definition provenance; PACK-002 remains unchecked.
+- PACK-001: portable manifest validation rejects path-like pack IDs, invalid project/snapshot identifiers, Windows-reserved object components, trailing-dot/space components and ASCII case-colliding object names. Code at `5388d7aeade12ac7177ce76642b4000897ef1274`; Rust CI `37961256845` passed at that exact SHA. Full container framing, signatures, streaming install and Android qualification remain unchecked.
