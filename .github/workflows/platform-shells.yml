@@ -53,6 +53,12 @@ jobs:
       - name: Build debug APK and unit tests
         working-directory: android
         run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon
+      - name: Preserve debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-wikipedia-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
       - name: Confirm head
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
