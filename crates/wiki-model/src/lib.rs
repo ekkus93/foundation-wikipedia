@@ -158,6 +158,18 @@ impl ArticleKey {
         id.push_str(&format!(":b{ordinal}"));
         id
     }
+
+    /// Stable hard citation for one Wikipedia reference in one exact revision.
+    /// Hex encoding avoids collisions between Unicode labels and delimiters.
+    /// This is not a relocatable bookmark or an external-source endorsement.
+    pub fn reference_id(&self, revision_id: u64, source_ref_id: &str) -> String {
+        let mut id = format!("wkr:{}:{}:{}:", self.project, self.page_id, revision_id);
+        for byte in source_ref_id.bytes() {
+            use std::fmt::Write;
+            write!(&mut id, "{byte:02x}").expect("writing into String cannot fail");
+        }
+        id
+    }
 }
 
 impl Redirect {
@@ -312,6 +324,18 @@ mod tests {
         assert_ne!(a, key.block_id(8, &[2, 3], 0));
         assert_ne!(a, key.block_id(7, &[2, 4], 0));
         assert_eq!(a, "wkb:enwiki:42:7:2:3:b0");
+    }
+
+    #[test]
+    fn reference_ids_are_revision_scoped_and_unambiguous() {
+        let key = article().key;
+        let original = key.reference_id(7, "cite:é");
+        assert!(original.starts_with("wkr:enwiki:42:7:"));
+        assert_ne!(original, key.reference_id(8, "cite:é"));
+        assert_ne!(original, key.reference_id(7, "cite-é"));
+        assert_ne!(original, key.reference_id(7, "cite:É"));
+        assert_ne!(original, key.block_id(7, &[], 0));
+        assert_eq!(original, key.reference_id(7, "cite:é"));
     }
 
     #[test]
