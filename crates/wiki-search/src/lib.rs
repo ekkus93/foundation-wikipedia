@@ -6,6 +6,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
 
+/// Bound user-provided retrieval queries before allocating token vectors.
+/// Very long selected passages belong in explicit selected-evidence context.
+pub const MAX_LEXICAL_QUERY_BYTES: usize = 8192;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvidenceHit {
     pub block_id: String,
@@ -36,6 +40,9 @@ impl ArticleLexicalIndex {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<EvidenceHit> {
+        if query.len() > MAX_LEXICAL_QUERY_BYTES || limit == 0 {
+            return Vec::new();
+        }
         let terms: BTreeSet<String> = tokenize(query).into_iter().take(32).collect();
         if terms.is_empty() || limit == 0 {
             return Vec::new();
@@ -129,7 +136,7 @@ impl CorpusLexicalIndex {
 
     /// Return a stable global ranking, bounded to 100 results.
     pub fn search(&self, query: &str, limit: usize) -> Vec<CorpusHit> {
-        if limit == 0 {
+        if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
             return Vec::new();
         }
         let mut hits = Vec::new();
@@ -371,6 +378,21 @@ mod tests {
         assert!(!ArticleLexicalIndex::build(&newer)
             .unwrap()
             .contains_evidence(&hits[0]));
+    }
+
+    #[test]
+    fn oversized_unicode_queries_are_rejected_before_token_allocation() {
+        let sample = sample();
+        let article = ArticleLexicalIndex::build(&sample).unwrap();
+        let corpus = CorpusLexicalIndex::build(&[sample]).unwrap();
+        let oversized = "🧠".repeat(MAX_LEXICAL_QUERY_BYTES / 4 + 1);
+        assert!(oversized.len() > MAX_LEXICAL_QUERY_BYTES);
+        assert!(article.search(&oversized, usize::MAX).is_empty());
+        assert!(article
+            .search_with_word_budget(&oversized, usize::MAX, usize::MAX)
+            .is_empty());
+        assert!(corpus.search(&oversized, usize::MAX).is_empty());
+        assert_eq!(article.search("physics", 1).len(), 1);
     }
 
     #[test]
