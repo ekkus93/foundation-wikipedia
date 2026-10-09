@@ -1,12 +1,11 @@
 import { useState } from "react";
-
-const actions = ["Chat", "Bookmark", "Offline", "Settings"] as const;
+import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  function activate(action: (typeof actions)[number]) {
+  function activate(action: ReaderAction) {
     setExpanded(false);
     setMessage(`${action} is not implemented yet. This screen is a development shell.`);
   }
@@ -40,7 +39,7 @@ export default function App() {
       </div>}
       <div className="hub">
         {expanded && <div className="speed-dial" aria-label="Reader actions">
-          {actions.map((action) => <button key={action} onClick={() => activate(action)}>{action}</button>)}
+          {READER_ACTIONS.map((action) => <button key={action} onClick={() => activate(action)}>{action}</button>)}
         </div>}
         <button className="fab"
           aria-label={expanded ? "Close reader actions" : "Open reader actions"}
