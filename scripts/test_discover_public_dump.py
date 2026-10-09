@@ -63,6 +63,22 @@ class PublicDumpDiscoveryTests(unittest.TestCase):
         with self.assertRaises(DiscoveryError):
             discover("enwiki", max_dates=1, fetcher=lambda url: responses[url])
 
+    def test_missing_status_document_falls_back_to_older_generation(self):
+        from urllib.error import HTTPError
+
+        base = "https://dumps.wikimedia.org/enwiki/"
+        responses = {
+            base: '<a href="20261020/">new</a><a href="20261001/">old</a>',
+            base + "20261001/dumpstatus.json": status(),
+        }
+
+        def fetch(url):
+            if url.endswith("20261020/dumpstatus.json"):
+                raise HTTPError(url, 404, "missing", {}, None)
+            return responses[url]
+
+        self.assertEqual(discover("enwiki", fetcher=fetch)["generation_id"], "20261001")
+
     def test_rejects_invalid_project_before_any_fetch(self):
         for project in ("../enwiki", "ENWIKI", "enwiki/", "https://evil.test"):
             with self.assertRaises(DiscoveryError):

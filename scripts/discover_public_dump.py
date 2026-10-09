@@ -9,6 +9,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 import json
 import re
+from urllib.error import HTTPError
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 HOST = "https://dumps.wikimedia.org"
@@ -137,6 +138,10 @@ def discover(project, job_name="articlesmultistreamdump", max_dates=8, fetcher=f
             status = fetcher(f"{HOST}/{project}/{generation}/dumpstatus.json")
             return parse_status(status, project, generation, job_name)
         except DiscoveryError:
+            continue
+        except HTTPError as error:
+            if error.code != 404:
+                raise
             continue
     raise DiscoveryError("no fully completed matching dump generation in scanned dates")
 
