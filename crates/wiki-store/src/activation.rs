@@ -77,7 +77,9 @@ impl ActiveSnapshotStore {
         self.ensure_root()?;
         let pointer = self.root.join("current");
         if !real_file(&pointer)? {
-            if pointer.exists() {
+            // Path::exists follows symlinks; a dangling symlink must never
+            // masquerade as a missing (uninitialized) current pointer.
+            if fs::symlink_metadata(&pointer).is_ok() {
                 return Err(ActivationError::CorruptCurrentPointer);
             }
             return Ok(None);
@@ -139,6 +141,29 @@ impl ActiveSnapshotStore {
 mod interruption_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_current_symlink_is_corrupt_not_uninitialized() {
+        use std::os::unix::fs::symlink;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-dangling-pointer-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("snapshots")).unwrap();
+        symlink("missing-snapshot-pointer", root.join("current")).unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        assert!(matches!(
+            store.current(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn simulated_failure_after_temp_sync_preserves_previous_pointer() {
