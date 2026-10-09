@@ -49,9 +49,9 @@ fn invalid_hash_and_version_fail() {
 #[test]
 fn control_characters_and_blank_metadata_are_rejected() {
     let mut bad = sample();
-    bad.objects[0].path = "articles/bad\\0.pack".into();
+    bad.objects[0].path = "articles/bad\0.pack".into();
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
-    bad.objects[0].path = "articles/bad\\n.pack".into();
+    bad.objects[0].path = "articles/bad\n.pack".into();
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
 
     let mut bad = sample();

@@ -58,6 +58,7 @@ impl Manifest {
                 || object.sha256.len() != 64
                 || !object.sha256.bytes().all(|c| c.is_ascii_hexdigit())
                 || object.path.contains('\\')
+                || object.path.chars().any(char::is_control)
                 || object.path.contains(':')
                 || object
                     .path
