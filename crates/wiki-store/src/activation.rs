@@ -94,6 +94,14 @@ impl ActiveSnapshotStore {
     /// filesystem. Missing/unsafe candidates cannot replace the old pointer.
     /// The previous snapshot directory is never deleted by this primitive.
     pub fn switch_to_prevalidated(&self, id: &str) -> Result<(), ActivationError> {
+        self.switch_with_precommit_gate(id, || Ok(()))
+    }
+
+    fn switch_with_precommit_gate(
+        &self,
+        id: &str,
+        precommit: impl FnOnce() -> Result<(), ActivationError>,
+    ) -> Result<(), ActivationError> {
         if !safe_id(id) {
             return Err(ActivationError::InvalidSnapshotId);
         }
@@ -115,6 +123,7 @@ impl ActiveSnapshotStore {
             file.write_all(b"\n")?;
             file.sync_all()?;
             drop(file);
+            precommit()?;
             fs::rename(&temp, self.root.join("current"))?;
             File::open(&self.root)?.sync_all()?;
             Ok(())
@@ -123,5 +132,43 @@ impl ActiveSnapshotStore {
             let _ = fs::remove_file(temp);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod interruption_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn simulated_failure_after_temp_sync_preserves_previous_pointer() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-atomic-precommit-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let path = root.join("snapshots").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("manifest.json"), "{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let error = store.switch_with_precommit_gate("new", || {
+            Err(ActivationError::Io(io::Error::other("injected interruption")))
+        });
+        assert!(matches!(error, Err(ActivationError::Io(_))));
+        assert_eq!(store.current().unwrap(), Some("old".into()));
+        let leftovers = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".current."))
+            .count();
+        assert_eq!(leftovers, 0);
+        assert!(root.join("snapshots/new/manifest.json").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }
