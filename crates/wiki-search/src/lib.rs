@@ -59,7 +59,9 @@ impl ArticleLexicalIndex {
             }
         }
         results.sort_by(|a, b| {
-            b.score.cmp(&a.score).then_with(|| a.block_id.cmp(&b.block_id))
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.block_id.cmp(&b.block_id))
         });
         results.truncate(limit.min(100));
         results
@@ -67,7 +69,10 @@ impl ArticleLexicalIndex {
 
     pub fn contains_evidence(&self, hit: &EvidenceHit) -> bool {
         hit.revision_id == self.revision_id
-            && self.entries.iter().any(|entry| entry.block_id == hit.block_id)
+            && self
+                .entries
+                .iter()
+                .any(|entry| entry.block_id == hit.block_id)
     }
 }
 
@@ -99,7 +104,9 @@ fn append_blocks(
         let text = match &block.content {
             BlockContent::Paragraph(text) | BlockContent::Quote(text) => text.clone(),
             BlockContent::List(items) => items.join(" "),
-            BlockContent::Table(rows) => rows.iter().flatten().cloned().collect::<Vec<_>>().join(" "),
+            BlockContent::Table(rows) => {
+                rows.iter().flatten().cloned().collect::<Vec<_>>().join(" ")
+            }
             BlockContent::Math { source, .. } => source.clone(),
             BlockContent::Infobox(fields) => fields
                 .iter()
@@ -113,7 +120,9 @@ fn append_blocks(
             continue;
         }
         entries.push(EvidenceHit {
-            block_id: article.key.block_id(article.revision.revision_id, path, block.ordinal),
+            block_id: article
+                .key
+                .block_id(article.revision.revision_id, path, block.ordinal),
             revision_id: article.revision.revision_id,
             heading_path: headings.to_vec(),
             excerpt: text,
@@ -137,7 +146,10 @@ mod tests {
     fn sample() -> Article {
         Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: 9 },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
             revision: Revision {
                 revision_id: 12,
                 timestamp: "2026-10-09T00:00:00Z".into(),
@@ -147,11 +159,17 @@ mod tests {
             display_title: "Physics".into(),
             language: "en".into(),
             wikidata_id: None,
-            lead: vec![Block { ordinal: 0, content: BlockContent::Paragraph("Physics studies matter.".into()) }],
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Physics studies matter.".into()),
+            }],
             sections: vec![Section {
                 ordinal: 1,
                 heading: "Gravitation".into(),
-                blocks: vec![Block { ordinal: 0, content: BlockContent::Paragraph("Gravity bends spacetime.".into()) }],
+                blocks: vec![Block {
+                    ordinal: 0,
+                    content: BlockContent::Paragraph("Gravity bends spacetime.".into()),
+                }],
                 subsections: vec![],
             }],
             references: vec![],
@@ -172,14 +190,22 @@ mod tests {
         assert!(index.search("unknown", 20).is_empty());
         let mut newer = sample();
         newer.revision.revision_id = 13;
-        assert!(!ArticleLexicalIndex::build(&newer).unwrap().contains_evidence(&hits[0]));
+        assert!(!ArticleLexicalIndex::build(&newer)
+            .unwrap()
+            .contains_evidence(&hits[0]));
     }
 
     #[test]
     fn rejects_invalid_article_and_empty_query() {
         let mut article = sample();
         article.revision.revision_id = 0;
-        assert_eq!(ArticleLexicalIndex::build(&article).unwrap_err(), ModelError::InvalidRevision);
-        assert!(ArticleLexicalIndex::build(&sample()).unwrap().search("", 1).is_empty());
+        assert_eq!(
+            ArticleLexicalIndex::build(&article).unwrap_err(),
+            ModelError::InvalidRevision
+        );
+        assert!(ArticleLexicalIndex::build(&sample())
+            .unwrap()
+            .search("", 1)
+            .is_empty());
     }
 }
