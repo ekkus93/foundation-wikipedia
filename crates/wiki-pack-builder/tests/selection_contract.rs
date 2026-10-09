@@ -3,21 +3,30 @@ use wiki_pack_builder::selection::{resolve, Category, Rules};
 
 fn graph() -> BTreeMap<String, Category> {
     BTreeMap::from([
-        ("Root".into(), Category {
-            articles: vec![3, 1, 2],
-            children: vec!["Child".into(), "Admin".into()],
-            administrative: false,
-        }),
-        ("Child".into(), Category {
-            articles: vec![4, 3],
-            children: vec!["Root".into()],
-            administrative: false,
-        }),
-        ("Admin".into(), Category {
-            articles: vec![999],
-            children: vec![],
-            administrative: true,
-        }),
+        (
+            "Root".into(),
+            Category {
+                articles: vec![3, 1, 2],
+                children: vec!["Child".into(), "Admin".into()],
+                administrative: false,
+            },
+        ),
+        (
+            "Child".into(),
+            Category {
+                articles: vec![4, 3],
+                children: vec!["Root".into()],
+                administrative: false,
+            },
+        ),
+        (
+            "Admin".into(),
+            Category {
+                articles: vec![999],
+                children: vec![],
+                administrative: true,
+            },
+        ),
     ])
 }
 

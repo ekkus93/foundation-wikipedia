@@ -3,16 +3,22 @@ use wiki_pack_builder::selection::{resolve, Category, ResolveError, Rules};
 
 fn fixture() -> BTreeMap<String, Category> {
     BTreeMap::from([
-        ("Root".into(), Category {
-            articles: vec![1, 2, 3],
-            children: vec!["Child".into()],
-            administrative: false,
-        }),
-        ("Child".into(), Category {
-            articles: vec![4],
-            children: vec![],
-            administrative: false,
-        }),
+        (
+            "Root".into(),
+            Category {
+                articles: vec![1, 2, 3],
+                children: vec!["Child".into()],
+                administrative: false,
+            },
+        ),
+        (
+            "Child".into(),
+            Category {
+                articles: vec![4],
+                children: vec![],
+                administrative: false,
+            },
+        ),
     ])
 }
 
