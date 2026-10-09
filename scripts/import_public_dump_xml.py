@@ -89,7 +89,7 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
         if not path:
             if (element != "mediawiki"
                     or re.fullmatch(
-                        r"http://www\\.mediawiki\\.org/xml/export-0\\.[0-9]+/",
+                        r"http://www\.mediawiki\.org/xml/export-0\.[0-9]+/",
                         namespace,
                     ) is None):
                 raise DumpImportError("not an official MediaWiki XML export namespace")
