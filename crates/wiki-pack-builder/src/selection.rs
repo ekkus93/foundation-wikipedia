@@ -23,6 +23,7 @@ pub enum ResolveError {
     Missing(String),
     InvalidPage,
     TooManyPages,
+    TooManyCategories,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +55,9 @@ pub fn resolve(
     while let Some((name, depth)) = queue.pop_front() {
         if !visited.insert(name.clone()) {
             continue;
+        }
+        if visited.len() > rules.page_limit.saturating_mul(32).max(1024) {
+            return Err(ResolveError::TooManyCategories);
         }
         let node = graph
             .get(&name)
