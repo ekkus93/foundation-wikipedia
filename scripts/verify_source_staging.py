@@ -7,6 +7,7 @@ manifest written by an attacker is not proof of Wikimedia publication.
 import argparse
 import hashlib
 import json
+import os
 import re
 import stat
 from pathlib import Path
@@ -107,13 +108,21 @@ def verify_source_bytes(manifest, directory):
         path = directory / name
         if path.is_symlink() or not path.is_file():
             raise SourceVerificationError(f"missing or unsafe staged member: {name}")
-        st = path.stat()
-        if not stat.S_ISREG(st.st_mode) or st.st_size != size:
-            raise SourceVerificationError(f"byte length mismatch: {name}")
-        actual = hashlib.sha256()
-        with path.open("rb") as handle:
-            for block in iter(lambda: handle.read(CHUNK), b""):
-                actual.update(block)
+        # Use the same no-follow file descriptor for fstat and SHA-256, so
+        # a concurrent symlink/file swap cannot invalidate earlier path tests.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0)  # reject replaced FIFOs without blocking
+        try:
+            descriptor = os.open(path, flags)
+            with os.fdopen(descriptor, "rb") as handle:
+                st = os.fstat(handle.fileno())
+                if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+                    raise SourceVerificationError(f"byte length mismatch: {name}")
+                actual = hashlib.sha256()
+                for block in iter(lambda: handle.read(CHUNK), b""):
+                    actual.update(block)
+        except OSError as error:
+            raise SourceVerificationError(f"missing or unsafe staged member: {name}") from error
         if actual.hexdigest() != digest:
             raise SourceVerificationError(f"sha256 mismatch: {name}")
     return len(members)

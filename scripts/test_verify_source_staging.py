@@ -1,8 +1,10 @@
 """Checks both matching staged source bytes and adversarial failure modes."""
 import copy
 import hashlib
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from verify_source_staging import SourceVerificationError, verify_source_bytes
@@ -93,6 +95,26 @@ class SourceStagingTests(unittest.TestCase):
         self.manifest["files"][0]["bytes"] = 4
         self.manifest["files"][0]["sha256"] = "invalid"
         self.reject("unsafe or incomplete")
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow open")
+    def test_symlink_replacement_between_path_check_and_open_is_rejected(self):
+        outside = Path(self.tempdir.name) / "outside"
+        outside.write_bytes(self.member.read_bytes())
+        real_open = os.open
+        swapped = False
+
+        def switch_path(path, flags, *args, **kwargs):
+            nonlocal swapped
+            if Path(path) == self.member and not swapped:
+                swapped = True
+                self.member.unlink()
+                self.member.symlink_to(outside)
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("verify_source_staging.os.open", side_effect=switch_path):
+            self.reject("missing or unsafe")
+        self.assertTrue(swapped)
+        self.assertEqual(outside.read_bytes(), b"<mediawiki>fixed revision</mediawiki>")
 
     def test_empty_manifest_and_root_symlink_rejected(self):
         self.manifest["files"] = []
