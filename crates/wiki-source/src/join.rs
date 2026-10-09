@@ -1,6 +1,6 @@
 //! Revision-scoped join guard for independently acquired Wikimedia components.
 //! This does not parse upstream dumps or sanitize rendered HTML.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PageKey {
@@ -34,6 +34,8 @@ pub enum JoinError {
     RevisionMismatch(PageKey),
     GenerationMismatch(PageKey),
     MissingComponent(PageKey),
+    DeletedPageConflict(PageKey),
+    DuplicateTombstone(PageKey),
 }
 
 fn collect(
@@ -107,6 +109,37 @@ pub fn join_pages(
     Ok(joined)
 }
 
+/// Filter exact-snapshot deletion markers before a live component join.
+/// A deleted page cannot retain a live body, HTML or category record.
+pub fn join_pages_with_tombstones(
+    structured: Vec<Component>,
+    rendered: Vec<Component>,
+    categories: Vec<Component>,
+    deleted: Vec<PageKey>,
+) -> Result<Vec<JoinedPage>, JoinError> {
+    let mut tombstones = BTreeSet::new();
+    for key in deleted {
+        if key.page_id == 0
+            || key.project.is_empty()
+            || !key
+                .project
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
+            return Err(JoinError::InvalidIdentity);
+        }
+        if !tombstones.insert(key.clone()) {
+            return Err(JoinError::DuplicateTombstone(key));
+        }
+    }
+    for item in structured.iter().chain(&rendered).chain(&categories) {
+        if tombstones.contains(&item.page) {
+            return Err(JoinError::DeletedPageConflict(item.page.clone()));
+        }
+    }
+    join_pages(structured, rendered, categories)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +197,32 @@ mod tests {
         assert_eq!(
             join_pages(vec![part(1, "s"), part(1, "s")], vec![], vec![]),
             Err(JoinError::Duplicate(part(1, "s").page))
+        );
+    }
+
+    #[test]
+    fn deleted_page_markers_cannot_coexist_with_live_components() {
+        let page = part(1, "s").page;
+        assert_eq!(
+            join_pages_with_tombstones(
+                vec![part(1, "s")],
+                vec![part(1, "h")],
+                vec![part(1, "c")],
+                vec![page.clone()]
+            ),
+            Err(JoinError::DeletedPageConflict(page.clone()))
+        );
+        assert!(join_pages_with_tombstones(
+            vec![],
+            vec![],
+            vec![],
+            vec![page.clone()]
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            join_pages_with_tombstones(vec![], vec![], vec![], vec![page.clone(), page.clone()]),
+            Err(JoinError::DuplicateTombstone(page))
         );
     }
 
