@@ -152,8 +152,10 @@ pub fn stream_selected(
         return Err(ProviderError::Cancelled);
     }
     // Enforce callback rejection even if a nonconforming provider swallows it.
-    // Also discard a response cancelled immediately after the final event.
+    // Also reject missing or repeated completion and any later text deltas.
+    // A transport cannot silently claim success after sending a partial reply.
     let mut callback_error = None;
+    let mut stream_completed = false;
     let outcome = provider.stream(request, cancellation, &mut |event| {
         if cancellation.is_cancelled() {
             callback_error = Some(ProviderError::Cancelled);
@@ -161,6 +163,13 @@ pub fn stream_selected(
         }
         if let Some(error) = &callback_error {
             return Err(error.clone());
+        }
+        if stream_completed {
+            callback_error = Some(ProviderError::InvalidResponse);
+            return Err(ProviderError::InvalidResponse);
+        }
+        if matches!(event, StreamEvent::Completed { .. }) {
+            stream_completed = true;
         }
         match on_event(event) {
             Ok(()) => Ok(()),
@@ -175,6 +184,9 @@ pub fn stream_selected(
     }
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
+    }
+    if outcome.is_ok() && !stream_completed {
+        return Err(ProviderError::InvalidResponse);
     }
     outcome
 }
@@ -392,6 +404,97 @@ mod tests {
         );
         assert_eq!(result, Err(ProviderError::Cancelled));
         assert!(token.is_cancelled());
+    }
+
+    struct MalformedStream {
+        omit_completed: bool,
+        extra_delta: bool,
+    }
+
+    impl LlmProvider for MalformedStream {
+        fn locality(&self) -> Locality {
+            Locality::OnDevice
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                discover_models: false,
+                streaming: true,
+                cancellable: true,
+            }
+        }
+
+        fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(vec![])
+        }
+
+        fn test_connection(&self) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn stream(
+            &self,
+            _: &GenerateRequest,
+            _: &CancellationToken,
+            on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+        ) -> Result<(), ProviderError> {
+            on_event(StreamEvent::TextDelta("partial".into()))?;
+            if !self.omit_completed {
+                on_event(StreamEvent::Completed {
+                    input_tokens: None,
+                    output_tokens: None,
+                })?;
+            }
+            if self.extra_delta {
+                // Deliberately nonconforming adapter ignores caller rejection.
+                let _ = on_event(StreamEvent::TextDelta("after completion".into()));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rejects_missing_completion_and_post_completion_deltas() {
+        let token = CancellationToken::default();
+        let mut events = Vec::new();
+        let missing = MalformedStream {
+            omit_completed: true,
+            extra_delta: false,
+        };
+        assert_eq!(
+            stream_selected(
+                &missing,
+                &request(),
+                &token,
+                OutboundPolicy::OnDeviceOnly,
+                &mut |event| {
+                    events.push(event);
+                    Ok(())
+                }
+            ),
+            Err(ProviderError::InvalidResponse)
+        );
+        assert_eq!(events.len(), 1);
+
+        let after = MalformedStream {
+            omit_completed: false,
+            extra_delta: true,
+        };
+        events.clear();
+        assert_eq!(
+            stream_selected(
+                &after,
+                &request(),
+                &token,
+                OutboundPolicy::OnDeviceOnly,
+                &mut |event| {
+                    events.push(event);
+                    Ok(())
+                }
+            ),
+            Err(ProviderError::InvalidResponse)
+        );
+        assert_eq!(events.len(), 2);
     }
 
     #[test]
