@@ -108,6 +108,18 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsafe_generation_identifiers() {
+        for id in ["", ".", "..", "../outside", "a/b", "a\\\\b", "a b", "a:b"] {
+            let mut bad = sample();
+            bad.upstream_id = id.into();
+            assert_eq!(bad.validate(), Err(SourceError::MissingGeneration));
+        }
+        let mut good = sample();
+        good.upstream_id = "2026-10-09T00_00_00Z".into();
+        assert_eq!(good.validate(), Ok(()));
+    }
+
+    #[test]
     fn rejects_unsafe_member_names_before_transport() {
         for name in [
             ".",
