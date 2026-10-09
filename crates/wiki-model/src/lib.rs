@@ -237,6 +237,7 @@ impl Article {
             if media.source_url.trim().is_empty()
                 || media.mime_type.trim().is_empty()
                 || media.license.trim().is_empty()
+                || media.creator.trim().is_empty()
                 || media.attribution.trim().is_empty()
             {
                 return Err(ModelError::InvalidMediaMetadata(index));
@@ -395,6 +396,9 @@ mod tests {
         assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
         a.media[0].source_url = "https://upload.wikimedia.org/example.svg".into();
         a.media[0].attribution.clear();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+        a.media[0].attribution = "Example contributor, CC BY-SA 4.0".into();
+        a.media[0].creator.clear();
         assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
     }
 
