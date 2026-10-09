@@ -261,3 +261,8 @@ mod tests {
         input = request();
         input.messages.clear();
         assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+        input = request();
+        input.max_output_tokens = 0;
+        assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+    }
+}
