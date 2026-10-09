@@ -3,7 +3,7 @@
 //! This indexes only one validated article revision and is not yet a BM25
 //! search engine. Evidence IDs are revision-bound, not persistent bookmarks.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{Article, Block, BlockContent, ModelError, Section};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +93,49 @@ impl ArticleLexicalIndex {
                     && entry.heading_path == hit.heading_path
             })
     }
+}
+
+/// An answer may cite only passages actually supplied to its model context.
+/// Validation is revision-scoped and rejects tampered, stale or fabricated hits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CitationError {
+    InvalidRetrievedEvidence(String),
+    DuplicateRetrievedEvidence(String),
+    UnretrievedCitation(String),
+    DuplicateCitation(String),
+}
+
+/// Return only the exact supplied evidence for model-claimed citation IDs.
+///
+/// Checking the full index alone is insufficient: an LLM must not cite an
+/// indexed passage that was never included in its prompt.
+pub fn validate_claimed_citations(
+    index: &ArticleLexicalIndex,
+    retrieved: &[EvidenceHit],
+    claimed_ids: &[String],
+) -> Result<Vec<EvidenceHit>, CitationError> {
+    let mut supplied = BTreeMap::new();
+    for hit in retrieved {
+        if !index.contains_evidence(hit) {
+            return Err(CitationError::InvalidRetrievedEvidence(hit.block_id.clone()));
+        }
+        if supplied.insert(hit.block_id.as_str(), hit).is_some() {
+            return Err(CitationError::DuplicateRetrievedEvidence(hit.block_id.clone()));
+        }
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut validated = Vec::with_capacity(claimed_ids.len());
+    for id in claimed_ids {
+        if !seen.insert(id.as_str()) {
+            return Err(CitationError::DuplicateCitation(id.clone()));
+        }
+        let hit = supplied
+            .get(id.as_str())
+            .ok_or_else(|| CitationError::UnretrievedCitation(id.clone()))?;
+        validated.push((*hit).clone());
+    }
+    Ok(validated)
 }
 
 fn append_section(
@@ -231,6 +274,60 @@ mod tests {
         assert_eq!(tight.len(), 1);
         assert_eq!(enough.len(), 2);
         assert!(no_hits.is_empty());
+    }
+
+    #[test]
+    fn citations_must_be_supplied_not_merely_indexed() {
+        let index = ArticleLexicalIndex::build(&sample()).unwrap();
+        let supplied = index.search("spacetime", 1);
+        let other = index.search("physics", 1);
+        let cited = validate_claimed_citations(
+            &index,
+            &supplied,
+            &[supplied[0].block_id.clone()],
+        )
+        .unwrap();
+        assert_eq!(cited, supplied);
+        assert_eq!(
+            validate_claimed_citations(&index, &supplied, &[other[0].block_id.clone()]),
+            Err(CitationError::UnretrievedCitation(other[0].block_id.clone()))
+        );
+        assert_eq!(
+            validate_claimed_citations(&index, &supplied, &["invented".into()]),
+            Err(CitationError::UnretrievedCitation("invented".into()))
+        );
+        assert_eq!(
+            validate_claimed_citations(
+                &index,
+                &supplied,
+                &[supplied[0].block_id.clone(), supplied[0].block_id.clone()]
+            ),
+            Err(CitationError::DuplicateCitation(supplied[0].block_id.clone()))
+        );
+    }
+
+    #[test]
+    fn citations_reject_stale_tampered_and_duplicate_supplied_evidence() {
+        let index = ArticleLexicalIndex::build(&sample()).unwrap();
+        let hits = index.search("spacetime", 1);
+        let mut altered = hits[0].clone();
+        altered.excerpt.push_str(" invented");
+        assert_eq!(
+            validate_claimed_citations(&index, &[altered], &[]),
+            Err(CitationError::InvalidRetrievedEvidence(hits[0].block_id.clone()))
+        );
+        let mut newer = sample();
+        newer.revision.revision_id += 1;
+        let newer_index = ArticleLexicalIndex::build(&newer).unwrap();
+        assert_eq!(
+            validate_claimed_citations(&newer_index, &hits, &[]),
+            Err(CitationError::InvalidRetrievedEvidence(hits[0].block_id.clone()))
+        );
+        assert_eq!(
+            validate_claimed_citations(&index, &[hits[0].clone(), hits[0].clone()], &[]),
+            Err(CitationError::DuplicateRetrievedEvidence(hits[0].block_id.clone()))
+        );
+        assert_eq!(validate_claimed_citations(&index, &hits, &[]), Ok(vec![]));
     }
 
     #[test]
