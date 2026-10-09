@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         working-directory: desktop
         run: npm install --no-audit --no-fund
+      - name: Source lint (unused locals and parameters)
+        working-directory: desktop
+        run: npm run lint
       - name: Typecheck and bundle
         working-directory: desktop
         run: npm run build
