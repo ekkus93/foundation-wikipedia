@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
-use wiki_pack_builder::selection::{resolve, resolve_with_redirects, Category, ResolveError, Rules};
+use wiki_pack_builder::selection::{
+    resolve, resolve_with_redirects, Category, ResolveError, Rules,
+};
 
 fn graph() -> BTreeMap<String, Category> {
     BTreeMap::from([
@@ -85,8 +87,12 @@ fn redirect_aliases_count_only_once_and_flag_disambiguation() {
     let result =
         resolve_with_redirects(&categories, &config, &redirects, &disambiguations).unwrap();
     assert_eq!(result.page_ids, vec![1]);
-    assert!(result.warnings.contains(&"Disambiguation article: 1".into()));
-    assert!(result.warnings.contains(&"Resolved redirect: 2 -> 1".into()));
+    assert!(result
+        .warnings
+        .contains(&"Disambiguation article: 1".into()));
+    assert!(result
+        .warnings
+        .contains(&"Resolved redirect: 2 -> 1".into()));
 }
 
 #[test]
@@ -96,12 +102,10 @@ fn exclusion_applies_to_canonical_target_not_just_redirect_alias() {
     config.roots.clear();
     config.include = vec![3];
     config.exclude = vec![1];
-    let result =
-        resolve_with_redirects(&graph(), &config, &redirects, &BTreeSet::new()).unwrap();
+    let result = resolve_with_redirects(&graph(), &config, &redirects, &BTreeSet::new()).unwrap();
     assert!(result.page_ids.is_empty());
     config.exclude = vec![3];
-    let result =
-        resolve_with_redirects(&graph(), &config, &redirects, &BTreeSet::new()).unwrap();
+    let result = resolve_with_redirects(&graph(), &config, &redirects, &BTreeSet::new()).unwrap();
     assert!(result.page_ids.is_empty());
 }
 
