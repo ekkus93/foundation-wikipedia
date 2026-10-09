@@ -78,7 +78,10 @@ fn structured_media_notices_preserve_revision_and_unicode_attribution() {
     article.media[1].is_av_preview = true;
     let notices = collect_structured_media_notices(&article).unwrap();
     assert_eq!(notices.len(), 2);
-    assert_eq!(notices.iter().map(|n| n.media_index).collect::<Vec<_>>(), vec![0, 1]);
+    assert_eq!(
+        notices.iter().map(|n| n.media_index).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
     assert_eq!(notices[0].project, "enwiki");
     assert_eq!(notices[0].page_id, 21);
     assert_eq!(notices[0].revision_id, 7);
@@ -86,10 +89,7 @@ fn structured_media_notices_preserve_revision_and_unicode_attribution() {
     assert_eq!(notices[0].attribution, "Gravité — 引力, CC BY-SA 4.0");
     assert!(notices[1].is_av_preview);
     assert_eq!(notices[1].license, "CC BY-SA 4.0");
-    assert_eq!(
-        collect_structured_media_notices(&article).unwrap(),
-        notices
-    );
+    assert_eq!(collect_structured_media_notices(&article).unwrap(), notices);
 }
 
 #[test]
