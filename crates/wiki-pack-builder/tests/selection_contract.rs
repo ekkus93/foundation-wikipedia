@@ -125,3 +125,34 @@ fn redirect_cycles_and_zero_targets_fail_closed() {
         Err(ResolveError::InvalidPage)
     );
 }
+
+#[test]
+fn excessive_category_fanout_is_rejected_before_enqueuing_children() {
+    let mut categories = BTreeMap::new();
+    categories.insert(
+        "Root".into(),
+        Category {
+            articles: vec![1],
+            children: (0..1025).map(|n| format!("Child{n}")).collect(),
+            administrative: false,
+        },
+    );
+    let mut config = rules();
+    config.page_limit = 1;
+    assert_eq!(
+        resolve(&categories, &config),
+        Err(ResolveError::TooManyCategories)
+    );
+    config.depth_limit = 0;
+    let result = resolve(&categories, &config).unwrap();
+    assert_eq!(result.page_ids, vec![1]);
+    assert!(result.warnings.contains(&"Depth limit reached: Root".into()));
+}
+
+#[test]
+fn excessive_root_fanout_is_rejected_before_queue_allocation() {
+    let mut config = rules();
+    config.page_limit = 1;
+    config.roots = (0..1025).map(|n| format!("Root{n}")).collect();
+    assert_eq!(resolve(&BTreeMap::new(), &config), Err(ResolveError::TooManyCategories));
+}

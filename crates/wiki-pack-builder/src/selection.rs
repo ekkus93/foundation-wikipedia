@@ -51,6 +51,12 @@ pub fn resolve_with_redirects(
     if rules.page_limit == 0 || rules.depth_limit > 100 {
         return Err(ResolveError::BadLimit);
     }
+    // Bound queued work before expansion: a single category can have far more
+    // children than selected pages, including cycles and duplicate links.
+    let category_budget = rules.page_limit.saturating_mul(32).clamp(1024, 100_000);
+    if rules.roots.len() > category_budget {
+        return Err(ResolveError::TooManyCategories);
+    }
     if rules
         .include
         .iter()
@@ -72,7 +78,7 @@ pub fn resolve_with_redirects(
         if !visited.insert(name.clone()) {
             continue;
         }
-        if visited.len() > rules.page_limit.saturating_mul(32).max(1024) {
+        if visited.len() > category_budget {
             return Err(ResolveError::TooManyCategories);
         }
         let node = graph
@@ -98,6 +104,9 @@ pub fn resolve_with_redirects(
             return Err(ResolveError::TooManyPages);
         }
         if depth < rules.depth_limit {
+            if node.children.len() > category_budget.saturating_sub(queue.len()) {
+                return Err(ResolveError::TooManyCategories);
+            }
             queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
         } else if !node.children.is_empty() {
             warnings.insert(format!("Depth limit reached: {name}"));
