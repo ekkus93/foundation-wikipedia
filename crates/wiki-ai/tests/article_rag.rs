@@ -199,11 +199,11 @@ fn no_claims_or_unclosed_claims_cannot_be_displayed_as_grounded() {
         };
         assert_eq!(
             answer_article(
-            &sample(),
-            &provider,
-            &question(),
-            &CancellationToken::default()
-        ),
+                &sample(),
+                &provider,
+                &question(),
+                &CancellationToken::default()
+            ),
             Err(error)
         );
     }
