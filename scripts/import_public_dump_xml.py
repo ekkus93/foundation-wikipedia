@@ -128,6 +128,8 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
                 model = page.get("slot_model", page.get("model", "wikitext"))
                 content_format = page.get("slot_format", page.get("format", "text/x-wiki"))
                 title = page["title"]
+            except DumpImportError:
+                raise
             except (KeyError, ValueError, TypeError) as error:
                 raise DumpImportError("missing or invalid page metadata") from error
             if model != "wikitext" or content_format != "text/x-wiki":
