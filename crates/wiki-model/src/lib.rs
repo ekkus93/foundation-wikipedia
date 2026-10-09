@@ -114,6 +114,8 @@ pub enum ModelError {
     UnsupportedSchema(u32),
     InvalidHash,
     MissingTitle,
+    InvalidSectionHeading,
+    InvalidReferenceLabel,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
@@ -203,13 +205,16 @@ impl Article {
             return Err(ModelError::UnsupportedSchema(self.schema_version));
         }
         self.key.validate()?;
-        if self.revision.revision_id == 0 || self.revision.timestamp.is_empty() {
+        if self.revision.revision_id == 0 || self.revision.timestamp.trim().is_empty() {
             return Err(ModelError::InvalidRevision);
         }
         if !valid_hash(&self.revision.content_sha256) {
             return Err(ModelError::InvalidHash);
         }
-        if self.title.trim().is_empty() || self.language.is_empty() {
+        if self.title.trim().is_empty()
+            || self.display_title.trim().is_empty()
+            || self.language.trim().is_empty()
+        {
             return Err(ModelError::MissingTitle);
         }
         for link in &self.links {
@@ -217,6 +222,9 @@ impl Article {
         }
         let mut refs = HashSet::new();
         for reference in &self.references {
+            if reference.label.trim().is_empty() {
+                return Err(ModelError::InvalidReferenceLabel);
+            }
             if reference.id.is_empty() || !refs.insert(&reference.id) {
                 return Err(ModelError::DuplicateReference(reference.id.clone()));
             }
@@ -259,6 +267,9 @@ fn check_blocks(blocks: &[Block], media_len: usize) -> Result<(), ModelError> {
 fn check_sections(sections: &[Section], media_len: usize) -> Result<(), ModelError> {
     let mut ordinals = HashSet::new();
     for section in sections {
+        if section.heading.trim().is_empty() {
+            return Err(ModelError::InvalidSectionHeading);
+        }
         if !ordinals.insert(section.ordinal) {
             return Err(ModelError::DuplicateOrdinal);
         }
@@ -381,6 +392,34 @@ mod tests {
         a.media[0].source_url = "https://upload.wikimedia.org/example.svg".into();
         a.media[0].attribution.clear();
         assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+    }
+
+    #[test]
+    fn rejects_blank_reference_labels_and_nested_headings() {
+        let mut a = article();
+        a.references[0].label = "  ".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidReferenceLabel));
+        a.references[0].label = "Source".into();
+        a.sections[0].heading = "\t".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidSectionHeading));
+        a.sections[0].heading = "Physics".into();
+        a.sections[0].subsections.push(Section {
+            ordinal: 2,
+            heading: "  ".into(),
+            blocks: vec![],
+            subsections: vec![],
+        });
+        assert_eq!(a.validate(), Err(ModelError::InvalidSectionHeading));
+    }
+
+    #[test]
+    fn rejects_blank_revision_and_display_title() {
+        let mut a = article();
+        a.revision.timestamp = " ".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidRevision));
+        a.revision.timestamp = "2026-10-09T00:00:00Z".into();
+        a.display_title.clear();
+        assert_eq!(a.validate(), Err(ModelError::MissingTitle));
     }
 
     #[test]
