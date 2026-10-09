@@ -37,32 +37,34 @@ fn soft_anchor_can_move_after_revision_and_block_reordering() {
     let original = article();
     let hard = original.key.block_id(1, &[], 0);
     let anchor = SoftAnchor::capture(&original, &hard).unwrap().unwrap();
-    assert_eq!(anchor.relocate(&original), Ok(AnchorMatch::Located {
-        block_id: hard.clone(),
-        relocated: false,
-    }));
+    assert_eq!(
+        anchor.relocate(&original),
+        Ok(AnchorMatch::Located {
+            block_id: hard.clone(),
+            relocated: false,
+        })
+    );
     let mut changed = original.clone();
     changed.revision.revision_id = 2;
     changed.lead[0].ordinal = 9;
-    changed.lead[0].content =
-        BlockContent::Paragraph("Gravity attracts matter.".into());
+    changed.lead[0].content = BlockContent::Paragraph("Gravity attracts matter.".into());
     let next = changed.key.block_id(2, &[], 9);
-    assert_eq!(anchor.relocate(&changed), Ok(AnchorMatch::Located {
-        block_id: next.clone(),
-        relocated: true,
-    }));
+    assert_eq!(
+        anchor.relocate(&changed),
+        Ok(AnchorMatch::Located {
+            block_id: next.clone(),
+            relocated: true,
+        })
+    );
     assert_ne!(hard, next);
 }
 
 #[test]
 fn missing_duplicate_and_wrong_article_are_not_silently_redirected() {
     let original = article();
-    let anchor = SoftAnchor::capture(
-        &original,
-        &original.key.block_id(1, &[], 0),
-    )
-    .unwrap()
-    .unwrap();
+    let anchor = SoftAnchor::capture(&original, &original.key.block_id(1, &[], 0))
+        .unwrap()
+        .unwrap();
     let mut changed = original.clone();
     changed.revision.revision_id = 2;
     changed.lead[0].content = BlockContent::Paragraph("Different content".into());
@@ -93,9 +95,6 @@ fn non_text_block_cannot_form_soft_anchor() {
         source: "F = ma".into(),
         html: String::new(),
     };
-    let anchor = SoftAnchor::capture(
-        &original,
-        &original.key.block_id(1, &[], 0),
-    );
+    let anchor = SoftAnchor::capture(&original, &original.key.block_id(1, &[], 0));
     assert_eq!(anchor.unwrap(), None);
 }
