@@ -36,7 +36,10 @@ proof of a native bridge.
 
 The Android development shell's reader FAB exposes four labeled, touchable
 action buttons (nearest FAB: Chat, Bookmark, Offline, Settings) and responds
-with an explicit placeholder snackbar when selected. None of the actions,
+with an explicit placeholder snackbar when selected. Android Back collapses the
+expanded menu; opening the menu transfers keyboard focus to Chat, and the main
+button has an accessible open/close description. Real-device accessibility
+qualification remains pending. None of the actions,
 article fetches, offline saves or settings screens is implemented yet;
 instrumented interaction and screen-reader qualification remain outstanding.
 

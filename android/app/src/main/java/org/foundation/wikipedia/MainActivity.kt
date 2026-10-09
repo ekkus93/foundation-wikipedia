@@ -4,6 +4,7 @@ import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.Alignment
@@ -23,6 +24,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +32,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
@@ -78,6 +84,13 @@ private fun FoundationApp() {
     var expanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val chatActionFocus = remember { FocusRequester() }
+
+    // Back dismisses the action menu before leaving the reader.
+    BackHandler(enabled = expanded) { expanded = false }
+    LaunchedEffect(expanded) {
+        if (expanded) chatActionFocus.requestFocus()
+    }
 
     MaterialTheme(colorScheme = scheme) {
         Scaffold(
@@ -95,12 +108,19 @@ private fun FoundationApp() {
                                         "$label is not implemented in this development shell"
                                     )
                                 }
-                            }) {
+                            },
+                                modifier = if (label == "Chat") Modifier.focusRequester(chatActionFocus) else Modifier
+                            ) {
                                 Text(label)
                             }
                         }
                     }
-                    FloatingActionButton(onClick = { expanded = !expanded }) {
+                    FloatingActionButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.semantics {
+                            contentDescription = if (expanded) "Close reader actions" else "Open reader actions"
+                        }
+                    ) {
                         Text(if (expanded) "Close" else "Actions")
                     }
                 }
