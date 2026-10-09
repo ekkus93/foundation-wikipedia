@@ -21,6 +21,49 @@ pub struct StructuredMediaInventory {
     pub rendered_dependencies_verified: bool,
 }
 
+/// Revision-scoped offline attribution for a referenced structured media item.
+/// These fields are untrusted text; any UI must escape/sanitize on display.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StructuredMediaNotice {
+    pub project: String,
+    pub page_id: u64,
+    pub revision_id: u64,
+    pub media_index: usize,
+    pub source_url: String,
+    pub mime_type: String,
+    pub license: String,
+    pub creator: String,
+    pub attribution: String,
+    pub is_av_preview: bool,
+}
+
+/// Produce deterministic, de-duplicated attribution metadata for references
+/// found in typed blocks. This does NOT establish offline completeness.
+pub fn collect_structured_media_notices(
+    article: &Article,
+) -> Result<Vec<StructuredMediaNotice>, InventoryError> {
+    let inventory = collect_structured_media(article)?;
+    Ok(inventory
+        .referenced_media
+        .into_iter()
+        .map(|index| {
+            let media = &article.media[index];
+            StructuredMediaNotice {
+                project: article.key.project.clone(),
+                page_id: article.key.page_id,
+                revision_id: article.revision.revision_id,
+                media_index: index,
+                source_url: media.source_url.clone(),
+                mime_type: media.mime_type.clone(),
+                license: media.license.clone(),
+                creator: media.creator.clone(),
+                attribution: media.attribution.clone(),
+                is_av_preview: media.is_av_preview,
+            }
+        })
+        .collect())
+}
+
 pub fn collect_structured_media(
     article: &Article,
 ) -> Result<StructuredMediaInventory, InventoryError> {

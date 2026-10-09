@@ -300,6 +300,19 @@ case-colliding members, and incomplete publication metadata. **It does not
 authenticate the manifest or discover Wikimedia releases**; those SRC-001
 requirements remain open. No active snapshot is mutated by this check.
 
+## Structured media attribution (PACK-003 / SEC-002 partial)
+
+The shared pack builder can now collect revision-scoped media attribution
+notices for every **typed** structured media block, in deterministic index
+order without duplicates. Source URL, MIME type, creator, license,
+attribution and A/V preview status are retained for offline display. The
+article model must validate successfully; unresolved opaque HTML fallback
+fails closed. This **does not** certify an offline-ready pack: later rendered
+HTML/CSS, SVG/MathML, infoboxes, thumbnails, captions, external fonts and
+complete required-media verification are still missing. Display layers must
+escape attribution strings from untrusted content; audio/video payloads must
+not be bundled by default.
+
 ## CI and evidence
 
 `.github/workflows/rust.yml` checks root Rust fmt, Clippy, unit tests and exact Git SHA. `.github/workflows/platform-shells.yml` builds the desktop frontend, Android debug APK/tests and checks Tauri native Rust dependencies on Ubuntu 24.04. A clean CI build does not mean the prototype shell has been installed or exercised on a device.

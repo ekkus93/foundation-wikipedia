@@ -1,7 +1,9 @@
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, MediaAsset, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
-use wiki_pack_builder::media_inventory::{collect_structured_media, InventoryError};
+use wiki_pack_builder::media_inventory::{
+    collect_structured_media, collect_structured_media_notices, InventoryError,
+};
 
 fn sample() -> Article {
     Article {
@@ -66,6 +68,44 @@ fn recursive_media_references_are_sorted_and_deduplicated() {
     let result = collect_structured_media(&sample()).unwrap();
     assert_eq!(result.referenced_media, vec![0, 1]);
     assert!(!result.rendered_dependencies_verified);
+}
+
+#[test]
+fn structured_media_notices_preserve_revision_and_unicode_attribution() {
+    let mut article = sample();
+    article.media[0].creator = "Gravité — 引力".into();
+    article.media[0].attribution = "Gravité — 引力, CC BY-SA 4.0".into();
+    article.media[1].is_av_preview = true;
+    let notices = collect_structured_media_notices(&article).unwrap();
+    assert_eq!(notices.len(), 2);
+    assert_eq!(notices.iter().map(|n| n.media_index).collect::<Vec<_>>(), vec![0, 1]);
+    assert_eq!(notices[0].project, "enwiki");
+    assert_eq!(notices[0].page_id, 21);
+    assert_eq!(notices[0].revision_id, 7);
+    assert_eq!(notices[0].creator, "Gravité — 引力");
+    assert_eq!(notices[0].attribution, "Gravité — 引力, CC BY-SA 4.0");
+    assert!(notices[1].is_av_preview);
+    assert_eq!(notices[1].license, "CC BY-SA 4.0");
+    assert_eq!(
+        collect_structured_media_notices(&article).unwrap(),
+        notices
+    );
+}
+
+#[test]
+fn structured_notice_collection_fails_when_attribution_is_unverified() {
+    let mut article = sample();
+    article.media[0].license.clear();
+    assert!(matches!(
+        collect_structured_media_notices(&article),
+        Err(InventoryError::InvalidArticle(_))
+    ));
+    article = sample();
+    article.lead[0].content = BlockContent::HtmlFallback("<img src='x'>".into());
+    assert_eq!(
+        collect_structured_media_notices(&article),
+        Err(InventoryError::UnresolvedHtmlFallback)
+    );
 }
 
 #[test]
