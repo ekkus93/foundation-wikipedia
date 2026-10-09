@@ -165,10 +165,7 @@ mod tests {
         for name in ["CON", "nul.xml", "COM1", "LPT9.txt", "prn.dat"] {
             let mut bad = sample();
             bad.files[0].name = name.into();
-            assert_eq!(
-                bad.validate(),
-                Err(SourceError::InvalidFile(name.into()))
-            );
+            assert_eq!(bad.validate(), Err(SourceError::InvalidFile(name.into())));
         }
         let mut bad = sample();
         bad.upstream_id = "CON".into();
