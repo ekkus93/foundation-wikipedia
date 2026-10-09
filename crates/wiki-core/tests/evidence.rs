@@ -1,4 +1,4 @@
-use wiki_core::evidence::{evidence_blocks, evidence_references};
+use wiki_core::evidence::{evidence_blocks, evidence_references, evidence_sections};
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
@@ -87,4 +87,34 @@ fn reference_handles_preserve_revision_and_source_identity() {
     assert_ne!(original[0].id, evidence_references(&second).unwrap()[0].id);
     second.references.push(second.references[0].clone());
     assert!(evidence_references(&second).is_err());
+}
+
+#[test]
+fn nested_sections_have_revision_scoped_hard_handles() {
+    let mut fixture = article();
+    fixture.sections[0].subsections.push(Section {
+        ordinal: 2,
+        heading: "Local structure".into(),
+        blocks: vec![],
+        subsections: vec![],
+    });
+    let handles = evidence_sections(&fixture).unwrap();
+    assert_eq!(handles.len(), 2);
+    assert_eq!(handles[0].id, "wks:enwiki:99:7:3");
+    assert_eq!(handles[1].id, "wks:enwiki:99:7:3:2");
+    assert_eq!(handles[1].headings, ["Space", "Local structure"]);
+    assert_eq!(handles[1].section.heading, "Local structure");
+
+    let mut next_revision = fixture.clone();
+    next_revision.revision.revision_id = 8;
+    let next = evidence_sections(&next_revision).unwrap();
+    assert_ne!(handles[0].id, next[0].id);
+    assert_ne!(handles[1].id, next[1].id);
+}
+
+#[test]
+fn section_ids_reject_invalid_article_structure() {
+    let mut fixture = article();
+    fixture.sections.push(fixture.sections[0].clone());
+    assert!(evidence_sections(&fixture).is_err());
 }
