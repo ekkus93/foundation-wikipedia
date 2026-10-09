@@ -1,0 +1,86 @@
+name: Desktop launch smoke
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop-launch-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install desktop prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev xvfb
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+      - name: Build frontend
+        working-directory: desktop
+        run: npm run build
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.90.0"
+      - name: Build native desktop binary
+        run: cargo +1.90.0 build --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Start Vite development server
+        working-directory: desktop
+        run: |
+          npm run dev -- --host 127.0.0.1 > /tmp/foundation-vite.log 2>&1 &
+          echo $! > /tmp/foundation-vite.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:1420/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/foundation-vite.log
+          exit 1
+      - name: Launch desktop shell under Xvfb
+        run: |
+          set +e
+          timeout --signal=TERM 15s xvfb-run -a \
+            desktop/src-tauri/target/debug/foundation-wikipedia-desktop \
+            > /tmp/foundation-desktop.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/foundation-desktop.log
+          if [ "$status" -ne 124 ]; then
+            echo "Desktop shell exited before the smoke-test window (status=$status)." >&2
+            exit 1
+          fi
+          echo "Desktop shell remained alive for the 15-second launch window."
+      - name: Stop Vite server
+        if: always()
+        run: |
+          if [ -f /tmp/foundation-vite.pid ]; then
+            kill "$(cat /tmp/foundation-vite.pid)" 2>/dev/null || true
+          fi
+      - name: Preserve launch logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-launch-smoke-logs
+          path: |
+            /tmp/foundation-vite.log
+            /tmp/foundation-desktop.log
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
