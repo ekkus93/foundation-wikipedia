@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types scripts/check-reader-actions.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
