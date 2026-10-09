@@ -87,8 +87,7 @@ pub fn check_media_completeness(
                 .preview_id
                 .as_deref()
                 .ok_or_else(|| MediaError::MissingPreview(resource.id.clone()))?;
-            if by_id.get(preview_id).map(|item| item.kind)
-                != Some(ResourceKind::AudioVideoPreview)
+            if by_id.get(preview_id).map(|item| item.kind) != Some(ResourceKind::AudioVideoPreview)
             {
                 return Err(MediaError::MissingPreview(resource.id.clone()));
             }

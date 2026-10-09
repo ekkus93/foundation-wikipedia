@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
-use wiki_pack_builder::media::{
-    check_media_completeness, MediaError, Resource, ResourceKind,
-};
+use wiki_pack_builder::media::{check_media_completeness, MediaError, Resource, ResourceKind};
 
 fn required(id: &str, kind: ResourceKind) -> Resource {
     Resource {
