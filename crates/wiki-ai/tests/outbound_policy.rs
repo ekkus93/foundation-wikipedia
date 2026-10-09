@@ -115,3 +115,52 @@ fn permitted_provider_receives_exactly_one_dispatch() {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 }
+
+#[test]
+fn cancellation_prevents_any_provider_dispatch() {
+    let calls = AtomicUsize::new(0);
+    let provider = FakeProvider {
+        locality: Locality::OnDevice,
+        calls: &calls,
+    };
+    let token = CancellationToken::default();
+    token.cancel();
+    let mut events = Vec::new();
+    assert_eq!(
+        stream_selected(
+            &provider,
+            &request(),
+            &token,
+            OutboundPolicy::OnDeviceOnly,
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            }
+        ),
+        Err(ProviderError::Cancelled)
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert!(events.is_empty());
+}
+
+#[test]
+fn invalid_request_does_not_start_provider_stream() {
+    let calls = AtomicUsize::new(0);
+    let provider = FakeProvider {
+        locality: Locality::OnDevice,
+        calls: &calls,
+    };
+    let mut request = request();
+    request.model.clear();
+    assert_eq!(
+        stream_selected(
+            &provider,
+            &request,
+            &CancellationToken::default(),
+            OutboundPolicy::OnDeviceOnly,
+            &mut |_| Ok(())
+        ),
+        Err(ProviderError::InvalidRequest)
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
