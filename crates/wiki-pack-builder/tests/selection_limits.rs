@@ -39,7 +39,10 @@ fn depth_limit_reports_truncation() {
 fn invalid_limits_and_missing_categories_fail_closed() {
     let mut config = rules();
     config.page_limit = 3;
-    assert_eq!(resolve(&fixture(), &config), Err(ResolveError::TooManyPages));
+    assert_eq!(
+        resolve(&fixture(), &config),
+        Err(ResolveError::TooManyPages)
+    );
     config.page_limit = 10;
     config.include = vec![0];
     assert_eq!(resolve(&fixture(), &config), Err(ResolveError::InvalidPage));
