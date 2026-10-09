@@ -45,3 +45,21 @@ fn invalid_hash_and_version_fail() {
     bad.objects[0].sha256 = "invalid".into();
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
 }
+
+#[test]
+fn control_characters_and_blank_metadata_are_rejected() {
+    let mut bad = sample();
+    bad.objects[0].path = "articles/bad\\0.pack".into();
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
+    bad.objects[0].path = "articles/bad\\n.pack".into();
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
+
+    let mut bad = sample();
+    bad.pack_id = "   ".into();
+    assert_eq!(bad.validate(), Err(ManifestError::MissingMetadata));
+    bad.pack_id = "physics".into();
+    bad.origin = Origin::Official {
+        publisher: "  ".into(),
+    };
+    assert_eq!(bad.validate(), Err(ManifestError::MissingMetadata));
+}

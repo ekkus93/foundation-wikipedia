@@ -39,12 +39,15 @@ impl Manifest {
         if self.version != FORMAT_VERSION {
             return Err(ManifestError::Version);
         }
-        if self.pack_id.is_empty() || self.project.is_empty() || self.snapshot.is_empty() {
+        if self.pack_id.trim().is_empty()
+            || self.project.trim().is_empty()
+            || self.snapshot.trim().is_empty()
+        {
             return Err(ManifestError::MissingMetadata);
         }
         let origin_valid = match &self.origin {
-            Origin::Official { publisher } => !publisher.is_empty(),
-            Origin::Custom { definition_id } => !definition_id.is_empty(),
+            Origin::Official { publisher } => !publisher.trim().is_empty(),
+            Origin::Custom { definition_id } => !definition_id.trim().is_empty(),
         };
         if !origin_valid || self.objects.is_empty() {
             return Err(ManifestError::MissingMetadata);
