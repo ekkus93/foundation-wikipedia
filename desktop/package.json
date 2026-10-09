@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build && npm run test",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
-    "test": "node --experimental-strip-types scripts/check-reader-actions.mjs",
+    "audit:licenses": "node scripts/audit-licenses.mjs",
+    "test": "node --experimental-strip-types scripts/check-reader-actions.mjs && node --test scripts/audit-licenses.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

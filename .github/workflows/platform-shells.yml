@@ -24,6 +24,9 @@ jobs:
       - name: Source lint (unused locals and parameters)
         working-directory: desktop
         run: npm run lint
+      - name: Audit npm dependency licenses
+        working-directory: desktop
+        run: npm run audit:licenses
       - name: Typecheck and bundle
         working-directory: desktop
         run: npm run build
