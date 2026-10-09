@@ -352,9 +352,7 @@ mod tests {
             title: "Gravity".into(),
             display_title: "Gravity".into(),
             language: "en".into(),
-
             namespace: 0,
-
             aliases: vec!["Gravity (physics)".into()],
             wikidata_id: Some("Q1140".into()),
             lead: vec![Block {
