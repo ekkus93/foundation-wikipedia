@@ -137,12 +137,11 @@ pub fn stream_selected(
     policy: OutboundPolicy,
     on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
 ) -> Result<(), ProviderError> {
-    let allowed = match (provider.locality(), policy) {
-        (Locality::OnDevice, _) => true,
-        (Locality::Localhost | Locality::LocalNetwork, OutboundPolicy::AllowLocalEndpoints) => true,
-        (_, OutboundPolicy::AllowCloud) => true,
-        _ => false,
-    };
+    let locality = provider.locality();
+    let allowed = locality == Locality::OnDevice
+        || policy == OutboundPolicy::AllowCloud
+        || (policy == OutboundPolicy::AllowLocalEndpoints
+            && matches!(locality, Locality::Localhost | Locality::LocalNetwork));
     if !allowed {
         return Err(ProviderError::DestinationNotAllowed);
     }
