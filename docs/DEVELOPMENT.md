@@ -107,6 +107,30 @@ It is still **not authenticated publication metadata**: discovery-report
 authenticity and legacy SHA-1 limitations remain separate trust concerns.
 No snapshot activation or import is performed.
 
+
+### Complete-generation staging (SRC-001 partial)
+
+Use the generation orchestrator to stage **all** members declared by a
+completed official discovery report, either via resumable HTTPS or from an
+already-downloaded local directory:
+
+```sh
+python3 scripts/stage_public_dump_generation.py \
+  completed-report.json /path/to/staging /path/to/source-manifest.json \
+  --local-directory /path/to/downloaded-files
+# OR
+python3 scripts/stage_public_dump_generation.py \
+  completed-report.json /path/to/staging /path/to/source-manifest.json \
+  --user-agent 'FoundationWikipedia/0.1 (contact: you@example.org)'
+```
+
+It validates the full inventory before copying, verifies each member against
+the report's upstream SHA-1 and size, and publishes a SHA-256 manifest only
+when every member has passed. Interrupted network transfers leave resumable
+`.part` files; an incomplete generation never produces the final manifest.
+It does not authenticate a caller-supplied discovery report, import articles,
+or activate a snapshot. Run the separate staging verifier before ingestion.
+
 ## Public Wikimedia dump discovery (read-only metadata)
 
 Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
