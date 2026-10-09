@@ -1,0 +1,31 @@
+* { box-sizing: border-box; }
+:root { font-family: system-ui, sans-serif; color: #202122; background: #fff; }
+body { margin: 0; }
+button, input { font: inherit; }
+.topbar { border-bottom: 1px solid #eaecf0; display: flex; gap: 28px; align-items: center; padding: 15px 28px; }
+.brand { min-width: 250px; display: flex; align-items: center; gap: 12px; }
+.brandmark { font: bold 34px Georgia, serif; width: 49px; height: 49px; text-align: center; border: 2px solid #54595d; border-radius: 50%; }
+.brand strong { font: 22px Georgia, serif; display: block; }
+.brand small { font-size: 11px; color: #54595d; display: block; }
+.search { flex: 1; max-width: 520px; padding: 11px; border: 1px solid #a2a9b1; background: #f8f9fa; }
+.status { font-size: 12px; color: #54595d; }
+.columns { max-width: 1260px; margin: auto; padding: 32px 40px 125px; display: grid; grid-template-columns: 220px minmax(0, 860px); gap: 35px; }
+.contents { font-size: 14px; border-right: 1px solid #eaecf0; }
+.contents strong { display: block; border-bottom: 1px solid #a2a9b1; margin: 0 25px 12px 0; padding-bottom: 8px; }
+.contents a { display: block; margin: 10px 0; color: #36c; text-decoration: none; }
+main { font: 17px/1.7 Georgia, serif; }
+main h1 { font-size: 32px; font-weight: normal; border-bottom: 1px solid #a2a9b1; padding-bottom: 12px; }
+main h2 { font-size: 23px; font-weight: normal; border-bottom: 1px solid #a2a9b1; }
+main a { color: #36c; }
+.eyebrow { font: 11px system-ui, sans-serif; color: #72777d; letter-spacing: .15em; }
+.lead { font-size: 19px; }
+.hub { position: fixed; right: 30px; bottom: 28px; display: flex; align-items: flex-end; flex-direction: column; gap: 12px; }
+.fab { cursor: pointer; border: 0; border-radius: 22px; background: #4b3a8b; color: white; width: 68px; height: 68px; font-size: 32px; box-shadow: 0 8px 26px #24154650; }
+.fab[aria-expanded=true] { border-radius: 50%; }
+.speed-dial { display: flex; flex-direction: column; gap: 8px; }
+.speed-dial button { cursor: pointer; border: none; border-radius: 24px 8px 24px 24px; background: #ede6ff; color: #2a2156; padding: 13px 28px; }
+.speed-dial button:hover { background: #dcd0ff; }
+.notice { position: fixed; left: 24px; bottom: 28px; max-width: 480px; border-radius: 18px; background: #f1ebff; padding: 16px; font-size: 14px; }
+.notice button { border: 0; background: transparent; cursor: pointer; margin-left: 14px; }
+@media (max-width: 800px) { .contents, .status { display: none; } .columns { display: block; padding: 20px 24px 110px; } .topbar { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
