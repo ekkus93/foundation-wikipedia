@@ -1,11 +1,31 @@
 //! Version-specific article evidence handles.
-use wiki_model::{Article, Block, ModelError, Section};
+use wiki_model::{Article, Block, ModelError, Reference, Section};
 
 #[derive(Debug)]
 pub struct EvidenceBlock<'a> {
     pub id: String,
     pub headings: Vec<String>,
     pub block: &'a Block,
+}
+
+/// Wikipedia reference notes are not independent verification of their URLs.
+#[derive(Debug)]
+pub struct EvidenceReference<'a> {
+    pub id: String,
+    pub reference: &'a Reference,
+}
+
+/// Enumerate validated, revision-bound reference handles.
+pub fn evidence_references(article: &Article) -> Result<Vec<EvidenceReference<'_>>, ModelError> {
+    article.validate()?;
+    Ok(article
+        .references
+        .iter()
+        .map(|reference| EvidenceReference {
+            id: article.key.reference_id(article.revision.revision_id, &reference.id),
+            reference,
+        })
+        .collect())
 }
 
 /// Traverse a validated article with provenance-scoped block identities.
