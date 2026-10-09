@@ -166,8 +166,16 @@ mod transcript_tests {
                 definition_id: "my-topic".into(),
             },
             objects: vec![
-                Object { path: "b/image.svg".into(), sha256: "A".repeat(64), bytes: 72 },
-                Object { path: "a/article.cbor".into(), sha256: "b".repeat(64), bytes: 105 },
+                Object {
+                    path: "b/image.svg".into(),
+                    sha256: "A".repeat(64),
+                    bytes: 72,
+                },
+                Object {
+                    path: "a/article.cbor".into(),
+                    sha256: "b".repeat(64),
+                    bytes: 105,
+                },
             ],
         }
     }
@@ -195,7 +203,9 @@ mod transcript_tests {
         changed.objects[0].bytes += 1;
         assert_ne!(changed.identity_transcript().unwrap(), baseline);
         changed = original.clone();
-        changed.origin = Origin::Official { publisher: "foundation".into() };
+        changed.origin = Origin::Official {
+            publisher: "foundation".into(),
+        };
         assert_ne!(changed.identity_transcript().unwrap(), baseline);
     }
 
