@@ -44,7 +44,7 @@ pub struct Article {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageRecord {
-    Article(Article),
+    Article(Box<Article>),
     Redirect(Redirect),
 }
 
