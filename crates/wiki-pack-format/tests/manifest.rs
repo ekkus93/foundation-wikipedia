@@ -63,3 +63,18 @@ fn control_characters_and_blank_metadata_are_rejected() {
     };
     assert_eq!(bad.validate(), Err(ManifestError::MissingMetadata));
 }
+
+#[test]
+fn unsafe_pack_and_snapshot_identifiers_fail_closed() {
+    let mut bad = sample();
+    for id in ["../escape", "bad\\name", "bad:name", ".", "..", " padded "] {
+        bad.pack_id = id.into();
+        assert_eq!(bad.validate(), Err(ManifestError::UnsafeMetadata));
+    }
+    bad.pack_id = "physics".into();
+    bad.project = "en/wiki".into();
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeMetadata));
+    bad.project = "enwiki".into();
+    bad.snapshot = "2026/10/09".into();
+    assert_eq!(bad.validate(), Err(ManifestError::UnsafeMetadata));
+}
