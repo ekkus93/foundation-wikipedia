@@ -48,7 +48,10 @@ fn nested_blocks_have_exact_page_revision_path() {
     assert_eq!(blocks[0].id, "wkb:enwiki:99:7:b0");
     assert_eq!(blocks[1].id, "wkb:enwiki:99:7:3:b1");
     assert_eq!(blocks[1].headings, ["Space"]);
-    assert!(matches!(blocks[1].block.content, BlockContent::Paragraph(_)));
+    assert!(matches!(
+        blocks[1].block.content,
+        BlockContent::Paragraph(_)
+    ));
 }
 
 #[test]
