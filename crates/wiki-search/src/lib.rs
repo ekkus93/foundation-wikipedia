@@ -187,6 +187,12 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].block_id, "wkb:enwiki:9:12:1:b0");
         assert!(index.contains_evidence(&hits[0]));
+        let mut altered = hits[0].clone();
+        altered.excerpt = "Different text".into();
+        assert!(!index.contains_evidence(&altered));
+        altered = hits[0].clone();
+        altered.heading_path = vec!["Different heading".into()];
+        assert!(!index.contains_evidence(&altered));
         assert!(index.search("unknown", 20).is_empty());
         let mut newer = sample();
         newer.revision.revision_id = 13;
