@@ -7,6 +7,7 @@ required before complete offline Wikipedia reader acceptance.
 """
 import argparse
 import bz2
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -94,8 +95,10 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
                 raise DumpImportError("duplicate main content slot")
         elif path == ["mediawiki", "page", "redirect"]:
             if page is not None:
+                if "redirect_title" in page:
+                    raise DumpImportError("duplicate redirect metadata")
                 page["redirect_title"] = attrs.get("title")
-                if not page["redirect_title"]:
+                if not page["redirect_title"] or not page["redirect_title"].strip():
                     raise DumpImportError("redirect has no target title")
         elif tuple(path) in FIELDS:
             if page is None or field is not None:
@@ -145,6 +148,10 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
                 raise DumpImportError("missing or invalid page metadata") from error
             if model != "wikitext" or content_format != "text/x-wiki":
                 raise DumpImportError("unsupported content model or format")
+            try:
+                datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+            except (ValueError, TypeError) as error:
+                raise DumpImportError("invalid UTC revision timestamp") from error
             if page_id <= 0 or revision_id <= 0 or not title.strip() or not timestamp or not wikitext:
                 raise DumpImportError("invalid or empty current-content record")
             if page_id in seen:

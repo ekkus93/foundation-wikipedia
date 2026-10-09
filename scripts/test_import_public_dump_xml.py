@@ -126,6 +126,19 @@ class DumpImportTests(unittest.TestCase):
                 max_pages=10_000_000, max_page_bytes=32 * 1024 * 1024
             ), 2)
 
+    def test_requires_utc_revision_timestamp_and_unambiguous_redirect(self):
+        for value in [b"not-a-time", b"2026-02-30T00:00:00Z",
+                      b"2026-10-09T00:00:00+04:00", b"2026-10-09"]:
+            with self.assertRaisesRegex(DumpImportError, "UTC revision timestamp"):
+                self.parse(BODY.replace(b"2026-10-09T00:00:00Z", value, 1))
+        with self.assertRaisesRegex(DumpImportError, "no target"):
+            self.parse(BODY.replace(b'<redirect title="Gravity"/>',
+                                    b'<redirect title="   "/>'))
+        with self.assertRaisesRegex(DumpImportError, "duplicate redirect"):
+            self.parse(BODY.replace(b'<redirect title="Gravity"/>',
+                                    b'<redirect title="Gravity"/>'
+                                    b'<redirect title="Other"/>'))
+
     def test_full_verified_bz2_input_atomically_publishes_raw_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
