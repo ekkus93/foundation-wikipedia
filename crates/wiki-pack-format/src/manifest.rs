@@ -46,6 +46,26 @@ fn safe_id(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
+fn unsafe_component(component: &str) -> bool {
+    if component.is_empty()
+        || component == "."
+        || component == ".."
+        || component.ends_with('.')
+        || component.ends_with(' ')
+    {
+        return true;
+    }
+    let stem = component.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL"
+            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
+            | "COM6" | "COM7" | "COM8" | "COM9"
+            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
+            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    )
+}
+
 impl Manifest {
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.version != FORMAT_VERSION {
@@ -81,11 +101,11 @@ impl Manifest {
                 || object
                     .path
                     .split('/')
-                    .any(|c| c.is_empty() || c == "." || c == "..")
+                    .any(unsafe_component)
             {
                 return Err(ManifestError::UnsafeObject);
             }
-            if !paths.insert(&object.path) {
+            if !paths.insert(object.path.to_ascii_lowercase()) {
                 return Err(ManifestError::DuplicateObject);
             }
         }
