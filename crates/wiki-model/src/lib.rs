@@ -152,14 +152,58 @@ fn valid_external_url(value: &str) -> bool {
     else {
         return false;
     };
+    if value
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return false;
+    }
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    !authority.is_empty()
-        && !authority.starts_with('.')
-        && !authority.ends_with('.')
-        && !authority.contains('@')
-        && !value
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    if authority.is_empty() || authority.contains('@') || authority.contains('%') {
+        return false;
+    }
+    let port = if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some((address, suffix)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        if suffix.is_empty() {
+            None
+        } else {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return false;
+            };
+            Some(port)
+        }
+    } else {
+        let (hostname, port) = match authority.rsplit_once(':') {
+            Some((hostname, port)) => (hostname, Some(port)),
+            None => (authority, None),
+        };
+        // Reject authority confusion before passing URLs to a browser.
+        // Unicode paths are fine; DNS names must use ASCII/IDNA form.
+        if hostname.len() > 253
+            || !hostname.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && label.as_bytes()[0].is_ascii_alphanumeric()
+                    && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+        {
+            return false;
+        }
+        port
+    };
+    port.is_none_or(|port| {
+        !port.is_empty()
+            && port.bytes().all(|b| b.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|number| number > 0)
+    })
 }
 
 /// MIME is metadata, not byte sniffing or an HTML sanitization guarantee.
@@ -652,6 +696,14 @@ mod tests {
             "https://example.org\\\\evil.test/",
             "https://example.org/white space",
             "https://",
+            "https://:443/article",
+            "https://example.org:bad/article",
+            "https://example.org:65536/article",
+            "https://example.org:0/article",
+            "https://bad..example.org/page",
+            "https://-bad.example.org/page",
+            "https://example.org%40bad.test/page",
+            "https://[::1]suffix/page",
         ] {
             a.references[0].source_url = Some(url.into());
             assert_eq!(
@@ -660,6 +712,11 @@ mod tests {
                 "unsafe reference URL: {url}"
             );
         }
+        a.references[0].source_url =
+            Some("https://en.wikipedia.org:443/wiki/Gravit%C3%A9".into());
+        assert_eq!(a.validate(), Ok(()));
+        a.references[0].source_url = Some("https://[2001:db8::1]:443/article".into());
+        assert_eq!(a.validate(), Ok(()));
         a.references[0].source_url = None;
         a.media.push(MediaAsset {
             source_url: "https://upload.wikimedia.org/example.svg".into(),
