@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Minimal window privileges while the reader is in bootstrap",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
