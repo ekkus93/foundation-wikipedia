@@ -162,6 +162,21 @@ fn valid_external_url(value: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
 }
 
+/// MIME is metadata, not byte sniffing or an HTML sanitization guarantee.
+/// Require a normalized type/subtype token rather than a renderer-executable
+/// or header-injection string with MIME parameters and control characters.
+fn valid_media_mime(value: &str) -> bool {
+    let Some((major, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    !major.is_empty()
+        && !subtype.is_empty()
+        && major.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && subtype.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+' | b'_')
+        })
+}
+
 impl ArticleKey {
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.page_id == 0
@@ -281,7 +296,9 @@ impl Article {
         }
         for (index, media) in self.media.iter().enumerate() {
             if !valid_external_url(&media.source_url)
-                || media.mime_type.trim().is_empty()
+                || !valid_media_mime(&media.mime_type)
+                || (media.is_av_preview
+                    && !media.mime_type.starts_with("image/"))
                 || media.license.trim().is_empty()
                 || media.creator.trim().is_empty()
                 || media.attribution.trim().is_empty()
@@ -477,6 +494,36 @@ mod tests {
         a.media[0].attribution = "Example contributor, CC BY-SA 4.0".into();
         a.media[0].creator.clear();
         assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+    }
+
+    #[test]
+    fn media_mime_must_be_safe_metadata_and_preview_must_be_an_image() {
+        let mut a = article();
+        a.media.push(MediaAsset {
+            source_url: "https://upload.wikimedia.org/example.webp".into(),
+            mime_type: "image/webp".into(),
+            sha256: Some("b".repeat(64)),
+            license: "CC BY-SA".into(),
+            creator: "Contributor".into(),
+            attribution: "Contributor under CC BY-SA".into(),
+            is_av_preview: true,
+        });
+        assert_eq!(a.validate(), Ok(()));
+        for mime in [
+            "", "image", "image/;foo", "image/png; charset=utf-8",
+            "image/evil\\r\\n", "image/png path", " /png",
+        ] {
+            a.media[0].mime_type = mime.into();
+            assert_eq!(
+                a.validate(),
+                Err(ModelError::InvalidMediaMetadata(0)),
+                "malformed MIME accepted: {mime:?}"
+            );
+        }
+        a.media[0].mime_type = "video/webm".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+        a.media[0].is_av_preview = false;
+        assert_eq!(a.validate(), Ok(()));
     }
 
     #[test]
