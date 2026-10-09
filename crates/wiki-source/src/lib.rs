@@ -1,6 +1,8 @@
 //! Authoritative Wikimedia snapshot metadata validation.
 //! Download transport and checksum verification are separate SRC-001 steps.
 
+pub mod join;
+
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
