@@ -64,7 +64,47 @@ fn unsafe_component(component: &str) -> bool {
     ["CON", "PRN", "AUX", "NUL"].contains(&base) || port
 }
 
+/// Provisional, unambiguous binary encoding for manifest *identity* only.
+///
+/// This helper is not the final .wpack serialization or a publisher signature
+/// payload. Full licensing, resource requirements, and update provenance must
+/// be added before a future format can be signed or shipped.
+fn append_field(bytes: &mut Vec<u8>, field: &str) {
+    bytes.extend_from_slice(&(field.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(field.as_bytes());
+}
+
 impl Manifest {
+    /// Deterministic identity transcript, independent of object input order
+    /// and the casing of hexadecimal digests.
+    pub fn identity_transcript(&self) -> Result<Vec<u8>, ManifestError> {
+        self.validate()?;
+        let mut out = b"foundation-wikipedia/manifest-identity/v1\0".to_vec();
+        out.extend_from_slice(&self.version.to_be_bytes());
+        append_field(&mut out, &self.pack_id);
+        append_field(&mut out, &self.project);
+        append_field(&mut out, &self.snapshot);
+        match &self.origin {
+            Origin::Official { publisher } => {
+                out.push(1);
+                append_field(&mut out, publisher);
+            }
+            Origin::Custom { definition_id } => {
+                out.push(2);
+                append_field(&mut out, definition_id);
+            }
+        }
+        let mut objects = self.objects.iter().collect::<Vec<_>>();
+        objects.sort_by(|a, b| a.path.cmp(&b.path));
+        out.extend_from_slice(&(objects.len() as u64).to_be_bytes());
+        for object in objects {
+            append_field(&mut out, &object.path);
+            append_field(&mut out, &object.sha256.to_ascii_lowercase());
+            out.extend_from_slice(&object.bytes.to_be_bytes());
+        }
+        Ok(out)
+    }
+
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.version != FORMAT_VERSION {
             return Err(ManifestError::Version);
@@ -109,5 +149,63 @@ impl Manifest {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+
+    fn sample() -> Manifest {
+        Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "physics".into(),
+            project: "enwiki".into(),
+            snapshot: "20261009".into(),
+            origin: Origin::Custom {
+                definition_id: "my-topic".into(),
+            },
+            objects: vec![
+                Object { path: "b/image.svg".into(), sha256: "A".repeat(64), bytes: 72 },
+                Object { path: "a/article.cbor".into(), sha256: "b".repeat(64), bytes: 105 },
+            ],
+        }
+    }
+
+    #[test]
+    fn deterministic_across_reordering_and_digest_case() {
+        let original = sample();
+        let mut permutation = original.clone();
+        permutation.objects.reverse();
+        permutation.objects[0].sha256.make_ascii_uppercase();
+        assert_eq!(
+            original.identity_transcript(),
+            permutation.identity_transcript()
+        );
+    }
+
+    #[test]
+    fn identity_fields_cannot_alias_or_be_removed() {
+        let original = sample();
+        let baseline = original.identity_transcript().unwrap();
+        let mut changed = original.clone();
+        changed.pack_id = "physic".into();
+        assert_ne!(changed.identity_transcript().unwrap(), baseline);
+        changed = original.clone();
+        changed.objects[0].bytes += 1;
+        assert_ne!(changed.identity_transcript().unwrap(), baseline);
+        changed = original.clone();
+        changed.origin = Origin::Official { publisher: "foundation".into() };
+        assert_ne!(changed.identity_transcript().unwrap(), baseline);
+    }
+
+    #[test]
+    fn invalid_manifest_never_produces_transcript() {
+        let mut invalid = sample();
+        invalid.objects[0].path = "../escape".into();
+        assert_eq!(
+            invalid.identity_transcript(),
+            Err(ManifestError::UnsafeObject)
+        );
     }
 }
