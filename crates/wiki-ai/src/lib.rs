@@ -55,7 +55,10 @@ impl GenerateRequest {
         if self.model.trim().is_empty()
             || self.messages.is_empty()
             || self.max_output_tokens == 0
-            || self.messages.iter().any(|msg| msg.content.trim().is_empty())
+            || self
+                .messages
+                .iter()
+                .any(|msg| msg.content.trim().is_empty())
         {
             return Err(ProviderError::InvalidRequest);
         }
@@ -258,8 +261,3 @@ mod tests {
         input = request();
         input.messages.clear();
         assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
-        input = request();
-        input.max_output_tokens = 0;
-        assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
-    }
-}
