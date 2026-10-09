@@ -46,6 +46,19 @@ cargo build --manifest-path "$ROOT/Cargo.toml" --package wiki-ffi --target "$TAR
 LIB="$ROOT/target/$TARGET/release/libwiki_ffi.so"
 test -f "$LIB"
 python3 "$ROOT/scripts/verify_android_elf.py" "$LIB"
+LLVM_NM="$NDK/toolchains/llvm/prebuilt/$HOST/bin/llvm-nm"
+if [[ ! -x "$LLVM_NM" ]]; then
+  echo "Missing Android NDK llvm-nm: $LLVM_NM" >&2
+  exit 2
+fi
+if ! "$LLVM_NM" -D --defined-only "$LIB" | grep -Eq '[[:space:]][TW][[:space:]]foundation_wikipedia_ffi_abi_version
+cp "$LIB" "$OUT/libwiki_ffi.so"
+printf 'Built %s\n' "$OUT/libwiki_ffi.so"
+printf 'NOTICE: native ABI library only; UniFFI Kotlin bindings and JNI API are not yet implemented.\n'
+; then
+  echo "wiki-ffi AArch64 library is missing its required ABI version handshake" >&2
+  exit 2
+fi
 mkdir -p "$OUT"
 cp "$LIB" "$OUT/libwiki_ffi.so"
 printf 'Built %s\n' "$OUT/libwiki_ffi.so"

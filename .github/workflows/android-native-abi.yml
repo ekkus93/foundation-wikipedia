@@ -1,0 +1,54 @@
+name: Android Rust ABI qualification
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/wiki-ffi/**'
+      - 'crates/wiki-model/**'
+      - 'crates/wiki-core/**'
+      - 'crates/wiki-store/**'
+      - 'crates/wiki-search/**'
+      - 'crates/wiki-ai/**'
+      - 'crates/wiki-pack-format/**'
+      - 'android/scripts/build-rust-android.sh'
+      - 'scripts/verify_android_elf.py'
+      - '.github/workflows/android-native-abi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-arm64-cdylib:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain and Android target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.85.1'
+          targets: aarch64-linux-android
+      - name: Install pinned Android NDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install 'ndk;27.2.12479018'
+          test -x "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+      - name: Cross-compile and check exported ABI handshake
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" bash android/scripts/build-rust-android.sh
+          python3 scripts/verify_android_elf.py android/app/src/main/jniLibs/arm64-v8a/libwiki_ffi.so
+      - name: Preserve opt-in native ABI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-ffi-android-arm64
+          path: android/app/src/main/jniLibs/arm64-v8a/libwiki_ffi.so
+          retention-days: 14
+          if-no-files-found: error
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
