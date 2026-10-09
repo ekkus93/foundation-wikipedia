@@ -63,6 +63,23 @@ gradle :app:buildRustArm64
 
 This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust. No exported UniFFI API, generated Kotlin bindings, coroutine bridge, lifecycle cancellation or device verification exists yet. The bridge and actual app integration remain MOB-001 work. See `android/README.md` for limitations.
 
+## Public Wikimedia dump discovery (read-only metadata)
+
+Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
+project index and select the newest fully terminal generation whose
+`articlesmultistreamdump` job completed. This reads official HTTPS
+`dumpstatus.json` metadata, rejects redirects, incomplete jobs, unsafe paths,
+and malformed sizes/checksums, and prints the exact file URLs and reported
+SHA-1/MD5 checksums. `--max-dates` bounds index scanning; no content is
+downloaded. Run offline negative tests with
+`python3 -m unittest discover -s scripts -p 'test_discover_public_dump.py'`.
+
+**Trust boundary:** legacy upstream SHA-1/MD5 values are not SHA-256 or signed
+publisher authentication. Missing upstream checksums are explicitly reported.
+This helper does not generate an accepted SHA-256 staging manifest or activate
+snapshots. Fetch/resume, authentic digest provenance, SHA-256 recomputation,
+revision joins, and real dump-import qualification remain open SRC-001/003 work.
+
 ## Bytewise verification of staged Wikimedia source files
 
 After separately obtaining completed official-source release metadata and
