@@ -24,6 +24,7 @@ pub enum ResolveError {
     InvalidPage,
     TooManyPages,
     TooManyCategories,
+    RedirectCycle(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +37,17 @@ pub fn resolve(
     graph: &BTreeMap<String, Category>,
     rules: &Rules,
 ) -> Result<Resolution, ResolveError> {
+    resolve_with_redirects(graph, rules, &BTreeMap::new(), &BTreeSet::new())
+}
+
+/// Apply exact-snapshot redirect identities before counting or excluding pages.
+/// Disambiguation pages remain readable articles, but are flagged for review.
+pub fn resolve_with_redirects(
+    graph: &BTreeMap<String, Category>,
+    rules: &Rules,
+    redirects: &BTreeMap<u64, u64>,
+    disambiguations: &BTreeSet<u64>,
+) -> Result<Resolution, ResolveError> {
     if rules.page_limit == 0 || rules.depth_limit > 100 {
         return Err(ResolveError::BadLimit);
     }
@@ -47,7 +59,11 @@ pub fn resolve(
     {
         return Err(ResolveError::InvalidPage);
     }
-    let excluded: BTreeSet<_> = rules.exclude.iter().copied().collect();
+    let excluded: BTreeSet<u64> = rules
+        .exclude
+        .iter()
+        .map(|id| canonical_page(*id, redirects))
+        .collect::<Result<_, _>>()?;
     let mut pages = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut warnings = BTreeSet::new();
@@ -67,11 +83,15 @@ pub fn resolve(
             continue;
         }
         for id in &node.articles {
-            if *id == 0 {
-                return Err(ResolveError::InvalidPage);
+            let resolved = canonical_page(*id, redirects)?;
+            if resolved != *id {
+                warnings.insert(format!("Resolved redirect: {id} -> {resolved}"));
             }
-            if !excluded.contains(id) {
-                pages.insert(*id);
+            if !excluded.contains(&resolved) {
+                pages.insert(resolved);
+                if disambiguations.contains(&resolved) {
+                    warnings.insert(format!("Disambiguation article: {resolved}"));
+                }
             }
         }
         if pages.len() > rules.page_limit {
@@ -83,13 +103,18 @@ pub fn resolve(
             warnings.insert(format!("Depth limit reached: {name}"));
         }
     }
-    pages.extend(
-        rules
-            .include
-            .iter()
-            .copied()
-            .filter(|id| !excluded.contains(id)),
-    );
+    for id in &rules.include {
+        let resolved = canonical_page(*id, redirects)?;
+        if resolved != *id {
+            warnings.insert(format!("Resolved redirect: {id} -> {resolved}"));
+        }
+        if !excluded.contains(&resolved) {
+            pages.insert(resolved);
+            if disambiguations.contains(&resolved) {
+                warnings.insert(format!("Disambiguation article: {resolved}"));
+            }
+        }
+    }
     if pages.len() > rules.page_limit {
         return Err(ResolveError::TooManyPages);
     }
@@ -97,4 +122,22 @@ pub fn resolve(
         page_ids: pages.into_iter().collect(),
         warnings: warnings.into_iter().collect(),
     })
+}
+
+fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, ResolveError> {
+    let mut visited = BTreeSet::new();
+    loop {
+        if id == 0 {
+            return Err(ResolveError::InvalidPage);
+        }
+        match redirects.get(&id) {
+            Some(next) => {
+                if !visited.insert(id) {
+                    return Err(ResolveError::RedirectCycle(id));
+                }
+                id = *next;
+            }
+            None => return Ok(id),
+        }
+    }
 }
