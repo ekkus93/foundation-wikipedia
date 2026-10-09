@@ -23,5 +23,8 @@ fn empty_category_fanout_has_a_finite_budget() {
         depth_limit: 1,
         page_limit: 1,
     };
-    assert_eq!(resolve(&graph, &rules), Err(ResolveError::TooManyCategories));
+    assert_eq!(
+        resolve(&graph, &rules),
+        Err(ResolveError::TooManyCategories)
+    );
 }
