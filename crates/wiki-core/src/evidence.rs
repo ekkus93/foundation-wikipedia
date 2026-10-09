@@ -22,7 +22,9 @@ pub fn evidence_references(article: &Article) -> Result<Vec<EvidenceReference<'_
         .references
         .iter()
         .map(|reference| EvidenceReference {
-            id: article.key.reference_id(article.revision.revision_id, &reference.id),
+            id: article
+                .key
+                .reference_id(article.revision.revision_id, &reference.id),
             reference,
         })
         .collect())
