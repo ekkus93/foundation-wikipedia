@@ -212,14 +212,11 @@ mod tests {
             ),
             Err(JoinError::DeletedPageConflict(page.clone()))
         );
-        assert!(join_pages_with_tombstones(
-            vec![],
-            vec![],
-            vec![],
-            vec![page.clone()]
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            join_pages_with_tombstones(vec![], vec![], vec![], vec![page.clone()])
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             join_pages_with_tombstones(vec![], vec![], vec![], vec![page.clone(), page.clone()]),
             Err(JoinError::DuplicateTombstone(page))
