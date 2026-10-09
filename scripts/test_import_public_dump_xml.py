@@ -80,6 +80,12 @@ class DumpImportTests(unittest.TestCase):
             self.parse(BODY.replace(b"<page><title>Gravity",
                                     b'<page xmlns="urn:attacker"><title>Gravity', 1))
 
+    def test_decoded_xml_budget_blocks_metadata_and_compression_bombs(self):
+        with self.assertRaisesRegex(DumpImportError, "decoded-input byte budget"):
+            self.parse(max_decoded_bytes=len(BODY) - 1)
+        with self.assertRaisesRegex(DumpImportError, "invalid decoded-input"):
+            self.parse(max_decoded_bytes=0)
+
     def test_page_and_total_budgets_fail_closed(self):
         with self.assertRaisesRegex(DumpImportError, "byte budget"):
             self.parse(max_page_bytes=10)
@@ -217,6 +223,12 @@ class DumpImportTests(unittest.TestCase):
             self.assertFalse(out.exists())
             with self.assertRaisesRegex(DumpImportError, "combined page count"):
                 import_verified_members(manifest, stage, names, out, max_pages=1)
+            self.assertFalse(out.exists())
+            with self.assertRaisesRegex(DumpImportError, "decoded-input byte budget"):
+                import_verified_members(
+                    manifest, stage, names, out,
+                    max_decoded_bytes=len(first) + len(second) - 1,
+                )
             self.assertFalse(out.exists())
             with self.assertRaisesRegex(DumpImportError, "not a verified XML"):
                 import_verified_members(manifest, stage, ["unknown.xml"], out)

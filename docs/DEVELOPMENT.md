@@ -159,7 +159,11 @@ python3 scripts/import_public_dump_xml.py source-manifest.json \
 The default 1,000,000-page import budget is deliberately conservative and
 would reject a full English-Wikipedia extraction. Pass `--max-pages 10000000`
 (or another justified positive limit) for a large qualified dump, and set
-`--max-page-bytes` up to 67108864 for unusually large individual pages. Both
+`--max-page-bytes` up to 67108864 for unusually large individual pages.
+The streaming XML reader also limits **total decompressed bytes across every
+selected shard** to 256 GiB by default (`--max-decoded-bytes` adjusts this,
+with a hard maximum of 4 TiB). The decoded-byte budget catches large ignored
+metadata and decompression bombs even when individual pages are small. Both
 quotas fail closed without publishing incomplete output; large builds require
 sufficient staging/output disk space and are not yet device-qualified.
 

@@ -19,6 +19,22 @@ from xml.parsers import expat
 from verify_source_staging import verify_source_bytes
 
 CHUNK = 65536
+DEFAULT_MAX_DECODED_BYTES = 256 * 1024 ** 3
+ABSOLUTE_MAX_DECODED_BYTES = 4 * 1024 ** 4
+
+
+class _DecodedBudget:
+    def __init__(self, cap):
+        if type(cap) is not int or not 1 <= cap <= ABSOLUTE_MAX_DECODED_BYTES:
+            raise DumpImportError("invalid decoded-input byte budget")
+        self.cap = cap
+        self.used = 0
+
+    def take(self, size):
+        self.used += size
+        if self.used > self.cap:
+            raise DumpImportError("decoded-input byte budget exceeded")
+
 FIELDS = {
     ("mediawiki", "page", "title"): "title",
     ("mediawiki", "page", "ns"): "namespace",
@@ -39,10 +55,12 @@ class DumpImportError(ValueError):
 
 
 def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
-              max_page_bytes=8 * 1024 * 1024):
+              max_page_bytes=8 * 1024 * 1024,
+              max_decoded_bytes=DEFAULT_MAX_DECODED_BYTES, _budget=None):
     """Streaming parser with bounded page text and explicit revision identity."""
     if not isinstance(project, str) or not project or not generation:
         raise DumpImportError("missing source provenance")
+    budget = _budget if _budget is not None else _DecodedBudget(max_decoded_bytes)
     seen = set()
     path = []
     page = None
@@ -183,6 +201,7 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
             block = stream.read(CHUNK)
             if not block:
                 break
+            budget.take(len(block))
             parser.Parse(block, False)
         parser.Parse(b"", True)
     except (expat.ExpatError, EOFError, OSError) as error:
@@ -193,7 +212,8 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
 
 
 def import_verified_members(manifest, staging, members, output, *, max_pages=1000000,
-                            max_page_bytes=8 * 1024 * 1024):
+                            max_page_bytes=8 * 1024 * 1024,
+                            max_decoded_bytes=DEFAULT_MAX_DECODED_BYTES):
     """Atomically combine explicitly selected, verified, non-overlapping XML shards.
 
     Caller must select shards from one dump product. A completed generation
@@ -205,6 +225,7 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
             or not members or type(max_pages) is not int or max_pages <= 0
             or type(max_page_bytes) is not int or not (1 <= max_page_bytes <= 64 * 1024 * 1024)):
         raise DumpImportError("invalid XML member selection or page budget")
+    decoded_budget = _DecodedBudget(max_decoded_bytes)
     if urlsplit(manifest["source_url"]).hostname != "dumps.wikimedia.org":
         raise DumpImportError("raw MediaWiki dump requires official public-dump provenance")
     allowed = {entry["name"]: entry for entry in manifest["files"]}
@@ -257,7 +278,8 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
                 with stream_open(source, "rb") as stream:
                     parse_xml(stream, emit, project=manifest["project"],
                               generation=manifest["generation_id"],
-                              max_pages=max_pages, max_page_bytes=max_page_bytes)
+                              max_pages=max_pages, max_page_bytes=max_page_bytes,
+                              _budget=decoded_budget)
             writer.flush()
             os.fsync(writer.fileno())
         try:
@@ -291,6 +313,8 @@ def main():
                         help="Fail after this many total records across selected shards")
     parser.add_argument("--max-page-bytes", type=int, default=8 * 1024 * 1024,
                         help="Maximum decoded character bytes per page (up to 64 MiB)")
+    parser.add_argument("--max-decoded-bytes", type=int, default=DEFAULT_MAX_DECODED_BYTES,
+                        help="Maximum total decoded XML bytes across all selected shards")
     parser.add_argument("raw_ndjson_output", type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.source_manifest.read_text(encoding="utf-8"))
@@ -298,7 +322,8 @@ def main():
         count = import_verified_members(
             manifest, args.staging_directory,
             [args.dump_member, *args.additional_member], args.raw_ndjson_output,
-            max_pages=args.max_pages, max_page_bytes=args.max_page_bytes
+            max_pages=args.max_pages, max_page_bytes=args.max_page_bytes,
+            max_decoded_bytes=args.max_decoded_bytes
         )
     except (DumpImportError, OSError, ValueError) as error:
         parser.exit(2, f"Raw XML import failed: {error}\n")
