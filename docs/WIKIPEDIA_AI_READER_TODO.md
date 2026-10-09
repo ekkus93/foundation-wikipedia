@@ -406,6 +406,20 @@ Spec deviation/ADR:
 
 
 
+### RAG-001 — partial article-local lexical retrieval (not complete)
+
+- Implementation: `crates/wiki-search/src/lib.rs` ranks terms from a single validated article, boosts matching headings, bounds result count, generates revision-scoped block IDs and rejects unanswerable lexical queries without manufacturing evidence.
+- Validated master SHA: `54277c69b2cc60c50eacd0e2b9e5d10fa00afb5d`.
+- CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37913138904 (Rust formatting, strict Clippy, unit tests and exact-head check all passed).
+- Remaining: canonical evidence maps, production block retrieval/index and token budget, article/selection context and BM25 evaluation. `RAG-001` remains unchecked.
+
+### SRC-001 — partial authoritative source manifest validation (not complete)
+
+- Implementation: `crates/wiki-source/src/lib.rs` validates project IDs, generation IDs, source publication-completed state, nonempty manifests, well-formed SHA-256 hex strings and duplicate member filenames.
+- Validated master SHA: `d653391dd5c6b637ce0bd75f2e7a369c73572c56`.
+- CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37914208872 (Rust checks and exact-head consistency passed).
+- Remaining: authoritative release discovery, bytewise SHA-256 validation, resume/mirror transport and activation isolation. `SRC-001` remains unchecked.
+
 ## Blockers requiring owner action
 
 _None at initial creation._ If a blocker arises, record exact failing operation, evidence, why independent progress cannot continue, the specific permission/input/hardware needed and the next action. Technical evaluations, normal code defects and running CI belong in the task notes, not here.
