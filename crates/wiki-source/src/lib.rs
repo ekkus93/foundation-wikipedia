@@ -28,6 +28,16 @@ pub enum SourceError {
     DuplicateFile(String),
 }
 
+/// Reject names that alias Windows device files even when given an extension.
+fn windows_device_name(value: &str) -> bool {
+    let upper = value.to_ascii_uppercase();
+    let base = upper.split('.').next().unwrap_or("");
+    let numbered = base.len() == 4
+        && (base.starts_with("COM") || base.starts_with("LPT"))
+        && (b'1'..=b'9').contains(&base.as_bytes()[3]);
+    ["CON", "PRN", "AUX", "NUL"].contains(&base) || numbered
+}
+
 impl SourceGeneration {
     /// Validate publication metadata before trusting any mirror or cache.
     pub fn validate(&self) -> Result<(), SourceError> {
@@ -42,6 +52,9 @@ impl SourceGeneration {
         if self.upstream_id.is_empty()
             || self.upstream_id == "."
             || self.upstream_id == ".."
+            || self.upstream_id.starts_with('.')
+            || self.upstream_id.ends_with('.')
+            || windows_device_name(&self.upstream_id)
             || !self
                 .upstream_id
                 .bytes()
@@ -65,6 +78,7 @@ impl SourceGeneration {
                 || file.name == ".."
                 || file.name.starts_with('.')
                 || file.name.ends_with('.')
+                || windows_device_name(&file.name)
                 || !file
                     .name
                     .bytes()
@@ -74,7 +88,7 @@ impl SourceGeneration {
             {
                 return Err(SourceError::InvalidFile(file.name.clone()));
             }
-            if !names.insert(&file.name) {
+            if !names.insert(file.name.to_ascii_lowercase()) {
                 return Err(SourceError::DuplicateFile(file.name.clone()));
             }
         }
@@ -144,6 +158,32 @@ mod tests {
         let mut good = sample();
         good.files[0].name = "enwiki-20261001-pages-articles.xml.bz2".into();
         assert_eq!(good.validate(), Ok(()));
+    }
+
+    #[test]
+    fn reserved_windows_names_and_case_aliases_are_rejected() {
+        for name in ["CON", "nul.xml", "COM1", "LPT9.txt", "prn.dat"] {
+            let mut bad = sample();
+            bad.files[0].name = name.into();
+            assert_eq!(
+                bad.validate(),
+                Err(SourceError::InvalidFile(name.into()))
+            );
+        }
+        let mut bad = sample();
+        bad.upstream_id = "CON".into();
+        assert_eq!(bad.validate(), Err(SourceError::MissingGeneration));
+
+        let mut colliding = sample();
+        colliding.files.push(SourceFile {
+            name: "ARTICLES.PARQUET".into(),
+            sha256: "b".repeat(64),
+            bytes: 12,
+        });
+        assert_eq!(
+            colliding.validate(),
+            Err(SourceError::DuplicateFile("ARTICLES.PARQUET".into()))
+        );
     }
 
     #[test]
