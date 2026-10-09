@@ -229,7 +229,7 @@ impl Article {
             if reference.label.trim().is_empty() {
                 return Err(ModelError::InvalidReferenceLabel);
             }
-            if reference.id.is_empty() || !refs.insert(&reference.id) {
+            if reference.id.trim().is_empty() || !refs.insert(&reference.id) {
                 return Err(ModelError::DuplicateReference(reference.id.clone()));
             }
         }
@@ -440,6 +440,16 @@ mod tests {
         assert_eq!(a.validate(), Err(ModelError::InvalidLinkLabel));
         a.links[0].label = "Related page".into();
         assert_eq!(a.validate(), Ok(()));
+    }
+
+    #[test]
+    fn whitespace_reference_ids_are_invalid() {
+        let mut a = article();
+        a.references[0].id = "  ".into();
+        assert_eq!(
+            a.validate(),
+            Err(ModelError::DuplicateReference("  ".into()))
+        );
     }
 
     #[test]
