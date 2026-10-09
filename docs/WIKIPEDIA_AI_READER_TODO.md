@@ -420,6 +420,24 @@ Spec deviation/ADR:
 - CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37914208872 (Rust checks and exact-head consistency passed).
 - Remaining: authoritative release discovery, bytewise SHA-256 validation, resume/mirror transport and activation isolation. `SRC-001` remains unchecked.
 
+### PACK-002 — partial deterministic category resolver
+
+- Code: `crates/wiki-pack-builder/src/selection.rs` and `tests/selection.rs`: cycle prevention, stable page-ID ordering, category filtering, inclusions/exclusions, page/depth limits.
+- Qualified: `af6d1c23257c7f1721c7a3a2977d221e41d660be`; https://github.com/ekkus93/foundation-wikipedia/actions/runs/37914680497 (format, Clippy, tests, exact-head check passed).
+- Remaining: official category source integration, redirect/disambiguation resolution and fixed-snapshot/definition provenance. PACK-002 unchecked.
+
+### MOD-002 — partial revision-scoped evidence mapping
+
+- Code: `crates/wiki-core/src/evidence.rs` and `tests/evidence.rs`: validated nested sections, exact revision-bound block handles and cross-revision identity change.
+- Qualified: `1eb109d6cd20a07f9ea2c0bbe0ab7200ebea1b86`; https://github.com/ekkus93/foundation-wikipedia/actions/runs/37915021866 (format, Clippy, tests, exact-head check passed).
+- Remaining: footnote/reference mapping, soft anchors, HTML bridge/RAG integration. MOD-002 unchecked. An unused intermediate duplicate model draft was removed by `90fee5b0d2fc880aba7f4e1cf125dd8aef2e0c40`.
+
+### PACK-001 — partial portable manifest validation
+
+- Code: `crates/wiki-pack-format/src/manifest.rs` and `tests/manifest.rs`: basic origin classification, version checks, malformed digests, object path safety and duplicates.
+- Qualified: `6c872b39f98d5a53d115e60949ff82f058f50873`; https://github.com/ekkus93/foundation-wikipedia/actions/runs/37916125850 (format, Clippy, tests, exact-head check passed).
+- Remaining: actual .wpack framing, canonical signing inputs, source hashes/provenance, full media/index catalog, byte verification and Android import. PACK-001 unchecked. Structural validation alone never confers Verified Publisher trust.
+
 ## Blockers requiring owner action
 
 _None at initial creation._ If a blocker arises, record exact failing operation, evidence, why independent progress cannot continue, the specific permission/input/hardware needed and the next action. Technical evaluations, normal code defects and running CI belong in the task notes, not here.
