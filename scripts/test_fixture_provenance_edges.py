@@ -81,6 +81,30 @@ class FixtureProvenanceEdgeTests(unittest.TestCase):
         self.assert_error("invalid page_id")
         self.assert_error("invalid revision_id")
 
+    def test_wikimedia_source_rejects_lookalike_hosts(self):
+        for url in (
+            "https://example.org/enwiki/",
+            "https://dumps.wikimedia.org.attacker.example/enwiki/",
+            "https://wikimedia.org@attacker.example/enwiki/",
+            "https://dumps.wikimedia.org:8443/enwiki/",
+            "https://dumps.wikimedia.org.evil.org/enwiki/",
+        ):
+            with self.subTest(url=url):
+                self.sidecar(
+                    source="wikimedia", source_url=url,
+                    project="enwiki", page_id=1, revision_id=2,
+                )
+                self.assert_error("missing HTTPS source_url")
+
+    def test_empty_fixture_directory_fails_closed(self):
+        self.fixture.unlink()
+        self.assert_error("no fixture data files")
+
+    def test_readme_only_fixture_directory_fails_closed(self):
+        self.fixture.unlink()
+        (self.root / "README.md").write_text("fixture guidance", encoding="utf-8")
+        self.assert_error("no fixture data files")
+
     def test_directory_symlink_is_rejected(self):
         target = self.root / "actual"
         target.mkdir()

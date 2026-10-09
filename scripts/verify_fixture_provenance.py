@@ -10,6 +10,14 @@ from urllib.parse import urlsplit
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 PROJECT = re.compile(r"^[a-z0-9_]+$")
 SUFFIX = ".provenance.json"
+# A HTTPS URL alone is not evidence of an authoritative Wikimedia source.
+# Match DNS label boundaries so attacker-controlled lookalikes cannot pass.
+OFFICIAL_HOSTS = (
+    "wikimedia.org", "wikimedia.com", "wikipedia.org", "wikidata.org",
+    "mediawiki.org", "wiktionary.org", "wikibooks.org", "wikiquote.org",
+    "wikisource.org", "wikinews.org", "wikiversity.org",
+    "wikivoyage.org", "wikifunctions.org",
+)
 
 
 def _positive_id(value):
@@ -24,6 +32,11 @@ def _official_url(value):
         return (
             parsed.scheme == "https"
             and bool(parsed.hostname)
+            and any(
+                parsed.hostname == host or parsed.hostname.endswith("." + host)
+                for host in OFFICIAL_HOSTS
+            )
+            and parsed.port in (None, 443)
             and parsed.username is None
             and parsed.password is None
         )
@@ -38,6 +51,7 @@ def verify(root):
         return [f"{root}: missing or unsafe fixture directory"]
 
     errors = []
+    fixture_count = 0
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             errors.append(f"{path}: symlink not allowed")
@@ -55,6 +69,7 @@ def verify(root):
         if path.name == "README.md":
             continue
 
+        fixture_count += 1
         sidecar = Path(str(path) + SUFFIX)
         if not sidecar.is_file() or sidecar.is_symlink():
             errors.append(f"{path}: missing provenance sidecar")
@@ -96,6 +111,8 @@ def verify(root):
             for key in ("page_id", "revision_id"):
                 if not _positive_id(data.get(key)):
                     errors.append(f"{sidecar}: invalid {key}")
+    if fixture_count == 0:
+        errors.append(f"{root}: no fixture data files")
     return errors
 
 
