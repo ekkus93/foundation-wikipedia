@@ -156,6 +156,13 @@ python3 scripts/import_public_dump_xml.py source-manifest.json \
   /path/to/raw-revisions.ndjson
 ```
 
+The default 1,000,000-page import budget is deliberately conservative and
+would reject a full English-Wikipedia extraction. Pass `--max-pages 10000000`
+(or another justified positive limit) for a large qualified dump, and set
+`--max-page-bytes` up to 67108864 for unusually large individual pages. Both
+quotas fail closed without publishing incomplete output; large builds require
+sufficient staging/output disk space and are not yet device-qualified.
+
 For a single *non-overlapping* dump product split across XML shards, specify
 the first member as usual and repeat `--additional-member` for each further
 shard (in desired output order). The importer verifies the complete staged

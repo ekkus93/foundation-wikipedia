@@ -184,7 +184,8 @@ def parse_xml(stream, emit, *, project, generation, max_pages=1000000,
     return total
 
 
-def import_verified_members(manifest, staging, members, output, *, max_pages=1000000):
+def import_verified_members(manifest, staging, members, output, *, max_pages=1000000,
+                            max_page_bytes=8 * 1024 * 1024):
     """Atomically combine explicitly selected, verified, non-overlapping XML shards.
 
     Caller must select shards from one dump product. A completed generation
@@ -193,7 +194,8 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
     """
     verify_source_bytes(manifest, staging)
     if (isinstance(members, (str, bytes)) or not isinstance(members, (list, tuple))
-            or not members or type(max_pages) is not int or max_pages <= 0):
+            or not members or type(max_pages) is not int or max_pages <= 0
+            or type(max_page_bytes) is not int or not (1 <= max_page_bytes <= 64 * 1024 * 1024)):
         raise DumpImportError("invalid XML member selection or page budget")
     allowed = {entry["name"] for entry in manifest["files"]}
     if len(set(members)) != len(members):
@@ -233,7 +235,7 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
                 with stream_open(source, "rb") as stream:
                     parse_xml(stream, emit, project=manifest["project"],
                               generation=manifest["generation_id"],
-                              max_pages=max_pages)
+                              max_pages=max_pages, max_page_bytes=max_page_bytes)
             writer.flush()
             os.fsync(writer.fileno())
         try:
@@ -263,13 +265,18 @@ def main():
     parser.add_argument("dump_member")
     parser.add_argument("--additional-member", action="append", default=[],
                         help="Additional non-overlapping XML shard (repeatable)")
+    parser.add_argument("--max-pages", type=int, default=1000000,
+                        help="Fail after this many total records across selected shards")
+    parser.add_argument("--max-page-bytes", type=int, default=8 * 1024 * 1024,
+                        help="Maximum decoded character bytes per page (up to 64 MiB)")
     parser.add_argument("raw_ndjson_output", type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.source_manifest.read_text(encoding="utf-8"))
     try:
         count = import_verified_members(
             manifest, args.staging_directory,
-            [args.dump_member, *args.additional_member], args.raw_ndjson_output
+            [args.dump_member, *args.additional_member], args.raw_ndjson_output,
+            max_pages=args.max_pages, max_page_bytes=args.max_page_bytes
         )
     except (DumpImportError, OSError, ValueError) as error:
         parser.exit(2, f"Raw XML import failed: {error}\n")

@@ -92,6 +92,40 @@ class DumpImportTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpImportError, "invalid or empty"):
             self.parse(BODY.replace(b"Force &amp; mass", b""))
 
+    def test_import_budgets_are_explicit_and_strictly_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stage = root / "stage"
+            stage.mkdir()
+            payload = bz2.compress(BODY)
+            (stage / "article.xml.bz2").write_bytes(payload)
+            manifest = {
+                "project": "enwiki", "generation_id": "20261009",
+                "source_url": "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json",
+                "completed": True,
+                "files": [{
+                    "name": "article.xml.bz2", "bytes": len(payload),
+                    "sha256": hashlib.sha256(payload).hexdigest()
+                }]
+            }
+            output = root / "raw.ndjson"
+            for quota in [0, -1, True]:
+                with self.assertRaisesRegex(DumpImportError, "budget"):
+                    import_verified_members(manifest, stage, ["article.xml.bz2"], output,
+                                            max_pages=quota)
+            for quota in [0, -1, True, 128 * 1024 * 1024]:
+                with self.assertRaisesRegex(DumpImportError, "budget"):
+                    import_verified_members(manifest, stage, ["article.xml.bz2"], output,
+                                            max_page_bytes=quota)
+            with self.assertRaisesRegex(DumpImportError, "byte budget"):
+                import_verified_members(manifest, stage, ["article.xml.bz2"], output,
+                                        max_page_bytes=10)
+            self.assertFalse(output.exists())
+            self.assertEqual(import_verified_members(
+                manifest, stage, ["article.xml.bz2"], output,
+                max_pages=10_000_000, max_page_bytes=32 * 1024 * 1024
+            ), 2)
+
     def test_full_verified_bz2_input_atomically_publishes_raw_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
