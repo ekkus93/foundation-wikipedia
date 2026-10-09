@@ -117,6 +117,7 @@ pub enum ModelError {
     InvalidSectionHeading,
     InvalidReferenceLabel,
     InvalidLinkLabel,
+    InvalidWikidataId,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
@@ -217,6 +218,15 @@ impl Article {
             || self.language.trim().is_empty()
         {
             return Err(ModelError::MissingTitle);
+        }
+        if let Some(id) = &self.wikidata_id {
+            let digits = id.strip_prefix('Q').unwrap_or("");
+            if digits.is_empty()
+                || digits.starts_with('0')
+                || !digits.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return Err(ModelError::InvalidWikidataId);
+            }
         }
         for link in &self.links {
             if link.label.trim().is_empty() {
@@ -454,6 +464,17 @@ mod tests {
             a.validate(),
             Err(ModelError::DuplicateReference("  ".into()))
         );
+    }
+
+    #[test]
+    fn invalid_wikidata_ids_are_rejected() {
+        let mut a = article();
+        for id in ["", "Q", "Q0", "Q01", "q42", "Q-1", "Q42x"] {
+            a.wikidata_id = Some(id.into());
+            assert_eq!(a.validate(), Err(ModelError::InvalidWikidataId));
+        }
+        a.wikidata_id = Some("Q42".into());
+        assert_eq!(a.validate(), Ok(()));
     }
 
     #[test]
