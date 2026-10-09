@@ -72,38 +72,73 @@ mod tests {
 
     #[test]
     fn official_claim_and_checksum_can_never_confer_publisher_trust() {
-        let claimed = pack(Origin::Official { publisher: "Foundation".into() });
-        assert_eq!(classify(&claimed, IntegrityState::NotChecked), TrustStatus::NotYetChecked);
-        assert_eq!(classify(&claimed, IntegrityState::Passed), TrustStatus::NotYetChecked);
-        assert_ne!(classify(&claimed, IntegrityState::Passed), TrustStatus::VerifiedPublisher);
-        assert_eq!(classify(&claimed, IntegrityState::Failed), TrustStatus::VerificationFailed);
+        let claimed = pack(Origin::Official {
+            publisher: "Foundation".into(),
+        });
+        assert_eq!(
+            classify(&claimed, IntegrityState::NotChecked),
+            TrustStatus::NotYetChecked
+        );
+        assert_eq!(
+            classify(&claimed, IntegrityState::Passed),
+            TrustStatus::NotYetChecked
+        );
+        assert_ne!(
+            classify(&claimed, IntegrityState::Passed),
+            TrustStatus::VerifiedPublisher
+        );
+        assert_eq!(
+            classify(&claimed, IntegrityState::Failed),
+            TrustStatus::VerificationFailed
+        );
     }
 
     #[test]
     fn unsigned_custom_integrity_is_not_publisher_identity() {
-        let custom = pack(Origin::Custom { definition_id: "physics".into() });
-        assert_eq!(classify(&custom, IntegrityState::NotChecked), TrustStatus::NotYetChecked);
+        let custom = pack(Origin::Custom {
+            definition_id: "physics".into(),
+        });
+        assert_eq!(
+            classify(&custom, IntegrityState::NotChecked),
+            TrustStatus::NotYetChecked
+        );
         assert_eq!(
             classify(&custom, IntegrityState::Passed),
             TrustStatus::CustomIntegrityVerified
         );
-        assert_eq!(classify(&custom, IntegrityState::Failed), TrustStatus::VerificationFailed);
-        assert_eq!(TrustStatus::CustomIntegrityVerified.label(), "Custom — integrity verified");
+        assert_eq!(
+            classify(&custom, IntegrityState::Failed),
+            TrustStatus::VerificationFailed
+        );
+        assert_eq!(
+            TrustStatus::CustomIntegrityVerified.label(),
+            "Custom — integrity verified"
+        );
     }
 
     #[test]
     fn invalid_manifest_never_shows_success_or_pending() {
-        let mut custom = pack(Origin::Custom { definition_id: "personal".into() });
+        let mut custom = pack(Origin::Custom {
+            definition_id: "personal".into(),
+        });
         custom.objects[0].path = "../escape".into();
-        assert_eq!(classify(&custom, IntegrityState::Passed), TrustStatus::VerificationFailed);
-        assert_eq!(classify(&custom, IntegrityState::NotChecked), TrustStatus::VerificationFailed);
+        assert_eq!(
+            classify(&custom, IntegrityState::Passed),
+            TrustStatus::VerificationFailed
+        );
+        assert_eq!(
+            classify(&custom, IntegrityState::NotChecked),
+            TrustStatus::VerificationFailed
+        );
     }
 
     #[test]
     fn all_states_have_explicit_accessible_labels() {
         for status in [
-            TrustStatus::VerifiedPublisher, TrustStatus::CustomIntegrityVerified,
-            TrustStatus::NotYetChecked, TrustStatus::VerificationFailed,
+            TrustStatus::VerifiedPublisher,
+            TrustStatus::CustomIntegrityVerified,
+            TrustStatus::NotYetChecked,
+            TrustStatus::VerificationFailed,
         ] {
             assert!(!status.label().trim().is_empty());
         }
