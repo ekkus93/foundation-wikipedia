@@ -154,13 +154,9 @@ impl Manifest {
                 || object.path.chars().any(char::is_control)
                 || object.path.contains(':')
                 || object.path.split('/').count() > MAX_OBJECT_PATH_COMPONENTS
-                || object
-                    .path
-                    .split('/')
-                    .any(|component| {
-                        component.len() > MAX_OBJECT_PATH_COMPONENT_BYTES
-                            || unsafe_component(component)
-                    })
+                || object.path.split('/').any(|component| {
+                    component.len() > MAX_OBJECT_PATH_COMPONENT_BYTES || unsafe_component(component)
+                })
             {
                 return Err(ManifestError::UnsafeObject);
             }
