@@ -3,8 +3,6 @@
 //! This is a **partial** implementation of MOD-001: stable typed data and
 //! validation. Upstream adapters and serialized record formats remain pending.
 
-pub mod evidence;
-
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
