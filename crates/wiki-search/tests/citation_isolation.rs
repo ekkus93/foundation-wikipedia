@@ -4,7 +4,10 @@ use wiki_search::{validate_claimed_citations, ArticleLexicalIndex, CitationError
 fn article(project: &str, page_id: u64, revision_id: u64) -> Article {
     Article {
         schema_version: ARTICLE_SCHEMA_VERSION,
-        key: ArticleKey { project: project.into(), page_id },
+        key: ArticleKey {
+            project: project.into(),
+            page_id,
+        },
         revision: Revision {
             revision_id,
             timestamp: "2026-10-09T00:00:00Z".into(),
@@ -31,16 +34,16 @@ fn article(project: &str, page_id: u64, revision_id: u64) -> Article {
 fn citations_do_not_cross_article_or_project_boundaries() {
     let original = ArticleLexicalIndex::build(&article("frwiki", 42, 10)).unwrap();
     let hit = original.search("gravité", 1).pop().unwrap();
-    for (project, page_id, revision_id) in [
-        ("frwiki", 43, 10),
-        ("enwiki", 42, 10),
-        ("frwiki", 42, 11),
-    ] {
+    for (project, page_id, revision_id) in
+        [("frwiki", 43, 10), ("enwiki", 42, 10), ("frwiki", 42, 11)]
+    {
         let other = ArticleLexicalIndex::build(&article(project, page_id, revision_id)).unwrap();
         assert!(!other.contains_evidence(&hit));
         assert_eq!(
             validate_claimed_citations(&other, &[hit.clone()], &[hit.block_id.clone()]),
-            Err(CitationError::InvalidRetrievedEvidence(hit.block_id.clone()))
+            Err(CitationError::InvalidRetrievedEvidence(
+                hit.block_id.clone()
+            ))
         );
     }
 }
