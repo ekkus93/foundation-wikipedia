@@ -20,10 +20,10 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 
 ## Phase 0 — Repository/bootstrap, build and quality gates
 
-- [ ] **BOOT-001** Establish the Rust workspace. **Dependencies:** none.  
-  - [ ] Create `wiki-model`, `wiki-core`, `wiki-source`, `wiki-store`, `wiki-search`, `wiki-ai`, `wiki-pack-format`, `wiki-pack-builder`, `wiki-ffi` crates and `wiki-pack` CLI skeleton.
-  - [ ] Enforce that shared crates do not import UI/Tauri/Android dependencies.
-  - [ ] Pin toolchains/lockfiles; add `cargo fmt`, `clippy`, unit-test scripts.
+- [x] **BOOT-001** Establish the Rust workspace. **Dependencies:** none.  
+  - [x] Create `wiki-model`, `wiki-core`, `wiki-source`, `wiki-store`, `wiki-search`, `wiki-ai`, `wiki-pack-format`, `wiki-pack-builder`, `wiki-ffi` crates and `wiki-pack` CLI skeleton.
+  - [x] Enforce that shared crates do not import UI/Tauri/Android dependencies.
+  - [x] Pin toolchains/lockfiles; add `cargo fmt`, `clippy`, unit-test scripts.
   - **Accept:** clean checkout compiles and tests minimal workspace without external infrastructure.
 - [ ] **BOOT-002** Scaffold desktop and Android shells. **Depends:** BOOT-001.  
   - [ ] Tauri 2/React/TypeScript/Vite desktop and Kotlin/Jetpack Compose/Gradle Android shells.
@@ -397,7 +397,14 @@ Failure and recovery test:
 Spec deviation/ADR:
 ```
 
-_No implementation acceptance is asserted by this initial planning document._
+### BOOT-001 — verified Rust workspace bootstrap
+
+- Master SHA: `a466255b478fc4a8d75a35ae3afd93c4f8a39a29`
+- CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37912719275 (exact-head success; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, and head consistency check).
+- Artifacts: 9 platform-neutral crates, `wiki-pack` CLI skeleton, pinned `rust-toolchain.toml`, `Cargo.lock`, `Cargo.toml` workspace, README and `docs/DEVELOPMENT.md`.
+- Scope boundary: This verifies only BOOT-001. Desktop/Android scaffolds, serde codecs, functional pack building and end-user features remain unchecked.
+
+
 
 ## Blockers requiring owner action
 
