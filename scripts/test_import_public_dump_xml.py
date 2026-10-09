@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from import_public_dump_xml import (DumpImportError, import_verified_member,
                                     import_verified_members, parse_xml)
@@ -284,6 +285,71 @@ class DumpImportTests(unittest.TestCase):
             with self.assertRaisesRegex(DumpImportError, "duplicate page ID across"):
                 import_verified_members(manifest, stage, names, out)
             self.assertFalse(out.exists())
+
+
+    def test_post_verification_symlink_substitution_never_publishes_import(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stage = root / "stage"
+            stage.mkdir()
+            member = stage / "article.xml.bz2"
+            body = bz2.compress(BODY)
+            member.write_bytes(body)
+            manifest = {
+                "project": "enwiki", "generation_id": "20261009",
+                "source_url": "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json",
+                "completed": True,
+                "files": [{"name": member.name, "bytes": len(body),
+                           "sha256": hashlib.sha256(body).hexdigest()}],
+            }
+            outside = root / "outside.xml.bz2"
+            outside.write_bytes(body)
+            output = root / "raw.ndjson"
+            from verify_source_staging import verify_source_bytes
+
+            def replace_after_verification(source_manifest, directory):
+                count = verify_source_bytes(source_manifest, directory)
+                member.unlink()
+                member.symlink_to(outside)
+                return count
+
+            with patch("import_public_dump_xml.verify_source_bytes",
+                       side_effect=replace_after_verification):
+                with self.assertRaisesRegex(DumpImportError, "unsafe verified XML member open"):
+                    import_verified_members(manifest, stage, [member.name], output)
+            self.assertFalse(output.exists())
+            self.assertEqual(outside.read_bytes(), body)
+
+    def test_post_verification_byte_substitution_rejected_before_publish(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stage = root / "stage"
+            stage.mkdir()
+            member = stage / "article.xml.bz2"
+            body = bz2.compress(BODY)
+            member.write_bytes(body)
+            manifest = {
+                "project": "enwiki", "generation_id": "20261009",
+                "source_url": "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json",
+                "completed": True,
+                "files": [{"name": member.name, "bytes": len(body),
+                           "sha256": hashlib.sha256(body).hexdigest()}],
+            }
+            output = root / "raw.ndjson"
+            from verify_source_staging import verify_source_bytes
+
+            def alter_after_verification(source_manifest, directory):
+                count = verify_source_bytes(source_manifest, directory)
+                # Preserve the compressed stream's validity but violate its
+                # attested source bytes after the standalone preflight.
+                member.write_bytes(body + b"trailing")
+                return count
+
+            with patch("import_public_dump_xml.verify_source_bytes",
+                       side_effect=alter_after_verification):
+                with self.assertRaisesRegex(DumpImportError, "changed or is unsafe"):
+                    import_verified_members(manifest, stage, [member.name], output)
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

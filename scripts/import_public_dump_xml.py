@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
+import stat
 import tempfile
 from xml.parsers import expat
 
@@ -308,12 +309,45 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
             for member in sorted(members):
                 current_member = member
                 source = Path(staging) / member
-                stream_open = bz2.open if member.endswith(".bz2") else open
-                with stream_open(source, "rb") as stream:
-                    parse_xml(stream, emit, project=manifest["project"],
-                              generation=manifest["generation_id"],
-                              max_pages=max_pages, max_page_bytes=max_page_bytes,
-                              _budget=decoded_budget)
+                # The earlier manifest verification alone cannot protect a
+                # path reopened after verification. Open once without following
+                # symlinks; parse and rehash through that same regular inode.
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                flags |= getattr(os, "O_NONBLOCK", 0)
+                try:
+                    descriptor = os.open(source, flags)
+                except OSError as error:
+                    raise DumpImportError("unsafe verified XML member open") from error
+                with os.fdopen(descriptor, "rb") as raw:
+                    initial = os.fstat(raw.fileno())
+                    if (not stat.S_ISREG(initial.st_mode)
+                            or initial.st_nlink != 1
+                            or initial.st_size != allowed[member]["bytes"]):
+                        raise DumpImportError("verified XML member changed or is unsafe")
+                    if member.endswith(".bz2"):
+                        with bz2.BZ2File(raw, "rb") as stream:
+                            parse_xml(stream, emit, project=manifest["project"],
+                                      generation=manifest["generation_id"],
+                                      max_pages=max_pages, max_page_bytes=max_page_bytes,
+                                      _budget=decoded_budget)
+                    else:
+                        parse_xml(raw, emit, project=manifest["project"],
+                                  generation=manifest["generation_id"],
+                                  max_pages=max_pages, max_page_bytes=max_page_bytes,
+                                  _budget=decoded_budget)
+                    raw.seek(0)
+                    digest = hashlib.sha256()
+                    for block in iter(lambda: raw.read(CHUNK), b""):
+                        digest.update(block)
+                    final = os.fstat(raw.fileno())
+                    if (digest.hexdigest() != allowed[member]["sha256"]
+                            or final.st_dev != initial.st_dev
+                            or final.st_ino != initial.st_ino
+                            or final.st_size != initial.st_size
+                            or final.st_mtime_ns != initial.st_mtime_ns
+                            or final.st_ctime_ns != initial.st_ctime_ns
+                            or final.st_nlink != 1):
+                        raise DumpImportError("verified XML member changed during import")
             writer.flush()
             os.fsync(writer.fileno())
         try:
