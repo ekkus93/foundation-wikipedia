@@ -1,6 +1,6 @@
 # Foundation Wikipedia — Canonical Implementation TODO
 
-**Status:** Initial roadmap; implementation not yet performed  
+**Status:** Implementation underway; only qualified task IDs are marked completed  
 **Created:** 2026-10-09  
 **Governing requirements:** [WIKIPEDIA_AI_READER_SPEC.md](WIKIPEDIA_AI_READER_SPEC.md)  
 **Repository:** https://github.com/ekkus93/foundation-wikipedia  
@@ -475,6 +475,15 @@ Spec deviation/ADR:
 - The canonical article validator rejects whitespace-only Wikipedia reference identifiers and missing creator metadata for media assets, with regression tests. These complement earlier checks for missing titles, revision identity, link labels, reference labels and media licensing/attribution.
 - Exact master `47b88a483d1f649502fb15113aa2c783aea961d1` passed Rust workspace CI 37954809397 and Platform shells CI 37954809455.
 - **Remaining:** full schema coverage, aliases, serde roundtrips and high-fidelity renderer qualification. MOD-001 remains unchecked.
+
+### 2026-10-09 — Verified incremental work; roadmap parents remain incomplete
+
+- **MOD-001 partial:** model rejects structurally empty paragraph/quote/HTML fallback/list/table/math/infobox content while accepting sparse valid tables/math/infoboxes. Exact master `25689803a7506dc0a8e303faefd8cfdd5ad32872`; Rust CI [37962964762](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37962964762), Platform CI [37962964753](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37962964753), both passed. Full canonical schema, serialization and rendering acceptance remain open.
+- **PACK-002 partial:** redirect-chain resolution is applied to inclusion/exclusion and final page counts, with disambiguation warnings and cycle/zero-target negative tests. Exact master `8517fa798b8ac7b09615fbaa2e366e4a59097915`; Rust CI [37963293570](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963293570), Platform CI [37963293596](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963293596), both passed. Official category source integration, reproducible snapshot/definition hashes and selection-review UI remain open.
+- **UX-001 partial:** React reader action hub now handles Escape, outside pointer dismissal, focus restoration and Chat-nearest-first visual order, with keyboard focus outline. Exact master `167bccccb059572a2c77dfa85fd0e6f6f3811bc1`; Rust CI [37963533859](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963533859), Platform CI [37963533977](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963533977), both passed. Real application/browser accessibility and touch acceptance remain open.
+- **BOOT-003 partial:** strict TypeScript unused-local/unused-parameter lint added to platform CI. Exact master `b29739693c201455b745386a17a2c444f5fee026`; Rust CI [37963739442](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963739442), Platform CI [37963739424](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963739424), both passed.
+- **BOOT-003 partial:** installed desktop npm dependency license gate and negative tests now supplement the existing root Rust audit. Exact master `c44b0519580a5d52f230c20b0d29cee2ccee59af`; Rust CI [37963930935](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963930935), Platform CI [37963930918](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37963930918), both passed. Android Gradle/Tauri separate-dependency audits, stable dependency lockfiles and intentional-failure CI exercises remain open.
+- **SRC-001 partial:** source manifests reject Windows-reserved path identifiers and ASCII-case-colliding member filenames. Exact master `1fe5d04d1c55039df46bc5f75d32d00ed2a37aff`; Rust CI [37964304931](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37964304931), Platform CI [37964304951](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37964304951), both passed. Official completed-generation discovery, resumable byte transport, hash verification and atomic activation remain open.
 
 ## Blockers requiring owner action
 
