@@ -1,6 +1,6 @@
-use wiki_core::evidence::evidence_blocks;
+use wiki_core::evidence::{evidence_blocks, evidence_references};
 use wiki_model::{
-    Article, ArticleKey, Block, BlockContent, Revision, Section, ARTICLE_SCHEMA_VERSION,
+    Article, ArticleKey, Block, BlockContent, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
 
 fn article() -> Article {
@@ -64,4 +64,25 @@ fn revision_change_changes_every_evidence_handle() {
     for (old, new) in before.iter().zip(&after) {
         assert_ne!(old.id, new.id);
     }
+}
+
+#[test]
+fn reference_handles_preserve_revision_and_source_identity() {
+    let mut first = article();
+    first.references.push(Reference {
+        id: "footnote:é".into(),
+        label: "Source note".into(),
+        source_url: Some("https://example.org/reference".into()),
+    });
+    let original = evidence_references(&first).unwrap();
+    assert_eq!(original.len(), 1);
+    assert_eq!(original[0].reference.label, "Source note");
+    assert!(original[0].id.starts_with("wkr:enwiki:99:7:"));
+    let mut second = first.clone();
+    second.revision.revision_id = 8;
+    assert_ne!(original[0].id, evidence_references(&second).unwrap()[0].id);
+    second.references[0].id = "footnote-é".into();
+    assert_ne!(original[0].id, evidence_references(&second).unwrap()[0].id);
+    second.references.push(second.references[0].clone());
+    assert!(evidence_references(&second).is_err());
 }
