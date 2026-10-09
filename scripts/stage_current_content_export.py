@@ -12,6 +12,8 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import time
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -116,7 +118,29 @@ def _receipt(item, size):
     }
 
 
-def _transfer(item, directory, *, opener, download_url=None):
+def _open_member_with_backoff(request, opener, retry_sleep):
+    """Retry only bounded HTTP 429/503 responses; never bypass checksums."""
+    for attempt in range(3):
+        try:
+            return opener(request, timeout=40)
+        except HTTPError as error:
+            if error.code not in (429, 503):
+                raise ExportStagingError("source member HTTP failure") from error
+            if attempt == 2:
+                raise ExportStagingError("source member rate limit retry budget exhausted") from error
+            header = error.headers.get("Retry-After") if error.headers else None
+            if header is None:
+                delay = 1 << attempt
+            elif not header.isdecimal() or int(header) > 30:
+                raise ExportStagingError("unsafe or excessive Retry-After") from error
+            else:
+                delay = int(header)
+            error.close()
+            retry_sleep(delay)
+    raise AssertionError("unreachable source retry loop")
+
+
+def _transfer(item, directory, *, opener, download_url=None, retry_sleep=time.sleep):
     url, digest = download_url or item["url"], item["sha256"]
     name = item["path"].rsplit("/", 1)[-1]
     target, part = directory / name, directory / (name + ".part")
@@ -141,7 +165,7 @@ def _transfer(item, directory, *, opener, download_url=None):
         "Accept-Encoding": "identity",
         **({"Range": f"bytes={offset}-"} if offset else {}),
     })
-    with opener(request, timeout=40) as response:
+    with _open_member_with_backoff(request, opener, retry_sleep) as response:
         if response.geturl() != url:
             raise ExportStagingError("source URL changed during transfer")
         if response.status != (206 if offset else 200):
@@ -273,7 +297,7 @@ def _preflight(report, fetcher):
 
 
 def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
-                 opener=_open, mirror_base=None, local_directory=None):
+                 opener=_open, mirror_base=None, local_directory=None, retry_sleep=time.sleep):
     """Stage complete verified inventory before no-clobber manifest publication."""
     if mirror_base is not None and local_directory is not None:
         raise ExportStagingError("mirror and local source modes are mutually exclusive")
@@ -293,7 +317,8 @@ def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
     entries = [
         _copy_local(item, directory, local_directory) if local_directory is not None
         else _transfer(item, directory, opener=opener,
-                       download_url=mirror_base + item["path"] if mirror_base else None)
+                       download_url=mirror_base + item["path"] if mirror_base else None,
+                       retry_sleep=retry_sleep)
         for item in fresh["files"]
     ]
     entries.sort(key=lambda item: item["name"])

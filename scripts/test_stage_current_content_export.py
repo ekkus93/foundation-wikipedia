@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from discover_current_content_export import parse_checksums
@@ -214,6 +215,54 @@ class ModernExportStagingTests(unittest.TestCase):
                 mirror_base="https://mirror.example.test/",
             )
         self.assertFalse(self.dest.exists())
+
+    def test_bounded_retry_after_on_transient_rate_limit(self):
+        attempts = []
+        delays = []
+
+        def throttled(request, timeout):
+            attempts.append(request.full_url)
+            if len(attempts) == 1:
+                raise HTTPError(request.full_url, 429, "rate limit", {"Retry-After": "2"}, None)
+            return self.opener(request, timeout)
+
+        result = stage_export(
+            self.report, self.dest, self.output, fetcher=self.fetch,
+            opener=throttled, retry_sleep=delays.append,
+        )
+        self.assertEqual(len(result["files"]), 2)
+        self.assertEqual(delays, [2])
+        self.assertEqual(len(attempts), 3)
+
+    def test_rate_limit_retry_is_bounded_and_never_publishes_partial_manifest(self):
+        attempts = []
+        delays = []
+
+        def exhausted(request, timeout):
+            attempts.append(request.full_url)
+            raise HTTPError(request.full_url, 503, "unavailable", {}, None)
+
+        with self.assertRaisesRegex(ExportStagingError, "retry budget exhausted"):
+            stage_export(
+                self.report, self.dest, self.output, fetcher=self.fetch,
+                opener=exhausted, retry_sleep=delays.append,
+            )
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(delays, [1, 2])
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.dest / NAMES[0]).exists())
+
+        for header in ("999999", "-1", "bad-date"):
+            with self.subTest(header=header):
+                with self.assertRaisesRegex(ExportStagingError, "Retry-After"):
+                    stage_export(
+                        self.report, self.dest, self.output, fetcher=self.fetch,
+                        opener=lambda req, timeout: (_ for _ in ()).throw(
+                            HTTPError(req.full_url, 429, "limit", {"Retry-After": header}, None)
+                        ),
+                        retry_sleep=lambda _: self.fail("unsafe retry sleep"),
+                    )
+                self.assertFalse(self.output.exists())
 
     def test_corruption_does_not_publish_manifest(self):
         def bad(request, timeout):

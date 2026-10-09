@@ -232,6 +232,13 @@ publication. Existing resumable partials may contain mixed transport bytes;
 only the complete official SHA-256 digest is treated as verified. This does
 not imply a mirror is a verified publisher.
 
+Wikimedia member downloads and explicit HTTPS mirror transfers retry HTTP 429
+and 503 at most twice (three total attempts). Numeric `Retry-After` values
+must be at most 30 seconds; missing headers use short bounded backoff.
+Unexpected HTTP status, oversized delays, malformed headers or repeated
+throttling terminate without publishing a partial manifest. No retry can
+replace upstream SHA-256 verification.
+
 The stager re-fetches and compares official SHA256SUMS metadata before any
 member transfer, rejects altered member inventories, checks exact HTTPS URLs,
 validates resume ranges and SHA-256, and refuses incomplete manifest publication.
