@@ -77,6 +77,12 @@ class GenerationStagingTests(unittest.TestCase):
             self.stage()
         self.assertFalse(self.staging.exists())
 
+    def test_forged_status_url_rejected_before_network_or_staging(self):
+        self.report["status_url"] = "https://example.invalid/forged"
+        with self.assertRaisesRegex(DownloadError, "status URL"):
+            self.stage()
+        self.assertFalse(self.staging.exists())
+
     def test_no_implicit_network_without_user_agent(self):
         with self.assertRaisesRegex(DownloadError, "user-agent"):
             stage_generation(self.report, self.staging, self.manifest)

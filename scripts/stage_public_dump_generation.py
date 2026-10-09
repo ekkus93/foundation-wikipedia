@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from download_public_dump import (
-    DownloadError, _metadata, fetch_dump_member,
+    HOST, DownloadError, _metadata, fetch_dump_member,
 )
 from finalize_public_dump_staging import finalize_public_dump, save_manifest
 from stage_local_dump import stage_local_dump_member
@@ -20,6 +20,9 @@ def stage_generation(report, staging, output_manifest, *, local_directory=None,
     """Verify the full member inventory before I/O; finalize only if all succeed."""
     if not isinstance(report, dict) or report.get("completed") is not True:
         raise DownloadError("incomplete public dump discovery report")
+    project, generation = report.get("project"), report.get("generation_id")
+    if report.get("status_url") != f"{HOST}/{project}/{generation}/dumpstatus.json":
+        raise DownloadError("unexpected official dump status URL")
     files = report.get("files")
     if not isinstance(files, list) or not (0 < len(files) <= 100000):
         raise DownloadError("missing or excessive source members")
