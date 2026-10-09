@@ -67,3 +67,5 @@ This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ig
 `.github/workflows/rust.yml` checks root Rust fmt, Clippy, unit tests and exact Git SHA. `.github/workflows/platform-shells.yml` builds the desktop frontend, Android debug APK/tests and checks Tauri native Rust dependencies on Ubuntu 24.04. A clean CI build does not mean the prototype shell has been installed or exercised on a device.
 
 Do not mark canonical TODO tasks complete until their tests and platform acceptance have been recorded at the exact commit SHA.
+
+Partial implementation and CI receipts for the current development session are in [IMPLEMENTATION_EVIDENCE_2026-10-09.md](IMPLEMENTATION_EVIDENCE_2026-10-09.md). The canonical TODO remains authoritative.
