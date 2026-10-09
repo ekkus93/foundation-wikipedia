@@ -94,6 +94,8 @@ def _response(base, name, offset, size, opener, timeout):
                 or final.port not in (None, 443)
                 or final.username is not None or final.password is not None):
             raise SourceDownloadError("redirect to untrusted origin")
+        if response.geturl() != url:
+            raise SourceDownloadError("unexpected source member URL change")
         if response.headers.get("Content-Encoding", "identity").lower() != "identity":
             raise SourceDownloadError("compressed transfer is not byte-addressable")
         if response.status != (206 if offset else 200):
@@ -156,7 +158,18 @@ def _download(base, item, directory, opener, timeout):
     if not _matches(partial, size, digest):
         partial.unlink()
         raise SourceDownloadError(f"checksum mismatch: {name}")
-    os.replace(partial, target)
+    # Never overwrite a final file which appeared after the initial exists()
+    # check. The final verifier still checks every member after publication.
+    try:
+        os.link(partial, target, follow_symlinks=False)
+    except FileExistsError as error:
+        raise SourceDownloadError(f"final member appeared during download: {name}") from error
+    partial.unlink()
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def stage_generation(manifest, directory, opener=None, timeout=30):

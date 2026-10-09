@@ -4,6 +4,7 @@ import hashlib
 import io
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from stage_source_http import _RejectRedirects, SourceDownloadError, stage_generation
@@ -94,6 +95,27 @@ class SourceDownloadTests(unittest.TestCase):
         with self.assertRaisesRegex(SourceDownloadError, "untrusted origin"):
             self.stage(redirect)
         self.assertEqual((self.directory / "articles.xml.part").read_bytes(), self.payload[:5])
+
+    def test_same_host_changed_member_url_is_rejected(self):
+        altered = "https://dumps.wikimedia.org/enwiki/20261009/other.xml"
+        def redirect(request, timeout):
+            return Response(self.payload, altered)
+        with self.assertRaisesRegex(SourceDownloadError, "URL change"):
+            self.stage(redirect)
+        self.assertFalse((self.directory / "articles.xml").exists())
+
+    def test_competing_final_file_is_never_overwritten(self):
+        final = self.directory / "articles.xml"
+        def competing_link(src, dst, **kwargs):
+            final.write_bytes(b"another writer")
+            raise FileExistsError("race")
+
+        with patch("stage_source_http.os.link", side_effect=competing_link):
+            with self.assertRaisesRegex(SourceDownloadError, "final member appeared"):
+                self.stage()
+        self.assertEqual(final.read_bytes(), b"another writer")
+        self.assertEqual((self.directory / "articles.xml.part").read_bytes(),
+                         self.payload)
 
     def test_excess_bytes_and_bad_headers(self):
         def excess(request, timeout):
