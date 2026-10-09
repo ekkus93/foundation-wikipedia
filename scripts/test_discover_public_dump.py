@@ -36,6 +36,18 @@ class PublicDumpDiscoveryTests(unittest.TestCase):
             with self.assertRaises(DiscoveryError):
                 parse_status(body, "enwiki", "20261001", "articlesmultistreamdump")
 
+    def test_rejects_nonexistent_generation_date_and_reserved_member(self):
+        with self.assertRaises(DiscoveryError):
+            parse_status(status(), "enwiki", "20260230", "articlesmultistreamdump")
+        record = json.loads(status())
+        files = record["jobs"]["articlesmultistreamdump"]["files"]
+        metadata = next(iter(files.values()))
+        record["jobs"]["articlesmultistreamdump"]["files"] = {
+            "CON.txt": {**metadata, "url": "/enwiki/20261001/CON.txt"}
+        }
+        with self.assertRaises(DiscoveryError):
+            parse_status(json.dumps(record), "enwiki", "20261001", "articlesmultistreamdump")
+
     def test_checksum_absence_is_reported_not_claimed_verified(self):
         report = parse_status(status(sha1=False), "enwiki", "20261001", "articlesmultistreamdump")
         self.assertFalse(report["all_files_have_upstream_checksums"])

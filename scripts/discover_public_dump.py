@@ -58,6 +58,10 @@ def parse_status(payload, project, generation, job_name):
     if not PROJECT.fullmatch(project) or not DATE.fullmatch(generation):
         raise DiscoveryError("invalid project or generation")
     try:
+        datetime.strptime(generation, "%Y%m%d")
+    except ValueError as error:
+        raise DiscoveryError("invalid generation date") from error
+    try:
         status = json.loads(payload)
     except (ValueError, TypeError) as error:
         raise DiscoveryError("invalid dump status JSON") from error
@@ -80,6 +84,11 @@ def parse_status(payload, project, generation, job_name):
     for name, info in sorted(entries.items()):
         if not isinstance(name, str) or not FILENAME.fullmatch(name) or name.endswith("."):
             raise DiscoveryError("unsafe dump filename")
+        base = name.split(".")[0].upper()
+        if base in {"CON", "PRN", "AUX", "NUL"} or (
+            len(base) == 4 and base[:3] in {"COM", "LPT"} and base[3] in "123456789"
+        ):
+            raise DiscoveryError("reserved dump filename")
         if name.lower() in seen:
             raise DiscoveryError("case-colliding dump filenames")
         seen.add(name.lower())
