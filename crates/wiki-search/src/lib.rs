@@ -403,14 +403,9 @@ mod tests {
         let index = ArticleLexicalIndex::build(&sample()).unwrap();
         let supplied = index.search("spacetime", 1);
         let id = supplied[0].block_id.clone();
-        let answer = validate_grounded_answer(
-            &index,
-            &supplied,
-            "Gravity bends spacetime.",
-            &[id],
-            false,
-        )
-        .unwrap();
+        let answer =
+            validate_grounded_answer(&index, &supplied, "Gravity bends spacetime.", &[id], false)
+                .unwrap();
         assert_eq!(
             answer,
             GroundedAnswer::Supported {
@@ -451,13 +446,7 @@ mod tests {
             Err(CitationError::UnsupportedAnswer)
         );
         assert_eq!(
-            validate_grounded_answer(
-                &index,
-                &supplied,
-                "",
-                &[supplied[0].block_id.clone()],
-                true
-            ),
+            validate_grounded_answer(&index, &supplied, "", &[supplied[0].block_id.clone()], true),
             Err(CitationError::UnsupportedAnswer)
         );
     }
