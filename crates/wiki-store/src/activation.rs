@@ -91,8 +91,7 @@ impl ActiveSnapshotStore {
         if bytes.len() > 129 {
             return Err(ActivationError::CorruptCurrentPointer);
         }
-        let id = std::str::from_utf8(&bytes)
-            .map_err(|_| ActivationError::CorruptCurrentPointer)?;
+        let id = std::str::from_utf8(&bytes).map_err(|_| ActivationError::CorruptCurrentPointer)?;
         let id = id.strip_suffix('\n').unwrap_or(id);
         if !safe_id(id) || !self.candidate_is_staged(id)? {
             return Err(ActivationError::CorruptCurrentPointer);
