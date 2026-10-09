@@ -181,6 +181,47 @@ class DumpImportTests(unittest.TestCase):
             self.assertFalse(out.exists())
 
 
+    def test_modern_sha256_export_records_exact_published_member_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stage = root / "stage"
+            stage.mkdir()
+            name = "enwiki-2026-10-01-p1p2.xml.bz2"
+            raw = bz2.compress(BODY)
+            (stage / name).write_bytes(raw)
+            root_url = (
+                "https://dumps.wikimedia.org/other/mediawiki_content_current/"
+                "enwiki/2026-10-01/xml/bzip2/"
+            )
+            manifest = {
+                "project": "enwiki", "generation_id": "2026-10-01",
+                "source_url": root_url + "SHA256SUMS",
+                "completed": True,
+                "files": [{
+                    "name": name, "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "relative_path": "shards/" + name,
+                    "url": root_url + "shards/" + name,
+                }],
+            }
+            output = root / "modern.jsonl"
+            self.assertEqual(import_verified_members(manifest, stage, [name], output), 2)
+            records = [json.loads(x) for x in output.read_text().splitlines()]
+            self.assertEqual(records[0]["source_member_url"], root_url + "shards/" + name)
+            self.assertEqual(records[0]["source_member_sha256"],
+                             hashlib.sha256(raw).hexdigest())
+            output.unlink()
+            for wrong in (root_url + name, "https://evil.test/" + name):
+                manifest["files"][0]["url"] = wrong
+                with self.assertRaisesRegex(DumpImportError, "URL mismatches"):
+                    import_verified_members(manifest, stage, [name], output)
+                self.assertFalse(output.exists())
+            manifest["files"][0]["url"] = root_url + "shards/" + name
+            manifest["files"][0]["relative_path"] = "../" + name
+            with self.assertRaisesRegex(DumpImportError, "unsafe modern"):
+                import_verified_members(manifest, stage, [name], output)
+            self.assertFalse(output.exists())
+
     def test_verified_xml_shards_combine_atomically_without_cross_member_duplicates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -67,6 +67,11 @@ class ModernExportStagingTests(unittest.TestCase):
     def test_complete_export_is_atomically_published(self):
         result = self.stage()
         self.assertEqual(result["source_url"], URL + "SHA256SUMS")
+        self.assertEqual(
+            result["files"][0]["url"],
+            URL + result["files"][0]["name"],
+        )
+        self.assertEqual(result["files"][0]["relative_path"], result["files"][0]["name"])
         self.assertEqual(len(result["files"]), 2)
         self.assertEqual(json.loads(self.output.read_text()), result)
         for item in result["files"]:

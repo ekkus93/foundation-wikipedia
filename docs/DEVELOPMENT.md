@@ -216,6 +216,13 @@ python3 scripts/verify_source_staging.py \
 The stager re-fetches and compares official SHA256SUMS metadata before any
 member transfer, rejects altered member inventories, checks exact HTTPS URLs,
 validates resume ranges and SHA-256, and refuses incomplete manifest publication.
+Published member-relative paths and exact original URLs are retained in
+modern staging manifests and in subsequent raw revision NDJSON records.
+Unlike the legacy source layout, new current-content exports can contain
+nested shard paths; the importer validates that the recorded URL matches
+the exact SHA256SUMS project/generation and rejects forged origins. All this
+is transport provenance, not an independent signed publisher identity.
+
 It is not a snapshot importer or installed article reader; no publisher
 signature or device acceptance has been established.
 

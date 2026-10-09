@@ -229,6 +229,43 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
     if urlsplit(manifest["source_url"]).hostname != "dumps.wikimedia.org":
         raise DumpImportError("raw MediaWiki dump requires official public-dump provenance")
     allowed = {entry["name"]: entry for entry in manifest["files"]}
+    # Newer official current-content exports have a different path layout
+    # from the legacy public dump generation. Never manufacture legacy URLs
+    # for a SHA-256 inventory's nested shard paths.
+    modern_prefix = "https://dumps.wikimedia.org/other/mediawiki_content_current/"
+    modern = manifest["source_url"].startswith(modern_prefix)
+    if modern:
+        expected_inventory = (
+            modern_prefix + manifest["project"] + "/" + manifest["generation_id"]
+            + "/xml/bzip2/SHA256SUMS"
+        )
+        if manifest["source_url"] != expected_inventory:
+            raise DumpImportError("modern SHA-256 inventory identity mismatch")
+        source_root = expected_inventory.removesuffix("SHA256SUMS")
+    else:
+        source_root = ("https://dumps.wikimedia.org/" + manifest["project"]
+                       + "/" + manifest["generation_id"] + "/")
+    source_urls = {}
+    for name, entry in allowed.items():
+        if modern:
+            relative = entry.get("relative_path")
+            if (not isinstance(relative, str)
+                    or not relative
+                    or relative.startswith("/")
+                    or ".." in relative.split("/")
+                    or any(not segment for segment in relative.split("/"))
+                    or relative.rsplit("/", 1)[-1] != name
+                    or "\\" in relative
+                    or "?" in relative or "#" in relative):
+                raise DumpImportError("unsafe modern source member relative path")
+            url = source_root + relative
+            if entry.get("url") != url:
+                raise DumpImportError("modern source member URL mismatches publication")
+        else:
+            url = source_root + name
+            if "url" in entry and entry["url"] != url:
+                raise DumpImportError("legacy source member URL mismatches publication")
+        source_urls[name] = url
     if len(set(members)) != len(members):
         raise DumpImportError("duplicate XML member selection")
     for member in members:
@@ -249,9 +286,6 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
         ) as writer:
             temporary = Path(writer.name)
             current_member = None
-            source_root = ("https://dumps.wikimedia.org/"
-                           + manifest["project"] + "/" + manifest["generation_id"] + "/")
-
             def emit(record):
                 nonlocal total
                 identity = (record["project"], record["page_id"])
@@ -259,7 +293,7 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
                 # parsing; the URL is derived from the exact dump generation.
                 # Neither field implies signed publisher authentication.
                 record["source_member"] = current_member
-                record["source_member_url"] = source_root + current_member
+                record["source_member_url"] = source_urls[current_member]
                 record["source_member_sha256"] = allowed[current_member]["sha256"]
                 if identity in seen_pages:
                     raise DumpImportError("duplicate page ID across dump members")

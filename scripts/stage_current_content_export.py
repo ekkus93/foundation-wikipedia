@@ -67,6 +67,16 @@ def _publish(part, target, directory):
         os.close(directory_fd)
 
 
+def _receipt(item, size):
+    return {
+        "name": item["path"].rsplit("/", 1)[-1],
+        "bytes": size,
+        "sha256": item["sha256"],
+        "relative_path": item["path"],
+        "url": item["url"],
+    }
+
+
 def _transfer(item, directory, *, opener):
     url, digest = item["url"], item["sha256"]
     name = item["path"].rsplit("/", 1)[-1]
@@ -75,7 +85,7 @@ def _transfer(item, directory, *, opener):
         size = target.stat().st_size
         if not (0 < size <= MAX_MEMBER_BYTES) or _hash(target) != digest:
             raise ExportStagingError("existing member does not match SHA-256 inventory")
-        return {"name": name, "bytes": size, "sha256": digest}
+        return _receipt(item, size)
 
     partial_exists = _ordinary_file(part)
     offset = part.stat().st_size if partial_exists else 0
@@ -83,7 +93,7 @@ def _transfer(item, directory, *, opener):
         part.unlink()
     if offset and _hash(part) == digest:
         _publish(part, target, directory)
-        return {"name": name, "bytes": offset, "sha256": digest}
+        return _receipt(item, offset)
     if offset > MAX_MEMBER_BYTES:
         raise ExportStagingError("oversized interrupted transfer")
 
@@ -142,7 +152,7 @@ def _transfer(item, directory, *, opener):
         part.unlink(missing_ok=True)
         raise ExportStagingError("source member SHA-256 mismatch")
     _publish(part, target, directory)
-    return {"name": name, "bytes": count, "sha256": digest}
+    return _receipt(item, count)
 
 
 def _preflight(report, fetcher):
