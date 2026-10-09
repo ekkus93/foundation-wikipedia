@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 import tempfile
 from xml.parsers import expat
 
@@ -204,7 +205,9 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
             or not members or type(max_pages) is not int or max_pages <= 0
             or type(max_page_bytes) is not int or not (1 <= max_page_bytes <= 64 * 1024 * 1024)):
         raise DumpImportError("invalid XML member selection or page budget")
-    allowed = {entry["name"] for entry in manifest["files"]}
+    if urlsplit(manifest["source_url"]).hostname != "dumps.wikimedia.org":
+        raise DumpImportError("raw MediaWiki dump requires official public-dump provenance")
+    allowed = {entry["name"]: entry for entry in manifest["files"]}
     if len(set(members)) != len(members):
         raise DumpImportError("duplicate XML member selection")
     for member in members:
@@ -224,10 +227,19 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
             prefix=".raw-dump.", suffix=".tmp", delete=False
         ) as writer:
             temporary = Path(writer.name)
+            current_member = None
+            source_root = ("https://dumps.wikimedia.org/"
+                           + manifest["project"] + "/" + manifest["generation_id"] + "/")
 
             def emit(record):
                 nonlocal total
                 identity = (record["project"], record["page_id"])
+                # Digest is the complete staged member SHA-256 checked before
+                # parsing; the URL is derived from the exact dump generation.
+                # Neither field implies signed publisher authentication.
+                record["source_member"] = current_member
+                record["source_member_url"] = source_root + current_member
+                record["source_member_sha256"] = allowed[current_member]["sha256"]
                 if identity in seen_pages:
                     raise DumpImportError("duplicate page ID across dump members")
                 if total >= max_pages:
@@ -236,7 +248,10 @@ def import_verified_members(manifest, staging, members, output, *, max_pages=100
                 total += 1
                 writer.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
-            for member in members:
+            # Caller ordering must not alter output bytes or downstream
+            # snapshot identities for the same non-overlapping shard set.
+            for member in sorted(members):
+                current_member = member
                 source = Path(staging) / member
                 stream_open = bz2.open if member.endswith(".bz2") else open
                 with stream_open(source, "rb") as stream:

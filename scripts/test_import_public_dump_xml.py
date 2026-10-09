@@ -159,6 +159,13 @@ class DumpImportTests(unittest.TestCase):
             self.assertEqual(import_verified_member(manifest, stage, "articles.xml.bz2", out), 2)
             rows = [json.loads(x) for x in out.read_text().splitlines()]
             self.assertEqual(rows[0]["title"], "Gravity")
+            self.assertEqual(rows[0]["source_member"], "articles.xml.bz2")
+            self.assertEqual(rows[0]["source_member_sha256"],
+                             hashlib.sha256(compressed).hexdigest())
+            self.assertEqual(
+                rows[0]["source_member_url"],
+                "https://dumps.wikimedia.org/enwiki/20261009/articles.xml.bz2",
+            )
             with self.assertRaisesRegex(DumpImportError, "already exists"):
                 import_verified_member(manifest, stage, "articles.xml.bz2", out)
             out.unlink()
@@ -193,6 +200,14 @@ class DumpImportTests(unittest.TestCase):
             rows = [json.loads(line) for line in out.read_text().splitlines()]
             self.assertEqual([row["page_id"] for row in rows], [42, 43])
             self.assertEqual({row["generation_id"] for row in rows}, {"20261009"})
+            self.assertEqual(
+                [row["source_member"] for row in rows],
+                ["part-1.xml.bz2", "part-2.xml.bz2"],
+            )
+            reversed_out = root / "reversed.jsonl"
+            self.assertEqual(import_verified_members(
+                manifest, stage, list(reversed(names)), reversed_out), 2)
+            self.assertEqual(out.read_bytes(), reversed_out.read_bytes())
             with self.assertRaisesRegex(DumpImportError, "already exists"):
                 import_verified_members(manifest, stage, names, out)
             out.unlink()

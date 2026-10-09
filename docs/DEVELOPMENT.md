@@ -173,6 +173,13 @@ whose article inventories overlap. The parser requires a MediaWiki export
 namespace and rejects foreign-namespace elements; this is input validation,
 not a substitute for provenance verification.
 
+Each emitted raw revision record contains the exact `source_member`,
+`source_member_url` and the locally verified `source_member_sha256`,
+alongside its page/revision/content SHA-256. Member ordering is sorted for
+reproducible NDJSON regardless of CLI argument order. These fields are traceable
+claims about staged bytes, **not** independent publisher signatures or proof
+of a semantically faithful rendered article.
+
 The import verifies the **full staged manifest** before consuming input,
 rejects XML doctypes/entities, duplicate page IDs, multi-revision records,
 unbounded page text and malformed revision metadata. Output is atomically
