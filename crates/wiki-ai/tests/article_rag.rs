@@ -244,7 +244,12 @@ fn validated_text_selection_is_kept_even_without_keyword_overlap() {
         calls: &calls,
     };
     assert!(matches!(
-        answer_article(&article, &provider, &requested, &CancellationToken::default()),
+        answer_article(
+            &article,
+            &provider,
+            &requested,
+            &CancellationToken::default()
+        ),
         Ok(GroundedAnswer::Supported { .. })
     ));
     assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -266,13 +271,23 @@ fn selected_block_must_match_exact_article_revision_and_word_budget() {
     tampered.revision_id += 1;
     question.selected_evidence = Some(&tampered);
     assert_eq!(
-        answer_article(&article, &provider, &question, &CancellationToken::default()),
+        answer_article(
+            &article,
+            &provider,
+            &question,
+            &CancellationToken::default()
+        ),
         Err(RagError::InvalidSelection)
     );
     question.selected_evidence = Some(&original);
     question.context_word_budget = 1;
     assert_eq!(
-        answer_article(&article, &provider, &question, &CancellationToken::default()),
+        answer_article(
+            &article,
+            &provider,
+            &question,
+            &CancellationToken::default()
+        ),
         Err(RagError::SelectionTooLarge)
     );
     assert_eq!(calls.load(Ordering::Relaxed), 0);

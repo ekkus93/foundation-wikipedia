@@ -96,7 +96,10 @@ pub fn answer_article(
         if evidence.len() >= question.passage_limit {
             break;
         }
-        if evidence.iter().any(|existing| existing.block_id == hit.block_id) {
+        if evidence
+            .iter()
+            .any(|existing| existing.block_id == hit.block_id)
+        {
             continue;
         }
         let words = hit
