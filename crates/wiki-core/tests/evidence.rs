@@ -57,6 +57,70 @@ fn nested_blocks_have_exact_page_revision_path() {
 }
 
 #[test]
+fn same_revision_reorder_preserves_ordinal_identity_not_vector_position() {
+    let mut fixture = article();
+    fixture.sections.push(Section {
+        ordinal: 8,
+        heading: "Matter".into(),
+        blocks: vec![Block {
+            ordinal: 4,
+            content: BlockContent::Paragraph("Matter has mass".into()),
+        }],
+        subsections: vec![],
+    });
+    let before = evidence_blocks(&fixture).unwrap();
+    let spacetime_before = before
+        .iter()
+        .find(|entry| matches!(
+            &entry.block.content,
+            BlockContent::Paragraph(text) if text == "Spacetime"
+        ))
+        .unwrap()
+        .id
+        .clone();
+    fixture.sections.swap(0, 1);
+    let after = evidence_blocks(&fixture).unwrap();
+    let spacetime_after = after
+        .iter()
+        .find(|entry| matches!(
+            &entry.block.content,
+            BlockContent::Paragraph(text) if text == "Spacetime"
+        ))
+        .unwrap()
+        .id
+        .clone();
+    assert_eq!(spacetime_before, "wkb:enwiki:99:7:3:b1");
+    assert_eq!(spacetime_before, spacetime_after);
+}
+
+#[test]
+fn deleting_evidence_never_reassigns_its_hard_id_to_surviving_text() {
+    let mut fixture = article();
+    fixture.lead.push(Block {
+        ordinal: 5,
+        content: BlockContent::Paragraph("Second lead block".into()),
+    });
+    let before = evidence_blocks(&fixture).unwrap();
+    let deleted = before
+        .iter()
+        .find(|entry| matches!(
+            &entry.block.content,
+            BlockContent::Paragraph(text) if text == "Gravity"
+        ))
+        .unwrap()
+        .id
+        .clone();
+    fixture.lead.remove(0);
+    let after = evidence_blocks(&fixture).unwrap();
+    assert!(!after.iter().any(|entry| entry.id == deleted));
+    assert_eq!(after[0].id, "wkb:enwiki:99:7:b5");
+    assert!(matches!(
+        &after[0].block.content,
+        BlockContent::Paragraph(text) if text == "Second lead block"
+    ));
+}
+
+#[test]
 fn revision_change_changes_every_evidence_handle() {
     let first = article();
     let mut second = article();
