@@ -161,3 +161,39 @@ fn excessive_root_fanout_is_rejected_before_queue_allocation() {
         Err(ResolveError::TooManyCategories)
     );
 }
+
+#[test]
+fn duplicate_candidates_are_bounded_even_when_unique_page_count_is_small() {
+    let categories = BTreeMap::from([(
+        "Root".into(),
+        Category {
+            articles: vec![1; 4097],
+            children: vec![],
+            administrative: false,
+        },
+    )]);
+    let mut config = rules();
+    config.page_limit = 1;
+    assert_eq!(
+        resolve(&categories, &config),
+        Err(ResolveError::TooManyCandidates)
+    );
+    config.roots.clear();
+    config.include = vec![1; 4097];
+    assert_eq!(
+        resolve(&categories, &config),
+        Err(ResolveError::TooManyCandidates)
+    );
+}
+
+#[test]
+fn excessive_redirect_chain_is_rejected_without_unbounded_traversal() {
+    let mut config = rules();
+    config.roots.clear();
+    config.include = vec![1];
+    let redirects: BTreeMap<u64, u64> = (1..=4097).map(|id| (id, id + 1)).collect();
+    assert_eq!(
+        resolve_with_redirects(&graph(), &config, &redirects, &BTreeSet::new()),
+        Err(ResolveError::RedirectTooDeep)
+    );
+}

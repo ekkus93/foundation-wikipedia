@@ -24,7 +24,9 @@ pub enum ResolveError {
     InvalidPage,
     TooManyPages,
     TooManyCategories,
+    TooManyCandidates,
     RedirectCycle(u64),
+    RedirectTooDeep,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +59,12 @@ pub fn resolve_with_redirects(
     if rules.roots.len() > category_budget {
         return Err(ResolveError::TooManyCategories);
     }
+    // A category can list millions of duplicate, excluded or redirected IDs
+    // without ever exceeding the unique-page limit.
+    let candidate_budget = rules.page_limit.saturating_mul(64).clamp(4096, 1_000_000);
+    if rules.include.len().saturating_add(rules.exclude.len()) > candidate_budget {
+        return Err(ResolveError::TooManyCandidates);
+    }
     if rules
         .include
         .iter()
@@ -71,6 +79,7 @@ pub fn resolve_with_redirects(
         .map(|id| canonical_page(*id, redirects))
         .collect::<Result<_, _>>()?;
     let mut pages = BTreeSet::new();
+    let mut inspected_candidates = rules.include.len().saturating_add(rules.exclude.len());
     let mut visited = BTreeSet::new();
     let mut warnings = BTreeSet::new();
     let mut queue: VecDeque<_> = rules.roots.iter().map(|root| (root.clone(), 0)).collect();
@@ -87,6 +96,10 @@ pub fn resolve_with_redirects(
         if node.administrative {
             warnings.insert(format!("Skipped administrative category: {name}"));
             continue;
+        }
+        inspected_candidates = inspected_candidates.saturating_add(node.articles.len());
+        if inspected_candidates > candidate_budget {
+            return Err(ResolveError::TooManyCandidates);
         }
         for id in &node.articles {
             let resolved = canonical_page(*id, redirects)?;
@@ -143,6 +156,9 @@ fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, Re
             Some(next) => {
                 if !visited.insert(id) {
                     return Err(ResolveError::RedirectCycle(id));
+                }
+                if visited.len() > 4096 {
+                    return Err(ResolveError::RedirectTooDeep);
                 }
                 id = *next;
             }
