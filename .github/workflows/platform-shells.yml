@@ -69,7 +69,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.85.1"
+          toolchain: "1.90.0"
       - name: Check native Tauri adapter
         run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
       - name: Confirm head
