@@ -116,7 +116,11 @@ def fetch_dump_member(report, name, dest, user_agent, opener=None):
             raise DownloadError("existing final member SHA-1 mismatch")
         return {"path": str(target), "bytes": size, "sha1": observed_sha1, "sha256": observed_sha256}
 
-    offset = partial.stat().st_size if _ordinary_file(partial) else 0
+    partial_exists = _ordinary_file(partial)
+    offset = partial.stat().st_size if partial_exists else 0
+    if offset == 0 and partial_exists:
+        # A transfer may fail before receiving its first byte.
+        partial.unlink()
     if offset > size:
         raise DownloadError("oversized partial member")
     if offset < size:

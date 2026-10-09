@@ -91,6 +91,13 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(retry.requests[0].get_header("Range"), "bytes=3-")
         self.assertEqual((self.root / "articles.xml").read_bytes(), BODY)
 
+    def test_empty_partial_file_restarts_without_false_file_exists_error(self):
+        self.root.mkdir()
+        (self.root / "articles.xml.part").touch()
+        receipt = self.fetch(Opener([Response(200, BODY)]))
+        self.assertEqual(receipt["bytes"], len(BODY))
+        self.assertEqual((self.root / "articles.xml").read_bytes(), BODY)
+
     def test_wrong_range_or_server_ignores_resume_fails_without_promotion(self):
         self.root.mkdir()
         (self.root / "articles.xml.part").write_bytes(BODY[:3])
