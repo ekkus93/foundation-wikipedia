@@ -223,10 +223,14 @@ mod tests {
     #[test]
     fn word_budget_bounds_selected_passages() {
         let index = ArticleLexicalIndex::build(&sample()).unwrap();
-        assert!(index.search_with_word_budget("physics spacetime", 2, 0).is_empty());
-        assert_eq!(index.search_with_word_budget("physics spacetime", 2, 3).len(), 1);
-        assert_eq!(index.search_with_word_budget("physics spacetime", 2, 6).len(), 2);
-        assert!(index.search_with_word_budget("physics spacetime", 0, 6).is_empty());
+        let zero = index.search_with_word_budget("physics spacetime", 2, 0);
+        let tight = index.search_with_word_budget("physics spacetime", 2, 3);
+        let enough = index.search_with_word_budget("physics spacetime", 2, 6);
+        let no_hits = index.search_with_word_budget("physics spacetime", 0, 6);
+        assert!(zero.is_empty());
+        assert_eq!(tight.len(), 1);
+        assert_eq!(enough.len(), 2);
+        assert!(no_hits.is_empty());
     }
 
     #[test]
