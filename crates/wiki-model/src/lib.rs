@@ -116,6 +116,7 @@ pub enum ModelError {
     MissingTitle,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
+    InvalidMediaMetadata(usize),
     DuplicateReference(String),
     InvalidRedirect,
 }
@@ -204,7 +205,14 @@ impl Article {
                 return Err(ModelError::DuplicateReference(reference.id.clone()));
             }
         }
-        for media in &self.media {
+        for (index, media) in self.media.iter().enumerate() {
+            if media.source_url.trim().is_empty()
+                || media.mime_type.trim().is_empty()
+                || media.license.trim().is_empty()
+                || media.attribution.trim().is_empty()
+            {
+                return Err(ModelError::InvalidMediaMetadata(index));
+            }
             if let Some(hash) = &media.sha256 {
                 if !valid_hash(hash) {
                     return Err(ModelError::InvalidHash);
@@ -321,6 +329,30 @@ mod tests {
         a.revision.content_sha256 = "a".repeat(64);
         a.lead[0].content = BlockContent::Media { media_index: 9 };
         assert_eq!(a.validate(), Err(ModelError::InvalidMediaIndex(9)));
+    }
+
+    #[test]
+    fn media_requires_source_license_and_attribution() {
+        let mut a = article();
+        a.media.push(MediaAsset {
+            source_url: "https://upload.wikimedia.org/wikipedia/commons/example.svg".into(),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some("b".repeat(64)),
+            license: "CC BY-SA 4.0".into(),
+            creator: "Example contributor".into(),
+            attribution: "Example contributor, CC BY-SA 4.0".into(),
+            is_av_preview: false,
+        });
+        a.lead[0].content = BlockContent::Media { media_index: 0 };
+        assert_eq!(a.validate(), Ok(()));
+        a.media[0].license = " ".into();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+        a.media[0].license = "CC BY-SA 4.0".into();
+        a.media[0].source_url.clear();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
+        a.media[0].source_url = "https://upload.wikimedia.org/example.svg".into();
+        a.media[0].attribution.clear();
+        assert_eq!(a.validate(), Err(ModelError::InvalidMediaMetadata(0)));
     }
 
     #[test]
