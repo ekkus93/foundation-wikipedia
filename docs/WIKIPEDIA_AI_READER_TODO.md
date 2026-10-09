@@ -184,9 +184,9 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 
 ## Phase 8 — AI provider adapters, streaming and model profiles
 
-- [ ] **AI-001** Define provider-independent Rust LLM interface and stream events. **Depends:** BOOT-001, RAG-001.  
-  - [ ] Providers enumerate models where possible, test connection, stream/cancel, expose capabilities and typed failures.
-  - [ ] Fake provider tests for success, timeout, bad response and cancellation.
+- [x] **AI-001** Define provider-independent Rust LLM interface and stream events. **Depends:** BOOT-001, RAG-001.  
+  - [x] Providers enumerate models where possible, test connection, stream/cancel, expose capabilities and typed failures.
+  - [x] Fake provider tests for success, timeout, bad response and cancellation.
   - **Accept:** RAG orchestration contains no provider-specific UI code.
 - [ ] **AI-002** Localhost/LAN provider support. **Depends:** AI-001.  
   - [ ] OpenAI-compatible endpoints and Ollama/llama-server adapters; user-selected endpoint/model.
@@ -503,6 +503,15 @@ Spec deviation/ADR:
 - **PACK-003 partial:** Shared Rust media completeness gate requires every *declared* offline image, diagram, plot, map, math resource, CSS/font and A/V preview to have a verified local object with matching digest/size; duplicate content hashes count once. Audio/video streams cannot masquerade as installed bytes and require a preview. Rust workspace CI [37971726302](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37971726302) and Platform shells CI [37971726380](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37971726380) passed at exact master `5ee3a61a944a9f10cab58e1d650c62c5bd161485`. **Not yet complete:** discovering *all* renderer dependencies, verifying media bytes in the object store, SVG/MathML sanitization, raster resizing/zoom, Android offline E2E.
 - **AI-005/RAG-002 partial:** `wiki-ai::rag::answer_article` now retrieves bounded blocks from one exact validated article revision, constructs provider-neutral context, honors selected outbound locality policy, buffers streaming answers, parses model block-citation claims and rejects fabricated/stale/uncited responses. Empty retrieval returns explicit insufficient evidence without invoking any provider; fake-provider negative tests cover prompt provenance, cross-revision citations and cloud denial. Rust workspace CI [37973697103](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37973697103) and Platform shells CI [37973697100](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37973697100) passed at exact master `c6e67d7cd36d71ecc9ca7b9c34ea6f104b9d5298`. **Not yet complete:** real provider adapters, answer factual-entailment evaluation, chat persistence, rendered links and supported device/browser flows.
 - **RAG-003 partial:** Introduced six synthetic labeled retrieval queries, cross-section query, Unicode, non-answer and revision-isolation test cases. Synthetic top-3 recall is asserted at 6/6. Rust workspace CI [37975367021](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37975367021) and Platform shells CI [37975367016](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37975367016) passed at exact master `a860f3d28954982f4210e5235362c71e23be5857`. This is a small synthetic smoke baseline, **not** representative Wikimedia retrieval, citation precision, answer support, or device-performance qualification.
+
+### AI-001 — provider-neutral interface, streaming, cancellation and fake-provider acceptance
+
+- Qualified master SHA: `5cccbd289ef234f694724e190d761230f7939138`. Rust workspace CI [37976320142](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37976320142) and Platform shells CI [37976320137](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37976320137), both passed with exact head consistency.
+- Contract: `crates/wiki-ai/src/lib.rs` exposes UI-independent `LlmProvider` with capability and model enumeration, connection tests, typed errors, streaming event callbacks, cooperative cancellation and explicit locality/outbound restrictions. `crates/wiki-ai/src/rag.rs` composes that trait without importing Tauri/Kotlin/Android/UI types or provider-specific APIs.
+- Tests: `cargo test --workspace --locked` includes fake-provider success, timeout, invalid response, cancellation, invalid request, outbound-policy and citation-stream orchestration cases. Rust CI also runs `cargo fmt --all -- --check` and strict Clippy.
+- Scope: **AI-001 complete; AI-002 through AI-005 are separate and remain unchecked**. No actual Ollama, llama-server, OpenAI, Anthropic or Gemini transport is claimed, and no real-device/UI chat acceptance is claimed.
+
+- **AI-005/RAG-001 partial:** Selection context now accepts only an exact retrieved evidence object validated against the current article revision; selected passages are included without query keyword overlap and remain bounded by a word budget. Invalid or stale selected evidence is rejected before provider invocation. Exact master `5cccbd289ef234f694724e190d761230f7939138` passed Rust workspace CI 37976320142 and Platform shells CI 37976320137. UI selection bridge, real provider, citation scrolling and end-to-end acceptance remain open.
 
 ## Blockers requiring owner action
 
