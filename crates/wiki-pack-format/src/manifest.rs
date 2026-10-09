@@ -30,8 +30,20 @@ pub struct Manifest {
 pub enum ManifestError {
     Version,
     MissingMetadata,
+    UnsafeMetadata,
     UnsafeObject,
     DuplicateObject,
+}
+
+fn safe_id(value: &str) -> bool {
+    value == value.trim()
+        && value.len() <= 256
+        && value != "."
+        && value != ".."
+        && !value.contains('/')
+        && !value.contains('\\\\')
+        && !value.contains(':')
+        && !value.chars().any(char::is_control)
 }
 
 impl Manifest {
@@ -44,6 +56,12 @@ impl Manifest {
             || self.snapshot.trim().is_empty()
         {
             return Err(ManifestError::MissingMetadata);
+        }
+        if !safe_id(&self.pack_id)
+            || !safe_id(&self.project)
+            || !safe_id(&self.snapshot)
+        {
+            return Err(ManifestError::UnsafeMetadata);
         }
         let origin_valid = match &self.origin {
             Origin::Official { publisher } => !publisher.trim().is_empty(),
