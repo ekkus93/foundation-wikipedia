@@ -76,16 +76,24 @@ impl ActiveSnapshotStore {
     pub fn current(&self) -> Result<Option<String>, ActivationError> {
         self.ensure_root()?;
         let pointer = self.root.join("current");
-        if !real_file(&pointer)? {
-            // Path::exists follows symlinks; a dangling symlink must never
-            // masquerade as a missing (uninitialized) current pointer.
-            if fs::symlink_metadata(&pointer).is_ok() {
-                return Err(ActivationError::CorruptCurrentPointer);
-            }
-            return Ok(None);
+        let meta = match fs::symlink_metadata(&pointer) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(ActivationError::Io(error)),
+        };
+        // A valid pointer consists of a snapshot ID (at most 128 ASCII
+        // bytes) and an optional trailing newline. Refuse unbounded reads,
+        // special files and dangling or live symlinks alike.
+        if !meta.file_type().is_file() || meta.len() > 129 {
+            return Err(ActivationError::CorruptCurrentPointer);
         }
-        let id = fs::read_to_string(&pointer)?;
-        let id = id.strip_suffix('\n').unwrap_or(&id);
+        let bytes = fs::read(&pointer)?;
+        if bytes.len() > 129 {
+            return Err(ActivationError::CorruptCurrentPointer);
+        }
+        let id = std::str::from_utf8(&bytes)
+            .map_err(|_| ActivationError::CorruptCurrentPointer)?;
+        let id = id.strip_suffix('\n').unwrap_or(id);
         if !safe_id(id) || !self.candidate_is_staged(id)? {
             return Err(ActivationError::CorruptCurrentPointer);
         }
@@ -158,6 +166,35 @@ mod interruption_tests {
         fs::create_dir_all(root.join("snapshots")).unwrap();
         symlink("missing-snapshot-pointer", root.join("current")).unwrap();
         let store = ActiveSnapshotStore::new(&root);
+        assert!(matches!(
+            store.current(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_and_invalid_utf8_pointer_are_rejected_before_snapshot_lookup() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-invalid-pointer-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("snapshots")).unwrap();
+        let pointer = root.join("current");
+        let store = ActiveSnapshotStore::new(&root);
+        assert_eq!(store.current().unwrap(), None);
+
+        fs::write(&pointer, "x".repeat(130)).unwrap();
+        assert!(matches!(
+            store.current(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+
+        fs::write(&pointer, b"\xff\xfe").unwrap();
         assert!(matches!(
             store.current(),
             Err(ActivationError::CorruptCurrentPointer)
