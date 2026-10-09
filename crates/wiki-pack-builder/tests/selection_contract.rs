@@ -146,7 +146,9 @@ fn excessive_category_fanout_is_rejected_before_enqueuing_children() {
     config.depth_limit = 0;
     let result = resolve(&categories, &config).unwrap();
     assert_eq!(result.page_ids, vec![1]);
-    assert!(result.warnings.contains(&"Depth limit reached: Root".into()));
+    assert!(result
+        .warnings
+        .contains(&"Depth limit reached: Root".into()));
 }
 
 #[test]
@@ -154,5 +156,8 @@ fn excessive_root_fanout_is_rejected_before_queue_allocation() {
     let mut config = rules();
     config.page_limit = 1;
     config.roots = (0..1025).map(|n| format!("Root{n}")).collect();
-    assert_eq!(resolve(&BTreeMap::new(), &config), Err(ResolveError::TooManyCategories));
+    assert_eq!(
+        resolve(&BTreeMap::new(), &config),
+        Err(ResolveError::TooManyCategories)
+    );
 }
