@@ -104,11 +104,11 @@ fn labeled_retrieval_has_full_expected_recall_at_three() {
     ];
     let index = ArticleLexicalIndex::build(&article()).unwrap();
     let mut found = 0;
-    for (query, expected) in cases {
+    for (query, expected) in &cases {
         let hits = index.search(query, 3);
         assert!(!hits.is_empty(), "expected lexical hit: {query}");
         assert!(
-            hits.iter().any(|hit| hit.block_id == expected),
+            hits.iter().any(|hit| hit.block_id == expected.as_str()),
             "relevant block not retrieved for {query}: {hits:?}"
         );
         found += 1;
