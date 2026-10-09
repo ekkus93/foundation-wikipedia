@@ -221,6 +221,15 @@ mod tests {
     }
 
     #[test]
+    fn word_budget_bounds_selected_passages() {
+        let index = ArticleLexicalIndex::build(&sample()).unwrap();
+        assert!(index.search_with_word_budget("physics spacetime", 2, 0).is_empty());
+        assert_eq!(index.search_with_word_budget("physics spacetime", 2, 3).len(), 1);
+        assert_eq!(index.search_with_word_budget("physics spacetime", 2, 6).len(), 2);
+        assert!(index.search_with_word_budget("physics spacetime", 0, 6).is_empty());
+    }
+
+    #[test]
     fn rejects_invalid_article_and_empty_query() {
         let mut article = sample();
         article.revision.revision_id = 0;
