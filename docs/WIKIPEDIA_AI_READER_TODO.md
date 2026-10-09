@@ -470,6 +470,12 @@ Spec deviation/ADR:
 - Qualified on exact master `fd367ad5e4012c00632d4883a041989382ca8754`: Rust workspace CI 37953712494 and Platform shells CI 37953712461 both passed.
 - **Remaining:** canonical pack serialization and signing, bounded archive streaming, byte/hash verification, object media completeness, hostile archive/HTML/SVG fixtures and independent Android importer. PACK-001 and TRUST-003 stay unchecked.
 
+### MOD-001 — further canonical provenance validation (partial)
+
+- The canonical article validator rejects whitespace-only Wikipedia reference identifiers and missing creator metadata for media assets, with regression tests. These complement earlier checks for missing titles, revision identity, link labels, reference labels and media licensing/attribution.
+- Exact master `47b88a483d1f649502fb15113aa2c783aea961d1` passed Rust workspace CI 37954809397 and Platform shells CI 37954809455.
+- **Remaining:** full schema coverage, aliases, serde roundtrips and high-fidelity renderer qualification. MOD-001 remains unchecked.
+
 ## Blockers requiring owner action
 
 _None at initial creation._ If a blocker arises, record exact failing operation, evidence, why independent progress cannot continue, the specific permission/input/hardware needed and the next action. Technical evaluations, normal code defects and running CI belong in the task notes, not here.
