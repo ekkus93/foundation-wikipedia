@@ -123,6 +123,35 @@ def parse_status(payload, project, generation, job_name):
     }
 
 
+def attach_official_sha1s(report, checksum_text):
+    """Enrich completed-job file metadata from official SHA-1 sums, rejecting conflicts."""
+    sums = {}
+    for line in checksum_text.splitlines():
+        if not line:
+            continue
+        match = re.fullmatch(r"([0-9a-fA-F]{40})  ([A-Za-z0-9_-][A-Za-z0-9_.-]*)", line)
+        if match is None:
+            raise DiscoveryError("malformed official SHA-1 checksum entry")
+        digest, name = match.groups()
+        if name.lower() in sums:
+            raise DiscoveryError("duplicate official SHA-1 checksum entry")
+        sums[name.lower()] = digest.lower()
+        if len(sums) > 100000:
+            raise DiscoveryError("excessive official checksum entries")
+    for item in report["files"]:
+        digest = sums.get(item["name"].lower())
+        if digest is None:
+            continue
+        if item["sha1"] is not None and item["sha1"].lower() != digest:
+            raise DiscoveryError("status and official SHA-1 sums disagree")
+        item["sha1"] = digest
+        item["has_upstream_checksum"] = True
+    report["all_files_have_upstream_checksums"] = all(
+        item["has_upstream_checksum"] for item in report["files"]
+    )
+    return report
+
+
 def fetch_official(url):
     if not url.startswith(HOST + "/"):
         raise DiscoveryError("nonofficial source URL")
@@ -145,7 +174,15 @@ def discover(project, job_name="articlesmultistreamdump", max_dates=8, fetcher=f
     for generation in available_dates(index)[:max_dates]:
         try:
             status = fetcher(f"{HOST}/{project}/{generation}/dumpstatus.json")
-            return parse_status(status, project, generation, job_name)
+            report = parse_status(status, project, generation, job_name)
+            if any(item["sha1"] is None for item in report["files"]):
+                sums_url = f"{HOST}/{project}/{generation}/{project}-{generation}-sha1sums.txt"
+                try:
+                    report = attach_official_sha1s(report, fetcher(sums_url))
+                except HTTPError as error:
+                    if error.code != 404:
+                        raise
+            return report
         except DiscoveryError:
             continue
         except HTTPError as error:
