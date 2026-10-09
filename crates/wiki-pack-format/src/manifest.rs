@@ -77,10 +77,7 @@ impl Manifest {
         {
             return Err(ManifestError::MissingMetadata);
         }
-        if !safe_id(&self.pack_id)
-            || !safe_id(&self.project)
-            || !safe_id(&self.snapshot)
-        {
+        if !safe_id(&self.pack_id) || !safe_id(&self.project) || !safe_id(&self.snapshot) {
             return Err(ManifestError::UnsafeMetadata);
         }
         let origin_valid = match &self.origin {
