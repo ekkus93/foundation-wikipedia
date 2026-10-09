@@ -71,10 +71,12 @@ fn same_revision_reorder_preserves_ordinal_identity_not_vector_position() {
     let before = evidence_blocks(&fixture).unwrap();
     let spacetime_before = before
         .iter()
-        .find(|entry| matches!(
-            &entry.block.content,
-            BlockContent::Paragraph(text) if text == "Spacetime"
-        ))
+        .find(|entry| {
+            matches!(
+                &entry.block.content,
+                BlockContent::Paragraph(text) if text == "Spacetime"
+            )
+        })
         .unwrap()
         .id
         .clone();
@@ -82,10 +84,12 @@ fn same_revision_reorder_preserves_ordinal_identity_not_vector_position() {
     let after = evidence_blocks(&fixture).unwrap();
     let spacetime_after = after
         .iter()
-        .find(|entry| matches!(
-            &entry.block.content,
-            BlockContent::Paragraph(text) if text == "Spacetime"
-        ))
+        .find(|entry| {
+            matches!(
+                &entry.block.content,
+                BlockContent::Paragraph(text) if text == "Spacetime"
+            )
+        })
         .unwrap()
         .id
         .clone();
@@ -103,10 +107,12 @@ fn deleting_evidence_never_reassigns_its_hard_id_to_surviving_text() {
     let before = evidence_blocks(&fixture).unwrap();
     let deleted = before
         .iter()
-        .find(|entry| matches!(
-            &entry.block.content,
-            BlockContent::Paragraph(text) if text == "Gravity"
-        ))
+        .find(|entry| {
+            matches!(
+                &entry.block.content,
+                BlockContent::Paragraph(text) if text == "Gravity"
+            )
+        })
         .unwrap()
         .id
         .clone();
