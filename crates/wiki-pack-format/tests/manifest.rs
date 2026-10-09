@@ -93,13 +93,15 @@ fn object_paths_have_bounded_length_depth_and_components() {
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
 
     bad = sample();
-    bad.objects[0].path =
-        std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS + 1).collect::<Vec<_>>().join("/");
+    bad.objects[0].path = std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS + 1)
+        .collect::<Vec<_>>()
+        .join("/");
     assert_eq!(bad.validate(), Err(ManifestError::UnsafeObject));
 
     let mut boundary = sample();
-    boundary.objects[0].path =
-        std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS).collect::<Vec<_>>().join("/");
+    boundary.objects[0].path = std::iter::repeat_n("a", MAX_OBJECT_PATH_COMPONENTS)
+        .collect::<Vec<_>>()
+        .join("/");
     assert!(boundary.objects[0].path.len() <= MAX_OBJECT_PATH_BYTES);
     assert_eq!(boundary.validate(), Ok(()));
 }
