@@ -78,6 +78,7 @@ pub enum StreamEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderError {
     InvalidRequest,
+    DestinationNotAllowed,
     Unsupported,
     Cancelled,
     Timeout,
@@ -117,6 +118,39 @@ pub trait LlmProvider: Send + Sync {
         cancellation: &CancellationToken,
         on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
     ) -> Result<(), ProviderError>;
+}
+
+/// Explicit network policy for one user-selected model invocation.
+/// No provider is silently substituted when the requested locality is denied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutboundPolicy {
+    OnDeviceOnly,
+    AllowLocalEndpoints,
+    AllowCloud,
+}
+
+/// Enforce destination permission before invoking any adapter or sending text.
+pub fn stream_selected(
+    provider: &dyn LlmProvider,
+    request: &GenerateRequest,
+    cancellation: &CancellationToken,
+    policy: OutboundPolicy,
+    on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+) -> Result<(), ProviderError> {
+    let allowed = match (provider.locality(), policy) {
+        (Locality::OnDevice, _) => true,
+        (Locality::Localhost | Locality::LocalNetwork, OutboundPolicy::AllowLocalEndpoints) => true,
+        (_, OutboundPolicy::AllowCloud) => true,
+        _ => false,
+    };
+    if !allowed {
+        return Err(ProviderError::DestinationNotAllowed);
+    }
+    request.validate()?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
+    provider.stream(request, cancellation, on_event)
 }
 
 #[cfg(test)]
