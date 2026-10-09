@@ -58,7 +58,6 @@ class SourceStagingTests(unittest.TestCase):
         for forgery in [
             "https://dumps.wikimedia.org/frwiki/20261009/dumpstatus.json",
             "https://dumps.wikimedia.org/enwiki/20261008/dumpstatus.json",
-            "https://dumps.wikimedia.org/enwiki/20261009/",
             "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json?alt=1",
             "https://dumps.wikimedia.org/enwiki/20261009/dumpstatus.json#alternate",
             "https://dumps.wikimedia.org/enwiki/20261009/../20261009/dumpstatus.json",
@@ -66,6 +65,8 @@ class SourceStagingTests(unittest.TestCase):
             self.manifest["source_url"] = forgery
             self.reject("generation metadata")
         self.manifest["source_url"] = accepted
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+        self.manifest["source_url"] = "https://dumps.wikimedia.org/enwiki/20261009/"
         self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
 
     def test_bad_ids_names_and_duplicate_case_aliases(self):

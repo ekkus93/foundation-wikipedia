@@ -209,7 +209,9 @@ python3 scripts/verify_source_staging.py source-manifest.json /path/to/staged-fi
 ```
 
 For public dump manifests, `source_url` must match the exact
-`https://dumps.wikimedia.org/PROJECT/GENERATION/dumpstatus.json` identity.
+`https://dumps.wikimedia.org/PROJECT/GENERATION/dumpstatus.json` identity,
+or the exact `/PROJECT/GENERATION/` directory when used as an HTTPS transfer
+base.
 Unrelated paths, query parameters and identity mismatches fail closed. This
 binds reported metadata to a consistent source identity **but cannot certify
 that the caller-supplied SHA-256 values came from Wikimedia**.

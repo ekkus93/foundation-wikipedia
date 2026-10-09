@@ -40,11 +40,6 @@ def _preflight(manifest):
     if not isinstance(manifest, dict):
         raise SourceDownloadError("invalid manifest")
     base = manifest.get("source_url")
-    if not _official_url(base):
-        raise SourceDownloadError("untrusted source URL")
-    parsed = urlsplit(base)
-    if not parsed.path.endswith("/") or parsed.query:
-        raise SourceDownloadError("source URL must be an official directory")
     if (manifest.get("completed") is not True
             or not isinstance(manifest.get("project"), str)
             or not IDENTITY.fullmatch(manifest["project"])
@@ -52,6 +47,11 @@ def _preflight(manifest):
             or not NAME.fullmatch(manifest["generation_id"])
             or manifest["generation_id"].endswith(".")):
         raise SourceDownloadError("incomplete or unsafe generation")
+    if not _official_url(base, manifest["project"], manifest["generation_id"]):
+        raise SourceDownloadError("untrusted source URL")
+    parsed = urlsplit(base)
+    if not parsed.path.endswith("/") or parsed.query:
+        raise SourceDownloadError("source URL must be an official directory")
     files = manifest.get("files")
     if not isinstance(files, list) or not (0 < len(files) <= MAX_MEMBERS):
         raise SourceDownloadError("invalid member count")

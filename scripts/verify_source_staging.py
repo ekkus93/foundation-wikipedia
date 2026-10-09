@@ -24,7 +24,7 @@ class SourceVerificationError(ValueError):
     pass
 
 
-def _official_url(value, project=None, generation=None):
+def _official_url(value, project, generation):
     if not isinstance(value, str):
         return False
     try:
@@ -39,10 +39,11 @@ def _official_url(value, project=None, generation=None):
             and not url.fragment
             and not any(char.isspace() or ord(char) < 32 or ord(char) == 92 for char in value)
             and (
-                (project is None and generation is None
-                 and bool(url.path.strip("/")))
-                or (url.hostname == "dumps.wikimedia.org"
-                    and url.path == f"/{project}/{generation}/dumpstatus.json")
+                (url.hostname == "dumps.wikimedia.org"
+                 and url.path in {
+                     f"/{project}/{generation}/",
+                     f"/{project}/{generation}/dumpstatus.json",
+                 })
                 or (url.hostname == "enterprise.wikimedia.com"
                     and bool(url.path.strip("/")))
             )
