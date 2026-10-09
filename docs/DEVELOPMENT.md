@@ -63,6 +63,29 @@ gradle :app:buildRustArm64
 
 This builds `libwiki_ffi.so` using the NDK API 26 linker and copies it to the ignored `app/src/main/jniLibs/arm64-v8a/` directory. The native task is **opt-in**: normal APK assembly still builds a placeholder shell without Rust. No exported UniFFI API, generated Kotlin bindings, coroutine bridge, lifecycle cancellation or device verification exists yet. The bridge and actual app integration remain MOB-001 work. See `android/README.md` for limitations.
 
+
+### Offline local-file source staging (SRC-001 partial)
+
+A dump member obtained by other means can be staged without a network call,
+using the same completed official dump-discovery report and upstream SHA-1
+identity as the resumable HTTPS downloader:
+
+```sh
+python3 scripts/discover_public_dump.py enwiki > completed-report.json
+python3 scripts/stage_local_dump.py completed-report.json \
+  enwiki-YYYYMMDD-pages-articles-multistream.xml.bz2 \
+  /path/to/verified-local-file.xml.bz2 /path/to/staging
+```
+
+The report must refer to a completed generation and contain the exact official
+file URL, expected size and upstream SHA-1. The command validates the copied
+bytes and emits a SHA-256 receipt, does not overwrite existing final files,
+and does not modify an interrupted HTTP `.part` transfer. It does **not**
+authenticate a caller-supplied report, install a snapshot or imply publisher
+signature verification. The upstream SHA-1 is a legacy integrity check, not
+a modern cryptographic authenticity guarantee. The local input must be a
+regular non-symlink file; the staging destination must not be a symlink.
+
 ## Public Wikimedia dump discovery (read-only metadata)
 
 Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
