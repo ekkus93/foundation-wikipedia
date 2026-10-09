@@ -177,7 +177,11 @@ impl Redirect {
     pub fn validate(&self) -> Result<(), ModelError> {
         self.from.validate()?;
         self.to.validate()?;
-        if self.title.trim().is_empty() || self.from == self.to {
+        // Cross-project navigation is an interwiki link, not a redirect record.
+        if self.title.trim().is_empty()
+            || self.from == self.to
+            || self.from.project != self.to.project
+        {
             return Err(ModelError::InvalidRedirect);
         }
         Ok(())
@@ -413,6 +417,19 @@ mod record_contract_tests {
         assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
         redirect.to = key(11);
         redirect.title = " ".into();
+        assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
+    }
+
+    #[test]
+    fn redirect_record_rejects_cross_project_targets() {
+        let redirect = Redirect {
+            from: key(10),
+            title: "Old title".into(),
+            to: ArticleKey {
+                project: "frwiki".into(),
+                page_id: 11,
+            },
+        };
         assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
     }
 
