@@ -26,9 +26,9 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Pin toolchains/lockfiles; add `cargo fmt`, `clippy`, unit-test scripts.
   - **Accept:** clean checkout compiles and tests minimal workspace without external infrastructure.
 - [ ] **BOOT-002** Scaffold desktop and Android shells. **Depends:** BOOT-001.  
-  - [ ] Tauri 2/React/TypeScript/Vite desktop and Kotlin/Jetpack Compose/Gradle Android shells.
+  - [x] Tauri 2/React/TypeScript/Vite desktop and Kotlin/Jetpack Compose/Gradle Android shells.
   - [ ] Android Rust build/ABI plan and UniFFI build integration stub.
-  - [ ] Document development prerequisites and reproducible clean-build commands.
+  - [x] Document development prerequisites and reproducible clean-build commands.
   - **Accept:** desktop launches and Android debug APK installs from clean checkout.
 - [ ] **BOOT-003** Establish exact-head CI and documentation discipline. **Depends:** BOOT-002.  
   - [ ] Rust fmt/clippy/test, frontend lint/typecheck/test, Android tests/lint, dependency/license audit.
@@ -437,6 +437,12 @@ Spec deviation/ADR:
 - Code: `crates/wiki-pack-format/src/manifest.rs` and `tests/manifest.rs`: basic origin classification, version checks, malformed digests, object path safety and duplicates.
 - Qualified: `6c872b39f98d5a53d115e60949ff82f058f50873`; https://github.com/ekkus93/foundation-wikipedia/actions/runs/37916125850 (format, Clippy, tests, exact-head check passed).
 - Remaining: actual .wpack framing, canonical signing inputs, source hashes/provenance, full media/index catalog, byte verification and Android import. PACK-001 unchecked. Structural validation alone never confers Verified Publisher trust.
+
+### BOOT-002 — partial desktop and Android shell qualification (not complete)
+
+- Platform CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/37915637440 on exact commit `d73b91c9daa4f0941ba5e12116b69c143fcef64c`; all three jobs passed: desktop React/TypeScript production bundle, Android SDK 35/JDK17 Gradle `assembleDebug` + unit tests, and native Tauri Rust 1.90 `cargo check` on Ubuntu 24.04 with WebKitGTK dependencies.
+- Docs: `README.md`, `docs/DEVELOPMENT.md` and `android/README.md` describe Rust toolchains, native dependencies, Gradle and Node build instructions, limitations and Android UniFFI/ABI integration plan. Android APK artifact retention added to CI.
+- Remaining: actual UniFFI Android binding/build integration, **real desktop launch**, **real Android debug APK installation and lifecycle smoke test**, and reproducible transitive npm/Gradle dependency locks. BOOT-002 **parent stays unchecked** until required acceptance is evidenced; passing compilation is not proof of launch or on-device installation.
 
 ## Blockers requiring owner action
 
