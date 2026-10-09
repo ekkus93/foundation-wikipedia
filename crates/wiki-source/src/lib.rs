@@ -54,7 +54,14 @@ impl SourceGeneration {
                 || file.name.is_empty()
                 || file.name.contains('/')
                 || file.name.contains('\\')
+                || file.name == "."
                 || file.name == ".."
+                || file.name.starts_with('.')
+                || file.name.ends_with('.')
+                || !file
+                    .name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
                 || file.sha256.len() != 64
                 || !file.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             {
@@ -91,6 +98,33 @@ mod tests {
         let mut bad = sample();
         bad.completed = false;
         assert_eq!(bad.validate(), Err(SourceError::Incomplete));
+    }
+
+    #[test]
+    fn rejects_unsafe_member_names_before_transport() {
+        for name in [
+            ".",
+            "..",
+            ".hidden",
+            "article.",
+            "../outside",
+            "folder/article.xml",
+            "folder\\\\article.xml",
+            "C:article.xml",
+            "article\\u{0000}.xml",
+            "article name.xml",
+        ] {
+            let mut bad = sample();
+            bad.files[0].name = name.into();
+            assert_eq!(
+                bad.validate(),
+                Err(SourceError::InvalidFile(name.into())),
+                "unsafe source member {name:?} was accepted"
+            );
+        }
+        let mut good = sample();
+        good.files[0].name = "enwiki-20261001-pages-articles.xml.bz2".into();
+        assert_eq!(good.validate(), Ok(()));
     }
 
     #[test]
