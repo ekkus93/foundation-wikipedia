@@ -8,6 +8,7 @@ import unittest
 
 from download_public_dump import DownloadError
 from stage_public_dump_generation import stage_generation
+from verify_public_dump_publication import PublicationError
 from verify_source_staging import verify_source_bytes
 
 BODY_A = b"article dump a"
