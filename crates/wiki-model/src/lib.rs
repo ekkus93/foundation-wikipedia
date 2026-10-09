@@ -5,7 +5,6 @@
 
 pub mod evidence;
 
-
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;

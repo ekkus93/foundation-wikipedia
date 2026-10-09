@@ -37,12 +37,7 @@ impl EvidenceIndex {
     }
 
     /// Never resolve an old revision's citation against a newer article.
-    pub fn resolve(
-        &self,
-        key: &ArticleKey,
-        revision_id: u64,
-        id: &str,
-    ) -> Option<&EvidenceHandle> {
+    pub fn resolve(&self, key: &ArticleKey, revision_id: u64, id: &str) -> Option<&EvidenceHandle> {
         if *key != self.key || revision_id != self.revision_id {
             return None;
         }
@@ -105,9 +100,7 @@ fn block_text(content: &BlockContent) -> Option<String> {
     let text = match content {
         BlockContent::Paragraph(text) | BlockContent::Quote(text) => text.clone(),
         BlockContent::List(items) => items.join(" "),
-        BlockContent::Table(rows) => {
-            rows.iter().flatten().cloned().collect::<Vec<_>>().join(" ")
-        }
+        BlockContent::Table(rows) => rows.iter().flatten().cloned().collect::<Vec<_>>().join(" "),
         BlockContent::Math { source, .. } => source.clone(),
         BlockContent::Infobox(fields) => fields
             .iter()
