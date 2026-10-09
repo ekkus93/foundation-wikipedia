@@ -29,14 +29,13 @@ The opt-in task uses NDK clang for API 26 and copies the output to
 by Git. The task deliberately does not run on ordinary `assembleDebug` yet.
 
 A dedicated [Android Rust ABI qualification workflow](../.github/workflows/android-native-abi.yml)
-now cross-compiles `wiki-ffi` for arm64 using Android NDK 27.2.12479018
-and API 26, verifies the ELF architecture and exported C symbol
-`foundation_wikipedia_ffi_abi_version` (returns `1`), and preserves the
-native `.so` as a short-lived CI artifact. The workflow is path-filtered to
-native dependencies and can be triggered manually. This checks the native
-build/ABI artifact, **not** Kotlin JNI interoperability or a working UniFFI
-generated interface. Normal debug APK assembly still omits the shared Rust
-library unless the opt-in build is invoked.
+cross-compiles `wiki-ffi` for arm64 with Android NDK 27.2.12479018
+and API 26, verifies the ELF target, and retains the `.so` as a CI artifact.
+The workflow is path-filtered to native dependencies and can be triggered
+manually. **This is an ABI-target build check, not a callable FFI contract.**
+The workspace's strict `unsafe_code = "forbid"` lint currently prevents
+exporting unmangled C symbols without a separately reviewed safety boundary.
+Normal debug APK assembly does not build Rust unless explicitly requested.
 
 **Not a working UniFFI integration:** no UniFFI-generated Kotlin bindings,
 versioned exported DTOs, JNI call path, coroutine adapter or device-tested

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build the platform-neutral Rust FFI library for Android arm64.
-# This is the native ABI build stage only; UniFFI bindings are not generated yet.
+# Cross-build the platform-neutral Rust FFI crate for Android arm64.
+# Native ELF qualification only: no callable JNI/UniFFI interface exists yet.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,7 +10,7 @@ OUT="$ROOT/android/app/src/main/jniLibs/arm64-v8a"
 
 if [[ "${1:-}" == "--help" ]]; then
   printf 'Usage: ANDROID_NDK_HOME=/path/to/ndk bash android/scripts/build-rust-android.sh\n'
-  printf 'Builds wiki-ffi for arm64-v8a (Android API %s). UniFFI generation is not yet wired.\n' "$API"
+  printf 'Builds wiki-ffi for arm64-v8a (Android API %s). No generated UniFFI API yet.\n' "$API"
   exit 0
 fi
 if [[ $# -ne 0 ]]; then
@@ -46,20 +46,7 @@ cargo build --manifest-path "$ROOT/Cargo.toml" --package wiki-ffi --target "$TAR
 LIB="$ROOT/target/$TARGET/release/libwiki_ffi.so"
 test -f "$LIB"
 python3 "$ROOT/scripts/verify_android_elf.py" "$LIB"
-LLVM_NM="$NDK/toolchains/llvm/prebuilt/$HOST/bin/llvm-nm"
-if [[ ! -x "$LLVM_NM" ]]; then
-  echo "Missing Android NDK llvm-nm: $LLVM_NM" >&2
-  exit 2
-fi
-if ! "$LLVM_NM" -D --defined-only "$LIB" | grep -Eq '[[:space:]][TW][[:space:]]foundation_wikipedia_ffi_abi_version
-cp "$LIB" "$OUT/libwiki_ffi.so"
-printf 'Built %s\n' "$OUT/libwiki_ffi.so"
-printf 'NOTICE: native ABI library only; UniFFI Kotlin bindings and JNI API are not yet implemented.\n'
-; then
-  echo "wiki-ffi AArch64 library is missing its required ABI version handshake" >&2
-  exit 2
-fi
 mkdir -p "$OUT"
 cp "$LIB" "$OUT/libwiki_ffi.so"
 printf 'Built %s\n' "$OUT/libwiki_ffi.so"
-printf 'NOTICE: native ABI library only; UniFFI Kotlin bindings and JNI API are not yet implemented.\n'
+printf 'NOTICE: AArch64 ELF only; UniFFI Kotlin bindings and JNI API are not yet implemented.\n'
