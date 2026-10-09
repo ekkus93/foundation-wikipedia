@@ -45,6 +45,7 @@ export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG"
 cargo build --manifest-path "$ROOT/Cargo.toml" --package wiki-ffi --target "$TARGET" --release --locked
 LIB="$ROOT/target/$TARGET/release/libwiki_ffi.so"
 test -f "$LIB"
+python3 "$ROOT/scripts/verify_android_elf.py" "$LIB"
 mkdir -p "$OUT"
 cp "$LIB" "$OUT/libwiki_ffi.so"
 printf 'Built %s\n' "$OUT/libwiki_ffi.so"
