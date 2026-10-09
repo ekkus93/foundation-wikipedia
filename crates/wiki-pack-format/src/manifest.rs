@@ -41,7 +41,7 @@ fn safe_id(value: &str) -> bool {
         && value != "."
         && value != ".."
         && !value.contains('/')
-        && !value.contains('\\\\')
+        && !value.contains('\\')
         && !value.contains(':')
         && !value.chars().any(char::is_control)
 }
