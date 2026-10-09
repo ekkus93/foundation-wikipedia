@@ -37,7 +37,11 @@ impl LlmProvider for FakeProvider<'_> {
         on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
     ) -> Result<(), ProviderError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
-        on_event(StreamEvent::TextDelta("safe response".into()))
+        on_event(StreamEvent::TextDelta("safe response".into()))?;
+        on_event(StreamEvent::Completed {
+            input_tokens: None,
+            output_tokens: None,
+        })
     }
 }
 
