@@ -122,6 +122,50 @@ class ModernExportStagingTests(unittest.TestCase):
         self.assertEqual(result["files"][0]["url"], URL + NAMES[0])
         self.assertFalse(any(mirror in str(entry) for entry in result["files"]))
 
+    def test_local_file_source_uses_official_inventory_and_leaves_http_partials(self):
+        source = self.root / "local-files"
+        source.mkdir()
+        for name, body in zip(NAMES, (BODY_A, BODY_B)):
+            (source / name).write_bytes(body)
+        self.dest.mkdir()
+        partial = self.dest / (NAMES[0] + ".part")
+        partial.write_bytes(b"do not touch network partial")
+        result = stage_export(
+            self.report, self.dest, self.output, fetcher=self.fetch,
+            opener=lambda *_args, **_kwargs: self.fail("local mode made download"),
+            local_directory=source,
+        )
+        self.assertEqual(len(result["files"]), 2)
+        self.assertEqual(partial.read_bytes(), b"do not touch network partial")
+        self.assertEqual((self.dest / NAMES[1]).read_bytes(), BODY_B)
+
+    def test_local_corruption_and_symlinks_fail_without_manifest(self):
+        source = self.root / "local-files"
+        source.mkdir()
+        (source / NAMES[0]).write_bytes(b"changed")
+        (source / NAMES[1]).write_bytes(BODY_B)
+        with self.assertRaisesRegex(ExportStagingError, "SHA-256 mismatch"):
+            stage_export(self.report, self.dest, self.output, fetcher=self.fetch,
+                         local_directory=source)
+        self.assertFalse(self.output.exists())
+        (source / NAMES[0]).unlink()
+        (source / NAMES[0]).symlink_to(source / NAMES[1])
+        with self.assertRaisesRegex(ExportStagingError, "unsafe local member"):
+            stage_export(self.report, self.dest, self.output, fetcher=self.fetch,
+                         local_directory=source)
+        self.assertFalse(self.output.exists())
+
+    def test_invalid_local_directory_and_conflicting_modes_fail_preflight(self):
+        missing = self.root / "missing"
+        with self.assertRaisesRegex(ExportStagingError, "source directory"):
+            stage_export(self.report, self.dest, self.output,
+                         fetcher=lambda _url: self.fail("early source lookup"),
+                         local_directory=missing)
+        with self.assertRaisesRegex(ExportStagingError, "mutually exclusive"):
+            stage_export(self.report, self.dest, self.output,
+                         fetcher=lambda _url: self.fail("early source lookup"),
+                         local_directory=missing, mirror_base="https://mirror.example.test/")
+
     def test_mirror_corruption_rejected_and_no_manifest(self):
         mirror = "https://mirror.example.test/"
 

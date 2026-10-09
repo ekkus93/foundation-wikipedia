@@ -194,6 +194,59 @@ def _transfer(item, directory, *, opener, download_url=None):
     return _receipt(item, count)
 
 
+def _copy_local(item, directory, local_directory):
+    """Copy a predownloaded flat basename, verifying official SHA-256 bytes."""
+    name = item["path"].rsplit("/", 1)[-1]
+    target = directory / name
+    if _ordinary_file(target):
+        size = target.stat().st_size
+        if not 0 < size <= MAX_MEMBER_BYTES or _hash(target) != item["sha256"]:
+            raise ExportStagingError("existing member does not match SHA-256 inventory")
+        return _receipt(item, size)
+    source = local_directory / name
+    try:
+        present = _ordinary_file(source)
+    except ExportStagingError as error:
+        raise ExportStagingError("missing or unsafe local member") from error
+    if not present:
+        raise ExportStagingError("missing or unsafe local member")
+    temporary = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(source, flags)
+        with os.fdopen(fd, "rb") as reader:
+            metadata = os.fstat(reader.fileno())
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or not 0 < metadata.st_size <= MAX_MEMBER_BYTES):
+                raise ExportStagingError("unsafe local member metadata")
+            with tempfile.NamedTemporaryFile(mode="wb", dir=directory,
+                                             prefix=".local-stage.", delete=False) as writer:
+                temporary = Path(writer.name)
+                digest = hashlib.sha256()
+                copied = 0
+                for block in iter(lambda: reader.read(CHUNK), b""):
+                    copied += len(block)
+                    if copied > metadata.st_size or copied > MAX_MEMBER_BYTES:
+                        raise ExportStagingError("local member changed during transfer")
+                    digest.update(block)
+                    writer.write(block)
+                writer.flush()
+                os.fsync(writer.fileno())
+            end = os.fstat(reader.fileno())
+            if (copied != metadata.st_size or end.st_size != metadata.st_size
+                    or end.st_mtime_ns != metadata.st_mtime_ns):
+                raise ExportStagingError("local member changed during transfer")
+            if digest.hexdigest() != item["sha256"]:
+                raise ExportStagingError("local member SHA-256 mismatch")
+        _publish(temporary, target, directory)
+        return _receipt(item, copied)
+    except OSError as error:
+        raise ExportStagingError("unsafe local member read") from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _preflight(report, fetcher):
     if not isinstance(report, dict) or report.get("completed") is not True:
         raise ExportStagingError("incomplete or invalid current-content export")
@@ -220,9 +273,15 @@ def _preflight(report, fetcher):
 
 
 def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
-                 opener=_open, mirror_base=None):
+                 opener=_open, mirror_base=None, local_directory=None):
     """Stage complete verified inventory before no-clobber manifest publication."""
+    if mirror_base is not None and local_directory is not None:
+        raise ExportStagingError("mirror and local source modes are mutually exclusive")
     mirror_base = _validate_mirror(mirror_base)
+    if local_directory is not None:
+        local_directory = Path(local_directory)
+        if local_directory.is_symlink() or not local_directory.is_dir():
+            raise ExportStagingError("missing or unsafe local source directory")
     fresh = _preflight(report, fetcher)
     directory = Path(directory)
     output = Path(output_manifest)
@@ -232,8 +291,9 @@ def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
     if output.exists() or output.is_symlink():
         raise ExportStagingError("output manifest already exists")
     entries = [
-        _transfer(item, directory, opener=opener,
-                  download_url=mirror_base + item["path"] if mirror_base else None)
+        _copy_local(item, directory, local_directory) if local_directory is not None
+        else _transfer(item, directory, opener=opener,
+                       download_url=mirror_base + item["path"] if mirror_base else None)
         for item in fresh["files"]
     ]
     entries.sort(key=lambda item: item["name"])
@@ -277,13 +337,16 @@ def main():
     parser.add_argument("completed_export_report", type=Path)
     parser.add_argument("staging_directory", type=Path)
     parser.add_argument("source_manifest", type=Path)
+    parser.add_argument("--local-directory", type=Path, default=None,
+                        help="Flat directory of predownloaded member basenames")
     parser.add_argument("--mirror-base", default=None,
                         help="Explicit HTTPS mirror directory (official SHA256SUMS still required)")
     args = parser.parse_args()
     try:
         report = json.loads(args.completed_export_report.read_text(encoding="utf-8"))
         manifest = stage_export(report, args.staging_directory, args.source_manifest,
-                                mirror_base=args.mirror_base)
+                                mirror_base=args.mirror_base,
+                                local_directory=args.local_directory)
     except (ExportStagingError, OSError, ValueError) as error:
         parser.exit(2, f"Current-content staging failed: {error}\n")
     print(f"Staged {len(manifest['files'])} SHA-256-verified member(s), without activation")

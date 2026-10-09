@@ -213,6 +213,14 @@ python3 scripts/verify_source_staging.py \
   /path/to/current-content-manifest.json /path/to/current-content-staging
 ```
 
+Alternatively, use `--local-directory /path/to/downloaded-shards` for
+pre-downloaded XML members stored under **flat basenames**. This mode copies
+every file via a no-follow descriptor into a no-clobber staging target,
+checks complete upstream SHA-256 and leaves unrelated HTTP `.part` files
+untouched. It still requires fresh official Wikimedia SHA256SUMS metadata
+over HTTPS; it is not an offline authentication or offline discovery mode.
+`--local-directory` and `--mirror-base` are mutually exclusive.
+
 To download from an explicitly configured HTTPS mirror instead of the
 original member host, append `--mirror-base https://mirror.example.test/exports/`.
 The mirror URL is validated before any I/O, redirects are rejected, and the
