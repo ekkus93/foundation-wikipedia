@@ -151,7 +151,32 @@ pub fn stream_selected(
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    provider.stream(request, cancellation, on_event)
+    // Enforce callback rejection even if a nonconforming provider swallows it.
+    // Also discard a response cancelled immediately after the final event.
+    let mut callback_error = None;
+    let outcome = provider.stream(request, cancellation, &mut |event| {
+        if cancellation.is_cancelled() {
+            callback_error = Some(ProviderError::Cancelled);
+            return Err(ProviderError::Cancelled);
+        }
+        if let Some(error) = &callback_error {
+            return Err(error.clone());
+        }
+        match on_event(event) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                callback_error = Some(error.clone());
+                Err(error)
+            }
+        }
+    });
+    if let Some(error) = callback_error {
+        return Err(error);
+    }
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
+    outcome
 }
 
 #[cfg(test)]
@@ -286,6 +311,87 @@ mod tests {
                 Err(error)
             );
         }
+    }
+
+    struct NonconformingProvider {
+        cancel_after_completion: bool,
+    }
+
+    impl LlmProvider for NonconformingProvider {
+        fn locality(&self) -> Locality {
+            Locality::OnDevice
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                discover_models: false,
+                streaming: true,
+                cancellable: true,
+            }
+        }
+
+        fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(vec![])
+        }
+
+        fn test_connection(&self) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn stream(
+            &self,
+            _: &GenerateRequest,
+            cancellation: &CancellationToken,
+            on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+        ) -> Result<(), ProviderError> {
+            // Deliberately swallow the callback's first error.
+            let _ = on_event(StreamEvent::TextDelta("first".into()));
+            let _ = on_event(StreamEvent::Completed {
+                input_tokens: None,
+                output_tokens: None,
+            });
+            if self.cancel_after_completion {
+                cancellation.cancel();
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn provider_cannot_swallow_callback_rejection() {
+        let provider = NonconformingProvider {
+            cancel_after_completion: false,
+        };
+        let mut seen = 0;
+        let result = stream_selected(
+            &provider,
+            &request(),
+            &CancellationToken::default(),
+            OutboundPolicy::OnDeviceOnly,
+            &mut |_| {
+                seen += 1;
+                Err(ProviderError::Rejected)
+            },
+        );
+        assert_eq!(result, Err(ProviderError::Rejected));
+        assert_eq!(seen, 1);
+    }
+
+    #[test]
+    fn cancellation_after_last_event_discards_completed_response() {
+        let provider = NonconformingProvider {
+            cancel_after_completion: true,
+        };
+        let token = CancellationToken::default();
+        let result = stream_selected(
+            &provider,
+            &request(),
+            &token,
+            OutboundPolicy::OnDeviceOnly,
+            &mut |_| Ok(()),
+        );
+        assert_eq!(result, Err(ProviderError::Cancelled));
+        assert!(token.is_cancelled());
     }
 
     #[test]
