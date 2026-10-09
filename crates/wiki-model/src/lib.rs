@@ -116,6 +116,7 @@ pub enum ModelError {
     MissingTitle,
     InvalidSectionHeading,
     InvalidReferenceLabel,
+    InvalidLinkLabel,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
@@ -218,6 +219,9 @@ impl Article {
             return Err(ModelError::MissingTitle);
         }
         for link in &self.links {
+            if link.label.trim().is_empty() {
+                return Err(ModelError::InvalidLinkLabel);
+            }
             link.target.validate()?;
         }
         let mut refs = HashSet::new();
@@ -420,6 +424,22 @@ mod tests {
         a.revision.timestamp = "2026-10-09T00:00:00Z".into();
         a.display_title.clear();
         assert_eq!(a.validate(), Err(ModelError::MissingTitle));
+    }
+
+    #[test]
+    fn article_links_require_readable_labels() {
+        let mut a = article();
+        a.links.push(ArticleLink {
+            label: " ".into(),
+            target: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 7,
+            },
+            fragment: None,
+        });
+        assert_eq!(a.validate(), Err(ModelError::InvalidLinkLabel));
+        a.links[0].label = "Related page".into();
+        assert_eq!(a.validate(), Ok(()));
     }
 
     #[test]
