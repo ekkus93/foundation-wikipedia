@@ -34,6 +34,8 @@ jobs:
             "platform-tools" "emulator" \
             "platforms;android-35" "build-tools;35.0.0" \
             "system-images;android-35;google_apis;x86_64"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
