@@ -84,7 +84,7 @@ impl SoftAnchor {
                 })
                 .collect();
             if preferred.len() == 1 {
-                Some(*preferred[0])
+                Some(preferred[0])
             } else {
                 None
             }
