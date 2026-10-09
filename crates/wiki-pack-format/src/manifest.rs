@@ -2,6 +2,10 @@
 use std::collections::BTreeSet;
 
 pub const FORMAT_VERSION: u32 = 1;
+/// Provisional safeguards until archive framing and mobile benchmarks are final.
+pub const MAX_PACK_OBJECTS: usize = 1_000_000;
+pub const MAX_OBJECT_BYTES: u64 = 1_u64 << 40;
+pub const MAX_DECLARED_BYTES: u64 = 4_u64 << 40;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
@@ -33,6 +37,7 @@ pub enum ManifestError {
     UnsafeMetadata,
     UnsafeObject,
     DuplicateObject,
+    ResourceBudget,
 }
 
 fn safe_id(value: &str) -> bool {
@@ -132,7 +137,11 @@ impl Manifest {
         if !origin_safe {
             return Err(ManifestError::UnsafeMetadata);
         }
+        if self.objects.len() > MAX_PACK_OBJECTS {
+            return Err(ManifestError::ResourceBudget);
+        }
         let mut paths = BTreeSet::new();
+        let mut declared_bytes = 0_u64;
         for object in &self.objects {
             if object.bytes == 0
                 || object.sha256.len() != 64
@@ -146,6 +155,15 @@ impl Manifest {
             }
             if !paths.insert(object.path.to_ascii_lowercase()) {
                 return Err(ManifestError::DuplicateObject);
+            }
+            if object.bytes > MAX_OBJECT_BYTES {
+                return Err(ManifestError::ResourceBudget);
+            }
+            declared_bytes = declared_bytes
+                .checked_add(object.bytes)
+                .ok_or(ManifestError::ResourceBudget)?;
+            if declared_bytes > MAX_DECLARED_BYTES {
+                return Err(ManifestError::ResourceBudget);
             }
         }
         Ok(())
@@ -207,6 +225,31 @@ mod transcript_tests {
             publisher: "foundation".into(),
         };
         assert_ne!(changed.identity_transcript().unwrap(), baseline);
+    }
+
+    #[test]
+    fn resource_budgets_reject_oversized_and_overflowing_pack_claims() {
+        let mut invalid = sample();
+        invalid.objects[0].bytes = MAX_OBJECT_BYTES + 1;
+        assert_eq!(invalid.validate(), Err(ManifestError::ResourceBudget));
+        assert_eq!(
+            invalid.identity_transcript(),
+            Err(ManifestError::ResourceBudget)
+        );
+
+        invalid = sample();
+        invalid.objects.clear();
+        for index in 0..5 {
+            invalid.objects.push(Object {
+                path: format!("records/{index}.pack"),
+                sha256: "a".repeat(64),
+                bytes: MAX_OBJECT_BYTES,
+            });
+        }
+        assert_eq!(invalid.validate(), Err(ManifestError::ResourceBudget));
+
+        invalid.objects.pop();
+        assert_eq!(invalid.validate(), Ok(()));
     }
 
     #[test]
