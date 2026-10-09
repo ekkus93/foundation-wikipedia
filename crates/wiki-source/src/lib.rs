@@ -39,7 +39,14 @@ impl SourceGeneration {
         {
             return Err(SourceError::InvalidProject);
         }
-        if self.upstream_id.trim().is_empty() {
+        if self.upstream_id.is_empty()
+            || self.upstream_id == "."
+            || self.upstream_id == ".."
+            || !self
+                .upstream_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
             return Err(SourceError::MissingGeneration);
         }
         if !self.completed {
