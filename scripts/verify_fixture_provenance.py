@@ -1,25 +1,61 @@
 #!/usr/bin/env python3
-"""Validate SHA-256 and source attribution of committed fixture files."""
+"""Fail-closed validation of committed fixture attribution and exact bytes."""
 import hashlib
 import json
 from pathlib import Path
 import re
 import sys
+from urllib.parse import urlsplit
 
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
+PROJECT = re.compile(r"^[a-z0-9_]+$")
+SUFFIX = ".provenance.json"
+
+
+def _positive_id(value):
+    return type(value) is int and value > 0
+
+
+def _official_url(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError:
+        return False
 
 
 def verify(root):
+    """Return all validation failures; never silently accept missing fixtures."""
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        return [f"{root}: missing or unsafe fixture directory"]
+
     errors = []
-    if not root.exists():
-        return errors
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             errors.append(f"{path}: symlink not allowed")
             continue
-        if not path.is_file() or path.name == "README.md" or path.name.endswith(".provenance.json"):
+        if path.is_dir():
             continue
-        sidecar = Path(str(path) + ".provenance.json")
+        if not path.is_file():
+            errors.append(f"{path}: unsupported fixture entry")
+            continue
+        if path.name.endswith(SUFFIX):
+            fixture = path.with_name(path.name[:-len(SUFFIX)])
+            if not fixture.is_file() or fixture.is_symlink():
+                errors.append(f"{path}: orphan provenance sidecar")
+            continue
+        if path.name == "README.md":
+            continue
+
+        sidecar = Path(str(path) + SUFFIX)
         if not sidecar.is_file() or sidecar.is_symlink():
             errors.append(f"{path}: missing provenance sidecar")
             continue
@@ -31,23 +67,35 @@ def verify(root):
         if not isinstance(data, dict):
             errors.append(f"{sidecar}: expected object")
             continue
-        if data.get("source") not in ("synthetic", "wikimedia"):
+
+        source = data.get("source")
+        if source not in ("synthetic", "wikimedia"):
             errors.append(f"{sidecar}: invalid source")
         if not isinstance(data.get("license"), str) or not data["license"].strip():
             errors.append(f"{sidecar}: missing license")
         digest = data.get("sha256")
         if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
             errors.append(f"{sidecar}: invalid sha256")
-        elif digest != hashlib.sha256(path.read_bytes()).hexdigest():
-            errors.append(f"{sidecar}: sha256 mismatch")
-        if data.get("source") == "synthetic" and not data.get("description"):
-            errors.append(f"{sidecar}: missing description")
-        if data.get("source") == "wikimedia":
-            if not str(data.get("source_url", "")).startswith("https://"):
+        else:
+            try:
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                errors.append(f"{path}: unable to read fixture")
+            else:
+                if digest != actual:
+                    errors.append(f"{sidecar}: sha256 mismatch")
+
+        if source == "synthetic":
+            if not isinstance(data.get("description"), str) or not data["description"].strip():
+                errors.append(f"{sidecar}: missing description")
+        elif source == "wikimedia":
+            if not _official_url(data.get("source_url")):
                 errors.append(f"{sidecar}: missing HTTPS source_url")
-            for key in ("project", "page_id", "revision_id"):
-                if not data.get(key):
-                    errors.append(f"{sidecar}: missing {key}")
+            if not isinstance(data.get("project"), str) or not PROJECT.fullmatch(data["project"]):
+                errors.append(f"{sidecar}: invalid project")
+            for key in ("page_id", "revision_id"):
+                if not _positive_id(data.get(key)):
+                    errors.append(f"{sidecar}: invalid {key}")
     return errors
 
 
