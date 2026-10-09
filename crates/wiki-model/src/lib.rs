@@ -511,8 +511,13 @@ mod tests {
         });
         assert_eq!(a.validate(), Ok(()));
         for mime in [
-            "", "image", "image/;foo", "image/png; charset=utf-8",
-            "image/evil\\r\\n", "image/png path", " /png",
+            "",
+            "image",
+            "image/;foo",
+            "image/png; charset=utf-8",
+            "image/evil\\r\\n",
+            "image/png path",
+            " /png",
         ] {
             a.media[0].mime_type = mime.into();
             assert_eq!(
