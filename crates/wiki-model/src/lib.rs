@@ -712,8 +712,7 @@ mod tests {
                 "unsafe reference URL: {url}"
             );
         }
-        a.references[0].source_url =
-            Some("https://en.wikipedia.org:443/wiki/Gravit%C3%A9".into());
+        a.references[0].source_url = Some("https://en.wikipedia.org:443/wiki/Gravit%C3%A9".into());
         assert_eq!(a.validate(), Ok(()));
         a.references[0].source_url = Some("https://[2001:db8::1]:443/article".into());
         assert_eq!(a.validate(), Ok(()));
