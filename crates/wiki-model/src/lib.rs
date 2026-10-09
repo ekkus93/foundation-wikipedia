@@ -171,10 +171,12 @@ fn valid_media_mime(value: &str) -> bool {
     };
     !major.is_empty()
         && !subtype.is_empty()
-        && major.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        && subtype.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+' | b'_')
-        })
+        && major
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && subtype
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+' | b'_'))
 }
 
 impl ArticleKey {
@@ -297,8 +299,7 @@ impl Article {
         for (index, media) in self.media.iter().enumerate() {
             if !valid_external_url(&media.source_url)
                 || !valid_media_mime(&media.mime_type)
-                || (media.is_av_preview
-                    && !media.mime_type.starts_with("image/"))
+                || (media.is_av_preview && !media.mime_type.starts_with("image/"))
                 || media.license.trim().is_empty()
                 || media.creator.trim().is_empty()
                 || media.attribution.trim().is_empty()

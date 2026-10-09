@@ -191,6 +191,25 @@ published without clobbering an existing result. Raw wikitext is **not**
 rendered article HTML; template/Lua/math expansion, revision joins, sanitized
 rendering and actual pack installation are still incomplete.
 
+## Newer public current-content SHA-256 export discovery (SRC-001 partial)
+
+Wikimedia's separate current-content XML export publishes an official
+`SHA256SUMS` inventory only when that monthly export is complete. Discover
+recent completed exports with:
+
+```sh
+python3 scripts/discover_current_content_export.py enwiki --months 4 \
+  > current-content-report.json
+```
+
+The resulting report contains each original, official source URL and upstream
+SHA-256 checksum. This read-only adapter does not download or activate content;
+member sizes and installed-snapshot integrity still require independent staged
+byte verification. The HTTPS checksum inventory is not a signed publisher
+manifest. Unlike the older dump-status route, the newer export can provide
+SHA-256 directly. See Wikimedia documentation:
+https://wikitech.wikimedia.org/wiki/MediaWiki_Content_File_Exports
+
 ## Public Wikimedia dump discovery (read-only metadata)
 
 Use `python3 scripts/discover_public_dump.py enwiki` to enumerate the official
