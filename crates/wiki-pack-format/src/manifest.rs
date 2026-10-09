@@ -56,7 +56,10 @@ impl Manifest {
                 || !object.sha256.bytes().all(|c| c.is_ascii_hexdigit())
                 || object.path.contains('\\')
                 || object.path.contains(':')
-                || object.path.split('/').any(|c| c.is_empty() || c == "." || c == "..")
+                || object
+                    .path
+                    .split('/')
+                    .any(|c| c.is_empty() || c == "." || c == "..")
             {
                 return Err(ManifestError::UnsafeObject);
             }
