@@ -55,15 +55,12 @@ fn unsafe_component(component: &str) -> bool {
     {
         return true;
     }
-    let stem = component.split('.').next().unwrap_or("").to_ascii_uppercase();
-    matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5"
-            | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5"
-            | "LPT6" | "LPT7" | "LPT8" | "LPT9"
-    )
+    let upper = component.to_ascii_uppercase();
+    let base = upper.split('.').next().unwrap_or("");
+    let port = base.len() == 4
+        && (base.starts_with("COM") || base.starts_with("LPT"))
+        && (b'1'..=b'9').contains(&base.as_bytes()[3]);
+    ["CON", "PRN", "AUX", "NUL"].contains(&base) || port
 }
 
 impl Manifest {
@@ -95,10 +92,7 @@ impl Manifest {
                 || object.path.contains('\\')
                 || object.path.chars().any(char::is_control)
                 || object.path.contains(':')
-                || object
-                    .path
-                    .split('/')
-                    .any(unsafe_component)
+                || object.path.split('/').any(unsafe_component)
             {
                 return Err(ManifestError::UnsafeObject);
             }
