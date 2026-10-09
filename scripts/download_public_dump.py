@@ -80,10 +80,18 @@ def _metadata(report, name):
 
 def _hash_file(path):
     digest1, digest256 = hashlib.sha1(), hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(CHUNK), b""):
-            digest1.update(block)
-            digest256.update(block)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise DownloadError("unsafe dump member file type or hardlink")
+            for block in iter(lambda: stream.read(CHUNK), b""):
+                digest1.update(block)
+                digest256.update(block)
+    except OSError as error:
+        raise DownloadError("dump member changed during verification") from error
     return digest1.hexdigest(), digest256.hexdigest()
 
 
@@ -92,8 +100,8 @@ def _ordinary_file(path):
         info = path.lstat()
     except FileNotFoundError:
         return False
-    if not stat.S_ISREG(info.st_mode):
-        raise DownloadError("unsafe existing destination or partial file")
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise DownloadError("unsafe existing destination or partial file (type or hardlink)")
     return True
 
 
@@ -135,6 +143,8 @@ def fetch_dump_member(report, name, dest, user_agent, opener=None):
                 raise DownloadError("transport changed the authorized URL")
             if status != (206 if offset else 200):
                 raise DownloadError("unexpected HTTP status for resume")
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise DownloadError("non-byte-addressable dump Content-Encoding")
             length = response.headers.get("Content-Length")
             expected_remaining = size - offset
             if length is not None and length != str(expected_remaining):
@@ -145,8 +155,16 @@ def fetch_dump_member(report, name, dest, user_agent, opener=None):
                     offset, size - 1, size
                 ):
                     raise DownloadError("invalid resumed Content-Range")
-            mode = "ab" if offset else "xb"
-            with partial.open(mode) as writer:
+            flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            if not offset:
+                flags |= os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(partial, flags, 0o600)
+            with os.fdopen(descriptor, "ab") as writer:
+                info = os.fstat(writer.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_size != offset):
+                    raise DownloadError("partial dump member changed during resume")
                 count = offset
                 while True:
                     data = response.read(CHUNK)
@@ -169,7 +187,7 @@ def fetch_dump_member(report, name, dest, user_agent, opener=None):
         raise DownloadError("upstream SHA-1 mismatch")
     # An atomic no-clobber promotion: never overwrite an already-staged member.
     try:
-        os.link(partial, target)
+        os.link(partial, target, follow_symlinks=False)
     except FileExistsError as error:
         raise DownloadError("final member appeared during download") from error
     partial.unlink()

@@ -1,5 +1,7 @@
 """Offline regression coverage for strict resumable official-dump transport."""
 import hashlib
+import os
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import unittest
@@ -120,6 +122,46 @@ class DownloadTests(unittest.TestCase):
         self.report["files"][0]["url"] = "https://attacker.example/articles.xml"
         with self.assertRaisesRegex(DownloadError, "official URL"):
             self.fetch(Opener([]))
+
+    def test_rejects_encoded_http_body_before_writing(self):
+        with self.assertRaisesRegex(DownloadError, "Content-Encoding"):
+            self.fetch(Opener([Response(200, BODY, {"Content-Encoding": "gzip"})]))
+        self.assertFalse((self.root / "articles.xml.part").exists())
+
+    def test_hardlinked_final_and_partial_are_rejected(self):
+        self.root.mkdir()
+        outside = self.root.parent / "outside"
+        outside.write_bytes(BODY)
+        for suffix in ("", ".part"):
+            path = self.root / ("articles.xml" + suffix)
+            os.link(outside, path)
+            with self.assertRaisesRegex(DownloadError, "hardlink"):
+                self.fetch(Opener([]))
+            path.unlink()
+        self.assertEqual(outside.read_bytes(), BODY)
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow")
+    def test_symlink_swap_during_partial_open_is_rejected(self):
+        self.root.mkdir()
+        outside = self.root.parent / "outside"
+        outside.write_bytes(BODY)
+        partial = self.root / "articles.xml.part"
+        real_open = os.open
+        changed = False
+
+        def swap(path, flags, *args, **kwargs):
+            nonlocal changed
+            if Path(path) == partial and not changed:
+                changed = True
+                partial.symlink_to(outside)
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("download_public_dump.os.open", side_effect=swap):
+            with self.assertRaises(OSError):
+                self.fetch(Opener([Response(200, BODY)]))
+        self.assertTrue(changed)
+        self.assertFalse((self.root / "articles.xml").exists())
+        self.assertEqual(outside.read_bytes(), BODY)
 
     def test_empty_or_oversized_metadata_and_symlinks_fail(self):
         self.report["files"][0]["bytes"] = True
