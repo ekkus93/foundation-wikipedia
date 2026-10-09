@@ -34,6 +34,12 @@ loading exists. MOB-001 must implement and test these before any app call
 can use the shared Rust core. An APK compiling without this library is not
 proof of a native bridge.
 
+The Android development shell's reader FAB exposes four labeled, touchable
+action buttons (nearest FAB: Chat, Bookmark, Offline, Settings) and responds
+with an explicit placeholder snackbar when selected. None of the actions,
+article fetches, offline saves or settings screens is implemented yet;
+instrumented interaction and screen-reader qualification remain outstanding.
+
 No third-party content is allowed to call privileged native APIs directly.
 The bootstrap WebView has JavaScript disabled; future source content needs
 explicit sanitization and tightly scoped URI/selection bridges.

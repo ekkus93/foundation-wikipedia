@@ -6,11 +6,15 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -22,11 +26,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.launch
 
 /** Native Compose application shell; Wikimedia loading will be bound through Rust. */
 class MainActivity : ComponentActivity() {
@@ -70,15 +76,29 @@ private fun FoundationApp() {
         if (isDark) darkColorScheme() else lightColorScheme()
     }
     var expanded by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     MaterialTheme(colorScheme = scheme) {
         Scaffold(
             topBar = { TopAppBar(title = { Text("Wikipedia") }) },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             floatingActionButton = {
-                Column {
+                Column(horizontalAlignment = Alignment.End) {
+                    // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
                     if (expanded) {
-                        Text("Chat · Bookmark · Offline · Settings")
-                        Text("Actions are not implemented yet")
+                        for (label in listOf("Settings", "Offline", "Bookmark", "Chat")) {
+                            OutlinedButton(onClick = {
+                                expanded = false
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        "$label is not implemented in this development shell"
+                                    )
+                                }
+                            }) {
+                                Text(label)
+                            }
+                        }
                     }
                     FloatingActionButton(onClick = { expanded = !expanded }) {
                         Text(if (expanded) "Close" else "Actions")
