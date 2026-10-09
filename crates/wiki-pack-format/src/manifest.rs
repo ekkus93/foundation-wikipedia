@@ -43,6 +43,7 @@ fn safe_id(value: &str) -> bool {
         && !value.contains('/')
         && !value.contains('\\')
         && !value.contains(':')
+        && !unsafe_component(value)
         && !value.chars().any(char::is_control)
 }
 
