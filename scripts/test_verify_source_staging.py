@@ -71,6 +71,21 @@ class SourceStagingTests(unittest.TestCase):
         self.manifest["source_url"] = "https://dumps.wikimedia.org/enwiki/20261009/"
         self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
 
+    def test_completed_modern_sha256_export_identity_is_validated(self):
+        self.manifest["generation_id"] = "2026-10-01"
+        self.manifest["source_url"] = (
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/"
+            "enwiki/2026-10-01/xml/bzip2/SHA256SUMS"
+        )
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+        self.manifest["generation_id"] = "2026-09-01"
+        self.reject("generation metadata")
+        self.manifest["generation_id"] = "2026-10-01"
+        self.manifest["source_url"] = self.manifest["source_url"].replace(
+            "/enwiki/", "/frwiki/"
+        )
+        self.reject("generation metadata")
+
     def test_bad_ids_names_and_duplicate_case_aliases(self):
         self.manifest["project"] = "en/wiki"
         self.reject("generation metadata")

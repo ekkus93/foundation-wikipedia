@@ -45,6 +45,11 @@ def _official_url(value, project, generation):
                      f"/{project}/{generation}/",
                      f"/{project}/{generation}/dumpstatus.json",
                  })
+                or (url.hostname == "dumps.wikimedia.org"
+                    and url.path == (
+                        f"/other/mediawiki_content_current/{project}/{generation}"
+                        "/xml/bzip2/SHA256SUMS"
+                    ))
                 or (url.hostname == "enterprise.wikimedia.com"
                     and bool(url.path.strip("/")))
             )

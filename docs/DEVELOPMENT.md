@@ -203,7 +203,23 @@ python3 scripts/discover_current_content_export.py enwiki --months 4 \
 ```
 
 The resulting report contains each original, official source URL and upstream
-SHA-256 checksum. This read-only adapter does not download or activate content;
+SHA-256 checksum. Resume/download **every** published member, verify hashes,
+and write a no-clobber complete staging manifest with:
+
+```sh
+python3 scripts/stage_current_content_export.py current-content-report.json \
+  /path/to/current-content-staging /path/to/current-content-manifest.json
+python3 scripts/verify_source_staging.py \
+  /path/to/current-content-manifest.json /path/to/current-content-staging
+```
+
+The stager re-fetches and compares official SHA256SUMS metadata before any
+member transfer, rejects altered member inventories, checks exact HTTPS URLs,
+validates resume ranges and SHA-256, and refuses incomplete manifest publication.
+It is not a snapshot importer or installed article reader; no publisher
+signature or device acceptance has been established.
+
+This separate read-only discovery adapter does not activate content;
 member sizes and installed-snapshot integrity still require independent staged
 byte verification. The HTTPS checksum inventory is not a signed publisher
 manifest. Unlike the older dump-status route, the newer export can provide
