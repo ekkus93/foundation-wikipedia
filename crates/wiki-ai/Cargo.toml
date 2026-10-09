@@ -1,0 +1,14 @@
+[package]
+name = "wiki-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wiki-model = { path = "../wiki-model" }
+wiki-core = { path = "../wiki-core" }
+wiki-search = { path = "../wiki-search" }

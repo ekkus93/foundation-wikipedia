@@ -1,0 +1,12 @@
+[package]
+name = "wiki-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wiki-pack-builder = { path = "../../crates/wiki-pack-builder" }

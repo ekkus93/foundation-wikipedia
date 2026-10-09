@@ -1,0 +1,17 @@
+[package]
+name = "wiki-pack-builder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+wiki-model = { path = "../wiki-model" }
+wiki-core = { path = "../wiki-core" }
+wiki-source = { path = "../wiki-source" }
+wiki-store = { path = "../wiki-store" }
+wiki-search = { path = "../wiki-search" }
+wiki-pack-format = { path = "../wiki-pack-format" }

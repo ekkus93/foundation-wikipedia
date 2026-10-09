@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wiki-model",
+    "crates/wiki-core",
+    "crates/wiki-source",
+    "crates/wiki-store",
+    "crates/wiki-search",
+    "crates/wiki-ai",
+    "crates/wiki-pack-format",
+    "crates/wiki-pack-builder",
+    "crates/wiki-ffi",
+    "tools/wiki-pack",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
