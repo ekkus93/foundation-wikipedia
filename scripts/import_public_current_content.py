@@ -26,7 +26,10 @@ class PublicDumpPage:
 
 
 def _child(element, name):
-    return next((item for item in element if item.tag.rsplit("}", 1)[-1] == name), None)
+    matches = [item for item in element if item.tag.rsplit("}", 1)[-1] == name]
+    if len(matches) > 1:
+        raise PublicDumpError(f"duplicate {name}")
+    return matches[0] if matches else None
 
 
 def _required(element, name):
