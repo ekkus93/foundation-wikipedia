@@ -250,9 +250,15 @@ mod tests {
             digest
         );
         assert_eq!(registry.notice_count(&digest).unwrap(), 2);
-        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
-        registry.add_owner(&digest, OwnerKind::Pack, "math").unwrap();
-        registry.add_owner(&digest, OwnerKind::UserPin, "user").unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::UserPin, "user")
+            .unwrap();
         registry.remove_owner(&digest, OwnerKind::Pack, "physics").unwrap();
         registry.remove_owner(&digest, OwnerKind::Pack, "math").unwrap();
         assert!(registry.unowned_digests().unwrap().is_empty());
