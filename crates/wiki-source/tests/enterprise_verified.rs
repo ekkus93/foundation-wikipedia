@@ -1,8 +1,10 @@
 use std::io::Cursor;
 
 use wiki_source::enterprise_integrity::IntegrityError;
+use wiki_source::enterprise_verified::enterprise_normalize::NormalizeError;
 use wiki_source::enterprise_verified::{
-    import_canonical_enterprise_ndjson, import_verified_enterprise_ndjson, VerifiedImportError,
+    import_canonical_enterprise_ndjson, import_verified_enterprise_ndjson, CanonicalImportError,
+    VerifiedImportError,
 };
 
 fn base() -> serde_json::Value {
@@ -58,4 +60,12 @@ fn verified_import_rejects_missing_citation_and_accepts_matching_one() {
     .unwrap();
     assert_eq!(canonical[0].article.revision.revision_id, 99);
     assert_eq!(canonical[0].article.references[0].id, "cite1");
+    regular["article_body"]["html"] = serde_json::json!("<article><img src=\"unverified.svg\"></article>");
+    let error = import_canonical_enterprise_ndjson(
+        Cursor::new(structured.to_string()),
+        Cursor::new(regular.to_string()),
+        "20261010",
+        vec![],
+    ).unwrap_err();
+    assert_eq!(error, CanonicalImportError::Normalize(NormalizeError::UnresolvedVisual));
 }
