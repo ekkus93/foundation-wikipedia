@@ -74,7 +74,10 @@ impl EnterpriseLinkIndex {
             if !seen_pages.insert((key.project.clone(), key.page_id)) {
                 return Err(NormalizeError::DuplicatePage(key));
             }
-            by_page.insert(identity.page_id, (identity.title.clone(), identity.redirects.clone()));
+            by_page.insert(
+                identity.page_id,
+                (identity.title.clone(), identity.redirects.clone()),
+            );
             for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
                 if title.trim().is_empty() || title != title.trim() {
                     return Err(NormalizeError::Missing("link index title"));
