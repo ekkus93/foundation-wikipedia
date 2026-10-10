@@ -28,7 +28,9 @@ pub fn install_owned_media(
     owner_id: &str,
 ) -> Result<String, MediaInstallError> {
     if !valid_owner_id(owner_id) || !notice.validate() {
-        return Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput));
+        return Err(MediaInstallError::Registry(
+            MediaRegistryError::InvalidInput,
+        ));
     }
     let stored_digest = store
         .store_bytes(content)
