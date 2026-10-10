@@ -16,6 +16,7 @@ use wiki_search::{
 const MAX_RESPONSE_BYTES: usize = 131_072;
 const MAX_CONTEXT_BYTES: usize = 65_536;
 const CITE_OPEN: &str = "[[cite:";
+const CITE_PREFIX: &str = "[[cite";
 
 #[derive(Clone, Debug)]
 pub struct ArticleQuestion<'a> {
@@ -46,10 +47,14 @@ pub enum RagError {
 fn claimed_citations(text: &str) -> Result<Vec<String>, RagError> {
     let mut cursor = text;
     let mut claims = Vec::new();
-    while let Some(start) = cursor.find(CITE_OPEN) {
-        cursor = &cursor[start + CITE_OPEN.len()..];
+    while let Some(start) = cursor.find(CITE_PREFIX) {
+        cursor = &cursor[start..];
+        if !cursor.starts_with(CITE_OPEN) {
+            return Err(RagError::MalformedCitation);
+        }
+        cursor = &cursor[CITE_OPEN.len()..];
         let (id, remaining) = cursor.split_once("]]").ok_or(RagError::MalformedCitation)?;
-        if id.is_empty() || id.chars().any(|c| c.is_whitespace() || c == '[') {
+        if id.is_empty() || id.chars().any(|c| c.is_whitespace() || c == '[' || c == ']') {
             return Err(RagError::MalformedCitation);
         }
         claims.push(id.to_string());
@@ -193,4 +198,32 @@ pub fn answer_article(
     let citations = claimed_citations(&result)?;
     validate_grounded_answer(&index, &evidence, &result, &citations, false)
         .map_err(RagError::Citation)
+}
+
+#[cfg(test)]
+mod citation_parser_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_well_formed_citation_claims() {
+        assert_eq!(
+            claimed_citations("Gravity [[cite:wkb:enwiki:9:12:b0]]").unwrap(),
+            vec!["wkb:enwiki:9:12:b0"]
+        );
+        assert_eq!(claimed_citations("No citation here").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rejects_malformed_or_ambiguous_citation_markup() {
+        for text in [
+            "Answer [[cite-id]] and [[cite:valid]]",
+            "Answer [[cite:unfinished",
+            "Answer [[cite:bad id]]",
+            "Answer [[cite:bad[inner]]",
+            "Answer [[cite:bad]id]]",
+            "Answer [[cite:]]",
+        ] {
+            assert_eq!(claimed_citations(text), Err(RagError::MalformedCitation));
+        }
+    }
 }
