@@ -232,7 +232,13 @@ mod tests {
             Err(MediaInstallError::IdentityMismatch)
         ));
         assert!(matches!(
-            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required[..1]),
+            verify_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "physics",
+                &required[..1]
+            ),
             Err(MediaInstallError::IdentityMismatch)
         ));
         let mut wrong_size = required.clone();
@@ -244,7 +250,9 @@ mod tests {
         fs::write(root.join(&shared[..2]).join(&shared), b"tampered").unwrap();
         assert!(matches!(
             verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required),
-            Err(MediaInstallError::Inventory(MediaInventoryError::Unreadable(_)))
+            Err(MediaInstallError::Inventory(
+                MediaInventoryError::Unreadable(_)
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
