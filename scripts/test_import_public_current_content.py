@@ -61,6 +61,11 @@ class PublicCurrentContentTests(unittest.TestCase):
             with self.assertRaisesRegex(PublicDumpError, "invalid bzip2"):
                 list(iter_verified_pages(path, hashlib.sha256(data).hexdigest()))
 
+    def test_rejects_duplicate_identity_fields(self):
+        duplicate = page().replace("<id>42</id>", "<id>42</id><id>42</id>", 1)
+        with self.assertRaisesRegex(PublicDumpError, "duplicate id"):
+            self.read("<mediawiki>" + duplicate + "</mediawiki>")
+
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):
             self.read("<mediawiki>" + page())
