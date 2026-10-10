@@ -47,6 +47,12 @@ class PublicCurrentContentTests(unittest.TestCase):
         with self.assertRaises(PublicDumpError):
             self.read("<mediawiki>" + page(revision=0) + "</mediawiki>")
 
+    def test_rejects_dtd_and_wrong_root(self):
+        with self.assertRaisesRegex(PublicDumpError, "unsafe or unrecognized"):
+            self.read("<!DOCTYPE mediawiki><mediawiki>" + page() + "</mediawiki>")
+        with self.assertRaisesRegex(PublicDumpError, "unsafe or unrecognized"):
+            self.read("<notmediawiki>" + page() + "</notmediawiki>")
+
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):
             self.read("<mediawiki>" + page())
