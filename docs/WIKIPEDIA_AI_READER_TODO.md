@@ -38,13 +38,13 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 
 ## Phase 1 — Canonical model and provenance
 
-- [ ] **MOD-001** Implement versioned article/section/block/media/reference/link/redirect models. **Depends:** BOOT-001.  
-  - [ ] Key articles on project + page ID; preserve revision ID, timestamp, title/aliases and optional Wikidata ID.
-  - [ ] Support paragraphs, nested sections, tables, lists, quote, math, media, infobox, HTML fallback and disambiguation.
-  - [ ] Add serde/Unicode roundtrip fixtures and schema validation.
+- [x] **MOD-001** Implement versioned article/section/block/media/reference/link/redirect models. **Depends:** BOOT-001.  
+  - [x] Key articles on project + page ID; preserve revision ID, timestamp, title/aliases and optional Wikidata ID.
+  - [x] Support paragraphs, nested sections, tables, lists, quote, math, media, infobox, footnotes, HTML fallback and disambiguation.
+  - [x] Add serde/Unicode roundtrip fixtures and schema validation.
   - **Accept:** complete varied fixtures can serialize, deserialize and render without dropping required semantics.
-- [ ] **MOD-002** Build deterministic revision-scoped IDs and evidence maps. **Depends:** MOD-001.  
-  - [ ] Assign block, section, footnote and reference IDs from an exact revision.
+- [x] **MOD-002** Build deterministic revision-scoped IDs and evidence maps. **Depends:** MOD-001.  
+  - [x] Assign block, section, footnote and reference IDs from an exact revision.
   - [x] Separate hard citation IDs from soft bookmark/highlight relocation anchors.
   - [x] Tests for text reorder, deletion and revision changes.
   - **Accept:** stale AI citation never points to unrelated text after content update.
@@ -568,6 +568,11 @@ Spec deviation/ADR:
 - **SRC-001 partial — staging verification race hardening:** `verify_source_staging.py` rejects hardlinks and detects size/inode/mtime/ctime/link-count changes during hashing instead of trusting a prior pathname check. Exact `379b5e43a62aef1de115fbdfec4271e5843aee6c` passed [Rust CI 38002701228](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38002701228) and [Platform CI 38002701259](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38002701259). SRC-001 remains open for full live acquisition/activation acceptance.
 - **SRC-003 partial — verified-descriptor XML import:** Raw XML ingestion now opens selected staged source members with no-follow descriptors, validates regular/unlinked file metadata, parses through that descriptor, re-hashes the same inode and rejects substitution/mutation before output publication. Exact `c2197466b88f608bec5c66b8b6fbfdb5f18fc51d` passed [Rust CI 38003318152](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38003318152) and [Platform CI 38003318151](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38003318151). MediaWiki export namespaces are also strictly version-shaped after the intentionally caught regression at `d97d189a`; corrected exact `dd377a3ab891a576e5ebfe38ef64e0eb9a5e12f5` passed [Rust CI 38004163807](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38004163807) and [Platform CI 38004163810](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38004163810). Rendering/normalization and representative real-dump acceptance remain open.
 - **TRUST-003 / PACK-001 partial — hostile manifest path budgets:** Pack manifest validation now bounds each object path to 4096 bytes, 64 components and 255 bytes per component in addition to existing traversal/device-name/control-character/duplicate and declared-size limits. Exact `b26f719519858fbe059a9cea4c8b03b81383e8ce` passed [Rust CI 38007021985](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38007021985), [Platform CI 38007021840](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38007021840), and [Android ABI CI 38007021955](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38007021955). Final archive framing/unpacking, MIME spoof handling, HTML/SVG sanitation and full malicious-container acceptance remain open.
+
+
+### 2026-10-10 — Canonical model and revision-scoped evidence qualified
+
+- **MOD-001 complete:** canonical `wiki-model` records now cover article identity/provenance, aliases/Wikidata, nested sections, every required structured block variant including explicit footnotes, typed media/reference/link/redirect data, disambiguation, validation, Unicode/Serde roundtrip coverage and retained validated render HTML. **MOD-002 complete:** `wiki-core::evidence` assigns distinct revision-scoped block (`wkb:`), section (`wks:`), footnote (`wkf:`) and reference (`wkr:`) handles; canonical footnote text participates in lexical retrieval, reference linkage fails closed, hard IDs remain separate from relocatable soft anchors, and reorder/deletion/revision regressions prevent stale evidence from silently resolving to unrelated content. Exact master `cf0097884e039b6e3ce0e352fd7a82eae33c3476` passed Rust workspace CI [38014207157](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207157), Platform shells CI [38014207124](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207124), and Android ABI CI [38014207123](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207123). Test gate: `cargo fmt --check`, workspace Clippy/tests plus repository regression suites; Android arm64 ABI cross-build also passed at the same SHA.
 
 ## Blockers requiring owner action
 
