@@ -154,6 +154,14 @@ fn read_verified_frame(
     Ok((decode_record_at(&frame, 0)?.record, digest))
 }
 
+fn verify_shard_length(root: &Path, name: &str, expected: u64) -> Result<(), CatalogError> {
+    let metadata = fs::symlink_metadata(root.join(name))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected {
+        return Err(CatalogError::InvalidFrame);
+    }
+    Ok(())
+}
+
 fn identity(record: &PageRecord) -> (ArticleKey, String, Option<u64>, Option<String>, Vec<String>) {
     match record {
         PageRecord::Article(article) => (
@@ -319,6 +327,63 @@ impl SnapshotCatalog {
             },
         )
         .transpose()
+    }
+
+    /// Audit every indexed frame before publishing a snapshot. Each referenced
+    /// shard must consist entirely of contiguous, digest-verified, decoded
+    /// records: missing frames, gaps, overlaps and trailing bytes fail closed.
+    /// This verifies catalog coverage, not source authenticity or media assets.
+    pub fn verify_shard_coverage(&self, root: &Path) -> Result<usize, CatalogError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT project, page_id, shard_name, frame_offset, frame_bytes
+             FROM records ORDER BY shard_name, frame_offset",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        let mut current_shard: Option<String> = None;
+        let mut next_offset = 0u64;
+        let mut verified = 0usize;
+        for row in rows {
+            let (project, page_id, shard, offset, frame_bytes) = row?;
+            if !valid_shard_name(&shard) {
+                return Err(CatalogError::UnsafeShardName);
+            }
+            if current_shard.as_deref() != Some(&shard) {
+                if let Some(previous) = &current_shard {
+                    verify_shard_length(root, previous, next_offset)?;
+                }
+                current_shard = Some(shard);
+                next_offset = 0;
+            }
+            let offset = as_u64(offset)?;
+            let frame_bytes = as_u64(frame_bytes)?;
+            if offset != next_offset || !(40..=MAX_FRAME_BYTES).contains(&frame_bytes) {
+                return Err(CatalogError::InvalidFrame);
+            }
+            let key = ArticleKey {
+                project,
+                page_id: as_u64(page_id)?,
+            };
+            // Rehash and decode the exact frame, including the catalog's
+            // revision/title/Wikidata identity checks.
+            if self.read_record(root, &key)?.is_none() {
+                return Err(CatalogError::InvalidCatalogEntry);
+            }
+            next_offset = offset
+                .checked_add(frame_bytes)
+                .ok_or(CatalogError::InvalidFrame)?;
+            verified += 1;
+        }
+        let last = current_shard.ok_or(CatalogError::InvalidCatalogEntry)?;
+        verify_shard_length(root, &last, next_offset)?;
+        Ok(verified)
     }
 
     /// Resolve an article title through at most 32 verified redirect records.
@@ -589,4 +654,55 @@ mod tests {
             .is_none());
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn full_shard_coverage_rejects_trailing_bytes_and_missing_frames() {
+        let root = temp_root();
+        let shard_name = "coverage.shard";
+        let first = article(42, "Earth");
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &first).unwrap();
+        let first_len = bytes.len() as u64;
+        let mut second = article(43, "Mars");
+        if let PageRecord::Article(ref mut page) = second {
+            page.aliases.clear();
+            page.wikidata_id = Some("Q111".into());
+        }
+        append_record_frame(&mut bytes, &second).unwrap();
+        fs::write(root.join(shard_name), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, shard_name, 0, first_len)
+            .unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidFrame)
+        ));
+        catalog
+            .insert_verified(&root, shard_name, first_len, bytes.len() as u64 - first_len)
+            .unwrap();
+        assert_eq!(catalog.verify_shard_coverage(&root).unwrap(), 2);
+        fs::write(root.join(shard_name), [&bytes[..], b"trailing"].concat()).unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidFrame)
+        ));
+        fs::remove_file(root.join(shard_name)).unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::Io(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn full_shard_coverage_rejects_empty_catalog() {
+        let catalog = SnapshotCatalog::in_memory().unwrap();
+        let root = temp_root();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }
