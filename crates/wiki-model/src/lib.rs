@@ -399,18 +399,8 @@ impl Article {
             }
         }
         let mut footnote_ids = HashSet::new();
-        check_blocks(
-            &self.lead,
-            self.media.len(),
-            &refs,
-            &mut footnote_ids,
-        )?;
-        check_sections(
-            &self.sections,
-            self.media.len(),
-            &refs,
-            &mut footnote_ids,
-        )?;
+        check_blocks(&self.lead, self.media.len(), &refs, &mut footnote_ids)?;
+        check_sections(&self.sections, self.media.len(), &refs, &mut footnote_ids)?;
         Ok(())
     }
 
@@ -504,12 +494,7 @@ fn check_sections<'a>(
             return Err(ModelError::DuplicateOrdinal);
         }
         check_blocks(&section.blocks, media_len, references, footnote_ids)?;
-        check_sections(
-            &section.subsections,
-            media_len,
-            references,
-            footnote_ids,
-        )?;
+        check_sections(&section.subsections, media_len, references, footnote_ids)?;
     }
     Ok(())
 }

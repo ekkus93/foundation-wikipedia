@@ -201,10 +201,7 @@ fn footnote_and_reference_handles_remain_distinct_and_revision_scoped() {
     if let BlockContent::Footnote(footnote) = &mut second.sections[0].blocks[1].content {
         footnote.source_id = "cite-note-é".into();
     }
-    assert_ne!(
-        next_notes[0].id,
-        evidence_footnotes(&second).unwrap()[0].id
-    );
+    assert_ne!(next_notes[0].id, evidence_footnotes(&second).unwrap()[0].id);
 }
 
 #[test]
