@@ -21,7 +21,9 @@ fn fixture() -> wiki_source::enterprise::JoinedEnterpriseArticle {
         "has_parts": [{"type": "field", "name": "Discipline", "value": "Science"}]
     }]);
     structured["sections"][0]["has_parts"]
-        .as_array_mut().unwrap().push(serde_json::json!({
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
             "type": "list", "has_parts": [{"type": "list_item", "value": "Point one"}]
         }));
     let mut regular = base;
@@ -42,8 +44,14 @@ fn normalizes_revision_and_rejects_unverified_images() {
     assert_eq!(canonical.article.revision.revision_id, 99);
     assert_eq!(canonical.categories, ["Physics"]);
     assert_eq!(canonical.article.sections[0].heading, "Theory");
-    assert!(matches!(canonical.article.lead[0].content, wiki_model::BlockContent::Infobox(_)));
-    assert!(matches!(canonical.article.sections[0].blocks[1].content, wiki_model::BlockContent::List(_)));
+    assert!(matches!(
+        canonical.article.lead[0].content,
+        wiki_model::BlockContent::Infobox(_)
+    ));
+    assert!(matches!(
+        canonical.article.sections[0].blocks[1].content,
+        wiki_model::BlockContent::List(_)
+    ));
     assert_eq!(
         normalize_enterprise_article(&joined, false).unwrap(),
         canonical
