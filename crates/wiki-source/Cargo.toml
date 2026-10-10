@@ -11,3 +11,4 @@ workspace = true
 [dependencies]
 wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
+serde_json = "1.0"

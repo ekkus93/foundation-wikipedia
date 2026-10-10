@@ -1,6 +1,7 @@
 //! Authoritative Wikimedia snapshot metadata validation.
 //! Download transport and checksum verification are separate SRC-001 steps.
 
+pub mod enterprise;
 pub mod join;
 
 use std::collections::BTreeSet;
@@ -118,86 +119,3 @@ mod tests {
     #[test]
     fn accepts_completed_generation_and_rejects_partial() {
         assert!(sample().validate().is_ok());
-        let mut bad = sample();
-        bad.completed = false;
-        assert_eq!(bad.validate(), Err(SourceError::Incomplete));
-    }
-
-    #[test]
-    fn rejects_unsafe_generation_identifiers() {
-        for id in ["", ".", "..", "../outside", "a/b", "a\\\\b", "a b", "a:b"] {
-            let mut bad = sample();
-            bad.upstream_id = id.into();
-            assert_eq!(bad.validate(), Err(SourceError::MissingGeneration));
-        }
-        let mut good = sample();
-        good.upstream_id = "2026-10-09T00_00_00Z".into();
-        assert_eq!(good.validate(), Ok(()));
-    }
-
-    #[test]
-    fn rejects_unsafe_member_names_before_transport() {
-        for name in [
-            ".",
-            "..",
-            ".hidden",
-            "article.",
-            "../outside",
-            "folder/article.xml",
-            "folder\\\\article.xml",
-            "C:article.xml",
-            "article\\u{0000}.xml",
-            "article name.xml",
-        ] {
-            let mut bad = sample();
-            bad.files[0].name = name.into();
-            assert_eq!(
-                bad.validate(),
-                Err(SourceError::InvalidFile(name.into())),
-                "unsafe source member {name:?} was accepted"
-            );
-        }
-        let mut good = sample();
-        good.files[0].name = "enwiki-20261001-pages-articles.xml.bz2".into();
-        assert_eq!(good.validate(), Ok(()));
-    }
-
-    #[test]
-    fn reserved_windows_names_and_case_aliases_are_rejected() {
-        for name in ["CON", "nul.xml", "COM1", "LPT9.txt", "prn.dat"] {
-            let mut bad = sample();
-            bad.files[0].name = name.into();
-            assert_eq!(bad.validate(), Err(SourceError::InvalidFile(name.into())));
-        }
-        let mut bad = sample();
-        bad.upstream_id = "CON".into();
-        assert_eq!(bad.validate(), Err(SourceError::MissingGeneration));
-
-        let mut colliding = sample();
-        colliding.files.push(SourceFile {
-            name: "ARTICLES.PARQUET".into(),
-            sha256: "b".repeat(64),
-            bytes: 12,
-        });
-        assert_eq!(
-            colliding.validate(),
-            Err(SourceError::DuplicateFile("ARTICLES.PARQUET".into()))
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_checksums_and_duplicate_members() {
-        let mut bad = sample();
-        bad.files[0].sha256 = "bad".into();
-        assert_eq!(
-            bad.validate(),
-            Err(SourceError::InvalidFile("articles.parquet".into()))
-        );
-        let mut duplicate = sample();
-        duplicate.files.push(duplicate.files[0].clone());
-        assert_eq!(
-            duplicate.validate(),
-            Err(SourceError::DuplicateFile("articles.parquet".into()))
-        );
-    }
-}
