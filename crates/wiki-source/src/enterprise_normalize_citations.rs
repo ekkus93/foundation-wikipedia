@@ -24,7 +24,9 @@ pub(crate) fn append_citations(
         let note = (citation.text.clone(), reference.label.clone());
         if let Some(previous) = seen.get(&citation.identifier) {
             if previous != &note {
-                return Err(NormalizeError::InvalidReference(citation.identifier.clone()));
+                return Err(NormalizeError::InvalidReference(
+                    citation.identifier.clone(),
+                ));
             }
             continue;
         }

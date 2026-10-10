@@ -5,7 +5,9 @@ use super::enterprise_normalize_references::references;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::BTreeMap;
-use wiki_model::{Article, ArticleKey, Block, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION};
+use wiki_model::{
+    Article, ArticleKey, Block, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
+};
 
 /// Retained HTML is NOT yet sanitized for a WebView. Unresolved images
 /// fail closed until a verified Commons/media join is implemented.
