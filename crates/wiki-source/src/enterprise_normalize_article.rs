@@ -30,8 +30,8 @@ fn normalize_with_index(
     // sanitization can silently remove required offline article content.
     let html = joined.rendered_html.to_ascii_lowercase();
     const UNRESOLVED_VISUAL_TAGS: [&str; 12] = [
-        "<img", "<picture", "<video", "<audio", "<source", "<track",
-        "<svg", "<math", "<canvas", "<iframe", "<object", "<embed",
+        "<img", "<picture", "<video", "<audio", "<source", "<track", "<svg", "<math", "<canvas",
+        "<iframe", "<object", "<embed",
     ];
     if UNRESOLVED_VISUAL_TAGS.iter().any(|tag| html.contains(tag)) {
         return Err(NormalizeError::UnresolvedVisual);
