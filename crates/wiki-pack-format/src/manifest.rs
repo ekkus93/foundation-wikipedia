@@ -56,7 +56,9 @@ fn safe_id(value: &str) -> bool {
         && !value.contains('\\')
         && !value.contains(':')
         && !unsafe_component(value)
-        && !value.chars().any(|c| c.is_control() || unsafe_directional_mark(c))
+        && !value
+            .chars()
+            .any(|c| c.is_control() || unsafe_directional_mark(c))
 }
 
 fn unsafe_component(component: &str) -> bool {
@@ -155,7 +157,10 @@ impl Manifest {
                 || !object.sha256.bytes().all(|c| c.is_ascii_hexdigit())
                 || object.path.len() > MAX_OBJECT_PATH_BYTES
                 || object.path.contains('\\')
-                || object.path.chars().any(|c| c.is_control() || unsafe_directional_mark(c))
+                || object
+                    .path
+                    .chars()
+                    .any(|c| c.is_control() || unsafe_directional_mark(c))
                 || object.path.contains(':')
                 || object.path.split('/').count() > MAX_OBJECT_PATH_COMPONENTS
                 || object.path.split('/').any(|component| {
