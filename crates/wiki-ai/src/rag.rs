@@ -54,7 +54,11 @@ fn claimed_citations(text: &str) -> Result<Vec<String>, RagError> {
         }
         cursor = &cursor[CITE_OPEN.len()..];
         let (id, remaining) = cursor.split_once("]]").ok_or(RagError::MalformedCitation)?;
-        if id.is_empty() || id.chars().any(|c| c.is_whitespace() || c == '[' || c == ']') {
+        if id.is_empty()
+            || id
+                .chars()
+                .any(|c| c.is_whitespace() || c == '[' || c == ']')
+        {
             return Err(RagError::MalformedCitation);
         }
         claims.push(id.to_string());
@@ -210,7 +214,10 @@ mod citation_parser_tests {
             claimed_citations("Gravity [[cite:wkb:enwiki:9:12:b0]]").unwrap(),
             vec!["wkb:enwiki:9:12:b0"]
         );
-        assert_eq!(claimed_citations("No citation here").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            claimed_citations("No citation here").unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
