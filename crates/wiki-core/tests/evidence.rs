@@ -1,5 +1,5 @@
 use wiki_core::evidence::{
-    evidence_blocks, evidence_footnotes, evidence_references, evidence_sections,
+    evidence_blocks, evidence_footnotes, evidence_references, evidence_sections, relocate_soft_block_anchor,
 };
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, Footnote, Reference, Revision, Section,
@@ -252,4 +252,51 @@ fn section_ids_reject_invalid_article_structure() {
     let mut fixture = article();
     fixture.sections.push(fixture.sections[0].clone());
     assert!(evidence_sections(&fixture).is_err());
+}
+
+#[test]
+fn soft_anchor_relocates_only_unique_unchanged_content_in_same_article() {
+    let old = article();
+    let mut new = article();
+    new.revision.revision_id = 8;
+    new.sections[0].blocks[0].ordinal = 11;
+    assert_eq!(
+        relocate_soft_block_anchor(&old, &new, "wkb:enwiki:99:7:3:b1").unwrap(),
+        Some("wkb:enwiki:99:8:3:b11".into())
+    );
+    // A hard citation remains bound to revision 7, not the relocated block.
+    assert_ne!(
+        evidence_blocks(&old).unwrap()[1].id,
+        evidence_blocks(&new).unwrap()[1].id
+    );
+    new.sections[0].blocks[0].content = BlockContent::Paragraph("Edited".into());
+    assert_eq!(
+        relocate_soft_block_anchor(&old, &new, "wkb:enwiki:99:7:3:b1").unwrap(),
+        None
+    );
+    assert_eq!(
+        relocate_soft_block_anchor(&old, &new, "fabricated-id").unwrap(),
+        None
+    );
+}
+
+#[test]
+fn soft_anchor_rejects_ambiguous_matches_and_cross_page_relocation() {
+    let old = article();
+    let mut new = article();
+    new.revision.revision_id = 8;
+    new.sections[0].blocks.push(Block {
+        ordinal: 9,
+        content: BlockContent::Paragraph("Spacetime".into()),
+    });
+    assert_eq!(
+        relocate_soft_block_anchor(&old, &new, "wkb:enwiki:99:7:3:b1").unwrap(),
+        None
+    );
+    new.sections[0].blocks.pop();
+    new.key.page_id = 100;
+    assert_eq!(
+        relocate_soft_block_anchor(&old, &new, "wkb:enwiki:99:7:3:b1").unwrap(),
+        None
+    );
 }

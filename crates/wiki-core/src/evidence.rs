@@ -177,3 +177,41 @@ fn collect<'a>(
         });
     }
 }
+
+/// Conservatively relocate a bookmark/highlight to a newer revision of the
+/// same article. This is a *soft* anchor: it must never be used to validate
+/// a hard AI citation, which always remains bound to its original revision.
+/// Only a unique exact content-and-heading match is safe to relocate.
+pub fn relocate_soft_block_anchor(
+    old: &Article,
+    new: &Article,
+    old_block_id: &str,
+) -> Result<Option<String>, ModelError> {
+    if old.key != new.key {
+        return Ok(None);
+    }
+    let old_blocks = evidence_blocks(old)?;
+    let new_blocks = evidence_blocks(new)?;
+    let Some(previous) = old_blocks.iter().find(|block| block.id == old_block_id) else {
+        return Ok(None);
+    };
+    // A media index is only meaningful within its original record; footnote
+    // identities are separately revision-scoped and must not be guessed.
+    if matches!(
+        previous.block.content,
+        BlockContent::Media { .. } | BlockContent::Footnote(_)
+    ) {
+        return Ok(None);
+    }
+    let mut matches = new_blocks.iter().filter(|candidate| {
+        candidate.headings == previous.headings
+            && candidate.block.content == previous.block.content
+    });
+    let Some(first) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Ok(None);
+    }
+    Ok(Some(first.id.clone()))
+}
