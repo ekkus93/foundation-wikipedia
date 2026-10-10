@@ -8,6 +8,7 @@ use crate::enterprise::{
     JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
     MAX_ENTERPRISE_RECORD_BYTES,
 };
+use crate::enterprise_integrity::{validate_joined_evidence, IntegrityError};
 use crate::join::PageKey;
 
 /// An import chunk must remain bounded even if an upstream file is enormous.
@@ -53,6 +54,7 @@ pub enum BatchImportError {
         error: EnterpriseError,
     },
     Join(EnterpriseError),
+    Integrity(IntegrityError),
 }
 
 fn parse_lines<R: BufRead, T>(
@@ -146,7 +148,12 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
     let regular: Vec<RegularArticleCompanion> = parse_lines(regular, InputKind::Regular, |line| {
         parse_regular_companion(line, generation_id)
     })?;
-    join_enterprise_batch(structured, regular, deleted).map_err(BatchImportError::Join)
+    let joined = join_enterprise_batch(structured, regular, deleted)
+        .map_err(BatchImportError::Join)?;
+    for article in &joined {
+        validate_joined_evidence(article).map_err(BatchImportError::Integrity)?;
+    }
+    Ok(joined)
 }
 
 #[cfg(test)]
