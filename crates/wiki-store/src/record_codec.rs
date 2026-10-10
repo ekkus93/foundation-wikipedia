@@ -93,11 +93,10 @@ pub fn encode_record(record: &PageRecord) -> Result<Vec<u8>, RecordCodecError> {
     record.validate()?;
     let raw = rmp_serde::to_vec_named(record)
         .map_err(|error| RecordCodecError::Serialization(error.to_string()))?;
-    let raw_len = u64::try_from(raw.len())
-        .map_err(|_| RecordCodecError::RecordTooLarge {
-            declared: u64::MAX,
-            limit: MAX_UNCOMPRESSED_RECORD_BYTES,
-        })?;
+    let raw_len = u64::try_from(raw.len()).map_err(|_| RecordCodecError::RecordTooLarge {
+        declared: u64::MAX,
+        limit: MAX_UNCOMPRESSED_RECORD_BYTES,
+    })?;
     if raw_len > MAX_UNCOMPRESSED_RECORD_BYTES {
         return Err(RecordCodecError::RecordTooLarge {
             declared: raw_len,
@@ -107,8 +106,8 @@ pub fn encode_record(record: &PageRecord) -> Result<Vec<u8>, RecordCodecError> {
 
     let compressed = zstd::stream::encode_all(raw.as_slice(), ZSTD_LEVEL)
         .map_err(|error| RecordCodecError::Compression(error.to_string()))?;
-    let compressed_len = u64::try_from(compressed.len())
-        .map_err(|_| RecordCodecError::RecordTooLarge {
+    let compressed_len =
+        u64::try_from(compressed.len()).map_err(|_| RecordCodecError::RecordTooLarge {
             declared: u64::MAX,
             limit: MAX_COMPRESSED_RECORD_BYTES,
         })?;
@@ -185,8 +184,8 @@ pub fn decode_record(bytes: &[u8]) -> Result<DecodedRecord, RecordCodecError> {
     let decoder = zstd::stream::read::Decoder::new(payload)
         .map_err(|error| RecordCodecError::Compression(error.to_string()))?;
     let mut limited = decoder.take(declared_raw.saturating_add(1));
-    let initial_capacity = usize::try_from(declared_raw.min(1024 * 1024))
-        .expect("capacity is capped to one MiB");
+    let initial_capacity =
+        usize::try_from(declared_raw.min(1024 * 1024)).expect("capacity is capped to one MiB");
     let mut raw = Vec::with_capacity(initial_capacity);
     limited
         .read_to_end(&mut raw)
@@ -391,8 +390,7 @@ mod tests {
         );
 
         let mut oversized = encoded.clone();
-        oversized[16..24]
-            .copy_from_slice(&(MAX_UNCOMPRESSED_RECORD_BYTES + 1).to_le_bytes());
+        oversized[16..24].copy_from_slice(&(MAX_UNCOMPRESSED_RECORD_BYTES + 1).to_le_bytes());
         assert_eq!(
             decode_record(&oversized),
             Err(RecordCodecError::RecordTooLarge {
@@ -422,8 +420,14 @@ mod tests {
         assert_eq!(first_offset, 0);
         assert!(second_offset > first_offset);
         assert!(third_offset > second_offset);
-        assert_eq!(decode_record_at(&shard, second_offset).unwrap().record, second);
-        assert_eq!(decode_record_at(&shard, third_offset).unwrap().record, third);
+        assert_eq!(
+            decode_record_at(&shard, second_offset).unwrap().record,
+            second
+        );
+        assert_eq!(
+            decode_record_at(&shard, third_offset).unwrap().record,
+            third
+        );
         assert_eq!(
             decode_record_at(&shard, shard.len()),
             Err(RecordCodecError::FrameOutOfBounds)

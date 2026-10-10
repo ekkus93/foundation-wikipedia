@@ -2,8 +2,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use wiki_model::{
-    Article, ArticleKey, Block, BlockContent, Footnote, MediaAsset, PageRecord, Reference, Revision,
-    Section, ARTICLE_SCHEMA_VERSION,
+    Article, ArticleKey, Block, BlockContent, Footnote, MediaAsset, PageRecord, Reference,
+    Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
 use wiki_store::record_codec::{
     append_record_frame, decode_record, decode_record_at, encode_record, MigrationStatus,
