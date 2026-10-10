@@ -128,6 +128,37 @@ fn main() {
     let msgpack_zstd = zstd::stream::encode_all(msgpack.as_slice(), 3).expect("MessagePack zstd");
     let cbor_zstd = zstd::stream::encode_all(cbor.as_slice(), 3).expect("CBOR zstd");
 
+    const FORMAT_ITERATIONS: usize = 200;
+    let msgpack_encode_start = Instant::now();
+    for _ in 0..FORMAT_ITERATIONS {
+        black_box(rmp_serde::to_vec_named(black_box(&record)).expect("MessagePack encode"));
+    }
+    let msgpack_encode_us = msgpack_encode_start.elapsed().as_micros();
+
+    let cbor_encode_start = Instant::now();
+    for _ in 0..FORMAT_ITERATIONS {
+        let mut candidate = Vec::new();
+        ciborium::ser::into_writer(black_box(&record), &mut candidate).expect("CBOR encode");
+        black_box(candidate);
+    }
+    let cbor_encode_us = cbor_encode_start.elapsed().as_micros();
+
+    let msgpack_decode_start = Instant::now();
+    for _ in 0..FORMAT_ITERATIONS {
+        let decoded: PageRecord =
+            rmp_serde::from_slice(black_box(&msgpack)).expect("MessagePack decode");
+        black_box(decoded);
+    }
+    let msgpack_decode_us = msgpack_decode_start.elapsed().as_micros();
+
+    let cbor_decode_start = Instant::now();
+    for _ in 0..FORMAT_ITERATIONS {
+        let decoded: PageRecord =
+            ciborium::de::from_reader(black_box(cbor.as_slice())).expect("CBOR decode");
+        black_box(decoded);
+    }
+    let cbor_decode_us = cbor_decode_start.elapsed().as_micros();
+
     const ITERATIONS: usize = 200;
     let encode_start = Instant::now();
     let mut encoded = Vec::new();
@@ -181,6 +212,14 @@ fn main() {
         cbor.len(),
         msgpack_zstd.len(),
         cbor_zstd.len()
+    );
+    println!(
+        "codec_probe format_compare iterations={} msgpack_encode_us={} cbor_encode_us={} msgpack_decode_us={} cbor_decode_us={}",
+        FORMAT_ITERATIONS,
+        msgpack_encode_us,
+        cbor_encode_us,
+        msgpack_decode_us,
+        cbor_decode_us
     );
     println!(
         "codec_probe roundtrip iterations={} encode_us={} decode_us={}",
