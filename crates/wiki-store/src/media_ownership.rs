@@ -242,7 +242,9 @@ mod tests {
         let mut registry = MediaRegistry::in_memory().unwrap();
         let digest = registry.register_verified_bytes(b"image data", &notice("A")).unwrap();
         assert_eq!(
-            registry.register_verified_bytes(b"image data", &notice("B")).unwrap(),
+            registry
+                .register_verified_bytes(b"image data", &notice("B"))
+                .unwrap(),
             digest
         );
         assert_eq!(registry.notice_count(&digest).unwrap(), 2);
