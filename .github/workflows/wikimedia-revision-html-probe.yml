@@ -1,0 +1,66 @@
+name: Wikimedia revision HTML probe
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/render_public_dump_revision.py'
+      - 'scripts/test_render_public_dump_revision.py'
+      - '.github/workflows/wikimedia-revision-html-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-revision-html:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Fetch documented historical revision HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts")
+          from render_public_dump_revision import fetch_revision_html
+
+          revision_id = 764138197
+          result = fetch_revision_html("enwiki", revision_id, timeout=30)
+          expected_url = (
+              "https://en.wikipedia.org/w/rest.php/v1/revision/"
+              f"{revision_id}/with_html"
+          )
+          assert result["renderer_revision_id"] == revision_id
+          assert result["renderer_url"] == expected_url
+          assert result["renderer_kind"] == "wikimedia-rest-revision-with-html"
+          assert result["html"].strip()
+          evidence = {
+              "project": "enwiki",
+              "revision_id": revision_id,
+              "renderer_url": result["renderer_url"],
+              "renderer_kind": result["renderer_kind"],
+              "renderer_timestamp": result["renderer_timestamp"],
+              "html_sha256": result["html_sha256"],
+              "html_bytes": len(result["html"].encode("utf-8")),
+          }
+          Path("/tmp/wikimedia-revision-html-probe.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(evidence, sort_keys=True))
+          PY
+      - name: Preserve renderer evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: wikimedia-revision-html-probe
+          path: /tmp/wikimedia-revision-html-probe.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
