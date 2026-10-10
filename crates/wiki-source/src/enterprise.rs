@@ -20,6 +20,7 @@ pub const MAX_PARTS: usize = 200_000;
 pub struct StructuredArticle {
     pub page: PageKey,
     pub revision_id: u64,
+    pub date_modified: String,
     pub generation_id: String,
     pub namespace: i32,
     pub language: String,
@@ -96,6 +97,7 @@ pub struct StructuredTable {
 pub struct RegularArticleCompanion {
     pub page: PageKey,
     pub revision_id: u64,
+    pub date_modified: String,
     pub generation_id: String,
     pub namespace: i32,
     pub language: String,
@@ -137,6 +139,7 @@ pub enum EnterpriseError {
     DuplicateTombstone(PageKey),
     IdentityMismatch,
     RevisionMismatch,
+    DateModifiedMismatch,
     GenerationMismatch,
     NamespaceMismatch,
     LanguageMismatch,
@@ -506,6 +509,7 @@ pub fn parse_structured_article(
     Ok(StructuredArticle {
         page,
         revision_id,
+        date_modified: required_string(map, "date_modified")?,
         generation_id: generation_id.to_owned(),
         namespace,
         language,
@@ -577,6 +581,7 @@ pub fn parse_regular_companion(
     Ok(RegularArticleCompanion {
         page,
         revision_id,
+        date_modified: required_string(map, "date_modified")?,
         generation_id: generation_id.to_owned(),
         namespace,
         language,
@@ -598,6 +603,9 @@ pub fn join_enterprise_article(
     }
     if structured.revision_id != regular.revision_id {
         return Err(EnterpriseError::RevisionMismatch);
+    }
+    if structured.date_modified != regular.date_modified {
+        return Err(EnterpriseError::DateModifiedMismatch);
     }
     if structured.generation_id != regular.generation_id {
         return Err(EnterpriseError::GenerationMismatch);
@@ -692,6 +700,7 @@ mod tests {
         r#"{
           "name":"Gravity","identifier":42,
           "version":{"identifier":99},
+          "date_modified":"2026-10-10T00:00:00Z",
           "is_part_of":{"identifier":"enwiki"},
           "in_language":{"identifier":"en"},
           "namespace":{"identifier":0},
@@ -725,6 +734,7 @@ mod tests {
         r#"{
           "name":"Gravity","identifier":42,
           "version":{"identifier":99},
+          "date_modified":"2026-10-10T00:00:00Z",
           "is_part_of":{"identifier":"enwiki"},
           "in_language":{"identifier":"en"},
           "namespace":{"identifier":0},
@@ -770,6 +780,12 @@ mod tests {
         assert_eq!(
             join_enterprise_article(structured.clone(), stale),
             Err(EnterpriseError::RevisionMismatch)
+        );
+        let mut wrong_date = regular.clone();
+        wrong_date.date_modified = "2026-10-10T00:00:01Z".into();
+        assert_eq!(
+            join_enterprise_article(structured.clone(), wrong_date),
+            Err(EnterpriseError::DateModifiedMismatch)
         );
         let mut wrong_namespace = regular.clone();
         wrong_namespace.namespace = 14;
