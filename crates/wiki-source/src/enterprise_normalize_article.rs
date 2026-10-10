@@ -114,7 +114,9 @@ pub fn normalize_enterprise_batch(
     // Resolve internal links only against identities from the exact joined
     // generation. Cross-chunk targets require a verified global page index.
     let mut index = BTreeMap::new();
-    let generation = joined.first().map(|page| page.structured.generation_id.as_str());
+    let generation = joined
+        .first()
+        .map(|page| page.structured.generation_id.as_str());
     for page in joined {
         if Some(page.structured.generation_id.as_str()) != generation {
             return Err(NormalizeError::GenerationMismatch);
