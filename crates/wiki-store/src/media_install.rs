@@ -110,13 +110,7 @@ mod tests {
         assert_eq!(registry.unowned_digests().unwrap(), vec![digest.clone()]);
         fs::write(root.join(&digest[..2]).join(&digest), b"changed").unwrap();
         assert!(matches!(
-            verify_declared_media(
-                &store,
-                &[RequiredMedia {
-                    digest,
-                    bytes: 7,
-                }]
-            ),
+            verify_declared_media(&store, &[RequiredMedia { digest, bytes: 7 }]),
             Err(MediaInventoryError::Unreadable(_))
         ));
         fs::remove_dir_all(root).unwrap();
@@ -142,7 +136,9 @@ mod tests {
                 OwnerKind::Pack,
                 "../invalid",
             ),
-            Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput))
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::InvalidInput
+            ))
         ));
         assert_eq!(registry.unowned_digests().unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
