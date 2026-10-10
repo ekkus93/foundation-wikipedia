@@ -25,12 +25,12 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Enforce that shared crates do not import UI/Tauri/Android dependencies.
   - [x] Pin toolchains/lockfiles; add `cargo fmt`, `clippy`, unit-test scripts.
   - **Accept:** clean checkout compiles and tests minimal workspace without external infrastructure.
-- [ ] **BOOT-002** Scaffold desktop and Android shells. **Depends:** BOOT-001.  
+- [x] **BOOT-002** Scaffold desktop and Android shells. **Depends:** BOOT-001.  
   - [x] Tauri 2/React/TypeScript/Vite desktop and Kotlin/Jetpack Compose/Gradle Android shells.
   - [x] Android Rust build/ABI plan and UniFFI build integration stub.
   - [x] Document development prerequisites and reproducible clean-build commands.
   - **Accept:** desktop launches and Android debug APK installs from clean checkout.
-- [ ] **BOOT-003** Establish exact-head CI and documentation discipline. **Depends:** BOOT-002.  
+- [x] **BOOT-003** Establish exact-head CI and documentation discipline. **Depends:** BOOT-002.  
   - [x] Rust fmt/clippy/test, frontend lint/typecheck/test, Android tests/lint, dependency/license audit.
   - [x] Fixture data provenance and test artifact retention.
   - [x] Add ADR and requirement-to-TODO traceability checklist.
@@ -48,9 +48,9 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Separate hard citation IDs from soft bookmark/highlight relocation anchors.
   - [x] Tests for text reorder, deletion and revision changes.
   - **Accept:** stale AI citation never points to unrelated text after content update.
-- [ ] **MOD-003** Select canonical record encoding and compatibility policy. **Depends:** MOD-001.  
+- [x] **MOD-003** Select canonical record encoding and compatibility policy. **Depends:** MOD-001.  
   - [x] Compare CBOR/MessagePack + record-level zstd/shard sizes against measured fixture performance.
-  - [ ] Record Android memory, random read, compression and migration results in ADR.
+  - [x] Record Android memory, random read, compression and migration results in ADR.
   - [x] Implement major/minor version guards and explicit reject/migrate behavior.
   - **Accept:** proven versioned codec and safe handling of unsupported revisions.
 
@@ -586,6 +586,13 @@ Spec deviation/ADR:
 - **SRC-001 complete:** the `mediawiki_content_current` acquisition path now discovers only published generations with official Wikimedia SHA256SUMS inventories, records exact authority/project/generation/release/member URLs and hashes, supports resumable HTTP range transport, bounded timeout/rate-limit retry policy, explicit HTTPS mirror transport and verified local-file transport, and publishes only complete verified staging manifests. Corruption, incomplete generations, redirect/authority substitution, changed inventories, missing/truncated members, symlink/hardlink/race cases and mirror tampering fail closed; staging is isolated and does not mutate the active snapshot.
 - **Real Wikimedia acceptance:** exact master `6ba82869555a62bfff0169855f0c736b42707f20` discovered completed enwiki generation `2026-10-01` with 19 members from the official `SHA256SUMS` inventory, then verified a real member supports an exact no-redirect `206` range request for `bytes=0-0`. [Wikimedia live-source CI 38021076620](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076620), [Rust workspace CI 38021076618](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076618), and [Platform shells CI 38021076619](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076619) all passed at that exact SHA. The Rust/Python gate reruns the resume, retry, mirror/local transport, checksum, no-clobber and staging negative suites.
 - This source-authority contract is distinct from later official **pack publisher signatures**. The governing SPEC requires completed Wikimedia source enumeration, upstream hashes, exact provenance and staged verification here; signed pack/catalog identity remains under PACK/TRUST release engineering.
+
+
+### 2026-10-10 — Bootstrap shells/CI and canonical record codec complete
+
+- **BOOT-002 complete:** desktop shell launch was already qualified on exact `f8d4d7d49a7cad44fce0261c7e739ca65f7078a1` by Desktop launch smoke 38005527046 plus Rust/Platform CI. Android clean-build/install/launch is now qualified on exact `bf3f4aaa52f19be93f527f099dfd57766c3db520`: [Android install smoke 38020692261](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38020692261) built the debug APK, booted an API 35 x86_64 emulator, installed the APK, launched `org.foundation.wikipedia/.MainActivity`, verified the process/foreground activity, preserved evidence and passed the exact-head check. This closes the BOOT-002 acceptance criterion without claiming production reader functionality.
+- **BOOT-003 complete:** all three CI/documentation subtasks were previously qualified; the remaining parent dependency was BOOT-002 acceptance. Exact-head Rust/Platform/Android workflows continue to validate commit identity, preserve artifacts and enforce format/lint/test/license gates. The intentional unsafe-export failure on `66c8429b8c6405cfdb52b82abdaeae282c35814d` was caught by CI and the corrected `b8c4379c09521eb0af49574b5acb885ec57775c8` passed, providing the required failure-detection evidence.
+- **MOD-003 complete:** named-field MessagePack + per-record zstd-3 remains the selected canonical codec with version `1.1`, bounded per-record framing, direct-offset shard access, supported `1.0` rewrite migration, and fail-closed future minor/major guards. Host benchmark evidence is in exact `f89f6a43b1153a044f4deba7bc269d19ee94e912` / Rust CI 38019218520. Android runtime qualification passed on exact `bf3f4aaa52f19be93f527f099dfd57766c3db520` in [Android record codec probe 38020692235](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38020692235): MessagePack/CBOR = 2443/2444 bytes; zstd-3 = 883/844 bytes; 200 MessagePack/CBOR encodes = 15706/19025 µs; decodes = 52234/72322 µs; 128-record shard = 118795 bytes; 1000 direct-offset reads = 3938487 µs; VmHWM = 5628 KiB; legacy 1.0 rewrites to 1.1 and future minor/major inputs are rejected. The API 35 emulator is software-emulated, so absolute timings are compatibility/relative evidence rather than real-device latency targets.
 
 ## Blockers requiring owner action
 

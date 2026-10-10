@@ -1,6 +1,6 @@
 # ADR 0001 — Canonical article-record encoding
 
-**Status:** Accepted for host implementation; Android runtime qualification pending  
+**Status:** Accepted  
 **Date:** 2026-10-10  
 **Requirements:** MOD-003, STORE-001, PACK-001, UPD-004
 
@@ -57,7 +57,29 @@ Canonical MessagePack+zstd measurements on the same Linux CI runner:
 - legacy 1.0 migration: validated rewrite to 1.1;
 - future minor and future major versions: rejected.
 
-Rust, Platform shells, and Android ARM64 ABI cross-build all passed at the exact SHA. The Android x86_64 codec probe also cross-built successfully, but its first API 35 software-emulator attempt timed out during boot before the probe executed. Android runtime memory and random-read evidence therefore remains pending and this ADR does not claim MOD-003 acceptance yet.
+Rust, Platform shells, and Android ARM64 ABI cross-build all passed at the exact host-qualification SHA.
+
+Android runtime qualification then passed on exact commit `bf3f4aaa52f19be93f527f099dfd57766c3db520`, [Android record codec probe run 38020692235](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38020692235), using an API 35 x86_64 software emulator. The same fixture produced:
+
+| Android API 35 measurement | MessagePack | CBOR |
+| --- | ---: | ---: |
+| Uncompressed fixture | 2443 B | 2444 B |
+| zstd level 3 | 883 B | 844 B |
+| 200 encodes | 15706 µs | 19025 µs |
+| 200 decodes | 52234 µs | 72322 µs |
+
+Canonical codec Android measurements:
+
+- 200 full record encodes: 6977246 µs;
+- 200 full record decodes: 1554813 µs;
+- 128 independently framed records: 118795 bytes;
+- 1000 direct-offset random reads: 3938487 µs;
+- probe process VmHWM: 5628 KiB;
+- maximum declared uncompressed record: 32 MiB;
+- legacy 1.0 migration: validated rewrite to 1.1;
+- future minor and future major versions: rejected.
+
+The emulator uses software CPU virtualization, so these absolute latency figures are **not** real-device performance targets. They are sufficient to qualify Android format compatibility, bounded memory behavior, direct-offset access and migration semantics. Real-device performance remains a later product-performance concern.
 
 ## Alternatives considered
 
@@ -75,4 +97,4 @@ Rust, Platform shells, and Android ARM64 ABI cross-build all passed at the exact
 - `wiki-store` owns physical encoding, size limits, framing and migration classification.
 - STORE-001 can index frame offsets in SQLite without changing the record wire format.
 - Pack/app updates must respect codec major/minor compatibility rather than assuming Serde shape compatibility.
-- Android runtime qualification must be appended here before MOD-003 is marked complete.
+- Android runtime qualification is complete for codec compatibility/memory/random-read behavior; later real-device work may refine performance expectations without changing the wire-format decision.
