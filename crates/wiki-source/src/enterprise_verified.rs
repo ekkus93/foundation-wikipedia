@@ -40,3 +40,16 @@ pub enum CanonicalImportError {
     Import(VerifiedImportError),
     Normalize(enterprise_normalize::NormalizeError),
 }
+
+/// All-or-nothing verified NDJSON import into canonical article records.
+pub fn import_canonical_enterprise_ndjson<S: BufRead, R: BufRead>(
+    structured: S,
+    regular: R,
+    generation_id: &str,
+    deleted: Vec<PageKey>,
+) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
+    let joined = import_verified_enterprise_ndjson(structured, regular, generation_id, deleted)
+        .map_err(CanonicalImportError::Import)?;
+    enterprise_normalize_article::normalize_enterprise_batch(&joined)
+        .map_err(CanonicalImportError::Normalize)
+}
