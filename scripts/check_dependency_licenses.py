@@ -15,6 +15,8 @@ ALLOWED = {
     "Zlib",
     "Unlicense OR MIT",
     "(MIT OR Apache-2.0) AND Unicode-3.0",
+    "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+    "BSD-2-Clause OR Apache-2.0 OR MIT",
 }
 
 

@@ -27,6 +27,26 @@ class LicenseAuditTests(unittest.TestCase):
         ]
         self.assertEqual(check(packages), [])
 
+    def test_codec_dependency_composite_spdx_expressions_are_approved(self):
+        packages = [
+            {
+                "name": "r-efi",
+                "version": "6.0.0",
+                "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+            },
+            {
+                "name": "zerocopy",
+                "version": "0.8.62",
+                "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+            },
+            {
+                "name": "zerocopy-derive",
+                "version": "0.8.62",
+                "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+            },
+        ]
+        self.assertEqual(check(packages), [])
+
     def test_missing_or_unapproved_license_fails(self):
         packages = [
             {"name": "missing", "version": "1.0", "license": None},
