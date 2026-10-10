@@ -4,12 +4,106 @@ use super::enterprise_normalize_blocks::convert;
 use super::enterprise_normalize_html::sanitize_rendered_html;
 use super::enterprise_normalize_links::collect_links;
 use super::enterprise_normalize_references::references;
-use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
+use crate::enterprise::{
+    JoinedEnterpriseArticle, PartKind, StructuredLink, StructuredPart, StructuredTable,
+};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{
     Article, ArticleKey, Block, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnterpriseLinkIdentity {
+    pub project: String,
+    pub page_id: u64,
+    pub generation_id: String,
+    pub title: String,
+    pub redirects: Vec<String>,
+}
+
+impl EnterpriseLinkIdentity {
+    pub fn from_joined(page: &JoinedEnterpriseArticle) -> Self {
+        Self {
+            project: page.structured.page.project.clone(),
+            page_id: page.structured.page.page_id,
+            generation_id: page.structured.generation_id.clone(),
+            title: page.structured.name.clone(),
+            redirects: page.redirects.clone(),
+        }
+    }
+}
+
+/// Snapshot-wide title/redirect resolver bound to exactly one project and
+/// generation. Build this from the verified identity pass, then reuse it while
+/// canonical records are normalized in bounded chunks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnterpriseLinkIndex {
+    project: String,
+    generation_id: String,
+    by_title: BTreeMap<(String, String), ArticleKey>,
+}
+
+impl EnterpriseLinkIndex {
+    pub fn build(identities: &[EnterpriseLinkIdentity]) -> Result<Self, NormalizeError> {
+        let first = identities
+            .first()
+            .ok_or(NormalizeError::Missing("link index identity"))?;
+        let project = first.project.clone();
+        let generation_id = first.generation_id.clone();
+        let mut by_title = BTreeMap::new();
+        let mut seen_pages = BTreeSet::new();
+
+        for identity in identities {
+            if identity.project != project {
+                return Err(NormalizeError::ProjectMismatch);
+            }
+            if identity.generation_id != generation_id {
+                return Err(NormalizeError::GenerationMismatch);
+            }
+            let key = ArticleKey {
+                project: identity.project.clone(),
+                page_id: identity.page_id,
+            };
+            if !seen_pages.insert((key.project.clone(), key.page_id)) {
+                return Err(NormalizeError::DuplicatePage(key));
+            }
+            for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
+                let index_key = (key.project.clone(), title.replace('_', " "));
+                if let Some(existing) = by_title.insert(index_key, key.clone()) {
+                    if existing != key {
+                        return Err(NormalizeError::UnresolvedLink);
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            project,
+            generation_id,
+            by_title,
+        })
+    }
+
+    fn validate_page(&self, page: &JoinedEnterpriseArticle) -> Result<(), NormalizeError> {
+        if page.structured.page.project != self.project {
+            return Err(NormalizeError::ProjectMismatch);
+        }
+        if page.structured.generation_id != self.generation_id {
+            return Err(NormalizeError::GenerationMismatch);
+        }
+        Ok(())
+    }
+}
+
+pub fn normalize_enterprise_article_with_link_index(
+    joined: &JoinedEnterpriseArticle,
+    is_disambiguation: bool,
+    link_index: &EnterpriseLinkIndex,
+) -> Result<CanonicalEnterpriseArticle, NormalizeError> {
+    link_index.validate_page(joined)?;
+    normalize_with_index(joined, is_disambiguation, Some(&link_index.by_title))
+}
 
 /// Rendered HTML is sanitized at the source boundary. Unresolved images
 /// still fail closed until a verified Commons/media join is implemented.
@@ -119,42 +213,17 @@ fn normalize_with_index(
 pub fn normalize_enterprise_batch(
     joined: &[JoinedEnterpriseArticle],
 ) -> Result<Vec<CanonicalEnterpriseArticle>, NormalizeError> {
-    // Resolve internal links only against identities from the exact joined
-    // generation. Cross-chunk targets require a verified global page index.
-    let mut index = BTreeMap::new();
-    let generation = joined
-        .first()
-        .map(|page| page.structured.generation_id.as_str());
-    let project = joined
-        .first()
-        .map(|page| page.structured.page.project.as_str());
-    let mut seen_pages = BTreeSet::new();
-    for page in joined {
-        if Some(page.structured.generation_id.as_str()) != generation {
-            return Err(NormalizeError::GenerationMismatch);
-        }
-        if Some(page.structured.page.project.as_str()) != project {
-            return Err(NormalizeError::ProjectMismatch);
-        }
-        let key = ArticleKey {
-            project: page.structured.page.project.clone(),
-            page_id: page.structured.page.page_id,
-        };
-        if !seen_pages.insert((key.project.clone(), key.page_id)) {
-            return Err(NormalizeError::DuplicatePage(key));
-        }
-        for title in std::iter::once(&page.structured.name).chain(page.redirects.iter()) {
-            let index_key = (key.project.clone(), title.replace('_', " "));
-            if let Some(existing) = index.insert(index_key, key.clone()) {
-                if existing != key {
-                    return Err(NormalizeError::UnresolvedLink);
-                }
-            }
-        }
+    if joined.is_empty() {
+        return Ok(Vec::new());
     }
+    let identities = joined
+        .iter()
+        .map(EnterpriseLinkIdentity::from_joined)
+        .collect::<Vec<_>>();
+    let index = EnterpriseLinkIndex::build(&identities)?;
     joined
         .iter()
-        .map(|page| normalize_with_index(page, false, Some(&index)))
+        .map(|page| normalize_enterprise_article_with_link_index(page, false, &index))
         .collect()
 }
 
@@ -208,6 +277,54 @@ mod tests {
                 project: "enwiki".into(),
                 page_id: 42,
             }))
+        );
+    }
+
+    #[test]
+    fn snapshot_link_index_resolves_targets_outside_the_current_chunk() {
+        let mut source = joined("enwiki", 42);
+        source.structured.name = "Source".into();
+        source.structured.sections.push(StructuredPart {
+            kind: PartKind::Paragraph,
+            name: None,
+            value: Some("See the target article.".into()),
+            values: vec![],
+            links: vec![StructuredLink {
+                url: "/wiki/Target".into(),
+                text: "Target".into(),
+            }],
+            citations: vec![],
+            table_references: vec![],
+            images: vec![],
+            has_parts: vec![],
+        });
+        let mut target = joined("enwiki", 43);
+        target.structured.name = "Target".into();
+        target.redirects.push("Target_alias".into());
+
+        let identities = [&source, &target]
+            .into_iter()
+            .map(EnterpriseLinkIdentity::from_joined)
+            .collect::<Vec<_>>();
+        let index = EnterpriseLinkIndex::build(&identities).unwrap();
+
+        let normalized =
+            normalize_enterprise_article_with_link_index(&source, false, &index).unwrap();
+        assert_eq!(normalized.article.links.len(), 1);
+        assert_eq!(normalized.article.links[0].target.page_id, 43);
+        assert_eq!(normalized.article.links[0].target.project, "enwiki");
+    }
+
+    #[test]
+    fn snapshot_link_index_rejects_cross_generation_use() {
+        let page = joined("enwiki", 42);
+        let index =
+            EnterpriseLinkIndex::build(&[EnterpriseLinkIdentity::from_joined(&page)]).unwrap();
+        let mut stale = page;
+        stale.structured.generation_id = "20261011".into();
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&stale, false, &index),
+            Err(NormalizeError::GenerationMismatch)
         );
     }
 }
