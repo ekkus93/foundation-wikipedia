@@ -4,3 +4,4 @@
 //! production API until its canonical TODO tasks are implemented.
 
 pub mod activation;
+pub mod record_codec;

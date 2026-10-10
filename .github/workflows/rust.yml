@@ -28,6 +28,11 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace --locked 2>&1 | tee rust-test.log
+      - name: Record codec probe
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo run -p wiki-store --example codec_probe --locked 2>&1 | tee codec-probe.log
       - name: Verify fixture provenance
         run: python3 -m unittest discover -s scripts && python3 scripts/verify_fixture_provenance.py
       - name: Source staging verifier negative tests
@@ -37,7 +42,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-test-evidence
-          path: rust-test.log
+          path: |
+            rust-test.log
+            codec-probe.log
           retention-days: 14
           if-no-files-found: warn
       - name: Confirm exact head
