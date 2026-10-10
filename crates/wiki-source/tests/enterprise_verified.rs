@@ -1,7 +1,9 @@
 use std::io::Cursor;
 
 use wiki_source::enterprise_integrity::IntegrityError;
-use wiki_source::enterprise_verified::{import_verified_enterprise_ndjson, VerifiedImportError};
+use wiki_source::enterprise_verified::{
+    import_canonical_enterprise_ndjson, import_verified_enterprise_ndjson, VerifiedImportError,
+};
 
 fn base() -> serde_json::Value {
     serde_json::json!({
@@ -47,4 +49,12 @@ fn verified_import_rejects_missing_citation_and_accepts_matching_one() {
     let joined = run(&structured).unwrap();
     assert_eq!(joined.len(), 1);
     assert_eq!(joined[0].structured.revision_id, 99);
+    let canonical = import_canonical_enterprise_ndjson(
+        Cursor::new(structured.to_string()),
+        Cursor::new(regular.to_string()),
+        "20261010",
+        vec![],
+    ).unwrap();
+    assert_eq!(canonical[0].article.revision.revision_id, 99);
+    assert_eq!(canonical[0].article.references[0].id, "cite1");
 }
