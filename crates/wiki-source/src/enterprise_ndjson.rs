@@ -13,6 +13,7 @@ use crate::join::PageKey;
 /// An import chunk must remain bounded even if an upstream file is enormous.
 /// Callers can partition verified snapshots into independently staged chunks.
 pub const MAX_BATCH_RECORDS: usize = 10_000;
+pub const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
@@ -42,6 +43,10 @@ pub enum BatchImportError {
         kind: InputKind,
         limit: usize,
     },
+    TooManyBytes {
+        kind: InputKind,
+        limit: usize,
+    },
     Parse {
         kind: InputKind,
         line: usize,
@@ -57,6 +62,7 @@ fn parse_lines<R: BufRead, T>(
 ) -> Result<Vec<T>, BatchImportError> {
     let mut result = Vec::new();
     let mut line_number = 0usize;
+    let mut total_bytes = 0usize;
     loop {
         let mut bytes = Vec::new();
         // Bound allocation even for an attacker-controlled line without a newline.
@@ -69,6 +75,18 @@ fn parse_lines<R: BufRead, T>(
             })?;
         if count == 0 {
             break;
+        }
+        total_bytes = total_bytes
+            .checked_add(count)
+            .ok_or(BatchImportError::TooManyBytes {
+                kind,
+                limit: MAX_BATCH_BYTES,
+            })?;
+        if total_bytes > MAX_BATCH_BYTES {
+            return Err(BatchImportError::TooManyBytes {
+                kind,
+                limit: MAX_BATCH_BYTES,
+            });
         }
         line_number += 1;
         if result.len() == MAX_BATCH_RECORDS {
@@ -118,6 +136,9 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<PageKey>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, BatchImportError> {
+    if generation_id.trim().is_empty() || generation_id != generation_id.trim() {
+        return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
+    }
     let structured: Vec<StructuredArticle> =
         parse_lines(structured, InputKind::Structured, |line| {
             parse_structured_article(line, generation_id)
