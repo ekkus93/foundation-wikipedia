@@ -13,9 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use wiki_model::{ArticleKey, ModelError, PageRecord};
 
-use crate::record_codec::{
-    decode_record_at, RecordCodecError, MAX_COMPRESSED_RECORD_BYTES,
-};
+use crate::record_codec::{decode_record_at, RecordCodecError, MAX_COMPRESSED_RECORD_BYTES};
 
 const MAX_FRAME_BYTES: u64 = MAX_COMPRESSED_RECORD_BYTES + 40;
 
@@ -33,16 +31,24 @@ pub enum CatalogError {
 }
 
 impl From<rusqlite::Error> for CatalogError {
-    fn from(value: rusqlite::Error) -> Self { Self::Sql(value) }
+    fn from(value: rusqlite::Error) -> Self {
+        Self::Sql(value)
+    }
 }
 impl From<std::io::Error> for CatalogError {
-    fn from(value: std::io::Error) -> Self { Self::Io(value) }
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 impl From<RecordCodecError> for CatalogError {
-    fn from(value: RecordCodecError) -> Self { Self::Codec(value) }
+    fn from(value: RecordCodecError) -> Self {
+        Self::Codec(value)
+    }
 }
 impl From<ModelError> for CatalogError {
-    fn from(value: ModelError) -> Self { Self::Model(value) }
+    fn from(value: ModelError) -> Self {
+        Self::Model(value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,12 +73,16 @@ fn valid_shard_name(name: &str) -> bool {
         && name != "."
         && name != ".."
         && !name.starts_with('.')
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
 
 fn title_key(title: &str) -> Result<String, CatalogError> {
     let normalized = title.trim().replace('_', " ").to_lowercase();
-    if normalized.is_empty() { return Err(CatalogError::InvalidCatalogEntry); }
+    if normalized.is_empty() {
+        return Err(CatalogError::InvalidCatalogEntry);
+    }
     Ok(normalized)
 }
 
@@ -90,7 +100,9 @@ fn read_verified_frame(
     frame_bytes: u64,
     expected_digest: Option<&str>,
 ) -> Result<(PageRecord, String), CatalogError> {
-    if !valid_shard_name(shard_name) { return Err(CatalogError::UnsafeShardName); }
+    if !valid_shard_name(shard_name) {
+        return Err(CatalogError::UnsafeShardName);
+    }
     if !(40..=MAX_FRAME_BYTES).contains(&frame_bytes) {
         return Err(CatalogError::InvalidFrame);
     }
@@ -108,7 +120,10 @@ fn read_verified_frame(
             return Err(CatalogError::InvalidFrame);
         }
     }
-    if offset.checked_add(frame_bytes).is_none_or(|end| end > opened.len()) {
+    if offset
+        .checked_add(frame_bytes)
+        .is_none_or(|end| end > opened.len())
+    {
         return Err(CatalogError::InvalidFrame);
     }
     let length = usize::try_from(frame_bytes).map_err(|_| CatalogError::InvalidFrame)?;
@@ -177,7 +192,7 @@ impl SnapshotCatalog {
                FOREIGN KEY(project, page_id) REFERENCES records(project, page_id)
              );
              CREATE INDEX IF NOT EXISTS records_wikidata
-               ON records(project, wikidata_id);"
+               ON records(project, wikidata_id);",
         )?;
         Ok(Self { conn })
     }
@@ -219,23 +234,44 @@ impl SnapshotCatalog {
         Ok(key)
     }
 
-    pub fn lookup_key(&self, project: &str, title: &str) -> Result<Option<ArticleKey>, CatalogError> {
+    pub fn lookup_key(
+        &self,
+        project: &str,
+        title: &str,
+    ) -> Result<Option<ArticleKey>, CatalogError> {
         let title = title_key(title)?;
-        let found: Option<i64> = self.conn.query_row(
-            "SELECT page_id FROM title_index WHERE project=?1 AND normalized_title=?2",
-            params![project, title],
-            |row| row.get(0),
-        ).optional()?;
-        found.map(|page_id| Ok(ArticleKey { project: project.to_owned(), page_id: as_u64(page_id)? })).transpose()
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT page_id FROM title_index WHERE project=?1 AND normalized_title=?2",
+                params![project, title],
+                |row| row.get(0),
+            )
+            .optional()?;
+        found
+            .map(|page_id| {
+                Ok(ArticleKey {
+                    project: project.to_owned(),
+                    page_id: as_u64(page_id)?,
+                })
+            })
+            .transpose()
     }
 
-    pub fn lookup_wikidata(&self, project: &str, item: &str) -> Result<Vec<ArticleKey>, CatalogError> {
+    pub fn lookup_wikidata(
+        &self,
+        project: &str,
+        item: &str,
+    ) -> Result<Vec<ArticleKey>, CatalogError> {
         let mut stmt = self.conn.prepare(
-            "SELECT page_id FROM records WHERE project=?1 AND wikidata_id=?2 ORDER BY page_id"
+            "SELECT page_id FROM records WHERE project=?1 AND wikidata_id=?2 ORDER BY page_id",
         )?;
         let mut matches = Vec::new();
         for row in stmt.query_map(params![project, item], |row| row.get::<_, i64>(0))? {
-            matches.push(ArticleKey { project: project.to_owned(), page_id: as_u64(row?)? });
+            matches.push(ArticleKey {
+                project: project.to_owned(),
+                page_id: as_u64(row?)?,
+            });
         }
         Ok(matches)
     }
@@ -249,31 +285,51 @@ impl SnapshotCatalog {
                 params![key.project, as_i64(key.page_id)?],
                 |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))
             ).optional()?;
-        row.map(|(title, revision_id, wikidata_id, shard_name, offset, frame_bytes, frame_sha256)| {
-            if !valid_shard_name(&shard_name) || frame_sha256.len() != 64
-                || !frame_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                return Err(CatalogError::InvalidCatalogEntry);
-            }
-            Ok(CatalogEntry {
-                key: key.clone(), title,
-                revision_id: revision_id.map(as_u64).transpose()?,
-                wikidata_id, shard_name, offset: as_u64(offset)?,
-                frame_bytes: as_u64(frame_bytes)?, frame_sha256,
-            })
-        }).transpose()
+        row.map(
+            |(title, revision_id, wikidata_id, shard_name, offset, frame_bytes, frame_sha256)| {
+                if !valid_shard_name(&shard_name)
+                    || frame_sha256.len() != 64
+                    || !frame_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    return Err(CatalogError::InvalidCatalogEntry);
+                }
+                Ok(CatalogEntry {
+                    key: key.clone(),
+                    title,
+                    revision_id: revision_id.map(as_u64).transpose()?,
+                    wikidata_id,
+                    shard_name,
+                    offset: as_u64(offset)?,
+                    frame_bytes: as_u64(frame_bytes)?,
+                    frame_sha256,
+                })
+            },
+        )
+        .transpose()
     }
 
     /// Read only the addressed frame, rehash it, then assert its decoded identity
     /// and revision match the catalog. A corrupt/stale catalog fails closed.
-    pub fn read_record(&self, root: &Path, key: &ArticleKey) -> Result<Option<PageRecord>, CatalogError> {
-        let Some(entry) = self.lookup_entry(key)? else { return Ok(None); };
+    pub fn read_record(
+        &self,
+        root: &Path,
+        key: &ArticleKey,
+    ) -> Result<Option<PageRecord>, CatalogError> {
+        let Some(entry) = self.lookup_entry(key)? else {
+            return Ok(None);
+        };
         let (record, _) = read_verified_frame(
-            root, &entry.shard_name, entry.offset, entry.frame_bytes, Some(&entry.frame_sha256),
+            root,
+            &entry.shard_name,
+            entry.offset,
+            entry.frame_bytes,
+            Some(&entry.frame_sha256),
         )?;
         let (actual_key, title, revision, wikidata, _) = identity(&record);
-        if actual_key != entry.key || title != entry.title
-            || revision != entry.revision_id || wikidata != entry.wikidata_id
+        if actual_key != entry.key
+            || title != entry.title
+            || revision != entry.revision_id
+            || wikidata != entry.wikidata_id
         {
             return Err(CatalogError::IdentityMismatch);
         }
@@ -285,12 +341,16 @@ impl SnapshotCatalog {
 mod tests {
     use super::*;
     use crate::record_codec::append_record_frame;
-    use wiki_model::{Article, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use wiki_model::{Article, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
 
     fn temp_root() -> std::path::PathBuf {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("wiki-catalog-{}-{stamp}", std::process::id()));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("wiki-catalog-{}-{stamp}", std::process::id()));
         fs::create_dir(&path).unwrap();
         path
     }
@@ -298,16 +358,28 @@ mod tests {
     fn article(id: u64, title: &str) -> PageRecord {
         PageRecord::Article(Box::new(Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: id },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: id,
+            },
             revision: Revision {
-                revision_id: 1000 + id, timestamp: "2026-10-10T00:00:00Z".into(),
+                revision_id: 1000 + id,
+                timestamp: "2026-10-10T00:00:00Z".into(),
                 content_sha256: "a".repeat(64),
             },
-            title: title.into(), display_title: title.into(), language: "en".into(),
-            namespace: 0, aliases: vec!["The blue planet".into()],
-            wikidata_id: Some("Q2".into()), lead: vec![], sections: vec![],
-            references: vec![], links: vec![], media: vec![],
-            rendered_html: "<article>Earth</article>".into(), is_disambiguation: false,
+            title: title.into(),
+            display_title: title.into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec!["The blue planet".into()],
+            wikidata_id: Some("Q2".into()),
+            lead: vec![],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article>Earth</article>".into(),
+            is_disambiguation: false,
         }))
     }
 
@@ -320,28 +392,65 @@ mod tests {
         append_record_frame(&mut shard, &first).unwrap();
         let second_offset = shard.len() as u64;
         let redirect = PageRecord::Redirect(Redirect {
-            from: ArticleKey { project: "enwiki".into(), page_id: 43 },
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 43,
+            },
             title: "Planet Earth".into(),
-            to: ArticleKey { project: "enwiki".into(), page_id: 42 },
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
         });
         append_record_frame(&mut shard, &redirect).unwrap();
         fs::write(&path, &shard).unwrap();
         let mut catalog = SnapshotCatalog::in_memory().unwrap();
-        let first_key = catalog.insert_verified(&root, "articles-001.shard", 0, second_offset).unwrap();
-        let second_key = catalog.insert_verified(
-            &root, "articles-001.shard", second_offset, shard.len() as u64 - second_offset,
-        ).unwrap();
-        assert_eq!(catalog.lookup_key("enwiki", "the_blue_planet").unwrap(), Some(first_key.clone()));
-        assert_eq!(catalog.lookup_key("enwiki", "PLANET EARTH").unwrap(), Some(second_key.clone()));
-        assert_eq!(catalog.lookup_wikidata("enwiki", "Q2").unwrap(), vec![first_key.clone()]);
+        let first_key = catalog
+            .insert_verified(&root, "articles-001.shard", 0, second_offset)
+            .unwrap();
+        let second_key = catalog
+            .insert_verified(
+                &root,
+                "articles-001.shard",
+                second_offset,
+                shard.len() as u64 - second_offset,
+            )
+            .unwrap();
+        assert_eq!(
+            catalog.lookup_key("enwiki", "the_blue_planet").unwrap(),
+            Some(first_key.clone())
+        );
+        assert_eq!(
+            catalog.lookup_key("enwiki", "PLANET EARTH").unwrap(),
+            Some(second_key.clone())
+        );
+        assert_eq!(
+            catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
+            vec![first_key.clone()]
+        );
         assert_eq!(catalog.read_record(&root, &first_key).unwrap(), Some(first));
-        assert_eq!(catalog.read_record(&root, &second_key).unwrap(), Some(redirect));
-        assert!(catalog.read_record(&root, &ArticleKey { project: "enwiki".into(), page_id: 999 }).unwrap().is_none());
+        assert_eq!(
+            catalog.read_record(&root, &second_key).unwrap(),
+            Some(redirect)
+        );
+        assert!(catalog
+            .read_record(
+                &root,
+                &ArticleKey {
+                    project: "enwiki".into(),
+                    page_id: 999
+                }
+            )
+            .unwrap()
+            .is_none());
 
         let mut tampered = shard;
         tampered[second_offset as usize + 12] ^= 1;
         fs::write(&path, &tampered).unwrap();
-        assert!(matches!(catalog.read_record(&root, &second_key), Err(CatalogError::DigestMismatch)));
+        assert!(matches!(
+            catalog.read_record(&root, &second_key),
+            Err(CatalogError::DigestMismatch)
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -355,12 +464,20 @@ mod tests {
         append_record_frame(&mut shard, &article(11, "Earth")).unwrap();
         fs::write(root.join("shard-1.bin"), &shard).unwrap();
         let mut catalog = SnapshotCatalog::in_memory().unwrap();
-        catalog.insert_verified(&root, "shard-1.bin", 0, next).unwrap();
+        catalog
+            .insert_verified(&root, "shard-1.bin", 0, next)
+            .unwrap();
         assert!(matches!(
             catalog.insert_verified(&root, "shard-1.bin", next, shard.len() as u64 - next),
             Err(CatalogError::Sql(_))
         ));
-        assert!(catalog.lookup_entry(&ArticleKey { project: "enwiki".into(), page_id: 11 }).unwrap().is_none());
+        assert!(catalog
+            .lookup_entry(&ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11
+            })
+            .unwrap()
+            .is_none());
         assert!(matches!(
             catalog.insert_verified(&root, "../shard-1.bin", 0, next),
             Err(CatalogError::UnsafeShardName)
