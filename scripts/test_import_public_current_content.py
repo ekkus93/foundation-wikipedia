@@ -73,6 +73,13 @@ class PublicCurrentContentTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicDumpError, "out-of-range namespace"):
             self.read("<mediawiki>" + bad_namespace + "</mediawiki>")
 
+    def test_rejects_nonhex_checksum_before_reading_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.xml.bz2"
+            path.write_bytes(bz2.compress(b"<mediawiki/>"))
+            with self.assertRaisesRegex(PublicDumpError, "invalid expected SHA-256"):
+                list(iter_verified_pages(path, "z" * 64))
+
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):
             self.read("<mediawiki>" + page())

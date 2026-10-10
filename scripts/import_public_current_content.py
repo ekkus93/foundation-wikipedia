@@ -80,7 +80,8 @@ def iter_verified_pages(path, expected_sha256):
     Exhaust the iterator and validate the complete XML before activating output.
     A failed later page must discard the entire staged generation.
     """
-    if not isinstance(expected_sha256, str) or len(expected_sha256) != 64:
+    if (not isinstance(expected_sha256, str) or len(expected_sha256) != 64
+            or not all(char in "0123456789abcdefABCDEF" for char in expected_sha256)):
         raise PublicDumpError("invalid expected SHA-256")
     path = Path(path)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
