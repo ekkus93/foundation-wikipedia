@@ -13,10 +13,7 @@ fn full_manifest_audit_requires_every_indexed_shard_and_exact_hash() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-manifest-{}-{stamp}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("wiki-manifest-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let mut catalog = SnapshotCatalog::in_memory().unwrap();
     let mut expected = BTreeMap::new();
