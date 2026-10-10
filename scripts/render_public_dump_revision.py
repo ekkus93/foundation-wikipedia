@@ -40,17 +40,14 @@ def wikipedia_origin(project):
     """Map supported Wikipedia database names to their canonical wiki origin."""
     if project == "simplewiki":
         return "https://simple.wikipedia.org"
-    match = re.fullmatch(r"([a-z][a-z0-9-]{0,31})wiki", project or "")
+    # Standard language Wikipedia database names use a two/three-letter
+    # language code plus "wiki". Irregular historical DB names require an
+    # explicit mapping; never manufacture a wikipedia.org host from arbitrary
+    # Wikimedia database syntax.
+    match = re.fullmatch(r"([a-z]{2,3})wiki", project or "")
     if match is None:
         raise RenderError("unsupported Wikipedia project for revision renderer")
     language = match.group(1)
-    # These database names belong to other Wikimedia projects, not Wikipedia.
-    # A syntactically plausible project name does not confer Wikipedia origin.
-    if language in {
-        "commons", "wikidata", "meta", "species", "test", "test2",
-        "incubator", "outreach", "foundation", "mediawiki", "login",
-    }:
-        raise RenderError("unsupported non-Wikipedia project for revision renderer")
     return f"https://{language}.wikipedia.org"
 
 

@@ -75,8 +75,16 @@ class RevisionRendererTests(unittest.TestCase):
     def test_project_mapping_is_allowlisted_to_wikipedia_hosts(self):
         self.assertEqual(wikipedia_origin("enwiki"), "https://en.wikipedia.org")
         self.assertEqual(wikipedia_origin("simplewiki"), "https://simple.wikipedia.org")
-        self.assertEqual(wikipedia_origin("pt-brwiki"), "https://pt-br.wikipedia.org")
-        for project in ["", "commonswiki", "../enwiki", "enwiktionary", "en_wiki"]:
+        self.assertEqual(wikipedia_origin("frwiki"), "https://fr.wikipedia.org")
+        for project in [
+            "",
+            "commonswiki",
+            "pt-brwiki",
+            "zh_classicalwiki",
+            "../enwiki",
+            "enwiktionary",
+            "en_wiki",
+        ]:
             with self.subTest(project=project):
                 with self.assertRaises(RenderError):
                     wikipedia_origin(project)
