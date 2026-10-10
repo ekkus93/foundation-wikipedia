@@ -24,7 +24,9 @@ fn check_parts(
         }
         for table in &part.table_references {
             if !tables.contains(table.identifier.as_str()) {
-                return Err(IntegrityError::UnknownTableReference(table.identifier.clone()));
+                return Err(IntegrityError::UnknownTableReference(
+                    table.identifier.clone(),
+                ));
             }
         }
         check_parts(&part.has_parts, references, tables)?;
@@ -62,7 +64,10 @@ mod tests {
     fn nested_evidence_requires_exact_local_identifiers() {
         let mut article = JoinedEnterpriseArticle {
             structured: crate::enterprise::StructuredArticle {
-                page: crate::join::PageKey { project: "enwiki".into(), page_id: 42 },
+                page: crate::join::PageKey {
+                    project: "enwiki".into(),
+                    page_id: 42,
+                },
                 revision_id: 99,
                 date_modified: "2026-10-10T00:00:00Z".into(),
                 generation_id: "20261010".into(),
@@ -110,20 +115,26 @@ mod tests {
             validate_joined_evidence(&article),
             Err(IntegrityError::UnknownCitation("cite1".into()))
         );
-        article.structured.references.push(crate::enterprise::StructuredReference {
-            identifier: "cite1".into(),
-            payload: serde_json::Map::new(),
-        });
+        article
+            .structured
+            .references
+            .push(crate::enterprise::StructuredReference {
+                identifier: "cite1".into(),
+                payload: serde_json::Map::new(),
+            });
         assert_eq!(
             validate_joined_evidence(&article),
             Err(IntegrityError::UnknownTableReference("table1".into()))
         );
-        article.structured.tables.push(crate::enterprise::StructuredTable {
-            identifier: "table1".into(),
-            headers: vec![],
-            rows: vec![],
-            confidence_score: None,
-        });
+        article
+            .structured
+            .tables
+            .push(crate::enterprise::StructuredTable {
+                identifier: "table1".into(),
+                headers: vec![],
+                rows: vec![],
+                confidence_score: None,
+            });
         assert_eq!(validate_joined_evidence(&article), Ok(()));
     }
 }
