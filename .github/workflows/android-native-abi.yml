@@ -10,6 +10,7 @@ on:
       - 'crates/wiki-search/**'
       - 'crates/wiki-ai/**'
       - 'crates/wiki-pack-format/**'
+      - 'Cargo.lock'
       - 'android/scripts/build-rust-android.sh'
       - 'scripts/verify_android_elf.py'
       - '.github/workflows/android-native-abi.yml'

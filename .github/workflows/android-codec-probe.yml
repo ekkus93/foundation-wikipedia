@@ -1,0 +1,74 @@
+name: Android record codec probe
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/wiki-store/**'
+      - 'Cargo.lock'
+      - '.github/workflows/android-codec-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-codec-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain and Android x86_64 target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.85.1'
+          targets: x86_64-linux-android
+      - name: Install pinned Android NDK
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install 'ndk;27.2.12479018'
+          test -x "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang"
+      - name: Cross-build codec probe for Android x86_64
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TOOLCHAIN/x86_64-linux-android26-clang"
+          export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang"
+          export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang++"
+          export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
+          cargo build --package wiki-store --example codec_probe --target x86_64-linux-android --release --locked
+          test -x target/x86_64-linux-android/release/examples/codec_probe
+      - name: Run codec probe on API 35 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -eu
+            PROBE="target/x86_64-linux-android/release/examples/codec_probe"
+            test -f "$PROBE"
+            adb push "$PROBE" /data/local/tmp/foundation-codec-probe
+            adb shell chmod 755 /data/local/tmp/foundation-codec-probe
+            adb shell /data/local/tmp/foundation-codec-probe > /tmp/android-codec-probe.log
+            cat /tmp/android-codec-probe.log
+            grep -F 'codec_probe target_os=android target_arch=x86_64' /tmp/android-codec-probe.log
+            grep -F 'codec_probe migration legacy=1.0 action=rewrite_to_1.1 future_minor=rejected future_major=rejected' /tmp/android-codec-probe.log
+      - name: Preserve Android codec evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-codec-probe-evidence
+          path: /tmp/android-codec-probe.log
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
