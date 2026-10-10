@@ -193,15 +193,20 @@ fn footnote_and_reference_handles_remain_distinct_and_revision_scoped() {
 
     let mut second = first.clone();
     second.revision.revision_id = 8;
-    let next_notes = evidence_footnotes(&second).unwrap();
-    let next_refs = evidence_references(&second).unwrap();
-    assert_ne!(notes[0].id, next_notes[0].id);
-    assert_ne!(refs[0].id, next_refs[0].id);
+    let (next_note_id, next_ref_id) = {
+        let next_notes = evidence_footnotes(&second).unwrap();
+        let next_refs = evidence_references(&second).unwrap();
+        assert_ne!(notes[0].id, next_notes[0].id);
+        assert_ne!(refs[0].id, next_refs[0].id);
+        (next_notes[0].id.clone(), next_refs[0].id.clone())
+    };
+    assert!(next_note_id.starts_with("wkf:enwiki:99:8:"));
+    assert!(next_ref_id.starts_with("wkr:enwiki:99:8:"));
 
     if let BlockContent::Footnote(footnote) = &mut second.sections[0].blocks[1].content {
         footnote.source_id = "cite-note-é".into();
     }
-    assert_ne!(next_notes[0].id, evidence_footnotes(&second).unwrap()[0].id);
+    assert_ne!(next_note_id, evidence_footnotes(&second).unwrap()[0].id);
 }
 
 #[test]
