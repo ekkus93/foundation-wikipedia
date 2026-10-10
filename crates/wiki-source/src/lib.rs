@@ -4,6 +4,7 @@
 pub mod enterprise;
 pub mod enterprise_integrity;
 pub mod enterprise_ndjson;
+pub mod enterprise_verified;
 pub mod join;
 
 use std::collections::BTreeSet;
