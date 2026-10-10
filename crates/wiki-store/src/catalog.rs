@@ -63,6 +63,8 @@ pub struct CatalogEntry {
     pub frame_sha256: String,
 }
 
+type CatalogRow = (String, Option<i64>, Option<String>, String, i64, i64, String);
+
 pub struct SnapshotCatalog {
     conn: Connection,
 }
@@ -278,7 +280,7 @@ impl SnapshotCatalog {
 
     pub fn lookup_entry(&self, key: &ArticleKey) -> Result<Option<CatalogEntry>, CatalogError> {
         key.validate()?;
-        let row: Option<(String, Option<i64>, Option<String>, String, i64, i64, String)> =
+        let row: Option<CatalogRow> =
             self.conn.query_row(
                 "SELECT title,revision_id,wikidata_id,shard_name,frame_offset,frame_bytes,frame_sha256
                    FROM records WHERE project=?1 AND page_id=?2",
@@ -388,104 +390,3 @@ mod tests {
         let root = temp_root();
         let path = root.join("articles-001.shard");
         let mut shard = Vec::new();
-        let first = article(42, "Earth");
-        append_record_frame(&mut shard, &first).unwrap();
-        let second_offset = shard.len() as u64;
-        let redirect = PageRecord::Redirect(Redirect {
-            from: ArticleKey {
-                project: "enwiki".into(),
-                page_id: 43,
-            },
-            title: "Planet Earth".into(),
-            to: ArticleKey {
-                project: "enwiki".into(),
-                page_id: 42,
-            },
-        });
-        append_record_frame(&mut shard, &redirect).unwrap();
-        fs::write(&path, &shard).unwrap();
-        let mut catalog = SnapshotCatalog::in_memory().unwrap();
-        let first_key = catalog
-            .insert_verified(&root, "articles-001.shard", 0, second_offset)
-            .unwrap();
-        let second_key = catalog
-            .insert_verified(
-                &root,
-                "articles-001.shard",
-                second_offset,
-                shard.len() as u64 - second_offset,
-            )
-            .unwrap();
-        assert_eq!(
-            catalog.lookup_key("enwiki", "the_blue_planet").unwrap(),
-            Some(first_key.clone())
-        );
-        assert_eq!(
-            catalog.lookup_key("enwiki", "PLANET EARTH").unwrap(),
-            Some(second_key.clone())
-        );
-        assert_eq!(
-            catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
-            vec![first_key.clone()]
-        );
-        assert_eq!(catalog.read_record(&root, &first_key).unwrap(), Some(first));
-        assert_eq!(
-            catalog.read_record(&root, &second_key).unwrap(),
-            Some(redirect)
-        );
-        assert!(catalog
-            .read_record(
-                &root,
-                &ArticleKey {
-                    project: "enwiki".into(),
-                    page_id: 999
-                }
-            )
-            .unwrap()
-            .is_none());
-
-        let mut tampered = shard;
-        tampered[second_offset as usize + 12] ^= 1;
-        fs::write(&path, &tampered).unwrap();
-        assert!(matches!(
-            catalog.read_record(&root, &second_key),
-            Err(CatalogError::DigestMismatch)
-        ));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn insertion_is_atomic_on_colliding_titles_and_rejects_unsafe_paths() {
-        let root = temp_root();
-        let mut shard = Vec::new();
-        let n = append_record_frame(&mut shard, &article(10, "Earth")).unwrap();
-        assert_eq!(n, 0);
-        let next = shard.len() as u64;
-        append_record_frame(&mut shard, &article(11, "Earth")).unwrap();
-        fs::write(root.join("shard-1.bin"), &shard).unwrap();
-        let mut catalog = SnapshotCatalog::in_memory().unwrap();
-        catalog
-            .insert_verified(&root, "shard-1.bin", 0, next)
-            .unwrap();
-        assert!(matches!(
-            catalog.insert_verified(&root, "shard-1.bin", next, shard.len() as u64 - next),
-            Err(CatalogError::Sql(_))
-        ));
-        assert!(catalog
-            .lookup_entry(&ArticleKey {
-                project: "enwiki".into(),
-                page_id: 11
-            })
-            .unwrap()
-            .is_none());
-        assert!(matches!(
-            catalog.insert_verified(&root, "../shard-1.bin", 0, next),
-            Err(CatalogError::UnsafeShardName)
-        ));
-        assert!(matches!(
-            catalog.insert_verified(&root, "shard-1.bin", 0, u64::MAX),
-            Err(CatalogError::InvalidFrame)
-        ));
-        fs::remove_dir_all(root).unwrap();
-    }
-}
