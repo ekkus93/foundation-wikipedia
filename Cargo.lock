@@ -324,6 +324,7 @@ dependencies = [
 name = "wiki-source"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "wiki-core",
  "wiki-model",
 ]
