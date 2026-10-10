@@ -292,7 +292,6 @@ fn append_blocks(
                 .join(" "),
             BlockContent::Footnote(footnote) => footnote.text.clone(),
             // HTML must be sanitized/normalized before contributing text.
-            BlockContent::Footnote(footnote) => footnote.text.clone(),
             BlockContent::HtmlFallback(_) | BlockContent::Media { .. } => continue,
         };
         if tokenize(&text).is_empty() {
@@ -599,3 +598,18 @@ mod tests {
             CorpusError::InvalidArticle(ModelError::InvalidRevision)
         );
     }
+
+    #[test]
+    fn rejects_invalid_article_and_empty_query() {
+        let mut article = sample();
+        article.revision.revision_id = 0;
+        assert_eq!(
+            ArticleLexicalIndex::build(&article).unwrap_err(),
+            ModelError::InvalidRevision
+        );
+        assert!(ArticleLexicalIndex::build(&sample())
+            .unwrap()
+            .search("", 1)
+            .is_empty());
+    }
+}
