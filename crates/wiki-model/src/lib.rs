@@ -1,7 +1,8 @@
 //! Versioned, platform-neutral Wikipedia article domain model.
 //!
-//! This is a **partial** implementation of MOD-001: stable typed data and
-//! validation. Upstream adapters and serialized record formats remain pending.
+//! This implements the MOD-001 logical model contract: stable typed data,
+//! validation, Serde roundtrips, and retained canonical render HTML. Upstream
+//! adapters and physical record encodings are tracked separately.
 
 use std::collections::HashSet;
 use std::error::Error;
@@ -118,6 +119,7 @@ pub enum ModelError {
     UnsupportedSchema(u32),
     InvalidHash,
     MissingTitle,
+    MissingRenderedHtml,
     InvalidSectionHeading,
     InvalidBlockContent,
     InvalidReferenceLabel,
@@ -307,6 +309,9 @@ impl Article {
         {
             return Err(ModelError::MissingTitle);
         }
+        if self.rendered_html.trim().is_empty() {
+            return Err(ModelError::MissingRenderedHtml);
+        }
         let mut aliases = HashSet::new();
         for alias in &self.aliases {
             if alias.trim().is_empty() || !aliases.insert(alias.trim().to_lowercase()) {
@@ -361,6 +366,13 @@ impl Article {
         check_blocks(&self.lead, self.media.len())?;
         check_sections(&self.sections, self.media.len())?;
         Ok(())
+    }
+
+    /// Return the retained sanitized, high-fidelity article HTML only after
+    /// the complete canonical record has passed model validation.
+    pub fn render_html(&self) -> Result<&str, ModelError> {
+        self.validate()?;
+        Ok(&self.rendered_html)
     }
 }
 
@@ -552,6 +564,7 @@ mod tests {
         let decoded: Article = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, a);
         assert_eq!(decoded.validate(), Ok(()));
+        assert_eq!(decoded.render_html(), Ok("<article>Gravité 🌍</article>"));
         let json = String::from_utf8(encoded).unwrap();
         assert!(json.contains("Gravité"));
         assert!(json.contains("质量"));
@@ -704,13 +717,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_blank_revision_and_display_title() {
+    fn rejects_blank_revision_display_title_and_render_html() {
         let mut a = article();
         a.revision.timestamp = " ".into();
         assert_eq!(a.validate(), Err(ModelError::InvalidRevision));
         a.revision.timestamp = "2026-10-09T00:00:00Z".into();
         a.display_title.clear();
         assert_eq!(a.validate(), Err(ModelError::MissingTitle));
+        a.display_title = "Gravity".into();
+        a.rendered_html = " \t".into();
+        assert_eq!(a.validate(), Err(ModelError::MissingRenderedHtml));
+        assert_eq!(a.render_html(), Err(ModelError::MissingRenderedHtml));
     }
 
     #[test]
