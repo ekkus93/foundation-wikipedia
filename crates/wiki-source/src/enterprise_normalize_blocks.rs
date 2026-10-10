@@ -1,5 +1,6 @@
 //! Loss-aware Structured Contents block conversion.
 use super::enterprise_normalize::NormalizeError;
+use super::enterprise_normalize_complex::{infobox, list};
 use crate::enterprise::{PartKind, StructuredPart, StructuredTable};
 use std::collections::BTreeMap;
 use wiki_model::{Block, BlockContent, Section};
@@ -80,6 +81,11 @@ pub(crate) fn convert(
                 push(blocks, BlockContent::Paragraph(value(part)?))?;
                 append_tables(part, blocks, known)?;
             }
+            PartKind::Infobox => {
+                push(blocks, infobox(part)?)?;
+                append_tables(part, blocks, known)?;
+            }
+            PartKind::List => push(blocks, list(part)?)?,
             PartKind::Table => {
                 if part.value.is_some()
                     || !part.values.is_empty()
