@@ -57,6 +57,13 @@ fn normalizes_revision_and_rejects_unverified_images() {
         canonical
     );
     canonical.article.validate().unwrap();
+    let mut changed = joined.clone();
+    changed.rendered_html = "<article>Revised content</article>".into();
+    let updated = normalize_enterprise_article(&changed, false).unwrap();
+    assert_ne!(
+        canonical.article.revision.content_sha256,
+        updated.article.revision.content_sha256
+    );
     let mut bad = joined;
     bad.rendered_html.push_str("<img src='missing.svg'>");
     assert_eq!(
