@@ -117,7 +117,9 @@ pub fn normalize_enterprise_batch(
     let generation = joined
         .first()
         .map(|page| page.structured.generation_id.as_str());
-    let project = joined.first().map(|page| page.structured.page.project.as_str());
+    let project = joined
+        .first()
+        .map(|page| page.structured.page.project.as_str());
     let mut seen_pages = BTreeSet::new();
     for page in joined {
         if Some(page.structured.generation_id.as_str()) != generation {
