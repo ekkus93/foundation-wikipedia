@@ -492,13 +492,22 @@ mod tests {
             is_av_preview: false,
         });
         a.lead = vec![
-            Block { ordinal: 0, content: BlockContent::Paragraph("Gravité 🌍".into()) },
-            Block { ordinal: 1, content: BlockContent::List(vec!["Énergie".into(), "质量".into()]) },
+            Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravité 🌍".into()),
+            },
+            Block {
+                ordinal: 1,
+                content: BlockContent::List(vec!["Énergie".into(), "质量".into()]),
+            },
             Block {
                 ordinal: 2,
                 content: BlockContent::Table(vec![vec!["量".into(), "Value".into()]]),
             },
-            Block { ordinal: 3, content: BlockContent::Quote("«Science»".into()) },
+            Block {
+                ordinal: 3,
+                content: BlockContent::Quote("«Science»".into()),
+            },
             Block {
                 ordinal: 4,
                 content: BlockContent::Math {
@@ -506,7 +515,10 @@ mod tests {
                     html: "<math>E = mc²</math>".into(),
                 },
             },
-            Block { ordinal: 5, content: BlockContent::Media { media_index: 0 } },
+            Block {
+                ordinal: 5,
+                content: BlockContent::Media { media_index: 0 },
+            },
             Block {
                 ordinal: 6,
                 content: BlockContent::Infobox(vec![("Nom".into(), "Gravité".into())]),
@@ -528,7 +540,10 @@ mod tests {
         a.references[0].source_url = Some("https://example.org/référence".into());
         a.links.push(ArticleLink {
             label: "Relativité".into(),
-            target: ArticleKey { project: "frwiki".into(), page_id: 123 },
+            target: ArticleKey {
+                project: "frwiki".into(),
+                page_id: 123,
+            },
             fragment: Some("Théorie".into()),
         });
         assert_eq!(a.validate(), Ok(()));
@@ -543,16 +558,21 @@ mod tests {
         assert!(json.contains("🌍"));
 
         let redirect = PageRecord::Redirect(Redirect {
-            from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
             title: "Old title".into(),
-            to: ArticleKey { project: "enwiki".into(), page_id: 11 },
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11,
+            },
         });
         let redirect_json = serde_json::to_vec(&redirect).unwrap();
         let decoded_redirect: PageRecord = serde_json::from_slice(&redirect_json).unwrap();
         assert_eq!(decoded_redirect, redirect);
         assert_eq!(decoded_redirect.validate(), Ok(()));
     }
-
 
     #[test]
     fn block_ids_change_with_revision() {
