@@ -4,6 +4,7 @@ on:
     branches: [master]
     paths:
       - 'crates/wiki-model/Cargo.toml'
+      - 'crates/wiki-store/Cargo.toml'
       - '.github/workflows/dependency-lock-probe.yml'
   workflow_dispatch:
 
