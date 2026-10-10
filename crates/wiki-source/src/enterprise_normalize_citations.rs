@@ -12,11 +12,6 @@ pub(crate) fn append_citations(
     seen: &mut BTreeMap<String, (String, String)>,
     include_direct_children: bool,
 ) -> Result<(), NormalizeError> {
-    if !part.links.is_empty() {
-        // A URL is not a canonical ArticleKey; page-ID resolution requires
-        // a verified same-generation page index before links can be emitted.
-        return Err(NormalizeError::UnresolvedLink);
-    }
     for citation in &part.citations {
         let reference = references
             .get(citation.identifier.as_str())

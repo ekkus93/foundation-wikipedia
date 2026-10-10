@@ -2,6 +2,7 @@
 use super::enterprise_normalize::{digest_article, CanonicalEnterpriseArticle, NormalizeError};
 use super::enterprise_normalize_blocks::convert;
 use super::enterprise_normalize_references::references;
+use super::enterprise_normalize_links::collect_links;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::BTreeMap;
@@ -15,6 +16,14 @@ pub fn normalize_enterprise_article(
     joined: &JoinedEnterpriseArticle,
     is_disambiguation: bool,
 ) -> Result<CanonicalEnterpriseArticle, NormalizeError> {
+    normalize_with_index(joined, is_disambiguation, None)
+}
+
+fn normalize_with_index(
+    joined: &JoinedEnterpriseArticle,
+    is_disambiguation: bool,
+    link_index: Option<&BTreeMap<(String, String), ArticleKey>>,
+) -> Result<CanonicalEnterpriseArticle, NormalizeError> {
     validate_joined_evidence(joined).map_err(NormalizeError::Integrity)?;
     let html = joined.rendered_html.to_ascii_lowercase();
     if html.contains("<img") || html.contains("<picture") || html.contains("<video") {
@@ -26,6 +35,21 @@ pub fn normalize_enterprise_article(
         .iter()
         .map(|t| (t.identifier.as_str(), t))
         .collect();
+    let mut links = Vec::new();
+    collect_links(
+        &joined.structured.infoboxes,
+        &joined.structured.page.project,
+        &joined.structured.language,
+        link_index,
+        &mut links,
+    )?;
+    collect_links(
+        &joined.structured.sections,
+        &joined.structured.page.project,
+        &joined.structured.language,
+        link_index,
+        &mut links,
+    )?;
     let references = references(joined)?;
     let reference_index: BTreeMap<&str, &Reference> =
         references.iter().map(|r| (r.id.as_str(), r)).collect();
@@ -68,7 +92,7 @@ pub fn normalize_enterprise_article(
         lead,
         sections,
         references,
-        links: Vec::new(),
+        links,
         media: Vec::new(),
         rendered_html: joined.rendered_html.clone(),
         is_disambiguation,
@@ -87,8 +111,25 @@ pub fn normalize_enterprise_article(
 pub fn normalize_enterprise_batch(
     joined: &[JoinedEnterpriseArticle],
 ) -> Result<Vec<CanonicalEnterpriseArticle>, NormalizeError> {
+    // Resolve internal links only against identities from the exact joined
+    // generation. Cross-chunk targets require a verified global page index.
+    let mut index = BTreeMap::new();
+    for page in joined {
+        let key = ArticleKey {
+            project: page.structured.page.project.clone(),
+            page_id: page.structured.page.page_id,
+        };
+        for title in std::iter::once(&page.structured.name).chain(page.redirects.iter()) {
+            let index_key = (key.project.clone(), title.replace('_', " "));
+            if let Some(existing) = index.insert(index_key, key.clone()) {
+                if existing != key {
+                    return Err(NormalizeError::UnresolvedLink);
+                }
+            }
+        }
+    }
     joined
         .iter()
-        .map(|page| normalize_enterprise_article(page, false))
+        .map(|page| normalize_with_index(page, false, Some(&index)))
         .collect()
 }

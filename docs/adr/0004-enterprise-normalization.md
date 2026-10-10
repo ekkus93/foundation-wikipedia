@@ -38,3 +38,12 @@ reference ID emit one footnote; conflicting marker text fails closed.
 Unresolved Structured Contents page links are rejected rather than silently
 omitted until a verified page-ID resolver is available. This does not
 constitute complete reference/footnote rendering fidelity or safe HTML.
+
+**Exact-generation link resolution increment:** Batch normalization builds a
+deterministic page-title/redirect index from the same verified generation and
+resolves supported Wikipedia article links to canonical project/page IDs,
+retaining URL fragments. Percent-encoded Unicode titles and underscores are
+decoded; unknown targets, ambiguous titles, cross-project/external links and
+revision-query URLs fail closed. Standalone normalization intentionally rejects
+unresolved links. Full-snapshot index availability across separate import
+chunks, redirect graph validation and HTML link interception remain pending.
