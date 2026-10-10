@@ -47,7 +47,7 @@ pub struct MediaNotice {
 }
 
 impl MediaNotice {
-    fn validate(&self) -> bool {
+    pub(crate) fn validate(&self) -> bool {
         !self.mime.trim().is_empty()
             && !self.source_url.trim().is_empty()
             && !self.creator.trim().is_empty()
@@ -216,7 +216,7 @@ fn valid_digest(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn valid_owner_id(id: &str) -> bool {
+pub(crate) fn valid_owner_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 255
         && id

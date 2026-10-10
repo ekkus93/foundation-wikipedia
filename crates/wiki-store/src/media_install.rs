@@ -6,7 +6,9 @@
 //! content-addressed bytes; it must never make missing bytes look installed.
 
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
-use crate::media_ownership::{MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind};
+use crate::media_ownership::{
+    valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind,
+};
 
 #[derive(Debug)]
 pub enum MediaInstallError {
@@ -25,6 +27,9 @@ pub fn install_owned_media(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<String, MediaInstallError> {
+    if !valid_owner_id(owner_id) || !notice.validate() {
+        return Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput));
+    }
     let stored_digest = store
         .store_bytes(content)
         .map_err(MediaInstallError::Store)?;
@@ -140,7 +145,8 @@ mod tests {
                 MediaRegistryError::InvalidInput
             ))
         ));
-        assert_eq!(registry.unowned_digests().unwrap().len(), 1);
+        assert!(registry.unowned_digests().unwrap().is_empty());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 }
