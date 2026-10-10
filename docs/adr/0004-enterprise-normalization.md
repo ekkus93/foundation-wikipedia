@@ -29,3 +29,12 @@ Qualification uses `cargo fmt --all -- --check`,
 `cargo test --workspace --locked`, and exact-head GitHub Actions.
 Do not mark SRC-002 complete until its acceptance criteria and relevant
 visual/HTML fidelity checks are evidenced.
+
+**Citation preservation increment:** Structured Contents citation IDs that
+resolve to same-revision references are now represented as canonical
+`Footnote` blocks, with a revision-local source ID, upstream marker text,
+reference title and explicit reference linkage. Duplicate uses of the same
+reference ID emit one footnote; conflicting marker text fails closed.
+Unresolved Structured Contents page links are rejected rather than silently
+omitted until a verified page-ID resolver is available. This does not
+constitute complete reference/footnote rendering fidelity or safe HTML.

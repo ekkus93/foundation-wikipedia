@@ -34,6 +34,8 @@ pub mod enterprise_normalize_article;
 mod enterprise_normalize_blocks;
 #[path = "enterprise_normalize_complex.rs"]
 mod enterprise_normalize_complex;
+#[path = "enterprise_normalize_citations.rs"]
+mod enterprise_normalize_citations;
 #[path = "enterprise_normalize_references.rs"]
 mod enterprise_normalize_references;
 

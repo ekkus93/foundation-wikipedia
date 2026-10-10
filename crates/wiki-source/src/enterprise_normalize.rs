@@ -20,6 +20,7 @@ pub enum NormalizeError {
     UnresolvedVisual,
     InvalidTable(String),
     InvalidReference(String),
+    UnresolvedLink,
     TooManyBlocks,
     Serialization,
 }

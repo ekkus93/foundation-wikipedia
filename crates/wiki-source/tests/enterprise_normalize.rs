@@ -71,3 +71,57 @@ fn normalizes_revision_and_rejects_unverified_images() {
         Err(NormalizeError::UnresolvedVisual)
     );
 }
+
+#[test]
+fn preserves_nested_citations_as_revision_scoped_footnotes() {
+    use wiki_source::enterprise::{StructuredCitation, StructuredReference};
+    use wiki_model::BlockContent;
+    let mut joined = fixture();
+    joined.structured.references.push(StructuredReference {
+        identifier: "cite-1".into(),
+        payload: serde_json::json!({
+            "identifier": "cite-1",
+            "title": "Verified reference title",
+            "url": "https://example.org/evidence"
+        }).as_object().unwrap().clone(),
+    });
+    let citation = StructuredCitation {
+        identifier: "cite-1".into(),
+        text: "[1]".into(),
+    };
+    joined.structured.sections[0].has_parts[0].citations.push(citation.clone());
+    joined.structured.sections[0].has_parts[1].has_parts[0].citations.push(citation.clone());
+    joined.structured.infoboxes[0].has_parts[0].citations.push(citation);
+    let normalized = normalize_enterprise_article(&joined, false).unwrap();
+    let notes: Vec<_> = normalized.article.lead.iter()
+        .chain(normalized.article.sections[0].blocks.iter())
+        .filter_map(|b| match &b.content { BlockContent::Footnote(note) => Some(note), _ => None })
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].source_id, "cite-1");
+    assert_eq!(notes[0].label, "[1]");
+    assert_eq!(notes[0].text, "Verified reference title");
+    assert_eq!(notes[0].reference_ids, ["cite-1"]);
+    normalized.article.validate().unwrap();
+
+    // Repeated identifiers with inconsistent marker text must fail closed.
+    joined.structured.sections[0].has_parts[0].citations[0].text = "[different]".into();
+    assert_eq!(
+        normalize_enterprise_article(&joined, false),
+        Err(NormalizeError::InvalidReference("cite-1".into()))
+    );
+}
+
+#[test]
+fn unresolved_structured_page_links_are_not_silently_dropped() {
+    use wiki_source::enterprise::StructuredLink;
+    let mut joined = fixture();
+    joined.structured.infoboxes[0].has_parts[0].links.push(StructuredLink {
+        url: "https://en.wikipedia.org/wiki/Physics".into(),
+        text: "Physics".into(),
+    });
+    assert_eq!(
+        normalize_enterprise_article(&joined, false),
+        Err(NormalizeError::UnresolvedLink)
+    );
+}
