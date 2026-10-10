@@ -62,9 +62,9 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Verify source checksums; fail closed on mismatch or incomplete source.
   - **Accept:** interrupted source fetch resumes; corrupted mirror bytes rejected with no active-snapshot damage.
 - [ ] **SRC-002** Implement Structured Contents adapter and necessary **other** official data joins. **Depends:** SRC-001.  
-  - [ ] Parse beta structured sections/references/infoboxes/tables.
-  - [ ] Obtain matching rendered body/HTML, categories, redirects, namespace data from official source(s); don't assume Structured Contents has those fields.
-  - [ ] Enforce project/page/revision equality across imported components; detect duplicates and deleted pages.
+  - [x] Parse beta structured sections/references/infoboxes/tables.
+  - [x] Obtain matching rendered body/HTML, categories, redirects, namespace data from official source(s); don't assume Structured Contents has those fields.
+  - [x] Enforce project/page/revision equality across imported components; detect duplicates and deleted pages.
   - **Accept:** article HTML, retrieved blocks and category membership have proven consistent provenance.
 - [ ] **SRC-003** Qualify an official public-dump fallback. **Depends:** SRC-001.  
   - [ ] Inspect current-content dump/checksum contract and build importer.
