@@ -52,8 +52,10 @@ def _page(element):
         raise
     except ValueError as error:
         raise PublicDumpError("invalid page or revision identifier") from error
-    if page_id <= 0 or revision_id <= 0:
-        raise PublicDumpError("nonpositive page/revision identifier")
+    if not (0 < page_id < 2 ** 64) or not (0 < revision_id < 2 ** 64):
+        raise PublicDumpError("out-of-range page/revision identifier")
+    if not (-2 ** 31 <= namespace < 2 ** 31):
+        raise PublicDumpError("out-of-range namespace")
     title = _required(element, "title")
     timestamp = _required(revision, "timestamp")
     text = _child(revision, "text")
@@ -64,7 +66,7 @@ def _page(element):
     if redirect is not None and not redirect_title:
         raise PublicDumpError("redirect without target")
     wikitext = text.text or ""
-    if len(wikitext) > 16 * 1024 * 1024:
+    if len(wikitext.encode("utf-8")) > 16 * 1024 * 1024:
         raise PublicDumpError("oversized page wikitext")
     return PublicDumpPage(
         page_id, revision_id, title, namespace, timestamp,
