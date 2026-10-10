@@ -8,8 +8,8 @@ maps project/page ID, canonical title and aliases, revision ID, optional
 Wikidata ID, shard basename, byte offset, frame length and SHA-256 digest.
 Direct-offset lookup reads and decompresses **only one addressed record**;
 record identity, revision and digest are checked again on read. Redirect
-resolution must reject missing targets and cycles instead of following
-unbounded chains.
+resolution now rejects missing targets, cycles and chains beyond 32 verified
+records; this does not prove full-snapshot coverage.
 
 The provisional Python `scripts/build_snapshot_catalog.py` tool builds a
 SQLite catalog from a caller-provided NDJSON index proposal and verifies the
