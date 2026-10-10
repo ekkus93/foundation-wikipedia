@@ -468,13 +468,18 @@ mod tests {
             catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
             vec![first_key.clone()]
         );
-        assert_eq!(catalog.read_record(&root, &first_key).unwrap(), Some(first.clone()));
+        assert_eq!(
+            catalog.read_record(&root, &first_key).unwrap(),
+            Some(first.clone())
+        );
         assert_eq!(
             catalog.read_record(&root, &second_key).unwrap(),
             Some(redirect)
         );
         assert_eq!(
-            catalog.resolve_title(&root, "enwiki", "Planet Earth").unwrap(),
+            catalog
+                .resolve_title(&root, "enwiki", "Planet Earth")
+                .unwrap(),
             Some((first_key.clone(), first.clone()))
         );
         assert!(catalog
