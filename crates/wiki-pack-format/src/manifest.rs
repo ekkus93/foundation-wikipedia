@@ -43,6 +43,10 @@ pub enum ManifestError {
     ResourceBudget,
 }
 
+fn unsafe_directional_mark(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 fn safe_id(value: &str) -> bool {
     value == value.trim()
         && value.len() <= 256
@@ -52,7 +56,7 @@ fn safe_id(value: &str) -> bool {
         && !value.contains('\\')
         && !value.contains(':')
         && !unsafe_component(value)
-        && !value.chars().any(char::is_control)
+        && !value.chars().any(|c| c.is_control() || unsafe_directional_mark(c))
 }
 
 fn unsafe_component(component: &str) -> bool {
@@ -151,7 +155,7 @@ impl Manifest {
                 || !object.sha256.bytes().all(|c| c.is_ascii_hexdigit())
                 || object.path.len() > MAX_OBJECT_PATH_BYTES
                 || object.path.contains('\\')
-                || object.path.chars().any(char::is_control)
+                || object.path.chars().any(|c| c.is_control() || unsafe_directional_mark(c))
                 || object.path.contains(':')
                 || object.path.split('/').count() > MAX_OBJECT_PATH_COMPONENTS
                 || object.path.split('/').any(|component| {
@@ -257,6 +261,16 @@ mod transcript_tests {
 
         invalid.objects.pop();
         assert_eq!(invalid.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_bidi_controls_that_spoof_displayed_pack_names_or_paths() {
+        let mut invalid = sample();
+        invalid.pack_id = "science\u{202e}txt".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+        invalid = sample();
+        invalid.objects[0].path = "media/\u{2066}figure.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
     }
 
     #[test]
