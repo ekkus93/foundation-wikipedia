@@ -1,9 +1,7 @@
 use std::io::Cursor;
 
 use wiki_source::enterprise_integrity::IntegrityError;
-use wiki_source::enterprise_verified::{
-    import_verified_enterprise_ndjson, VerifiedImportError,
-};
+use wiki_source::enterprise_verified::{import_verified_enterprise_ndjson, VerifiedImportError};
 
 fn base() -> serde_json::Value {
     serde_json::json!({
