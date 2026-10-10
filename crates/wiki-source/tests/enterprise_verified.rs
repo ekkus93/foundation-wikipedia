@@ -54,7 +54,8 @@ fn verified_import_rejects_missing_citation_and_accepts_matching_one() {
         Cursor::new(regular.to_string()),
         "20261010",
         vec![],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(canonical[0].article.revision.revision_id, 99);
     assert_eq!(canonical[0].article.references[0].id, "cite1");
 }
