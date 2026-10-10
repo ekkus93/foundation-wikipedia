@@ -818,10 +818,8 @@ mod tests {
 
     #[test]
     fn batch_join_is_stable_and_rejects_duplicate_missing_and_deleted_pages() {
-        let structured_42 =
-            parse_structured_article(&structured_json(), "2026-10-01").unwrap();
-        let regular_42 =
-            parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
+        let structured_42 = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular_42 = parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
 
         let mut structured_7 = structured_42.clone();
         structured_7.page.page_id = 7;
@@ -856,15 +854,11 @@ mod tests {
         );
         assert_eq!(
             join_enterprise_batch(vec![structured_42.clone()], vec![], vec![]),
-            Err(EnterpriseError::MissingRegular(
-                structured_42.page.clone()
-            ))
+            Err(EnterpriseError::MissingRegular(structured_42.page.clone()))
         );
         assert_eq!(
             join_enterprise_batch(vec![], vec![regular_42.clone()], vec![]),
-            Err(EnterpriseError::MissingStructured(
-                regular_42.page.clone()
-            ))
+            Err(EnterpriseError::MissingStructured(regular_42.page.clone()))
         );
         assert_eq!(
             join_enterprise_batch(
