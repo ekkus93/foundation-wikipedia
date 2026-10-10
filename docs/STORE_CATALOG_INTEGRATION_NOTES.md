@@ -47,3 +47,9 @@ referenced by another pack or a user pin. Audio/video payloads are on-demand
 online resources, while preview imagery and metadata remain offline.
 
 The new `SnapshotCatalog::verify_shard_coverage` audit walks every catalog entry in shard/offset order, requires contiguous frames from offset zero with no trailing bytes, rehashes and decodes each record through the identity-checked read path, and refuses empty catalogs, missing shards and malformed frames. This is an **optional pre-activation audit primitive**, not yet wired into the snapshot installer. It proves complete coverage only of **referenced** shards; it does not prove that the upstream manifest contains no additional required shards, media, or articles. An independent manifest-to-catalog completeness check remains required.
+
+## Implemented ownership registry (partial STORE-002)
+
+`wiki-store::media_ownership::MediaRegistry` persists SHA-256/size identities derived from actual supplied media bytes, distinct attribution notices for the same digest, and independent pack, temporary-cache and user-pin ownership. Its `unowned_digests()` returns candidates for a *separate* garbage-collection transaction; it never deletes media bytes. An object shared by Physics, Mathematics and a user pin cannot become collectable until all three owners release it. Invalid owners and unregistered digests are rejected. Tests cover in-memory and reopened disk-backed SQLite state.
+
+**Trust boundary:** registering supplied bytes does not store those bytes on disk, prove upstream attribution authenticity, or guarantee that a reader can open an offline asset. A future content-addressed object store must persist/revalidate bytes, associate them with this registry, and implement crash-safe GC and staged activation. No full STORE-002 acceptance is claimed.
