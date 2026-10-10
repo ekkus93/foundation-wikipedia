@@ -386,6 +386,24 @@ impl SnapshotCatalog {
         Ok(verified)
     }
 
+    /// Require the indexed shard inventory to match the verified manifest's
+    /// expected shard names. The caller must authenticate the manifest first.
+    pub fn verify_expected_shards(
+        &self,
+        root: &Path,
+        expected: &BTreeSet<String>,
+    ) -> Result<usize, CatalogError> {
+        let count = self.verify_shard_coverage(root)?;
+        let mut stmt = self.conn.prepare("SELECT DISTINCT shard_name FROM records")?;
+        let indexed: BTreeSet<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+        if &indexed != expected {
+            return Err(CatalogError::InvalidCatalogEntry);
+        }
+        Ok(count)
+    }
+
     /// Resolve an article title through at most 32 verified redirect records.
     /// A dangling target, cycle or excessive chain never counts as success.
     pub fn resolve_title(
@@ -690,6 +708,31 @@ mod tests {
         assert!(matches!(
             catalog.verify_shard_coverage(&root),
             Err(CatalogError::Io(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn expected_shard_set_must_match_catalog_inventory() {
+        let root = temp_root();
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &article(42, "Earth")).unwrap();
+        fs::write(root.join("one.shard"), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "one.shard", 0, bytes.len() as u64)
+            .unwrap();
+        let expected = BTreeSet::from(["one.shard".to_owned()]);
+        assert_eq!(catalog.verify_expected_shards(&root, &expected).unwrap(), 1);
+        let incomplete = BTreeSet::new();
+        assert!(matches!(
+            catalog.verify_expected_shards(&root, &incomplete),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        let extra = BTreeSet::from(["one.shard".to_owned(), "two.shard".to_owned()]);
+        assert!(matches!(
+            catalog.verify_expected_shards(&root, &extra),
+            Err(CatalogError::InvalidCatalogEntry)
         ));
         fs::remove_dir_all(root).unwrap();
     }
