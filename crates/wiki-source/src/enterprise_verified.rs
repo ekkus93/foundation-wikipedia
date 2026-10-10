@@ -25,3 +25,6 @@ pub fn import_verified_enterprise_ndjson<S: BufRead, R: BufRead>(
     }
     Ok(joined)
 }
+
+#[path = "enterprise_normalize.rs"]
+pub mod enterprise_normalize;
