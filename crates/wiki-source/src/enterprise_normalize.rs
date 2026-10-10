@@ -2,7 +2,7 @@
 use crate::enterprise::PartKind;
 use crate::enterprise_integrity::IntegrityError;
 use sha2::{Digest, Sha256};
-use wiki_model::{Article, ModelError};
+use wiki_model::{Article, ArticleKey, ModelError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalEnterpriseArticle {
@@ -22,6 +22,8 @@ pub enum NormalizeError {
     InvalidReference(String),
     UnresolvedLink,
     GenerationMismatch,
+    ProjectMismatch,
+    DuplicatePage(ArticleKey),
     TooManyBlocks,
     Serialization,
 }

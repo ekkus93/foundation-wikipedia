@@ -5,7 +5,7 @@ use super::enterprise_normalize_links::collect_links;
 use super::enterprise_normalize_references::references;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{
     Article, ArticleKey, Block, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
@@ -117,14 +117,22 @@ pub fn normalize_enterprise_batch(
     let generation = joined
         .first()
         .map(|page| page.structured.generation_id.as_str());
+    let project = joined.first().map(|page| page.structured.page.project.as_str());
+    let mut seen_pages = BTreeSet::new();
     for page in joined {
         if Some(page.structured.generation_id.as_str()) != generation {
             return Err(NormalizeError::GenerationMismatch);
+        }
+        if Some(page.structured.page.project.as_str()) != project {
+            return Err(NormalizeError::ProjectMismatch);
         }
         let key = ArticleKey {
             project: page.structured.page.project.clone(),
             page_id: page.structured.page.page_id,
         };
+        if !seen_pages.insert((key.project.clone(), key.page_id)) {
+            return Err(NormalizeError::DuplicatePage(key));
+        }
         for title in std::iter::once(&page.structured.name).chain(page.redirects.iter()) {
             let index_key = (key.project.clone(), title.replace('_', " "));
             if let Some(existing) = index.insert(index_key, key.clone()) {
@@ -138,4 +146,58 @@ pub fn normalize_enterprise_batch(
         .iter()
         .map(|page| normalize_with_index(page, false, Some(&index)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enterprise::StructuredArticle;
+    use crate::join::PageKey;
+
+    fn joined(project: &str, page_id: u64) -> JoinedEnterpriseArticle {
+        JoinedEnterpriseArticle {
+            structured: StructuredArticle {
+                page: PageKey {
+                    project: project.into(),
+                    page_id,
+                },
+                revision_id: 100,
+                date_modified: "2026-10-10T00:00:00Z".into(),
+                generation_id: "20261010".into(),
+                namespace: 0,
+                language: "en".into(),
+                name: format!("Article {page_id}"),
+                wikidata_id: None,
+                description: None,
+                infoboxes: vec![],
+                sections: vec![],
+                references: vec![],
+                tables: vec![],
+            },
+            rendered_html: "<article>Verified companion</article>".into(),
+            categories: vec![],
+            redirects: vec![],
+        }
+    }
+
+    #[test]
+    fn canonical_batch_rejects_cross_project_generation_collision() {
+        let pages = [joined("enwiki", 42), joined("simplewiki", 43)];
+        assert_eq!(
+            normalize_enterprise_batch(&pages),
+            Err(NormalizeError::ProjectMismatch)
+        );
+    }
+
+    #[test]
+    fn canonical_batch_rejects_duplicate_page_even_with_same_identity() {
+        let page = joined("enwiki", 42);
+        assert_eq!(
+            normalize_enterprise_batch(&[page.clone(), page]),
+            Err(NormalizeError::DuplicatePage(ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            }))
+        );
+    }
 }
