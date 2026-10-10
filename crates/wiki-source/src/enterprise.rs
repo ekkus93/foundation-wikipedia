@@ -143,8 +143,13 @@ fn parse_json(input: &str) -> Result<Value, EnterpriseError> {
     serde_json::from_str(input).map_err(|_| EnterpriseError::InvalidJson)
 }
 
-fn object<'a>(value: &'a Value, field: &'static str) -> Result<&'a Map<String, Value>, EnterpriseError> {
-    value.as_object().ok_or(EnterpriseError::InvalidField(field))
+fn object<'a>(
+    value: &'a Value,
+    field: &'static str,
+) -> Result<&'a Map<String, Value>, EnterpriseError> {
+    value
+        .as_object()
+        .ok_or(EnterpriseError::InvalidField(field))
 }
 
 fn required_string(
@@ -189,9 +194,7 @@ fn nested_identifier<'a>(
     map: &'a Map<String, Value>,
     field: &'static str,
 ) -> Result<&'a Value, EnterpriseError> {
-    let nested = map
-        .get(field)
-        .ok_or(EnterpriseError::MissingField(field))?;
+    let nested = map.get(field).ok_or(EnterpriseError::MissingField(field))?;
     object(nested, field)?
         .get("identifier")
         .ok_or(EnterpriseError::MissingField(field))
@@ -223,8 +226,8 @@ fn identity(
     let namespace_i64 = nested_identifier(map, "namespace")?
         .as_i64()
         .ok_or(EnterpriseError::InvalidField("namespace.identifier"))?;
-    let namespace =
-        i32::try_from(namespace_i64).map_err(|_| EnterpriseError::InvalidField("namespace.identifier"))?;
+    let namespace = i32::try_from(namespace_i64)
+        .map_err(|_| EnterpriseError::InvalidField("namespace.identifier"))?;
     let language = nested_identifier(map, "in_language")?
         .as_str()
         .filter(|value| !value.trim().is_empty())
@@ -254,11 +257,16 @@ fn parse_kind(value: &str) -> Result<PartKind, EnterpriseError> {
     }
 }
 
-fn parse_strings(value: Option<&Value>, field: &'static str) -> Result<Vec<String>, EnterpriseError> {
+fn parse_strings(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Vec<String>, EnterpriseError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
-    let array = value.as_array().ok_or(EnterpriseError::InvalidField(field))?;
+    let array = value
+        .as_array()
+        .ok_or(EnterpriseError::InvalidField(field))?;
     array
         .iter()
         .map(|item| {
@@ -308,7 +316,10 @@ fn parse_citations(value: Option<&Value>) -> Result<Vec<StructuredCitation>, Ent
         .collect()
 }
 
-fn decimal_string(value: Option<&Value>, field: &'static str) -> Result<Option<String>, EnterpriseError> {
+fn decimal_string(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Option<String>, EnterpriseError> {
     match value {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => Ok(Some(number.to_string())),
@@ -349,7 +360,9 @@ fn parse_parts(
     if depth > MAX_PART_DEPTH {
         return Err(EnterpriseError::PartDepthExceeded);
     }
-    let array = value.as_array().ok_or(EnterpriseError::InvalidField(field))?;
+    let array = value
+        .as_array()
+        .ok_or(EnterpriseError::InvalidField(field))?;
     let mut output = Vec::with_capacity(array.len());
     for item in array {
         *count = count
@@ -403,8 +416,13 @@ fn parse_references(value: Option<&Value>) -> Result<Vec<StructuredReference>, E
     Ok(output)
 }
 
-fn parse_table_cells(value: &Value, field: &'static str) -> Result<Vec<Vec<String>>, EnterpriseError> {
-    let rows = value.as_array().ok_or(EnterpriseError::InvalidField(field))?;
+fn parse_table_cells(
+    value: &Value,
+    field: &'static str,
+) -> Result<Vec<Vec<String>>, EnterpriseError> {
+    let rows = value
+        .as_array()
+        .ok_or(EnterpriseError::InvalidField(field))?;
     rows.iter()
         .map(|row| {
             let cells = row.as_array().ok_or(EnterpriseError::InvalidField(field))?;
@@ -469,7 +487,10 @@ pub fn parse_structured_article(
         Some(value) => {
             let entity = object(value, "main_entity")?;
             let id = required_string(entity, "identifier")?;
-            if !id.starts_with('Q') || id[1..].is_empty() || !id[1..].bytes().all(|b| b.is_ascii_digit()) {
+            if !id.starts_with('Q')
+                || id[1..].is_empty()
+                || !id[1..].bytes().all(|b| b.is_ascii_digit())
+            {
                 return Err(EnterpriseError::InvalidField("main_entity.identifier"));
             }
             Some(id)
@@ -499,7 +520,9 @@ fn parse_string_array(
     let Some(value) = map.get(field) else {
         return Ok(Vec::new());
     };
-    let array = value.as_array().ok_or(EnterpriseError::InvalidField(field))?;
+    let array = value
+        .as_array()
+        .ok_or(EnterpriseError::InvalidField(field))?;
     let mut seen = BTreeSet::new();
     let mut out = Vec::with_capacity(array.len());
     for item in array {
@@ -620,7 +643,8 @@ mod tests {
             "rows":[[{"value":"g"},{"value":"9.81"}]],
             "confidence_score":0.9
           }]
-        }"#.to_owned()
+        }"#
+        .to_owned()
     }
 
     fn regular_json() -> String {
@@ -688,10 +712,8 @@ mod tests {
 
     #[test]
     fn unknown_beta_part_shapes_fail_closed() {
-        let input = structured_json().replace(
-            "\"type\":\"paragraph\"",
-            "\"type\":\"new_beta_shape\"",
-        );
+        let input =
+            structured_json().replace("\"type\":\"paragraph\"", "\"type\":\"new_beta_shape\"");
         assert_eq!(
             parse_structured_article(&input, "2026-10-01"),
             Err(EnterpriseError::UnknownPartType("new_beta_shape".into()))
@@ -729,8 +751,7 @@ mod tests {
             Err(EnterpriseError::IdentityMismatch)
         );
 
-        let duplicate_category =
-            regular_json().replace("\"Gravitation\"}]", "\"Physics\"}]");
+        let duplicate_category = regular_json().replace("\"Gravitation\"}]", "\"Physics\"}]");
         assert_eq!(
             parse_regular_companion(&duplicate_category, "2026-10-01"),
             Err(EnterpriseError::DuplicateCategory("Physics".into()))
