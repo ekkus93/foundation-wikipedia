@@ -22,19 +22,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install Android SDK and emulator image
+      - name: Install Android build SDK
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
           fi
           test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install \
-            "platform-tools" "emulator" \
-            "platforms;android-35" "build-tools;35.0.0" \
-            "system-images;android-35;google_apis;x86_64"
-          test -x "$ANDROID_HOME/platform-tools/adb"
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -43,67 +38,33 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon
-      - name: Create headless API 35 emulator
-        run: |
-          echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
-            --force --name foundation-wikipedia-ci \
-            --package "system-images;android-35;google_apis;x86_64" \
-            --device "pixel_6"
-      - name: Boot emulator
-        run: |
-          ACCEL=off
-          if [ -e /dev/kvm ]; then
-            sudo chmod 666 /dev/kvm
-            ACCEL=on
-          fi
-          echo "Android emulator acceleration: $ACCEL"
-          "$ANDROID_HOME/emulator/emulator" \
-            -avd foundation-wikipedia-ci \
-            -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel "$ACCEL" -wipe-data \
-            > /tmp/foundation-emulator.log 2>&1 &
-          echo $! > /tmp/foundation-emulator.pid
-          adb wait-for-device
-          for attempt in $(seq 1 300); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
-              adb shell input keyevent 82 || true
-              exit 0
-            fi
-            if ! kill -0 "$(cat /tmp/foundation-emulator.pid)" 2>/dev/null; then
-              cat /tmp/foundation-emulator.log
-              exit 1
-            fi
-            sleep 1
-          done
-          cat /tmp/foundation-emulator.log
-          exit 1
-      - name: Install and launch debug APK
-        run: |
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          adb install -r "$APK"
-          adb shell am force-stop org.foundation.wikipedia
-          adb shell am start -W -n org.foundation.wikipedia/.MainActivity | tee /tmp/foundation-launch.txt
-          adb shell pidof org.foundation.wikipedia | grep -Eq '^[0-9]+'
-          adb shell dumpsys activity activities \
-            | grep -F 'org.foundation.wikipedia/.MainActivity'
-      - name: Preserve emulator evidence
+      - name: Install APK and launch on API 35 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -euo pipefail
+            APK="android/app/build/outputs/apk/debug/app-debug.apk"
+            test -f "$APK"
+            adb install -r "$APK"
+            adb shell am force-stop org.foundation.wikipedia
+            adb shell am start -W -n org.foundation.wikipedia/.MainActivity | tee /tmp/foundation-launch.txt
+            adb shell pidof org.foundation.wikipedia | grep -Eq '^[0-9]+'
+            adb shell dumpsys activity activities | grep -F 'org.foundation.wikipedia/.MainActivity'
+      - name: Preserve install evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-install-smoke-evidence
           path: |
-            /tmp/foundation-emulator.log
             /tmp/foundation-launch.txt
             android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
           if-no-files-found: warn
-      - name: Stop emulator
-        if: always()
-        run: |
-          adb emu kill >/dev/null 2>&1 || true
-          if [ -f /tmp/foundation-emulator.pid ]; then
-            kill "$(cat /tmp/foundation-emulator.pid)" 2>/dev/null || true
-          fi
       - name: Confirm exact head
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
