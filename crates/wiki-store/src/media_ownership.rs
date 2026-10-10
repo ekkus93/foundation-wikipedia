@@ -196,6 +196,38 @@ impl MediaRegistry {
         Ok(hashes)
     }
 
+    /// Return only this owner's registered digest/byte claims, in stable order.
+    /// These claims are not proof that the objects still exist on disk.
+    pub fn owned_media(
+        &self,
+        kind: OwnerKind,
+        owner_id: &str,
+    ) -> Result<Vec<(String, u64)>, MediaRegistryError> {
+        if !valid_owner_id(owner_id) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT o.digest, o.bytes FROM media_objects o
+             JOIN media_owners r ON r.digest=o.digest
+             WHERE r.kind=?1 AND r.owner_id=?2 ORDER BY o.digest",
+        )?;
+        let rows = stmt.query_map(params![kind.as_str(), owner_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (digest, size) = row?;
+            if !valid_digest(&digest) || size <= 0 {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+            entries.push((
+                digest,
+                u64::try_from(size).map_err(|_| MediaRegistryError::InvalidInput)?,
+            ));
+        }
+        Ok(entries)
+    }
+
     pub fn notice_count(&self, digest: &str) -> Result<u64, MediaRegistryError> {
         if !valid_digest(digest) {
             return Err(MediaRegistryError::InvalidInput);

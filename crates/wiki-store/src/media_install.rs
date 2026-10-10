@@ -5,6 +5,7 @@
 //! activating a snapshot. An interrupted installation may leave unowned
 //! content-addressed bytes; it must never make missing bytes look installed.
 
+use crate::media_inventory::{verify_declared_media, MediaInventoryError, RequiredMedia};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{
     valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind,
@@ -15,6 +16,7 @@ pub enum MediaInstallError {
     Store(MediaObjectError),
     Registry(MediaRegistryError),
     IdentityMismatch,
+    Inventory(MediaInventoryError),
 }
 
 /// Persist and rehash the object first, then register attribution and owner.
@@ -45,6 +47,24 @@ pub fn install_owned_media(
         .add_owner(&stored_digest, kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
     Ok(stored_digest)
+}
+
+/// Rehash every registered object for one owner. An authenticated pack
+/// manifest must separately prove that this owner has *all* required media.
+pub fn verify_registered_owner_bytes(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<u64, MediaInstallError> {
+    let claims = registry
+        .owned_media(kind, owner_id)
+        .map_err(MediaInstallError::Registry)?;
+    let entries: Vec<RequiredMedia> = claims
+        .into_iter()
+        .map(|(digest, bytes)| RequiredMedia { digest, bytes })
+        .collect();
+    verify_declared_media(store, &entries).map_err(MediaInstallError::Inventory)
 }
 
 #[cfg(test)]
@@ -101,6 +121,10 @@ mod tests {
             .unwrap();
         assert!(registry.unowned_digests().unwrap().is_empty());
         assert_eq!(
+            verify_registered_owner_bytes(&store, &registry, OwnerKind::Pack, "math").unwrap(),
+            7
+        );
+        assert_eq!(
             verify_declared_media(
                 &store,
                 &[RequiredMedia {
@@ -119,6 +143,10 @@ mod tests {
         assert!(matches!(
             verify_declared_media(&store, &[RequiredMedia { digest, bytes: 7 }]),
             Err(MediaInventoryError::Unreadable(_))
+        ));
+        assert!(matches!(
+            verify_registered_owner_bytes(&store, &registry, OwnerKind::Pack, "physics"),
+            Ok(0)
         ));
         fs::remove_dir_all(root).unwrap();
     }
