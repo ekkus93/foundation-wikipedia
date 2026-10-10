@@ -330,7 +330,9 @@ mod tests {
         invalid.page_id = 0;
         assert_eq!(
             EnterpriseLinkIndex::build(&[invalid]),
-            Err(NormalizeError::Model(wiki_model::ModelError::InvalidIdentity))
+            Err(NormalizeError::Model(
+                wiki_model::ModelError::InvalidIdentity
+            ))
         );
 
         let mut invalid = original.clone();
