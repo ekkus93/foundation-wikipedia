@@ -117,3 +117,19 @@ pub(crate) fn collect_links(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_hosts_are_bound_to_the_actual_wiki_project() {
+        let mut index = BTreeMap::new();
+        index.insert(
+            ("simplewiki".into(), "Gravity".into()),
+            ArticleKey { project: "simplewiki".into(), page_id: 42 },
+        );
+        assert!(resolve("https://en.wikipedia.org/wiki/Gravity", "simplewiki", "en", &index).is_err());
+        assert!(resolve("https://simple.wikipedia.org/wiki/Gravity", "simplewiki", "en", &index).is_ok());
+    }
+}
