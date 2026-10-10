@@ -31,17 +31,27 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "Unsupported NDK host: $(uname -s)-$(uname -m)" >&2; exit 2 ;;
 esac
 
-CLANG="$NDK/toolchains/llvm/prebuilt/$HOST/bin/aarch64-linux-android${API}-clang"
-if [[ ! -x "$CLANG" ]]; then
-  echo "Missing Android NDK compiler: $CLANG" >&2
-  exit 2
-fi
+TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/$HOST/bin"
+CLANG="$TOOLCHAIN/aarch64-linux-android${API}-clang"
+CXX="$TOOLCHAIN/aarch64-linux-android${API}-clang++"
+AR="$TOOLCHAIN/llvm-ar"
+for tool in "$CLANG" "$CXX" "$AR"; do
+  if [[ ! -x "$tool" ]]; then
+    echo "Missing Android NDK tool: $tool" >&2
+    exit 2
+  fi
+done
 if ! rustup target list --installed | grep -qx "$TARGET"; then
   echo "Install the pinned Rust Android target: rustup target add $TARGET" >&2
   exit 2
 fi
 
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG"
+# Native dependency build scripts (for example zstd-sys via cc-rs) do not
+# consume Cargo's linker variable; provide target-normalized compiler tools.
+export CC_aarch64_linux_android="$CLANG"
+export CXX_aarch64_linux_android="$CXX"
+export AR_aarch64_linux_android="$AR"
 cargo build --manifest-path "$ROOT/Cargo.toml" --package wiki-ffi --target "$TARGET" --release --locked
 LIB="$ROOT/target/$TARGET/release/libwiki_ffi.so"
 test -f "$LIB"
