@@ -63,7 +63,15 @@ pub struct CatalogEntry {
     pub frame_sha256: String,
 }
 
-type CatalogRow = (String, Option<i64>, Option<String>, String, i64, i64, String);
+type CatalogRow = (
+    String,
+    Option<i64>,
+    Option<String>,
+    String,
+    i64,
+    i64,
+    String,
+);
 
 pub struct SnapshotCatalog {
     conn: Connection,
