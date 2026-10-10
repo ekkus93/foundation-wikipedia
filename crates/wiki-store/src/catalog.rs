@@ -4,7 +4,7 @@
 //! verify the full upstream manifest and every required object before use.
 //! Each lookup rechecks the exact frame digest and record identity.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -28,6 +28,9 @@ pub enum CatalogError {
     InvalidCatalogEntry,
     DigestMismatch,
     IdentityMismatch,
+    DanglingRedirect,
+    RedirectCycle,
+    RedirectTooDeep,
 }
 
 impl From<rusqlite::Error> for CatalogError {
@@ -318,6 +321,33 @@ impl SnapshotCatalog {
         .transpose()
     }
 
+    /// Resolve an article title through at most 32 verified redirect records.
+    /// A dangling target, cycle or excessive chain never counts as success.
+    pub fn resolve_title(
+        &self,
+        root: &Path,
+        project: &str,
+        title: &str,
+    ) -> Result<Option<(ArticleKey, PageRecord)>, CatalogError> {
+        let Some(mut key) = self.lookup_key(project, title)? else {
+            return Ok(None);
+        };
+        let mut visited = HashSet::new();
+        for _ in 0..32 {
+            if !visited.insert(key.clone()) {
+                return Err(CatalogError::RedirectCycle);
+            }
+            let Some(record) = self.read_record(root, &key)? else {
+                return Err(CatalogError::DanglingRedirect);
+            };
+            match record {
+                PageRecord::Redirect(redirect) => key = redirect.to,
+                article @ PageRecord::Article(_) => return Ok(Some((key, article))),
+            }
+        }
+        Err(CatalogError::RedirectTooDeep)
+    }
+
     /// Read only the addressed frame, rehash it, then assert its decoded identity
     /// and revision match the catalog. A corrupt/stale catalog fails closed.
     pub fn read_record(
@@ -438,10 +468,14 @@ mod tests {
             catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
             vec![first_key.clone()]
         );
-        assert_eq!(catalog.read_record(&root, &first_key).unwrap(), Some(first));
+        assert_eq!(catalog.read_record(&root, &first_key).unwrap(), Some(first.clone()));
         assert_eq!(
             catalog.read_record(&root, &second_key).unwrap(),
             Some(redirect)
+        );
+        assert_eq!(
+            catalog.resolve_title(&root, "enwiki", "Planet Earth").unwrap(),
+            Some((first_key.clone(), first.clone()))
         );
         assert!(catalog
             .read_record(
@@ -496,6 +530,58 @@ mod tests {
             catalog.insert_verified(&root, "shard-1.bin", 0, u64::MAX),
             Err(CatalogError::InvalidFrame)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn redirect_cycles_and_dangling_targets_fail_closed() {
+        let root = temp_root();
+        let mut shard = Vec::new();
+        let first = PageRecord::Redirect(Redirect {
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
+            title: "Cycle A".into(),
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11,
+            },
+        });
+        let second = PageRecord::Redirect(Redirect {
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11,
+            },
+            title: "Cycle B".into(),
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
+        });
+        append_record_frame(&mut shard, &first).unwrap();
+        let next = shard.len() as u64;
+        append_record_frame(&mut shard, &second).unwrap();
+        fs::write(root.join("redirects.shard"), &shard).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "redirects.shard", 0, next)
+            .unwrap();
+        assert!(matches!(
+            catalog.resolve_title(&root, "enwiki", "Cycle A"),
+            Err(CatalogError::DanglingRedirect)
+        ));
+        catalog
+            .insert_verified(&root, "redirects.shard", next, shard.len() as u64 - next)
+            .unwrap();
+        assert!(matches!(
+            catalog.resolve_title(&root, "enwiki", "Cycle A"),
+            Err(CatalogError::RedirectCycle)
+        ));
+        assert!(catalog
+            .resolve_title(&root, "enwiki", "Unknown title")
+            .unwrap()
+            .is_none());
         fs::remove_dir_all(root).unwrap();
     }
 }
