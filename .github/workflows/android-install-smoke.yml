@@ -48,7 +48,8 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            set -euo pipefail
+            # reactivecircus executes this payload with POSIX /bin/sh on Linux.
+            set -eu
             APK="android/app/build/outputs/apk/debug/app-debug.apk"
             test -f "$APK"
             adb install -r "$APK"
