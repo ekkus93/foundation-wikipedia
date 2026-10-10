@@ -219,7 +219,9 @@ fn valid_digest(digest: &str) -> bool {
 fn valid_owner_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 255
-        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 #[cfg(test)]
