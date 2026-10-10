@@ -4,9 +4,7 @@ use super::enterprise_normalize_blocks::convert;
 use super::enterprise_normalize_html::sanitize_rendered_html;
 use super::enterprise_normalize_links::collect_links;
 use super::enterprise_normalize_references::references;
-use crate::enterprise::{
-    JoinedEnterpriseArticle, PartKind, StructuredLink, StructuredPart, StructuredTable,
-};
+use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{
@@ -230,7 +228,7 @@ pub fn normalize_enterprise_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enterprise::StructuredArticle;
+    use crate::enterprise::{PartKind, StructuredArticle, StructuredLink, StructuredPart};
     use crate::join::PageKey;
 
     fn joined(project: &str, page_id: u64) -> JoinedEnterpriseArticle {
