@@ -421,7 +421,8 @@ impl SnapshotCatalog {
             }
             let path = root.join(name);
             let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != *bytes {
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != *bytes
+            {
                 return Err(CatalogError::InvalidFrame);
             }
             let mut file = File::open(path)?;
@@ -433,7 +434,9 @@ impl SnapshotCatalog {
                 if n == 0 {
                     break;
                 }
-                read_bytes = read_bytes.checked_add(n as u64).ok_or(CatalogError::InvalidFrame)?;
+                read_bytes = read_bytes
+                    .checked_add(n as u64)
+                    .ok_or(CatalogError::InvalidFrame)?;
                 if read_bytes > *bytes {
                     return Err(CatalogError::InvalidFrame);
                 }
@@ -797,7 +800,12 @@ mod tests {
             "manifest.shard".to_owned(),
             (bytes.len() as u64, digest.clone()),
         )]);
-        assert_eq!(catalog.verify_manifest_shard_hashes(&root, &manifest).unwrap(), 1);
+        assert_eq!(
+            catalog
+                .verify_manifest_shard_hashes(&root, &manifest)
+                .unwrap(),
+            1
+        );
         manifest.get_mut("manifest.shard").unwrap().1 = "0".repeat(64);
         assert!(matches!(
             catalog.verify_manifest_shard_hashes(&root, &manifest),
