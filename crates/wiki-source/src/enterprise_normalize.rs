@@ -1,8 +1,8 @@
 //! Exact-revision Enterprise canonical normalization, with fail-closed errors.
-use sha2::{Digest, Sha256};
-use wiki_model::{Article, ModelError};
 use crate::enterprise::PartKind;
 use crate::enterprise_integrity::IntegrityError;
+use sha2::{Digest, Sha256};
+use wiki_model::{Article, ModelError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanonicalEnterpriseArticle {
