@@ -75,7 +75,9 @@ impl LocalEndpoint {
         let locality = if host.eq_ignore_ascii_case("localhost") {
             Locality::Localhost
         } else {
-            let address = host.parse::<IpAddr>().map_err(|_| EndpointError::UnapprovedHost)?;
+            let address = host
+                .parse::<IpAddr>()
+                .map_err(|_| EndpointError::UnapprovedHost)?;
             match address {
                 IpAddr::V4(ip) if ip.is_loopback() => Locality::Localhost,
                 IpAddr::V6(ip) if ip == Ipv6Addr::LOCALHOST => Locality::Localhost,
