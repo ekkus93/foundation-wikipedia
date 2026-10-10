@@ -45,3 +45,5 @@ from the shared object bytes. Keep explicit pack, temporary cache and user
 pin ownership distinct; deleting one pack must never delete an object still
 referenced by another pack or a user pin. Audio/video payloads are on-demand
 online resources, while preview imagery and metadata remain offline.
+
+The new `SnapshotCatalog::verify_shard_coverage` audit walks every catalog entry in shard/offset order, requires contiguous frames from offset zero with no trailing bytes, rehashes and decodes each record through the identity-checked read path, and refuses empty catalogs, missing shards and malformed frames. This is an **optional pre-activation audit primitive**, not yet wired into the snapshot installer. It proves complete coverage only of **referenced** shards; it does not prove that the upstream manifest contains no additional required shards, media, or articles. An independent manifest-to-catalog completeness check remains required.
