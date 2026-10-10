@@ -3,6 +3,7 @@
 import bz2
 from dataclasses import dataclass
 import hashlib
+import io
 import os
 from pathlib import Path
 import stat
@@ -90,10 +91,14 @@ def iter_verified_pages(path, expected_sha256):
             raise PublicDumpError("public dump checksum mismatch")
         source.seek(0)
         with bz2.BZ2File(source) as decompressed:
+            buffered = io.BufferedReader(decompressed)
+            header = buffered.peek(65536)[:65536]
+            if b"<!DOCTYPE" in header.upper() or b"<mediawiki" not in header:
+                raise PublicDumpError("unsafe or unrecognized XML prolog")
             root = None
             seen = set()
             try:
-                for event, element in ET.iterparse(decompressed, events=("start", "end")):
+                for event, element in ET.iterparse(buffered, events=("start", "end")):
                     if root is None:
                         root = element
                         if element.tag.rsplit("}", 1)[-1] != "mediawiki":
