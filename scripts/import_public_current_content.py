@@ -92,7 +92,10 @@ def iter_verified_pages(path, expected_sha256):
         source.seek(0)
         with bz2.BZ2File(source) as decompressed:
             buffered = io.BufferedReader(decompressed)
-            header = buffered.peek(65536)[:65536]
+            try:
+                header = buffered.peek(65536)[:65536]
+            except (EOFError, OSError) as error:
+                raise PublicDumpError("invalid bzip2 stream") from error
             if b"<!DOCTYPE" in header.upper() or b"<mediawiki" not in header:
                 raise PublicDumpError("unsafe or unrecognized XML prolog")
             root = None
