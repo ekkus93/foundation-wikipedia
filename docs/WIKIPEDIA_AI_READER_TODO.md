@@ -56,10 +56,10 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 
 ## Phase 2 — Wikimedia acquisition and revision-matched normalization
 
-- [ ] **SRC-001** Implement verified official-source acquisition. **Depends:** MOD-001.  
-  - [ ] Discover *completed* Wikimedia source generations, not guessed filenames; capture authority, release ID, project, date, URLs, hashes.
-  - [ ] Download resume, timeout/rate-limit handling, configured mirror/local file transport and partial-data isolation.
-  - [ ] Verify source checksums; fail closed on mismatch or incomplete source.
+- [x] **SRC-001** Implement verified official-source acquisition. **Depends:** MOD-001.  
+  - [x] Discover *completed* Wikimedia source generations, not guessed filenames; capture authority, release ID, project, date, URLs, hashes.
+  - [x] Download resume, timeout/rate-limit handling, configured mirror/local file transport and partial-data isolation.
+  - [x] Verify source checksums; fail closed on mismatch or incomplete source.
   - **Accept:** interrupted source fetch resumes; corrupted mirror bytes rejected with no active-snapshot damage.
 - [ ] **SRC-002** Implement Structured Contents adapter and necessary **other** official data joins. **Depends:** SRC-001.  
   - [ ] Parse beta structured sections/references/infoboxes/tables.
@@ -579,6 +579,13 @@ Spec deviation/ADR:
 
 - **MOD-003 partial — codec choice and compatibility guards:** `wiki-store::record_codec` now uses a fixed `FWREC001` envelope with named-field MessagePack payloads, per-record zstd level 3 compression, bounded compressed/uncompressed lengths, independently addressable length-prefixed shard frames, and explicit codec version `1.1`. Major-version mismatches and future minor versions fail closed; legacy `1.0` is accepted only with `RewriteToCurrent` migration status and is re-encoded as the current version. Direct-offset tests prove a catalog can retrieve one record without inflating or scanning the whole shard. Exact `f89f6a43b1153a044f4deba7bc269d19ee94e912` passed [Rust workspace CI 38019218520](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218520), [Platform shells CI 38019218527](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218527), and [Android ABI CI 38019218530](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218530).
 - **Measured Linux fixture comparison at the same SHA:** named MessagePack = 2443 bytes, CBOR = 2444 bytes; zstd-3 MessagePack = 883 bytes, zstd-3 CBOR = 844 bytes. Over 200 debug-profile fixture iterations, MessagePack encode/decode measured 3036/5735 µs versus CBOR 3285/7575 µs. The canonical record codec measured 14430/10295 µs for 200 encode/decode iterations; a 128-record framed shard was 118795 bytes and 1000 direct-offset random reads measured 50973 µs. Linux probe VmHWM was 8004 KiB. These CI microtimings are comparative evidence for this fixture, not device-independent latency guarantees. The Android codec probe cross-build succeeds, but its first emulator attempt timed out before boot; Android memory/random-read measurements remain required before MOD-003 can close.
+
+
+### 2026-10-10 — SRC-001 verified official-source acquisition complete
+
+- **SRC-001 complete:** the `mediawiki_content_current` acquisition path now discovers only published generations with official Wikimedia SHA256SUMS inventories, records exact authority/project/generation/release/member URLs and hashes, supports resumable HTTP range transport, bounded timeout/rate-limit retry policy, explicit HTTPS mirror transport and verified local-file transport, and publishes only complete verified staging manifests. Corruption, incomplete generations, redirect/authority substitution, changed inventories, missing/truncated members, symlink/hardlink/race cases and mirror tampering fail closed; staging is isolated and does not mutate the active snapshot.
+- **Real Wikimedia acceptance:** exact master `6ba82869555a62bfff0169855f0c736b42707f20` discovered completed enwiki generation `2026-10-01` with 19 members from the official `SHA256SUMS` inventory, then verified a real member supports an exact no-redirect `206` range request for `bytes=0-0`. [Wikimedia live-source CI 38021076620](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076620), [Rust workspace CI 38021076618](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076618), and [Platform shells CI 38021076619](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38021076619) all passed at that exact SHA. The Rust/Python gate reruns the resume, retry, mirror/local transport, checksum, no-clobber and staging negative suites.
+- This source-authority contract is distinct from later official **pack publisher signatures**. The governing SPEC requires completed Wikimedia source enumeration, upstream hashes, exact provenance and staged verification here; signed pack/catalog identity remains under PACK/TRUST release engineering.
 
 ## Blockers requiring owner action
 
