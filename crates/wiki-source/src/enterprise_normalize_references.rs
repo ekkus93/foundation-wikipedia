@@ -9,7 +9,9 @@ fn label(reference: &StructuredReference) -> Result<String, NormalizeError> {
         None | Some(Value::Null) => Ok(reference.identifier.clone()),
         Some(Value::String(title)) if !title.trim().is_empty() => Ok(title.clone()),
         Some(Value::String(_)) => Ok(reference.identifier.clone()),
-        Some(_) => Err(NormalizeError::InvalidReference(reference.identifier.clone())),
+        Some(_) => Err(NormalizeError::InvalidReference(
+            reference.identifier.clone(),
+        )),
     }
 }
 
@@ -53,7 +55,7 @@ mod tests {
 
     #[test]
     fn rejects_explicit_non_string_reference_title() {
-        for title in [serde_json::json!(42), serde_json::json!({"text":"unsafe"})] {
+        for title in [serde_json::json!(42), serde_json::json!({"text":"wrong-shape"})] {
             assert_eq!(
                 label(&reference(Some(title))),
                 Err(NormalizeError::InvalidReference("cite-42".into()))
