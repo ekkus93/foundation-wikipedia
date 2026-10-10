@@ -66,6 +66,13 @@ class PublicCurrentContentTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicDumpError, "duplicate id"):
             self.read("<mediawiki>" + duplicate + "</mediawiki>")
 
+    def test_rejects_out_of_range_canonical_identifiers(self):
+        with self.assertRaisesRegex(PublicDumpError, "out-of-range"):
+            self.read("<mediawiki>" + page(page_id=2 ** 64) + "</mediawiki>")
+        bad_namespace = page().replace("<ns>0</ns>", "<ns>2147483648</ns>")
+        with self.assertRaisesRegex(PublicDumpError, "out-of-range namespace"):
+            self.read("<mediawiki>" + bad_namespace + "</mediawiki>")
+
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):
             self.read("<mediawiki>" + page())
