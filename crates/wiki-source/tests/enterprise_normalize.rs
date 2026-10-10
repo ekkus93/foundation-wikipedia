@@ -198,3 +198,16 @@ fn rejects_ambiguous_titles_and_revision_query_links() {
         Err(NormalizeError::UnresolvedLink)
     );
 }
+
+#[test]
+fn batch_rejects_mixed_generation_before_link_resolution() {
+    use wiki_source::enterprise_verified::enterprise_normalize_article::normalize_enterprise_batch;
+    let first = fixture();
+    let mut second = fixture();
+    second.structured.page.page_id = 43;
+    second.structured.generation_id = "20261011".into();
+    assert_eq!(
+        normalize_enterprise_batch(&[first, second]),
+        Err(NormalizeError::GenerationMismatch)
+    );
+}

@@ -21,6 +21,7 @@ pub enum NormalizeError {
     InvalidTable(String),
     InvalidReference(String),
     UnresolvedLink,
+    GenerationMismatch,
     TooManyBlocks,
     Serialization,
 }
