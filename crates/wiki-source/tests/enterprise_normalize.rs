@@ -1,8 +1,8 @@
 use wiki_source::enterprise::{
     join_enterprise_article, parse_regular_companion, parse_structured_article,
 };
-use wiki_source::enterprise_verified::enterprise_normalize_article::normalize_enterprise_article;
 use wiki_source::enterprise_verified::enterprise_normalize::NormalizeError;
+use wiki_source::enterprise_verified::enterprise_normalize_article::normalize_enterprise_article;
 
 fn fixture() -> wiki_source::enterprise::JoinedEnterpriseArticle {
     let base = serde_json::json!({
@@ -22,7 +22,8 @@ fn fixture() -> wiki_source::enterprise::JoinedEnterpriseArticle {
     join_enterprise_article(
         parse_structured_article(&structured.to_string(), "20261010").unwrap(),
         parse_regular_companion(&regular.to_string(), "20261010").unwrap(),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[test]
@@ -33,9 +34,15 @@ fn normalizes_revision_and_rejects_unverified_images() {
     assert_eq!(canonical.article.revision.revision_id, 99);
     assert_eq!(canonical.categories, ["Physics"]);
     assert_eq!(canonical.article.sections[0].heading, "Theory");
-    assert_eq!(normalize_enterprise_article(&joined, false).unwrap(), canonical);
+    assert_eq!(
+        normalize_enterprise_article(&joined, false).unwrap(),
+        canonical
+    );
     canonical.article.validate().unwrap();
     let mut bad = joined;
     bad.rendered_html.push_str("<img src='missing.svg'>");
-    assert_eq!(normalize_enterprise_article(&bad, false), Err(NormalizeError::UnresolvedVisual));
+    assert_eq!(
+        normalize_enterprise_article(&bad, false),
+        Err(NormalizeError::UnresolvedVisual)
+    );
 }
