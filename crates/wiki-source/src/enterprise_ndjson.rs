@@ -5,7 +5,8 @@ use std::io::{BufRead, Read};
 
 use crate::enterprise::{
     join_enterprise_batch, parse_regular_companion, parse_structured_article, EnterpriseError,
-    JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle, MAX_ENTERPRISE_RECORD_BYTES,
+    JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
+    MAX_ENTERPRISE_RECORD_BYTES,
 };
 use crate::join::PageKey;
 
@@ -21,11 +22,26 @@ pub enum InputKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BatchImportError {
-    Io { kind: InputKind, line: usize },
-    InvalidUtf8 { kind: InputKind, line: usize },
-    EmptyLine { kind: InputKind, line: usize },
-    OversizedRecord { kind: InputKind, line: usize },
-    TooManyRecords { kind: InputKind, limit: usize },
+    Io {
+        kind: InputKind,
+        line: usize,
+    },
+    InvalidUtf8 {
+        kind: InputKind,
+        line: usize,
+    },
+    EmptyLine {
+        kind: InputKind,
+        line: usize,
+    },
+    OversizedRecord {
+        kind: InputKind,
+        line: usize,
+    },
+    TooManyRecords {
+        kind: InputKind,
+        limit: usize,
+    },
     Parse {
         kind: InputKind,
         line: usize,
@@ -106,10 +122,9 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
         parse_lines(structured, InputKind::Structured, |line| {
             parse_structured_article(line, generation_id)
         })?;
-    let regular: Vec<RegularArticleCompanion> =
-        parse_lines(regular, InputKind::Regular, |line| {
-            parse_regular_companion(line, generation_id)
-        })?;
+    let regular: Vec<RegularArticleCompanion> = parse_lines(regular, InputKind::Regular, |line| {
+        parse_regular_companion(line, generation_id)
+    })?;
     join_enterprise_batch(structured, regular, deleted).map_err(BatchImportError::Join)
 }
 
@@ -137,7 +152,10 @@ mod tests {
         let joined =
             join_enterprise_ndjson(Cursor::new(s), Cursor::new(r), "20261010", vec![]).unwrap();
         assert_eq!(
-            joined.iter().map(|a| a.structured.page.page_id).collect::<Vec<_>>(),
+            joined
+                .iter()
+                .map(|a| a.structured.page.page_id)
+                .collect::<Vec<_>>(),
             vec![1, 2]
         );
         assert_eq!(joined[0].categories, ["Science"]);
@@ -152,7 +170,10 @@ mod tests {
             vec![],
         )
         .unwrap_err();
-        assert_eq!(error, BatchImportError::Join(EnterpriseError::RevisionMismatch));
+        assert_eq!(
+            error,
+            BatchImportError::Join(EnterpriseError::RevisionMismatch)
+        );
         let error = join_enterprise_ndjson(
             Cursor::new(format!("{}\n{}", structured(1, 17), structured(1, 17))),
             Cursor::new(regular(1, 17)),
@@ -219,7 +240,10 @@ mod tests {
                 line: 1,
             }
         );
-        let page = PageKey { project: "enwiki".into(), page_id: 1 };
+        let page = PageKey {
+            project: "enwiki".into(),
+            page_id: 1,
+        };
         let error = join_enterprise_ndjson(
             Cursor::new(structured(1, 17)),
             Cursor::new(regular(1, 17)),
