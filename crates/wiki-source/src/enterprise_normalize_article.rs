@@ -59,14 +59,23 @@ impl EnterpriseLinkIndex {
             if identity.generation_id != generation_id {
                 return Err(NormalizeError::GenerationMismatch);
             }
+            if identity.generation_id.trim().is_empty()
+                || identity.generation_id != identity.generation_id.trim()
+            {
+                return Err(NormalizeError::Missing("link index generation"));
+            }
             let key = ArticleKey {
                 project: identity.project.clone(),
                 page_id: identity.page_id,
             };
+            key.validate().map_err(NormalizeError::Model)?;
             if !seen_pages.insert((key.project.clone(), key.page_id)) {
                 return Err(NormalizeError::DuplicatePage(key));
             }
             for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
+                if title.trim().is_empty() || title != title.trim() {
+                    return Err(NormalizeError::Missing("link index title"));
+                }
                 let index_key = (key.project.clone(), title.replace('_', " "));
                 if let Some(existing) = by_title.insert(index_key, key.clone()) {
                     if existing != key {
@@ -311,6 +320,39 @@ mod tests {
         assert_eq!(normalized.article.links.len(), 1);
         assert_eq!(normalized.article.links[0].target.page_id, 43);
         assert_eq!(normalized.article.links[0].target.project, "enwiki");
+    }
+
+    #[test]
+    fn link_index_rejects_unverified_identity_metadata() {
+        let original = EnterpriseLinkIdentity::from_joined(&joined("enwiki", 42));
+
+        let mut invalid = original.clone();
+        invalid.page_id = 0;
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Model(wiki_model::ModelError::InvalidIdentity))
+        );
+
+        let mut invalid = original.clone();
+        invalid.generation_id = " ".into();
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index generation"))
+        );
+
+        let mut invalid = original.clone();
+        invalid.title = " ".into();
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index title"))
+        );
+
+        let mut invalid = original;
+        invalid.redirects.push(" malformed ".into());
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index title"))
+        );
     }
 
     #[test]
