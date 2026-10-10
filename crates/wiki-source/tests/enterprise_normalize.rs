@@ -148,17 +148,22 @@ fn batch_resolves_percent_encoded_links_to_exact_generation_page_ids() {
     use wiki_source::enterprise::StructuredLink;
     use wiki_source::enterprise_verified::enterprise_normalize_article::normalize_enterprise_batch;
     let mut first = fixture();
-    first.structured.sections[0].has_parts[0].links.push(StructuredLink {
-        url: "/wiki/Quantum_mechanics#Wave%20function".into(),
-        text: "Quantum mechanics".into(),
-    });
+    first.structured.sections[0].has_parts[0]
+        .links
+        .push(StructuredLink {
+            url: "/wiki/Quantum_mechanics#Wave%20function".into(),
+            text: "Quantum mechanics".into(),
+        });
     let mut second = fixture();
     second.structured.page.page_id = 43;
     second.structured.name = "Quantum mechanics".into();
     let records = normalize_enterprise_batch(&[first.clone(), second.clone()]).unwrap();
     assert_eq!(records[0].article.links.len(), 1);
     assert_eq!(records[0].article.links[0].target.page_id, 43);
-    assert_eq!(records[0].article.links[0].fragment.as_deref(), Some("Wave function"));
+    assert_eq!(
+        records[0].article.links[0].fragment.as_deref(),
+        Some("Wave function")
+    );
     assert_eq!(
         normalize_enterprise_article(&first, false),
         Err(NormalizeError::UnresolvedLink)
@@ -182,10 +187,12 @@ fn rejects_ambiguous_titles_and_revision_query_links() {
         Err(NormalizeError::UnresolvedLink)
     );
     let mut queried = first.clone();
-    queried.structured.sections[0].has_parts[0].links.push(StructuredLink {
-        url: "https://en.wikipedia.org/wiki/Gravity?oldid=98".into(),
-        text: "Gravity".into(),
-    });
+    queried.structured.sections[0].has_parts[0]
+        .links
+        .push(StructuredLink {
+            url: "https://en.wikipedia.org/wiki/Gravity?oldid=98".into(),
+            text: "Gravity".into(),
+        });
     assert_eq!(
         normalize_enterprise_batch(&[queried]),
         Err(NormalizeError::UnresolvedLink)
