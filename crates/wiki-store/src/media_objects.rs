@@ -196,7 +196,10 @@ mod tests {
                 })
             })
             .collect();
-        let digests: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+        let digests: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
         for digest in &digests {
             assert_eq!(digest, &digests[0]);
             assert_eq!(
@@ -206,10 +209,7 @@ mod tests {
         }
         let prefix = root.join(&digests[0][..2]);
         assert_eq!(
-            fs::read_dir(prefix)
-                .unwrap()
-                .filter_map(Result::ok)
-                .count(),
+            fs::read_dir(prefix).unwrap().filter_map(Result::ok).count(),
             1
         );
         fs::remove_dir_all(root).unwrap();
