@@ -61,8 +61,12 @@ impl MediaObjectStore {
         let digest = format!("{:x}", Sha256::digest(bytes));
         let path = self.object_path(&digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
-        if !parent.exists() {
-            fs::create_dir(parent)?;
+        // A second installer may create the same digest-prefix directory
+        // between checks. Still verify its type below before writing.
+        match fs::create_dir(parent) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(MediaObjectError::Io(error)),
         }
         let metadata = fs::symlink_metadata(parent)?;
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
@@ -171,6 +175,63 @@ mod tests {
             store.read_verified(&digest),
             Err(MediaObjectError::DigestMismatch)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_identical_writers_share_one_verified_object() {
+        use std::sync::{Arc, Barrier};
+
+        let root = root();
+        let store = Arc::new(MediaObjectStore::new(&root));
+        const WRITERS: usize = 12;
+        let start = Arc::new(Barrier::new(WRITERS));
+        let threads: Vec<_> = (0..WRITERS)
+            .map(|_| {
+                let store = Arc::clone(&store);
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    store.store_bytes(b"shared scientific diagram").unwrap()
+                })
+            })
+            .collect();
+        let digests: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+        for digest in &digests {
+            assert_eq!(digest, &digests[0]);
+            assert_eq!(
+                store.read_verified(digest).unwrap(),
+                b"shared scientific diagram"
+            );
+        }
+        let prefix = root.join(&digests[0][..2]);
+        assert_eq!(
+            fs::read_dir(prefix)
+                .unwrap()
+                .filter_map(Result::ok)
+                .count(),
+            1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_digest_directory_is_rejected_before_writing() {
+        use std::os::unix::fs::symlink;
+
+        let root = root();
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        let bytes = b"must not follow a symlink";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        symlink(&outside, root.join(&digest[..2])).unwrap();
+        let store = MediaObjectStore::new(&root);
+        assert!(matches!(
+            store.store_bytes(bytes),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 
