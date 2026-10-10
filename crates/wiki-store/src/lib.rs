@@ -9,3 +9,4 @@ pub mod shard_io;
 
 pub mod catalog;
 pub mod media_ownership;
+pub mod media_objects;
