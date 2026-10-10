@@ -34,3 +34,9 @@ pub mod enterprise_normalize_article;
 mod enterprise_normalize_blocks;
 #[path = "enterprise_normalize_references.rs"]
 mod enterprise_normalize_references;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalImportError {
+    Import(VerifiedImportError),
+    Normalize(enterprise_normalize::NormalizeError),
+}
