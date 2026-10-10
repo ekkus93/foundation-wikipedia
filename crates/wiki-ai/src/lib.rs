@@ -4,6 +4,7 @@
 //! Streaming is callback-based; platform adapters must schedule blocking
 //! transports off the UI thread and honor the cancellation token.
 
+pub mod local_endpoint;
 pub mod rag;
 
 use std::sync::{
