@@ -29,7 +29,7 @@ fn article() -> Article {
         references: vec![],
         links: vec![],
         media: vec![],
-        rendered_html: String::new(),
+        rendered_html: "<article><p>Gravity attracts matter.</p></article>".into(),
         is_disambiguation: false,
     }
 }
