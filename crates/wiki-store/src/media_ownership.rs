@@ -259,10 +259,16 @@ mod tests {
         registry
             .add_owner(&digest, OwnerKind::UserPin, "user")
             .unwrap();
-        registry.remove_owner(&digest, OwnerKind::Pack, "physics").unwrap();
-        registry.remove_owner(&digest, OwnerKind::Pack, "math").unwrap();
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
         assert!(registry.unowned_digests().unwrap().is_empty());
-        registry.remove_owner(&digest, OwnerKind::UserPin, "user").unwrap();
+        registry
+            .remove_owner(&digest, OwnerKind::UserPin, "user")
+            .unwrap();
         assert_eq!(registry.unowned_digests().unwrap(), vec![digest]);
     }
 
