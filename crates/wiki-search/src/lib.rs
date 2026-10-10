@@ -290,6 +290,7 @@ fn append_blocks(
                 .map(|(key, value)| format!("{key} {value}"))
                 .collect::<Vec<_>>()
                 .join(" "),
+            BlockContent::Footnote(footnote) => footnote.text.clone(),
             // HTML must be sanitized/normalized before contributing text.
             BlockContent::HtmlFallback(_) | BlockContent::Media { .. } => continue,
         };
@@ -318,7 +319,7 @@ fn tokenize(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiki_model::{ArticleKey, Revision, ARTICLE_SCHEMA_VERSION};
+    use wiki_model::{ArticleKey, Footnote, Revision, ARTICLE_SCHEMA_VERSION};
 
     fn sample() -> Article {
         Article {
@@ -406,6 +407,35 @@ mod tests {
         assert_eq!(tight.len(), 1);
         assert_eq!(enough.len(), 2);
         assert!(no_hits.is_empty());
+    }
+
+    #[test]
+    fn canonical_footnote_text_is_revision_scoped_search_evidence() {
+        let mut article = sample();
+        article.sections[0].blocks.push(Block {
+            ordinal: 1,
+            content: BlockContent::Footnote(Footnote {
+                source_id: "cite-note-1".into(),
+                label: "1".into(),
+                text: "Einstein described gravity using spacetime geometry.".into(),
+                reference_ids: vec![],
+            }),
+        });
+        let index = ArticleLexicalIndex::build(&article).unwrap();
+        let hits = index.search("Einstein geometry", 5);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].block_id, "wkb:enwiki:9:12:1:b1");
+        assert_eq!(
+            hits[0].excerpt,
+            "Einstein described gravity using spacetime geometry."
+        );
+        let mut newer = article;
+        newer.revision.revision_id = 13;
+        let newer_hits = ArticleLexicalIndex::build(&newer)
+            .unwrap()
+            .search("Einstein geometry", 5);
+        assert_eq!(newer_hits.len(), 1);
+        assert_ne!(hits[0].block_id, newer_hits[0].block_id);
     }
 
     #[test]
