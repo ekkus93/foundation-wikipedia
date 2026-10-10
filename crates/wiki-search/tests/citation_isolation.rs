@@ -27,7 +27,7 @@ fn article(project: &str, page_id: u64, revision_id: u64) -> Article {
         references: vec![],
         links: vec![],
         media: vec![],
-        rendered_html: String::new(),
+        rendered_html: "<article><p>La gravité courbe l’espace-temps.</p></article>".into(),
         is_disambiguation: false,
     }
 }
