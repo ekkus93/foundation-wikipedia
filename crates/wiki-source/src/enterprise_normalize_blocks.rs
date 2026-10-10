@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use wiki_model::{Block, BlockContent, Section};
 use crate::enterprise::{PartKind, StructuredPart, StructuredTable};
-use crate::enterprise_normalize::NormalizeError;
+use super::enterprise_normalize::NormalizeError;
 
 fn push(blocks: &mut Vec<Block>, content: BlockContent) -> Result<(), NormalizeError> {
     let ordinal = u32::try_from(blocks.len()).map_err(|_| NormalizeError::TooManyBlocks)?;

@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use wiki_model::{Article, ArticleKey, Block, Revision, Section, ARTICLE_SCHEMA_VERSION};
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
-use crate::enterprise_normalize::{CanonicalEnterpriseArticle, NormalizeError, digest_article};
-use crate::enterprise_normalize_blocks::convert;
-use crate::enterprise_normalize_references::references;
+use super::enterprise_normalize::{CanonicalEnterpriseArticle, NormalizeError, digest_article};
+use super::enterprise_normalize_blocks::convert;
+use super::enterprise_normalize_references::references;
 
 /// Retained HTML is NOT yet sanitized for a WebView. Unresolved images
 /// fail closed until a verified Commons/media join is implemented.

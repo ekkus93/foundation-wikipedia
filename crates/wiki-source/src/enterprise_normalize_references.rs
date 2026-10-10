@@ -2,7 +2,7 @@
 use serde_json::Value;
 use wiki_model::Reference;
 use crate::enterprise::JoinedEnterpriseArticle;
-use crate::enterprise_normalize::NormalizeError;
+use super::enterprise_normalize::NormalizeError;
 
 pub(crate) fn references(joined: &JoinedEnterpriseArticle) -> Result<Vec<Reference>, NormalizeError> {
     joined.structured.references.iter().map(|r| {
