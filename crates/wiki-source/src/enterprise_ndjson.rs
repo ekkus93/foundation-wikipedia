@@ -135,13 +135,13 @@ mod tests {
 
     fn structured(page: u64, revision: u64) -> String {
         format!(
-            r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}}}}"#
+            r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}},"date_modified":"2026-10-10T00:00:00Z"}}"#
         )
     }
 
     fn regular(page: u64, revision: u64) -> String {
         format!(
-            r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}},"article_body":{{"html":"<article>Example</article>"}},"categories":[{{"name":"Science"}}],"redirects":[]}}"#
+            r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}},"date_modified":"2026-10-10T00:00:00Z","article_body":{{"html":"<article>Example</article>"}},"categories":[{{"name":"Science"}}],"redirects":[]}}"#
         )
     }
 
