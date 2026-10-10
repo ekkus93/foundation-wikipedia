@@ -60,12 +60,17 @@ fn verified_import_rejects_missing_citation_and_accepts_matching_one() {
     .unwrap();
     assert_eq!(canonical[0].article.revision.revision_id, 99);
     assert_eq!(canonical[0].article.references[0].id, "cite1");
-    regular["article_body"]["html"] = serde_json::json!("<article><img src=\"unverified.svg\"></article>");
+    regular["article_body"]["html"] =
+        serde_json::json!("<article><img src=\"unverified.svg\"></article>");
     let error = import_canonical_enterprise_ndjson(
         Cursor::new(structured.to_string()),
         Cursor::new(regular.to_string()),
         "20261010",
         vec![],
-    ).unwrap_err();
-    assert_eq!(error, CanonicalImportError::Normalize(NormalizeError::UnresolvedVisual));
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        CanonicalImportError::Normalize(NormalizeError::UnresolvedVisual)
+    );
 }
