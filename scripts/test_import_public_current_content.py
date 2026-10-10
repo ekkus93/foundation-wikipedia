@@ -53,6 +53,14 @@ class PublicCurrentContentTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicDumpError, "unsafe or unrecognized"):
             self.read("<notmediawiki>" + page() + "</notmediawiki>")
 
+    def test_rejects_corrupt_bzip2_after_checksum(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.xml.bz2"
+            data = b"not a bzip2 stream"
+            path.write_bytes(data)
+            with self.assertRaisesRegex(PublicDumpError, "invalid bzip2"):
+                list(iter_verified_pages(path, hashlib.sha256(data).hexdigest()))
+
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):
             self.read("<mediawiki>" + page())
