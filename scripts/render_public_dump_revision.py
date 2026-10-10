@@ -44,6 +44,13 @@ def wikipedia_origin(project):
     if match is None:
         raise RenderError("unsupported Wikipedia project for revision renderer")
     language = match.group(1)
+    # These database names belong to other Wikimedia projects, not Wikipedia.
+    # A syntactically plausible project name does not confer Wikipedia origin.
+    if language in {
+        "commons", "wikidata", "meta", "species", "test", "test2",
+        "incubator", "outreach", "foundation", "mediawiki", "login",
+    }:
+        raise RenderError("unsupported non-Wikipedia project for revision renderer")
     return f"https://{language}.wikipedia.org"
 
 
