@@ -16,6 +16,17 @@ class LicenseAuditTests(unittest.TestCase):
         self.assertTrue(packages)
         self.assertEqual(check(packages), [])
 
+    def test_known_composite_spdx_expressions_are_approved(self):
+        packages = [
+            {"name": "memchr", "version": "2.8.3", "license": "Unlicense OR MIT"},
+            {
+                "name": "unicode-ident",
+                "version": "1.0.26",
+                "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+            },
+        ]
+        self.assertEqual(check(packages), [])
+
     def test_missing_or_unapproved_license_fails(self):
         packages = [
             {"name": "missing", "version": "1.0", "license": None},

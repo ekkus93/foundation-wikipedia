@@ -5,9 +5,16 @@ import subprocess
 import sys
 
 ALLOWED = {
-    "MIT", "Apache-2.0", "MIT OR Apache-2.0",
-    "Apache-2.0 OR MIT", "BSD-3-Clause", "ISC",
-    "Unicode-3.0", "Zlib",
+    "MIT",
+    "Apache-2.0",
+    "MIT OR Apache-2.0",
+    "Apache-2.0 OR MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "Unlicense OR MIT",
+    "(MIT OR Apache-2.0) AND Unicode-3.0",
 }
 
 
