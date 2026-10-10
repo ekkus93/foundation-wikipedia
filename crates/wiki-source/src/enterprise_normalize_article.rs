@@ -1,8 +1,8 @@
 //! Construct a revision-bound Article from verified Enterprise companions.
 use super::enterprise_normalize::{digest_article, CanonicalEnterpriseArticle, NormalizeError};
 use super::enterprise_normalize_blocks::convert;
-use super::enterprise_normalize_references::references;
 use super::enterprise_normalize_links::collect_links;
+use super::enterprise_normalize_references::references;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::BTreeMap;
