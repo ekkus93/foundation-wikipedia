@@ -240,7 +240,9 @@ mod tests {
     #[test]
     fn shared_pack_ownership_and_pin_prevent_premature_gc() {
         let mut registry = MediaRegistry::in_memory().unwrap();
-        let digest = registry.register_verified_bytes(b"image data", &notice("A")).unwrap();
+        let digest = registry
+            .register_verified_bytes(b"image data", &notice("A"))
+            .unwrap();
         assert_eq!(
             registry
                 .register_verified_bytes(b"image data", &notice("B"))
@@ -265,7 +267,9 @@ mod tests {
             registry.register_verified_bytes(b"", &notice("A")),
             Err(MediaRegistryError::InvalidInput)
         ));
-        let digest = registry.register_verified_bytes(b"payload", &notice("A")).unwrap();
+        let digest = registry
+            .register_verified_bytes(b"payload", &notice("A"))
+            .unwrap();
         assert!(matches!(
             registry.add_owner(&digest, OwnerKind::Cache, "../outside"),
             Err(MediaRegistryError::InvalidInput)
