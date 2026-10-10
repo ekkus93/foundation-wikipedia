@@ -47,6 +47,18 @@ class LicenseAuditTests(unittest.TestCase):
         ]
         self.assertEqual(check(packages), [])
 
+    def test_html_sanitizer_dependency_licenses_are_approved(self):
+        packages = [
+            {"name": "cssparser", "version": "0.38.0", "license": "MPL-2.0"},
+            {"name": "dtoa-short", "version": "0.3.5", "license": "MPL-2.0"},
+            {
+                "name": "tinyvec",
+                "version": "1.13.3",
+                "license": "Zlib OR Apache-2.0 OR MIT",
+            },
+        ]
+        self.assertEqual(check(packages), [])
+
     def test_missing_or_unapproved_license_fails(self):
         packages = [
             {"name": "missing", "version": "1.0", "license": None},
