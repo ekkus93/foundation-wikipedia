@@ -40,6 +40,7 @@ pub struct EnterpriseLinkIndex {
     project: String,
     generation_id: String,
     by_title: BTreeMap<(String, String), ArticleKey>,
+    by_page: BTreeMap<u64, (String, Vec<String>)>,
 }
 
 impl EnterpriseLinkIndex {
@@ -51,6 +52,7 @@ impl EnterpriseLinkIndex {
         let generation_id = first.generation_id.clone();
         let mut by_title = BTreeMap::new();
         let mut seen_pages = BTreeSet::new();
+        let mut by_page = BTreeMap::new();
 
         for identity in identities {
             if identity.project != project {
@@ -72,6 +74,7 @@ impl EnterpriseLinkIndex {
             if !seen_pages.insert((key.project.clone(), key.page_id)) {
                 return Err(NormalizeError::DuplicatePage(key));
             }
+            by_page.insert(identity.page_id, (identity.title.clone(), identity.redirects.clone()));
             for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
                 if title.trim().is_empty() || title != title.trim() {
                     return Err(NormalizeError::Missing("link index title"));
@@ -89,6 +92,7 @@ impl EnterpriseLinkIndex {
             project,
             generation_id,
             by_title,
+            by_page,
         })
     }
 
@@ -98,6 +102,12 @@ impl EnterpriseLinkIndex {
         }
         if page.structured.generation_id != self.generation_id {
             return Err(NormalizeError::GenerationMismatch);
+        }
+        let Some((title, redirects)) = self.by_page.get(&page.structured.page.page_id) else {
+            return Err(NormalizeError::UnresolvedLink);
+        };
+        if title != &page.structured.name || redirects != &page.redirects {
+            return Err(NormalizeError::UnresolvedLink);
         }
         Ok(())
     }
@@ -354,6 +364,32 @@ mod tests {
         assert_eq!(
             EnterpriseLinkIndex::build(&[invalid]),
             Err(NormalizeError::Missing("link index title"))
+        );
+    }
+
+    #[test]
+    fn snapshot_link_index_rejects_unindexed_or_changed_page_identity() {
+        let page = joined("enwiki", 42);
+        let index =
+            EnterpriseLinkIndex::build(&[EnterpriseLinkIdentity::from_joined(&page)]).unwrap();
+
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&joined("enwiki", 43), false, &index),
+            Err(NormalizeError::UnresolvedLink)
+        );
+
+        let mut renamed = page.clone();
+        renamed.structured.name = "Changed title".into();
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&renamed, false, &index),
+            Err(NormalizeError::UnresolvedLink)
+        );
+
+        let mut redirected = page;
+        redirected.redirects.push("Unindexed alias".into());
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&redirected, false, &index),
+            Err(NormalizeError::UnresolvedLink)
         );
     }
 
