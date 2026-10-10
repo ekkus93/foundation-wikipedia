@@ -37,7 +37,7 @@ fn article() -> Article {
         references: vec![],
         links: vec![],
         media: vec![],
-        rendered_html: "".into(),
+        rendered_html: "<article><p>Gravity</p></article>".into(),
         is_disambiguation: false,
     }
 }
