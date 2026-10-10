@@ -247,3 +247,25 @@ fn batch_rejects_mixed_generation_before_link_resolution() {
         Err(NormalizeError::GenerationMismatch)
     );
 }
+
+#[test]
+fn rejects_unresolved_embedded_media_and_mathml() {
+    for html in [
+        "<svg><circle r='5'/></svg>",
+        "<math><mi>x</mi></math>",
+        "<canvas>figure</canvas>",
+        "<audio src='lecture.ogg'></audio>",
+        "<iframe src='external.html'></iframe>",
+        "<object data='chart.svg'></object>",
+        "<embed src='chart.svg'>",
+        "<source src='diagram.webm'>",
+    ] {
+        let mut joined = fixture();
+        joined.rendered_html = html.to_owned();
+        assert_eq!(
+            normalize_enterprise_article(&joined, false),
+            Err(NormalizeError::UnresolvedVisual),
+            "unverified embedded resource was accepted: {html}"
+        );
+    }
+}

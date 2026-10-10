@@ -26,8 +26,14 @@ fn normalize_with_index(
     link_index: Option<&BTreeMap<(String, String), ArticleKey>>,
 ) -> Result<CanonicalEnterpriseArticle, NormalizeError> {
     validate_joined_evidence(joined).map_err(NormalizeError::Integrity)?;
+    // Reject unresolved embedded media and rich visual markup before HTML
+    // sanitization can silently remove required offline article content.
     let html = joined.rendered_html.to_ascii_lowercase();
-    if html.contains("<img") || html.contains("<picture") || html.contains("<video") {
+    const UNRESOLVED_VISUAL_TAGS: [&str; 12] = [
+        "<img", "<picture", "<video", "<audio", "<source", "<track",
+        "<svg", "<math", "<canvas", "<iframe", "<object", "<embed",
+    ];
+    if UNRESOLVED_VISUAL_TAGS.iter().any(|tag| html.contains(tag)) {
         return Err(NormalizeError::UnresolvedVisual);
     }
     let rendered_html = sanitize_rendered_html(&joined.rendered_html)?;
