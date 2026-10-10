@@ -2,7 +2,6 @@
 //! Download transport and checksum verification are separate SRC-001 steps.
 
 pub mod enterprise;
-pub mod enterprise_integrity;
 pub mod enterprise_ndjson;
 pub mod join;
 
@@ -198,3 +197,9 @@ mod tests {
         );
         let mut duplicate = sample();
         duplicate.files.push(duplicate.files[0].clone());
+        assert_eq!(
+            duplicate.validate(),
+            Err(SourceError::DuplicateFile("articles.parquet".into()))
+        );
+    }
+}
