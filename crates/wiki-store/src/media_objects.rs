@@ -123,7 +123,7 @@ impl MediaObjectStore {
             }
         }
         let mut bytes = Vec::new();
-        file.by_ref()
+        std::io::Read::by_ref(&mut file)
             .take(MAX_OBJECT_BYTES + 1)
             .read_to_end(&mut bytes)?;
         if bytes.len() as u64 != opened.len() || file.metadata()?.len() != opened.len() {
