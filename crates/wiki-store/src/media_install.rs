@@ -67,6 +67,38 @@ pub fn verify_registered_owner_bytes(
     verify_declared_media(store, &entries).map_err(MediaInstallError::Inventory)
 }
 
+/// Compare an authenticated manifest's required-media inventory with exactly
+/// the owner's registered objects, then rehash every on-disk object. Neither
+/// this method nor registry membership authenticates the manifest itself or
+/// proves the caller discovered every visual used by the article renderer.
+pub fn verify_required_owner_media(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    required: &[RequiredMedia],
+) -> Result<u64, MediaInstallError> {
+    let registered = registry
+        .owned_media(kind, owner_id)
+        .map_err(MediaInstallError::Registry)?;
+    if registered.len() != required.len() {
+        return Err(MediaInstallError::IdentityMismatch);
+    }
+    let mut expected: Vec<_> = required
+        .iter()
+        .map(|entry| (entry.digest.as_str(), entry.bytes))
+        .collect();
+    expected.sort_unstable();
+    if !registered
+        .iter()
+        .map(|(digest, bytes)| (digest.as_str(), *bytes))
+        .eq(expected.into_iter())
+    {
+        return Err(MediaInstallError::IdentityMismatch);
+    }
+    verify_declared_media(store, required).map_err(MediaInstallError::Inventory)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +179,72 @@ mod tests {
         assert!(matches!(
             verify_registered_owner_bytes(&store, &registry, OwnerKind::Pack, "physics"),
             Ok(0)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn required_media_must_match_owner_claims_before_acceptance() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("wiki-required-{}-{stamp}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let shared = install_owned_media(
+            &store,
+            &mut registry,
+            b"diagram",
+            &notice("Creator"),
+            OwnerKind::Pack,
+            "physics",
+        )
+        .unwrap();
+        let additional = install_owned_media(
+            &store,
+            &mut registry,
+            b"figure",
+            &notice("Creator"),
+            OwnerKind::Pack,
+            "physics",
+        )
+        .unwrap();
+        let required = vec![
+            RequiredMedia {
+                digest: additional.clone(),
+                bytes: 6,
+            },
+            RequiredMedia {
+                digest: shared.clone(),
+                bytes: 7,
+            },
+        ];
+        assert_eq!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required)
+                .unwrap(),
+            13
+        );
+        assert!(matches!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "missing", &required),
+            Err(MediaInstallError::IdentityMismatch)
+        ));
+        assert!(matches!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required[..1]),
+            Err(MediaInstallError::IdentityMismatch)
+        ));
+        let mut wrong_size = required.clone();
+        wrong_size[0].bytes = 9;
+        assert!(matches!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &wrong_size),
+            Err(MediaInstallError::IdentityMismatch)
+        ));
+        fs::write(root.join(&shared[..2]).join(&shared), b"tampered").unwrap();
+        assert!(matches!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required),
+            Err(MediaInstallError::Inventory(MediaInventoryError::Unreadable(_)))
         ));
         fs::remove_dir_all(root).unwrap();
     }
