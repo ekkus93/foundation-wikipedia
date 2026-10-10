@@ -44,6 +44,8 @@ def _page(element):
             raise PublicDumpError("expected one current revision")
         revision = revisions[0]
         revision_id = int(_required(revision, "id"))
+    except PublicDumpError:
+        raise
     except ValueError as error:
         raise PublicDumpError("invalid page or revision identifier") from error
     if page_id <= 0 or revision_id <= 0:
@@ -57,9 +59,12 @@ def _page(element):
     redirect_title = redirect.get("title") if redirect is not None else None
     if redirect is not None and not redirect_title:
         raise PublicDumpError("redirect without target")
+    wikitext = text.text or ""
+    if len(wikitext) > 16 * 1024 * 1024:
+        raise PublicDumpError("oversized page wikitext")
     return PublicDumpPage(
         page_id, revision_id, title, namespace, timestamp,
-        text.text or "", redirect_title,
+        wikitext, redirect_title,
     )
 
 
