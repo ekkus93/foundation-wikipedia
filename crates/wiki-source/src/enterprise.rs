@@ -657,7 +657,8 @@ mod tests {
           "article_body":{"html":"<article><p>Gravity bends spacetime.</p></article>"},
           "categories":[{"name":"Physics"},{"name":"Gravitation"}],
           "redirects":[{"name":"Gravity (physics)"}]
-        }"#.to_owned()
+        }"#
+        .to_owned()
     }
 
     #[test]

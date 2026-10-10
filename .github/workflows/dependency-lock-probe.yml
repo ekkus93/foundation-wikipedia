@@ -5,6 +5,7 @@ on:
     paths:
       - 'crates/wiki-model/Cargo.toml'
       - 'crates/wiki-store/Cargo.toml'
+      - 'crates/wiki-source/Cargo.toml'
       - '.github/workflows/dependency-lock-probe.yml'
   workflow_dispatch:
 
