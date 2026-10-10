@@ -8,6 +8,7 @@ ALLOWED = {
     "MIT",
     "Apache-2.0",
     "MIT OR Apache-2.0",
+    "MIT/Apache-2.0",  # Legacy dual-license metadata from version_check 0.9.5
     "Apache-2.0 OR MIT",
     "BSD-3-Clause",
     "ISC",
