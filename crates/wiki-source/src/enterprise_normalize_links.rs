@@ -41,10 +41,23 @@ fn resolve(
     language: &str,
     index: &BTreeMap<(String, String), ArticleKey>,
 ) -> Result<(ArticleKey, Option<String>), NormalizeError> {
-    let base = format!("https://{language}.wikipedia.org/wiki/");
+    // The language tag alone does not establish the Wikimedia project.
+    let base = if project == format!("{language}wiki") {
+        format!("https://{language}.wikipedia.org/wiki/")
+    } else if project == "simplewiki" {
+        "https://simple.wikipedia.org/wiki/".to_owned()
+    } else {
+        String::new()
+    };
     let path = url
         .strip_prefix("/wiki/")
-        .or_else(|| url.strip_prefix(&base))
+        .or_else(|| {
+            if base.is_empty() {
+                None
+            } else {
+                url.strip_prefix(&base)
+            }
+        })
         .ok_or(NormalizeError::UnresolvedLink)?;
     // Query parameters can select a different revision and cannot be treated
     // as a current-revision canonical page link.
