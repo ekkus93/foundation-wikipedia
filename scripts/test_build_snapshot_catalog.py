@@ -35,6 +35,28 @@ class CatalogTests(unittest.TestCase):
     def write_manifest(self):
         self.manifest.write_text("".join(json.dumps(item) + "\n" for item in self.entries))
 
+    def test_sqlite_schema_matches_rust_catalog_contract(self):
+        import sqlite3
+        self.write_manifest()
+        build(self.manifest, self.root, self.db)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(
+                [row[1] for row in conn.execute("PRAGMA table_info(records)")],
+                ["project", "page_id", "title", "revision_id", "wikidata_id",
+                 "shard_name", "frame_offset", "frame_bytes", "frame_sha256"],
+            )
+            self.assertEqual(
+                [row[1] for row in conn.execute("PRAGMA table_info(title_index)")],
+                ["project", "normalized_title", "page_id"],
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT shard_name,frame_offset FROM records WHERE project=? AND page_id=?",
+                    ("enwiki", 43),
+                ).fetchone(),
+                ("articles.shard", len(self.first)),
+            )
+
     def test_random_read_and_tamper_detection(self):
         self.write_manifest()
         build(self.manifest, self.root, self.db)

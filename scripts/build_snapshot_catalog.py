@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build and query a provisional SQLite index for immutable FWREC001 shards.
 
-Input NDJSON is a caller-supplied index proposal, NOT authenticated source data.
+The SQLite schema matches wiki-store::catalog for interchangeable read access.\nInput NDJSON is a caller-supplied index proposal, NOT authenticated source data.
 Each frame is verified against its actual shard bytes. Canonical PageRecord
 identity verification and full-snapshot activation remain STORE-001 work.
 """
@@ -20,16 +20,16 @@ SCHEMA = """
 PRAGMA foreign_keys=ON;
 CREATE TABLE records (
  project TEXT NOT NULL, page_id INTEGER NOT NULL, title TEXT NOT NULL,
- revision_id INTEGER, wikidata_id TEXT, shard TEXT NOT NULL,
- byte_offset INTEGER NOT NULL, frame_bytes INTEGER NOT NULL,
+ revision_id INTEGER, wikidata_id TEXT, shard_name TEXT NOT NULL,
+ frame_offset INTEGER NOT NULL, frame_bytes INTEGER NOT NULL,
  frame_sha256 TEXT NOT NULL, PRIMARY KEY(project,page_id)
 );
-CREATE TABLE titles (
+CREATE TABLE title_index (
  project TEXT NOT NULL, normalized_title TEXT NOT NULL, page_id INTEGER NOT NULL,
  PRIMARY KEY(project,normalized_title),
  FOREIGN KEY(project,page_id) REFERENCES records(project,page_id)
 );
-CREATE INDEX by_wikidata ON records(project,wikidata_id);
+CREATE INDEX records_wikidata ON records(project,wikidata_id);
 """
 
 class CatalogError(ValueError):
@@ -38,7 +38,7 @@ class CatalogError(ValueError):
 def title_key(title):
     if not isinstance(title, str) or not title.strip():
         raise CatalogError("invalid title")
-    return title.strip().replace("_", " ").casefold()
+    return title.strip().replace("_", " ").lower()
 
 def integer(value, *, positive=True):
     if type(value) is not int or value < (1 if positive else 0) or value >= 2**63:
@@ -128,7 +128,7 @@ def build(manifest, root, destination):
                             entry["offset"], entry["frame_bytes"], digest,
                         ))
                         for name in names:
-                            conn.execute("INSERT INTO titles VALUES (?,?,?)", (project, name, page_id))
+                            conn.execute("INSERT INTO title_index VALUES (?,?,?)", (project, name, page_id))
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             conn.close()
@@ -141,8 +141,8 @@ def lookup(catalog, root, project, title):
     with sqlite3.connect(f"file:{catalog}?mode=ro", uri=True) as conn:
         conn.execute("PRAGMA query_only=ON")
         row = conn.execute("""
-          SELECT r.page_id,r.revision_id,r.shard,r.byte_offset,r.frame_bytes,r.frame_sha256
-          FROM records r JOIN titles t USING(project,page_id)
+          SELECT r.page_id,r.revision_id,r.shard_name,r.frame_offset,r.frame_bytes,r.frame_sha256
+          FROM records r JOIN title_index t USING(project,page_id)
           WHERE t.project=? AND t.normalized_title=?
         """, (project, title_key(title))).fetchone()
     if row is None:
