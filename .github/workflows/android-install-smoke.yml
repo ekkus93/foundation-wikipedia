@@ -48,11 +48,8 @@ jobs:
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            # reactivecircus executes this payload with POSIX /bin/sh on Linux.
-            set -eu
-            APK="android/app/build/outputs/apk/debug/app-debug.apk"
-            test -f "$APK"
-            adb install -r "$APK"
+            test -f android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb shell am force-stop org.foundation.wikipedia
             adb shell am start -W -n org.foundation.wikipedia/.MainActivity | tee /tmp/foundation-launch.txt
             adb shell pidof org.foundation.wikipedia | grep -Eq '^[0-9]+'

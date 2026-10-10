@@ -53,10 +53,8 @@ jobs:
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
-            set -eu
-            PROBE="target/x86_64-linux-android/release/examples/codec_probe"
-            test -f "$PROBE"
-            adb push "$PROBE" /data/local/tmp/foundation-codec-probe
+            test -f target/x86_64-linux-android/release/examples/codec_probe
+            adb push target/x86_64-linux-android/release/examples/codec_probe /data/local/tmp/foundation-codec-probe
             adb shell chmod 755 /data/local/tmp/foundation-codec-probe
             adb shell /data/local/tmp/foundation-codec-probe > /tmp/android-codec-probe.log
             cat /tmp/android-codec-probe.log
