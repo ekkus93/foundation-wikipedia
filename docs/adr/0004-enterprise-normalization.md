@@ -16,13 +16,15 @@ The importer maps paragraphs, nested sections, tables, simple lists,
 infobox fields and references; unsupported beta shapes fail closed.
 
 **Not qualified for complete offline reading:** Wikimedia image/Commons
-metadata, hashes, licenses and required assets are not yet joined.
-An article containing unresolved structured images or HTML image elements is
-rejected rather than incorrectly labeled offline-ready. Rendered HTML is
-retained verbatim and **must be sanitized before any WebView renders it**.
-Link-to-page-ID resolution, rich footnotes, disambiguation metadata, complete
-visual fidelity, real official-snapshot regression fixtures, and source
-availability/hosting evaluation remain outstanding.
+metadata, hashes, licenses and required assets are not yet joined. Canonical
+normalization sanitizes retained HTML at the source boundary with Ammonia,
+removing active script/event-handler/unsafe-URL content. Before sanitization,
+the pipeline rejects unresolved image/picture/video/audio/source/track,
+SVG/MathML/canvas/iframe/object/embed markup so required offline semantics
+cannot be silently stripped and mislabeled as complete. Disambiguation
+metadata, complete visual fidelity, representative real official-snapshot
+regression fixtures, and source availability/hosting evaluation remain
+outstanding.
 
 Qualification uses `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`,
@@ -39,11 +41,14 @@ Unresolved Structured Contents page links are rejected rather than silently
 omitted until a verified page-ID resolver is available. This does not
 constitute complete reference/footnote rendering fidelity or safe HTML.
 
-**Exact-generation link resolution increment:** Batch normalization builds a
-deterministic page-title/redirect index from the same verified generation and
-resolves supported Wikipedia article links to canonical project/page IDs,
-retaining URL fragments. Percent-encoded Unicode titles and underscores are
-decoded; unknown targets, ambiguous titles, cross-project/external links and
-revision-query URLs fail closed. Standalone normalization intentionally rejects
-unresolved links. Full-snapshot index availability across separate import
-chunks, redirect graph validation and HTML link interception remain pending.
+**Exact-generation link resolution increment:** Canonical normalization uses a
+deterministic page-title/redirect index bound to one verified project and
+generation and resolves supported Wikipedia article links to canonical
+project/page IDs while retaining URL fragments. A snapshot-wide identity pass
+can build this index once and reuse it across bounded normalization chunks, so
+a target does not need to be present in the current chunk. Percent-encoded
+Unicode titles and underscores are decoded; unknown targets, ambiguous titles,
+mixed project/generation identities, duplicate page IDs, cross-project/external
+links and revision-query URLs fail closed. Standalone normalization
+intentionally rejects unresolved links. Redirect graph validation, HTML link
+interception, verified media joins and real-snapshot fidelity remain pending.
