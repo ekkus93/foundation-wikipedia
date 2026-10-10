@@ -67,7 +67,8 @@ jobs:
               content_range = response.headers.get("Content-Range", "")
               match = re.fullmatch(r"bytes 0-0/([0-9]+)", content_range)
               assert match is not None and int(match.group(1)) > 0
-              data = response.read(2)\n              assert len(data) == 1
+              data = response.read(2)
+              assert len(data) == 1
           print("live_source range_resume=verified member=" + url)
           PY
       - name: Preserve live source evidence
