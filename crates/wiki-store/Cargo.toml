@@ -13,6 +13,8 @@ wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
 rmp-serde = "1.3"
 zstd = "0.13"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 ciborium = "0.2"
