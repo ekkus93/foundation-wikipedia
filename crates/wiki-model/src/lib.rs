@@ -83,7 +83,20 @@ pub enum BlockContent {
     Math { source: String, html: String },
     Media { media_index: usize },
     Infobox(Vec<(String, String)>),
+    Footnote(Footnote),
     HtmlFallback(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Footnote {
+    /// Upstream note anchor/name within this exact Wikipedia revision.
+    pub source_id: String,
+    /// Human-visible marker such as "1" or "a".
+    pub label: String,
+    /// Canonical note text; rendered HTML remains in Article::rendered_html.
+    pub text: String,
+    /// IDs from Article::references that this note cites, if any.
+    pub reference_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +144,7 @@ pub enum ModelError {
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
     DuplicateReference(String),
+    InvalidFootnote(String),
     InvalidRedirect,
 }
 
@@ -253,6 +267,27 @@ impl ArticleKey {
         id
     }
 
+    /// Stable hard identity for one nested section in one exact revision.
+    pub fn section_id(&self, revision_id: u64, section_path: &[u32]) -> String {
+        let mut id = format!("wks:{}:{}:{}", self.project, self.page_id, revision_id);
+        for section in section_path {
+            id.push(':');
+            id.push_str(&section.to_string());
+        }
+        id
+    }
+
+    /// Stable hard identity for one Wikipedia footnote in one exact revision.
+    /// Footnotes remain distinct from external/reference records.
+    pub fn footnote_id(&self, revision_id: u64, source_footnote_id: &str) -> String {
+        let mut id = format!("wkf:{}:{}:{}:", self.project, self.page_id, revision_id);
+        for byte in source_footnote_id.bytes() {
+            use std::fmt::Write;
+            write!(&mut id, "{byte:02x}").expect("writing into String cannot fail");
+        }
+        id
+    }
+
     /// Stable hard citation for one Wikipedia reference in one exact revision.
     /// Hex encoding avoids collisions between Unicode labels and delimiters.
     /// This is not a relocatable bookmark or an external-source endorsement.
@@ -338,7 +373,7 @@ impl Article {
             if reference.label.trim().is_empty() {
                 return Err(ModelError::InvalidReferenceLabel);
             }
-            if reference.id.trim().is_empty() || !refs.insert(&reference.id) {
+            if reference.id.trim().is_empty() || !refs.insert(reference.id.as_str()) {
                 return Err(ModelError::DuplicateReference(reference.id.clone()));
             }
             if let Some(url) = &reference.source_url {
@@ -363,8 +398,19 @@ impl Article {
                 }
             }
         }
-        check_blocks(&self.lead, self.media.len())?;
-        check_sections(&self.sections, self.media.len())?;
+        let mut footnote_ids = HashSet::new();
+        check_blocks(
+            &self.lead,
+            self.media.len(),
+            &refs,
+            &mut footnote_ids,
+        )?;
+        check_sections(
+            &self.sections,
+            self.media.len(),
+            &refs,
+            &mut footnote_ids,
+        )?;
         Ok(())
     }
 
@@ -376,7 +422,12 @@ impl Article {
     }
 }
 
-fn check_blocks(blocks: &[Block], media_len: usize) -> Result<(), ModelError> {
+fn check_blocks<'a>(
+    blocks: &'a [Block],
+    media_len: usize,
+    references: &HashSet<&str>,
+    footnote_ids: &mut HashSet<&'a str>,
+) -> Result<(), ModelError> {
     let mut ordinals = HashSet::new();
     for block in blocks {
         if !ordinals.insert(block.ordinal) {
@@ -415,12 +466,35 @@ fn check_blocks(blocks: &[Block], media_len: usize) -> Result<(), ModelError> {
                     return Err(ModelError::InvalidBlockContent);
                 }
             }
+            BlockContent::Footnote(footnote) => {
+                if footnote.source_id.trim().is_empty()
+                    || footnote.label.trim().is_empty()
+                    || footnote.text.trim().is_empty()
+                    || !footnote_ids.insert(footnote.source_id.as_str())
+                {
+                    return Err(ModelError::InvalidFootnote(footnote.source_id.clone()));
+                }
+                let mut linked = HashSet::new();
+                for reference_id in &footnote.reference_ids {
+                    if reference_id.trim().is_empty()
+                        || !linked.insert(reference_id.as_str())
+                        || !references.contains(reference_id.as_str())
+                    {
+                        return Err(ModelError::InvalidFootnote(footnote.source_id.clone()));
+                    }
+                }
+            }
         }
     }
     Ok(())
 }
 
-fn check_sections(sections: &[Section], media_len: usize) -> Result<(), ModelError> {
+fn check_sections<'a>(
+    sections: &'a [Section],
+    media_len: usize,
+    references: &HashSet<&str>,
+    footnote_ids: &mut HashSet<&'a str>,
+) -> Result<(), ModelError> {
     let mut ordinals = HashSet::new();
     for section in sections {
         if section.heading.trim().is_empty() {
@@ -429,8 +503,13 @@ fn check_sections(sections: &[Section], media_len: usize) -> Result<(), ModelErr
         if !ordinals.insert(section.ordinal) {
             return Err(ModelError::DuplicateOrdinal);
         }
-        check_blocks(&section.blocks, media_len)?;
-        check_sections(&section.subsections, media_len)?;
+        check_blocks(&section.blocks, media_len, references, footnote_ids)?;
+        check_sections(
+            &section.subsections,
+            media_len,
+            references,
+            footnote_ids,
+        )?;
     }
     Ok(())
 }
@@ -538,6 +617,15 @@ mod tests {
             Block {
                 ordinal: 7,
                 content: BlockContent::HtmlFallback("<span>fallback é</span>".into()),
+            },
+            Block {
+                ordinal: 8,
+                content: BlockContent::Footnote(Footnote {
+                    source_id: "cite-note-é".into(),
+                    label: "1".into(),
+                    text: "Note de référence — 质量".into(),
+                    reference_ids: vec!["ref1".into()],
+                }),
             },
         ];
         a.sections[0].subsections.push(Section {
@@ -770,6 +858,46 @@ mod tests {
             a.sections[0].blocks[0].content = content;
             assert_eq!(a.validate(), Ok(()));
         }
+    }
+
+    #[test]
+    fn footnotes_are_distinct_validated_reference_links() {
+        let mut a = article();
+        a.lead.push(Block {
+            ordinal: 8,
+            content: BlockContent::Footnote(Footnote {
+                source_id: "cite-note-é".into(),
+                label: "1".into(),
+                text: "Source explanation".into(),
+                reference_ids: vec!["ref1".into()],
+            }),
+        });
+        assert_eq!(a.validate(), Ok(()));
+
+        if let BlockContent::Footnote(footnote) = &mut a.lead[1].content {
+            footnote.reference_ids[0] = "missing".into();
+        }
+        assert_eq!(
+            a.validate(),
+            Err(ModelError::InvalidFootnote("cite-note-é".into()))
+        );
+
+        if let BlockContent::Footnote(footnote) = &mut a.lead[1].content {
+            footnote.reference_ids = vec!["ref1".into()];
+        }
+        a.sections[0].blocks.push(Block {
+            ordinal: 9,
+            content: BlockContent::Footnote(Footnote {
+                source_id: "cite-note-é".into(),
+                label: "2".into(),
+                text: "Duplicate upstream anchor".into(),
+                reference_ids: vec![],
+            }),
+        });
+        assert_eq!(
+            a.validate(),
+            Err(ModelError::InvalidFootnote("cite-note-é".into()))
+        );
     }
 
     #[test]

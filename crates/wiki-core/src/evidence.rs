@@ -1,5 +1,5 @@
 //! Version-specific article evidence handles.
-use wiki_model::{Article, Block, ModelError, Reference, Section};
+use wiki_model::{Article, Block, BlockContent, Footnote, ModelError, Reference, Section};
 
 #[derive(Debug)]
 pub struct EvidenceBlock<'a> {
@@ -37,20 +37,76 @@ fn collect_evidence_sections<'a>(
         new_path.push(section.ordinal);
         let mut new_headings = headings.to_vec();
         new_headings.push(section.heading.clone());
-        let mut id = format!(
-            "wks:{}:{}:{}",
-            article.key.project, article.key.page_id, article.revision.revision_id
-        );
-        for ordinal in &new_path {
-            id.push(':');
-            id.push_str(&ordinal.to_string());
-        }
         out.push(EvidenceSection {
-            id,
+            id: article
+                .key
+                .section_id(article.revision.revision_id, &new_path),
             headings: new_headings.clone(),
             section,
         });
         collect_evidence_sections(article, &section.subsections, &new_path, &new_headings, out);
+    }
+}
+
+/// A Wikipedia footnote is an article-local note, not proof that any linked
+/// external source was independently inspected.
+#[derive(Debug)]
+pub struct EvidenceFootnote<'a> {
+    pub id: String,
+    pub block_id: String,
+    pub headings: Vec<String>,
+    pub footnote: &'a Footnote,
+}
+
+/// Enumerate validated, revision-bound footnote handles and their enclosing
+/// block handles from the exact canonical article revision.
+pub fn evidence_footnotes(article: &Article) -> Result<Vec<EvidenceFootnote<'_>>, ModelError> {
+    article.validate()?;
+    let mut out = Vec::new();
+    collect_footnotes(article, &article.lead, &[], &[], &mut out);
+    for section in &article.sections {
+        collect_section_footnotes(article, section, &[], &[], &mut out);
+    }
+    Ok(out)
+}
+
+fn collect_section_footnotes<'a>(
+    article: &Article,
+    section: &'a Section,
+    path: &[u32],
+    headings: &[String],
+    out: &mut Vec<EvidenceFootnote<'a>>,
+) {
+    let mut new_path = path.to_vec();
+    new_path.push(section.ordinal);
+    let mut new_headings = headings.to_vec();
+    new_headings.push(section.heading.clone());
+    collect_footnotes(article, &section.blocks, &new_path, &new_headings, out);
+    for child in &section.subsections {
+        collect_section_footnotes(article, child, &new_path, &new_headings, out);
+    }
+}
+
+fn collect_footnotes<'a>(
+    article: &Article,
+    blocks: &'a [Block],
+    path: &[u32],
+    headings: &[String],
+    out: &mut Vec<EvidenceFootnote<'a>>,
+) {
+    for block in blocks {
+        if let BlockContent::Footnote(footnote) = &block.content {
+            out.push(EvidenceFootnote {
+                id: article
+                    .key
+                    .footnote_id(article.revision.revision_id, &footnote.source_id),
+                block_id: article
+                    .key
+                    .block_id(article.revision.revision_id, path, block.ordinal),
+                headings: headings.to_vec(),
+                footnote,
+            });
+        }
     }
 }
 

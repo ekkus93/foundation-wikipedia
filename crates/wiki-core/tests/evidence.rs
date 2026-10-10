@@ -1,6 +1,9 @@
-use wiki_core::evidence::{evidence_blocks, evidence_references, evidence_sections};
+use wiki_core::evidence::{
+    evidence_blocks, evidence_footnotes, evidence_references, evidence_sections,
+};
 use wiki_model::{
-    Article, ArticleKey, Block, BlockContent, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
+    Article, ArticleKey, Block, BlockContent, Footnote, Reference, Revision, Section,
+    ARTICLE_SCHEMA_VERSION,
 };
 
 fn article() -> Article {
@@ -157,6 +160,66 @@ fn reference_handles_preserve_revision_and_source_identity() {
     assert_ne!(original[0].id, evidence_references(&second).unwrap()[0].id);
     second.references.push(second.references[0].clone());
     assert!(evidence_references(&second).is_err());
+}
+
+#[test]
+fn footnote_and_reference_handles_remain_distinct_and_revision_scoped() {
+    let mut first = article();
+    first.references.push(Reference {
+        id: "source:é".into(),
+        label: "External source".into(),
+        source_url: Some("https://example.org/source".into()),
+    });
+    first.sections[0].blocks.push(Block {
+        ordinal: 2,
+        content: BlockContent::Footnote(Footnote {
+            source_id: "cite-note:é".into(),
+            label: "1".into(),
+            text: "Article-local explanatory note".into(),
+            reference_ids: vec!["source:é".into()],
+        }),
+    });
+
+    let notes = evidence_footnotes(&first).unwrap();
+    let refs = evidence_references(&first).unwrap();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(refs.len(), 1);
+    assert!(notes[0].id.starts_with("wkf:enwiki:99:7:"));
+    assert!(refs[0].id.starts_with("wkr:enwiki:99:7:"));
+    assert_ne!(notes[0].id, refs[0].id);
+    assert_eq!(notes[0].block_id, "wkb:enwiki:99:7:3:b2");
+    assert_eq!(notes[0].headings, ["Space"]);
+    assert_eq!(notes[0].footnote.reference_ids, ["source:é"]);
+
+    let mut second = first.clone();
+    second.revision.revision_id = 8;
+    let next_notes = evidence_footnotes(&second).unwrap();
+    let next_refs = evidence_references(&second).unwrap();
+    assert_ne!(notes[0].id, next_notes[0].id);
+    assert_ne!(refs[0].id, next_refs[0].id);
+
+    if let BlockContent::Footnote(footnote) = &mut second.sections[0].blocks[1].content {
+        footnote.source_id = "cite-note-é".into();
+    }
+    assert_ne!(
+        next_notes[0].id,
+        evidence_footnotes(&second).unwrap()[0].id
+    );
+}
+
+#[test]
+fn invalid_footnote_reference_fails_closed() {
+    let mut fixture = article();
+    fixture.lead.push(Block {
+        ordinal: 4,
+        content: BlockContent::Footnote(Footnote {
+            source_id: "note-1".into(),
+            label: "1".into(),
+            text: "Needs a missing reference".into(),
+            reference_ids: vec!["missing".into()],
+        }),
+    });
+    assert!(evidence_footnotes(&fixture).is_err());
 }
 
 #[test]
