@@ -1,0 +1,81 @@
+name: Wikimedia source live smoke
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/discover_current_content_export.py'
+      - 'scripts/stage_current_content_export.py'
+      - '.github/workflows/wikimedia-source-live-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Discover completed Wikimedia generation
+        run: |
+          python3 scripts/discover_current_content_export.py enwiki --months 12 > /tmp/wikimedia-source.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("/tmp/wikimedia-source.json").read_text())
+          assert report["authority"] == "Wikimedia Foundation"
+          assert report["completed"] is True
+          assert report["checksum_algorithm"] == "sha256"
+          assert report["release_id"].startswith("mediawiki_content_current:enwiki:")
+          assert report["files"]
+          print(
+              "live_source generation={} members={} inventory={}".format(
+                  report["generation_id"],
+                  len(report["files"]),
+                  report["checksum_inventory_url"],
+              )
+          )
+          PY
+      - name: Verify real member supports bounded resume range
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  raise RuntimeError("member URL redirected")
+
+          report = json.loads(Path("/tmp/wikimedia-source.json").read_text())
+          url = report["files"][0]["url"]
+          request = Request(
+              url,
+              headers={
+                  "User-Agent": "FoundationWikipedia/0.1 live-source-smoke",
+                  "Accept-Encoding": "identity",
+                  "Range": "bytes=0-0",
+              },
+          )
+          with build_opener(NoRedirect()).open(request, timeout=40) as response:
+              assert response.geturl() == url
+              assert response.status == 206
+              assert response.headers.get("Content-Encoding", "identity").lower() == "identity"
+              content_range = response.headers.get("Content-Range", "")
+              match = re.fullmatch(r"bytes 0-0/([0-9]+)", content_range)
+              assert match is not None and int(match.group(1)) > 0
+              data = response.read(2)\n              assert len(data) == 1
+          print("live_source range_resume=verified member=" + url)
+          PY
+      - name: Preserve live source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: wikimedia-source-live-evidence
+          path: /tmp/wikimedia-source.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
