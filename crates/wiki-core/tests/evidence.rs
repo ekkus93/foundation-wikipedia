@@ -1,5 +1,6 @@
 use wiki_core::evidence::{
-    evidence_blocks, evidence_footnotes, evidence_references, evidence_sections, relocate_soft_block_anchor,
+    evidence_blocks, evidence_footnotes, evidence_references, evidence_sections,
+    relocate_soft_block_anchor,
 };
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, Footnote, Reference, Revision, Section,

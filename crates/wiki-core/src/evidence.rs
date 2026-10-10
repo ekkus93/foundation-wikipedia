@@ -204,8 +204,7 @@ pub fn relocate_soft_block_anchor(
         return Ok(None);
     }
     let mut matches = new_blocks.iter().filter(|candidate| {
-        candidate.headings == previous.headings
-            && candidate.block.content == previous.block.content
+        candidate.headings == previous.headings && candidate.block.content == previous.block.content
     });
     let Some(first) = matches.next() else {
         return Ok(None);
