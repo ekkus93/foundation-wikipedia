@@ -17,7 +17,11 @@ class CurrentContentExportTests(unittest.TestCase):
     def test_sha256_and_canonical_official_urls(self):
         report = parse_checksums(f"{SHA}  {NAME}\n", PROJECT, DATE)
         self.assertTrue(report["completed"])
+        self.assertEqual(report["authority"], "Wikimedia Foundation")
         self.assertEqual(report["dataset"], "mediawiki_content_current")
+        self.assertEqual(report["release_id"], "mediawiki_content_current:enwiki:2026-10-01")
+        self.assertEqual(report["release_date"], DATE)
+        self.assertEqual(report["checksum_algorithm"], "sha256")
         self.assertEqual(report["files"][0]["sha256"], SHA)
         self.assertEqual(
             report["files"][0]["url"],

@@ -279,7 +279,16 @@ def _preflight(report, fetcher):
         expected = inventory_url(project, generation)
     except ExportDiscoveryError as error:
         raise ExportStagingError("invalid source project or generation") from error
-    if report.get("dataset") != "mediawiki_content_current" or report.get("checksum_inventory_url") != expected:
+    release_id = f"mediawiki_content_current:{project}:{generation}"
+    identity = (
+        report.get("authority") == "Wikimedia Foundation"
+        and report.get("dataset") == "mediawiki_content_current"
+        and report.get("release_id") == release_id
+        and report.get("release_date") == generation
+        and report.get("checksum_algorithm") == "sha256"
+        and report.get("checksum_inventory_url") == expected
+    )
+    if not identity:
         raise ExportStagingError("mismatched SHA-256 inventory identity")
     try:
         fresh = parse_checksums(fetcher(expected), project, generation)
@@ -323,8 +332,15 @@ def stage_export(report, directory, output_manifest, *, fetcher=fetch_official,
     ]
     entries.sort(key=lambda item: item["name"])
     manifest = {
-        "project": fresh["project"], "generation_id": fresh["generation_id"],
-        "source_url": fresh["checksum_inventory_url"], "completed": True,
+        "authority": fresh["authority"],
+        "dataset": fresh["dataset"],
+        "release_id": fresh["release_id"],
+        "release_date": fresh["release_date"],
+        "project": fresh["project"],
+        "generation_id": fresh["generation_id"],
+        "checksum_algorithm": fresh["checksum_algorithm"],
+        "source_url": fresh["checksum_inventory_url"],
+        "completed": True,
         "files": entries,
     }
     for item in entries:

@@ -91,8 +91,15 @@ def parse_checksums(text, project, date):
     if not entries:
         raise ExportDiscoveryError("empty current-content member inventory")
     return {
-        "dataset": DATASET, "project": project, "generation_id": date,
-        "completed": True, "checksum_inventory_url": inventory_url(project, date),
+        "authority": "Wikimedia Foundation",
+        "dataset": DATASET,
+        "release_id": f"{DATASET}:{project}:{date}",
+        "release_date": date,
+        "project": project,
+        "generation_id": date,
+        "completed": True,
+        "checksum_algorithm": "sha256",
+        "checksum_inventory_url": inventory_url(project, date),
         "files": sorted(entries.values(), key=lambda entry: entry["path"]),
         "note": "Official HTTPS SHA-256 inventory, not a publisher signature or installed snapshot",
     }

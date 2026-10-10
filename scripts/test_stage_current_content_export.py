@@ -69,6 +69,13 @@ class ModernExportStagingTests(unittest.TestCase):
 
     def test_complete_export_is_atomically_published(self):
         result = self.stage()
+        self.assertEqual(result["authority"], "Wikimedia Foundation")
+        self.assertEqual(result["dataset"], "mediawiki_content_current")
+        self.assertEqual(
+            result["release_id"], "mediawiki_content_current:enwiki:2026-10-01"
+        )
+        self.assertEqual(result["release_date"], "2026-10-01")
+        self.assertEqual(result["checksum_algorithm"], "sha256")
         self.assertEqual(result["source_url"], URL + "SHA256SUMS")
         self.assertEqual(
             result["files"][0]["url"],
