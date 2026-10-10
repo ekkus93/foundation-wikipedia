@@ -8,5 +8,5 @@ pub mod record_codec;
 pub mod shard_io;
 
 pub mod catalog;
-pub mod media_ownership;
 pub mod media_objects;
+pub mod media_ownership;
