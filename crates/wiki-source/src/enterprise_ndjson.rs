@@ -225,6 +225,50 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_lines_without_reading_unbounded_input() {
+        let mut input = vec![b'x'; MAX_ENTERPRISE_RECORD_BYTES + 1];
+        input.push(b'\n');
+        let error = join_enterprise_ndjson(
+            Cursor::new(input),
+            Cursor::new(Vec::<u8>::new()),
+            "20261010",
+            vec![],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            BatchImportError::OversizedRecord {
+                kind: InputKind::Structured,
+                line: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn caps_batch_size_before_accepting_an_extra_record() {
+        let mut input = String::new();
+        let article = structured(1, 17);
+        for _ in 0..=MAX_BATCH_RECORDS {
+            input.push_str(&article);
+            input.push('\n');
+        }
+        let error = join_enterprise_ndjson(
+            Cursor::new(input),
+            Cursor::new(Vec::<u8>::new()),
+            "20261010",
+            vec![],
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            BatchImportError::TooManyRecords {
+                kind: InputKind::Structured,
+                limit: MAX_BATCH_RECORDS,
+            }
+        );
+    }
+
+    #[test]
     fn rejects_invalid_utf8_and_deleted_live_records() {
         let error = join_enterprise_ndjson(
             Cursor::new(vec![0xff, b'\n']),
