@@ -28,9 +28,9 @@ pub fn import_verified_enterprise_ndjson<S: BufRead, R: BufRead>(
 
 #[path = "enterprise_normalize.rs"]
 pub mod enterprise_normalize;
+#[path = "enterprise_normalize_article.rs"]
+pub mod enterprise_normalize_article;
 #[path = "enterprise_normalize_blocks.rs"]
 mod enterprise_normalize_blocks;
 #[path = "enterprise_normalize_references.rs"]
 mod enterprise_normalize_references;
-#[path = "enterprise_normalize_article.rs"]
-pub mod enterprise_normalize_article;
