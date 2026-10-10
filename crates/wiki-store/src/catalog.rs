@@ -406,6 +406,49 @@ impl SnapshotCatalog {
         Ok(count)
     }
 
+    /// Cross-check complete shard bytes against a previously authenticated
+    /// manifest using bounded streaming reads, not whole-shard allocation.
+    pub fn verify_manifest_shard_hashes(
+        &self,
+        root: &Path,
+        expected: &std::collections::BTreeMap<String, (u64, String)>,
+    ) -> Result<usize, CatalogError> {
+        let names = expected.keys().cloned().collect();
+        let count = self.verify_expected_shards(root, &names)?;
+        for (name, (bytes, sha256)) in expected {
+            if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(CatalogError::InvalidCatalogEntry);
+            }
+            let path = root.join(name);
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != *bytes {
+                return Err(CatalogError::InvalidFrame);
+            }
+            let mut file = File::open(path)?;
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 65536];
+            let mut read_bytes = 0u64;
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                read_bytes = read_bytes.checked_add(n as u64).ok_or(CatalogError::InvalidFrame)?;
+                if read_bytes > *bytes {
+                    return Err(CatalogError::InvalidFrame);
+                }
+                hasher.update(&buffer[..n]);
+            }
+            if read_bytes != *bytes || file.metadata()?.len() != *bytes {
+                return Err(CatalogError::InvalidFrame);
+            }
+            if format!("{:x}", hasher.finalize()) != *sha256 {
+                return Err(CatalogError::DigestMismatch);
+            }
+        }
+        Ok(count)
+    }
+
     /// Resolve an article title through at most 32 verified redirect records.
     /// A dangling target, cycle or excessive chain never counts as success.
     pub fn resolve_title(
@@ -735,6 +778,36 @@ mod tests {
         assert!(matches!(
             catalog.verify_expected_shards(&root, &extra),
             Err(CatalogError::InvalidCatalogEntry)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_shard_hashes_require_exact_bytes() {
+        let root = temp_root();
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &article(42, "Earth")).unwrap();
+        fs::write(root.join("manifest.shard"), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "manifest.shard", 0, bytes.len() as u64)
+            .unwrap();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let mut manifest = std::collections::BTreeMap::from([(
+            "manifest.shard".to_owned(),
+            (bytes.len() as u64, digest.clone()),
+        )]);
+        assert_eq!(catalog.verify_manifest_shard_hashes(&root, &manifest).unwrap(), 1);
+        manifest.get_mut("manifest.shard").unwrap().1 = "0".repeat(64);
+        assert!(matches!(
+            catalog.verify_manifest_shard_hashes(&root, &manifest),
+            Err(CatalogError::DigestMismatch)
+        ));
+        manifest.get_mut("manifest.shard").unwrap().1 = digest;
+        manifest.get_mut("manifest.shard").unwrap().0 += 1;
+        assert!(matches!(
+            catalog.verify_manifest_shard_hashes(&root, &manifest),
+            Err(CatalogError::InvalidFrame)
         ));
         fs::remove_dir_all(root).unwrap();
     }
