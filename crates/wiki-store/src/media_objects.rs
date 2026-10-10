@@ -153,7 +153,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-objects-{}-{stamp}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("wiki-objects-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         root
     }
