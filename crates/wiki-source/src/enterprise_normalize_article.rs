@@ -1,6 +1,7 @@
 //! Construct a revision-bound Article from verified Enterprise companions.
 use super::enterprise_normalize::{digest_article, CanonicalEnterpriseArticle, NormalizeError};
 use super::enterprise_normalize_blocks::convert;
+use super::enterprise_normalize_html::sanitize_rendered_html;
 use super::enterprise_normalize_links::collect_links;
 use super::enterprise_normalize_references::references;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
@@ -10,8 +11,8 @@ use wiki_model::{
     Article, ArticleKey, Block, Reference, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
 
-/// Retained HTML is NOT yet sanitized for a WebView. Unresolved images
-/// fail closed until a verified Commons/media join is implemented.
+/// Rendered HTML is sanitized at the source boundary. Unresolved images
+/// still fail closed until a verified Commons/media join is implemented.
 pub fn normalize_enterprise_article(
     joined: &JoinedEnterpriseArticle,
     is_disambiguation: bool,
@@ -29,6 +30,7 @@ fn normalize_with_index(
     if html.contains("<img") || html.contains("<picture") || html.contains("<video") {
         return Err(NormalizeError::UnresolvedVisual);
     }
+    let rendered_html = sanitize_rendered_html(&joined.rendered_html)?;
     let known: BTreeMap<&str, &StructuredTable> = joined
         .structured
         .tables
@@ -94,7 +96,7 @@ fn normalize_with_index(
         references,
         links,
         media: Vec::new(),
-        rendered_html: joined.rendered_html.clone(),
+        rendered_html,
         is_disambiguation,
     };
     article.validate().map_err(NormalizeError::Model)?;

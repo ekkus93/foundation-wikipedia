@@ -13,3 +13,4 @@ wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
 serde_json = "1.0"
 sha2 = "0.10"
+ammonia = "4.1"

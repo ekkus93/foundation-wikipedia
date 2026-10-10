@@ -18,6 +18,7 @@ pub enum NormalizeError {
     Missing(&'static str),
     Unsupported(PartKind),
     UnresolvedVisual,
+    UnsafeHtml,
     InvalidTable(String),
     InvalidReference(String),
     UnresolvedLink,

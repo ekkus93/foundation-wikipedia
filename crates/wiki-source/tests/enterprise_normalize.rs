@@ -73,6 +73,42 @@ fn normalizes_revision_and_rejects_unverified_images() {
 }
 
 #[test]
+fn sanitizes_active_html_before_canonical_rendering() {
+    let mut joined = fixture();
+    joined.rendered_html = concat!(
+        "<article>",
+        "<script>window.pwned=true</script>",
+        "<p onclick=\"steal()\">Safe text</p>",
+        "<a href=\"javascript:alert(1)\" onmouseover=\"steal()\">unsafe link</a>",
+        "<a href=\"https://example.org/evidence\">safe link</a>",
+        "</article>"
+    )
+    .into();
+
+    let normalized = normalize_enterprise_article(&joined, false).unwrap();
+    let html = &normalized.article.rendered_html;
+    assert!(html.contains("Safe text"));
+    assert!(html.contains("safe link"));
+    assert!(html.contains("https://example.org/evidence"));
+    assert!(!html.contains("<script"));
+    assert!(!html.contains("window.pwned"));
+    assert!(!html.contains("onclick"));
+    assert!(!html.contains("onmouseover"));
+    assert!(!html.contains("javascript:"));
+    normalized.article.validate().unwrap();
+}
+
+#[test]
+fn sanitizer_does_not_turn_active_only_html_into_a_renderable_article() {
+    let mut joined = fixture();
+    joined.rendered_html = "<script>alert('only active content')</script>".into();
+    assert_eq!(
+        normalize_enterprise_article(&joined, false),
+        Err(NormalizeError::UnsafeHtml)
+    );
+}
+
+#[test]
 fn preserves_nested_citations_as_revision_scoped_footnotes() {
     use wiki_model::BlockContent;
     use wiki_source::enterprise::{StructuredCitation, StructuredReference};
