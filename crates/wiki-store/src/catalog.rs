@@ -394,7 +394,9 @@ impl SnapshotCatalog {
         expected: &BTreeSet<String>,
     ) -> Result<usize, CatalogError> {
         let count = self.verify_shard_coverage(root)?;
-        let mut stmt = self.conn.prepare("SELECT DISTINCT shard_name FROM records")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT shard_name FROM records")?;
         let indexed: BTreeSet<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<_, _>>()?;
