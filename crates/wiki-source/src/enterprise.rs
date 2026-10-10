@@ -6,7 +6,7 @@
 //! Rendered HTML, categories and redirects intentionally come from the separate
 //! regular article model and are joined only on exact project/page/revision.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
@@ -129,6 +129,12 @@ pub enum EnterpriseError {
     DuplicateTable(String),
     DuplicateCategory(String),
     DuplicateRedirect(String),
+    DuplicateStructured(PageKey),
+    DuplicateRegular(PageKey),
+    MissingStructured(PageKey),
+    MissingRegular(PageKey),
+    DeletedPageConflict(PageKey),
+    DuplicateTombstone(PageKey),
     IdentityMismatch,
     RevisionMismatch,
     GenerationMismatch,
@@ -610,6 +616,74 @@ pub fn join_enterprise_article(
     })
 }
 
+fn valid_page_key(page: &PageKey) -> bool {
+    page.page_id != 0
+        && !page.project.is_empty()
+        && page
+            .project
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// Join complete Structured Contents and regular-article collections in stable
+/// project/page-ID order. Duplicate, missing, or deleted live records fail
+/// closed instead of silently selecting one source record.
+pub fn join_enterprise_batch(
+    structured: Vec<StructuredArticle>,
+    regular: Vec<RegularArticleCompanion>,
+    deleted: Vec<PageKey>,
+) -> Result<Vec<JoinedEnterpriseArticle>, EnterpriseError> {
+    let mut tombstones = BTreeSet::new();
+    for page in deleted {
+        if !valid_page_key(&page) {
+            return Err(EnterpriseError::InvalidIdentity);
+        }
+        if !tombstones.insert(page.clone()) {
+            return Err(EnterpriseError::DuplicateTombstone(page));
+        }
+    }
+
+    let mut structured_by_page = BTreeMap::new();
+    for article in structured {
+        if !valid_page_key(&article.page) {
+            return Err(EnterpriseError::InvalidIdentity);
+        }
+        if tombstones.contains(&article.page) {
+            return Err(EnterpriseError::DeletedPageConflict(article.page));
+        }
+        let page = article.page.clone();
+        if structured_by_page.insert(page.clone(), article).is_some() {
+            return Err(EnterpriseError::DuplicateStructured(page));
+        }
+    }
+
+    let mut regular_by_page = BTreeMap::new();
+    for article in regular {
+        if !valid_page_key(&article.page) {
+            return Err(EnterpriseError::InvalidIdentity);
+        }
+        if tombstones.contains(&article.page) {
+            return Err(EnterpriseError::DeletedPageConflict(article.page));
+        }
+        let page = article.page.clone();
+        if regular_by_page.insert(page.clone(), article).is_some() {
+            return Err(EnterpriseError::DuplicateRegular(page));
+        }
+    }
+
+    let mut joined = Vec::with_capacity(structured_by_page.len());
+    for (page, structured) in structured_by_page {
+        let regular = regular_by_page
+            .remove(&page)
+            .ok_or_else(|| EnterpriseError::MissingRegular(page.clone()))?;
+        joined.push(join_enterprise_article(structured, regular)?);
+    }
+    if let Some((page, _)) = regular_by_page.into_iter().next() {
+        return Err(EnterpriseError::MissingStructured(page));
+    }
+    Ok(joined)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,6 +813,78 @@ mod tests {
         assert_eq!(
             parse_structured_article(&tables, "2026-10-01"),
             Err(EnterpriseError::DuplicateTable("theory_table1".into()))
+        );
+    }
+
+    #[test]
+    fn batch_join_is_stable_and_rejects_duplicate_missing_and_deleted_pages() {
+        let structured_42 =
+            parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular_42 =
+            parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
+
+        let mut structured_7 = structured_42.clone();
+        structured_7.page.page_id = 7;
+        structured_7.name = "Earlier page".into();
+        let mut regular_7 = regular_42.clone();
+        regular_7.page.page_id = 7;
+        regular_7.name = "Earlier page".into();
+
+        let joined = join_enterprise_batch(
+            vec![structured_42.clone(), structured_7.clone()],
+            vec![regular_42.clone(), regular_7.clone()],
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            joined
+                .iter()
+                .map(|article| article.structured.page.page_id)
+                .collect::<Vec<_>>(),
+            vec![7, 42]
+        );
+
+        assert_eq!(
+            join_enterprise_batch(
+                vec![structured_42.clone(), structured_42.clone()],
+                vec![regular_42.clone()],
+                vec![],
+            ),
+            Err(EnterpriseError::DuplicateStructured(
+                structured_42.page.clone()
+            ))
+        );
+        assert_eq!(
+            join_enterprise_batch(vec![structured_42.clone()], vec![], vec![]),
+            Err(EnterpriseError::MissingRegular(
+                structured_42.page.clone()
+            ))
+        );
+        assert_eq!(
+            join_enterprise_batch(vec![], vec![regular_42.clone()], vec![]),
+            Err(EnterpriseError::MissingStructured(
+                regular_42.page.clone()
+            ))
+        );
+        assert_eq!(
+            join_enterprise_batch(
+                vec![structured_42.clone()],
+                vec![regular_42.clone()],
+                vec![structured_42.page.clone()],
+            ),
+            Err(EnterpriseError::DeletedPageConflict(
+                structured_42.page.clone()
+            ))
+        );
+        assert_eq!(
+            join_enterprise_batch(
+                vec![],
+                vec![],
+                vec![structured_42.page.clone(), structured_42.page.clone()],
+            ),
+            Err(EnterpriseError::DuplicateTombstone(
+                structured_42.page.clone()
+            ))
         );
     }
 
