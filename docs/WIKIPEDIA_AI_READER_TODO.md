@@ -49,9 +49,9 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Tests for text reorder, deletion and revision changes.
   - **Accept:** stale AI citation never points to unrelated text after content update.
 - [ ] **MOD-003** Select canonical record encoding and compatibility policy. **Depends:** MOD-001.  
-  - [ ] Compare CBOR/MessagePack + record-level zstd/shard sizes against measured fixture performance.
+  - [x] Compare CBOR/MessagePack + record-level zstd/shard sizes against measured fixture performance.
   - [ ] Record Android memory, random read, compression and migration results in ADR.
-  - [ ] Implement major/minor version guards and explicit reject/migrate behavior.
+  - [x] Implement major/minor version guards and explicit reject/migrate behavior.
   - **Accept:** proven versioned codec and safe handling of unsupported revisions.
 
 ## Phase 2 — Wikimedia acquisition and revision-matched normalization
@@ -573,6 +573,12 @@ Spec deviation/ADR:
 ### 2026-10-10 — Canonical model and revision-scoped evidence qualified
 
 - **MOD-001 complete:** canonical `wiki-model` records now cover article identity/provenance, aliases/Wikidata, nested sections, every required structured block variant including explicit footnotes, typed media/reference/link/redirect data, disambiguation, validation, Unicode/Serde roundtrip coverage and retained validated render HTML. **MOD-002 complete:** `wiki-core::evidence` assigns distinct revision-scoped block (`wkb:`), section (`wks:`), footnote (`wkf:`) and reference (`wkr:`) handles; canonical footnote text participates in lexical retrieval, reference linkage fails closed, hard IDs remain separate from relocatable soft anchors, and reorder/deletion/revision regressions prevent stale evidence from silently resolving to unrelated content. Exact master `cf0097884e039b6e3ce0e352fd7a82eae33c3476` passed Rust workspace CI [38014207157](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207157), Platform shells CI [38014207124](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207124), and Android ABI CI [38014207123](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38014207123). Test gate: `cargo fmt --check`, workspace Clippy/tests plus repository regression suites; Android arm64 ABI cross-build also passed at the same SHA.
+
+
+### 2026-10-10 — MOD-003 record codec host qualification (Android evidence pending)
+
+- **MOD-003 partial — codec choice and compatibility guards:** `wiki-store::record_codec` now uses a fixed `FWREC001` envelope with named-field MessagePack payloads, per-record zstd level 3 compression, bounded compressed/uncompressed lengths, independently addressable length-prefixed shard frames, and explicit codec version `1.1`. Major-version mismatches and future minor versions fail closed; legacy `1.0` is accepted only with `RewriteToCurrent` migration status and is re-encoded as the current version. Direct-offset tests prove a catalog can retrieve one record without inflating or scanning the whole shard. Exact `f89f6a43b1153a044f4deba7bc269d19ee94e912` passed [Rust workspace CI 38019218520](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218520), [Platform shells CI 38019218527](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218527), and [Android ABI CI 38019218530](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38019218530).
+- **Measured Linux fixture comparison at the same SHA:** named MessagePack = 2443 bytes, CBOR = 2444 bytes; zstd-3 MessagePack = 883 bytes, zstd-3 CBOR = 844 bytes. Over 200 debug-profile fixture iterations, MessagePack encode/decode measured 3036/5735 µs versus CBOR 3285/7575 µs. The canonical record codec measured 14430/10295 µs for 200 encode/decode iterations; a 128-record framed shard was 118795 bytes and 1000 direct-offset random reads measured 50973 µs. Linux probe VmHWM was 8004 KiB. These CI microtimings are comparative evidence for this fixture, not device-independent latency guarantees. The Android codec probe cross-build succeeds, but its first emulator attempt timed out before boot; Android memory/random-read measurements remain required before MOD-003 can close.
 
 ## Blockers requiring owner action
 
