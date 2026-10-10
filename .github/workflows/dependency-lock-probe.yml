@@ -1,0 +1,31 @@
+name: Dependency lock refresh probe
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/wiki-model/Cargo.toml'
+      - '.github/workflows/dependency-lock-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.85.1'
+      - name: Generate and expose candidate lockfile
+        run: |
+          cargo generate-lockfile
+          printf 'LOCK_B64='
+          base64 -w0 Cargo.lock
+          printf '\n'
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"

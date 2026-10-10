@@ -7,15 +7,17 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 pub const ARTICLE_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArticleKey {
     pub project: String,
     pub page_id: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {
     pub revision_id: u64,
     pub timestamp: String,
@@ -23,7 +25,7 @@ pub struct Revision {
     pub content_sha256: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Article {
     pub schema_version: u32,
     pub key: ArticleKey,
@@ -44,20 +46,20 @@ pub struct Article {
     pub is_disambiguation: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PageRecord {
     Article(Box<Article>),
     Redirect(Redirect),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Redirect {
     pub from: ArticleKey,
     pub title: String,
     pub to: ArticleKey,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Section {
     pub ordinal: u32,
     pub heading: String,
@@ -65,13 +67,13 @@ pub struct Section {
     pub subsections: Vec<Section>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     pub ordinal: u32,
     pub content: BlockContent,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockContent {
     Paragraph(String),
     List(Vec<String>),
@@ -83,21 +85,21 @@ pub enum BlockContent {
     HtmlFallback(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reference {
     pub id: String,
     pub label: String,
     pub source_url: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArticleLink {
     pub label: String,
     pub target: ArticleKey,
     pub fragment: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaAsset {
     pub source_url: String,
     pub mime_type: String,
@@ -109,7 +111,7 @@ pub struct MediaAsset {
     pub is_av_preview: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelError {
     InvalidIdentity,
     InvalidRevision,
@@ -475,6 +477,82 @@ mod tests {
     fn accepts_unicode_and_sections() {
         assert!(article().validate().is_ok());
     }
+
+    #[test]
+    fn serde_roundtrip_preserves_unicode_and_every_block_variant() {
+        let mut a = article();
+        a.is_disambiguation = true;
+        a.media.push(MediaAsset {
+            source_url: "https://upload.wikimedia.org/example.svg".into(),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some("b".repeat(64)),
+            license: "CC BY-SA 4.0".into(),
+            creator: "Émilie Example".into(),
+            attribution: "Émilie Example — CC BY-SA 4.0".into(),
+            is_av_preview: false,
+        });
+        a.lead = vec![
+            Block { ordinal: 0, content: BlockContent::Paragraph("Gravité 🌍".into()) },
+            Block { ordinal: 1, content: BlockContent::List(vec!["Énergie".into(), "质量".into()]) },
+            Block {
+                ordinal: 2,
+                content: BlockContent::Table(vec![vec!["量".into(), "Value".into()]]),
+            },
+            Block { ordinal: 3, content: BlockContent::Quote("«Science»".into()) },
+            Block {
+                ordinal: 4,
+                content: BlockContent::Math {
+                    source: "E = mc²".into(),
+                    html: "<math>E = mc²</math>".into(),
+                },
+            },
+            Block { ordinal: 5, content: BlockContent::Media { media_index: 0 } },
+            Block {
+                ordinal: 6,
+                content: BlockContent::Infobox(vec![("Nom".into(), "Gravité".into())]),
+            },
+            Block {
+                ordinal: 7,
+                content: BlockContent::HtmlFallback("<span>fallback é</span>".into()),
+            },
+        ];
+        a.sections[0].subsections.push(Section {
+            ordinal: 2,
+            heading: "Théorie 理論".into(),
+            blocks: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Nested Unicode ✓".into()),
+            }],
+            subsections: vec![],
+        });
+        a.references[0].source_url = Some("https://example.org/référence".into());
+        a.links.push(ArticleLink {
+            label: "Relativité".into(),
+            target: ArticleKey { project: "frwiki".into(), page_id: 123 },
+            fragment: Some("Théorie".into()),
+        });
+        assert_eq!(a.validate(), Ok(()));
+
+        let encoded = serde_json::to_vec(&a).unwrap();
+        let decoded: Article = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, a);
+        assert_eq!(decoded.validate(), Ok(()));
+        let json = String::from_utf8(encoded).unwrap();
+        assert!(json.contains("Gravité"));
+        assert!(json.contains("质量"));
+        assert!(json.contains("🌍"));
+
+        let redirect = PageRecord::Redirect(Redirect {
+            from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+            title: "Old title".into(),
+            to: ArticleKey { project: "enwiki".into(), page_id: 11 },
+        });
+        let redirect_json = serde_json::to_vec(&redirect).unwrap();
+        let decoded_redirect: PageRecord = serde_json::from_slice(&redirect_json).unwrap();
+        assert_eq!(decoded_redirect, redirect);
+        assert_eq!(decoded_redirect.validate(), Ok(()));
+    }
+
 
     #[test]
     fn block_ids_change_with_revision() {
