@@ -2,6 +2,7 @@
 //! Download transport and checksum verification are separate SRC-001 steps.
 
 pub mod enterprise;
+pub mod enterprise_ndjson;
 pub mod join;
 
 use std::collections::BTreeSet;
