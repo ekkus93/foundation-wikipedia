@@ -1,6 +1,7 @@
 """Regression tests for the official current-content XML fallback reader."""
 import bz2
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -79,6 +80,18 @@ class PublicCurrentContentTests(unittest.TestCase):
             path.write_bytes(bz2.compress(b"<mediawiki/>"))
             with self.assertRaisesRegex(PublicDumpError, "invalid expected SHA-256"):
                 list(iter_verified_pages(path, "z" * 64))
+
+    def test_detects_source_mutation_after_yield_before_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fixture.xml.bz2"
+            data = bz2.compress(("<mediawiki>" + page() + "</mediawiki>").encode("utf-8"))
+            path.write_bytes(data)
+            iterator = iter_verified_pages(path, hashlib.sha256(data).hexdigest())
+            self.assertEqual(next(iterator).page_id, 42)
+            before = path.stat()
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+            with self.assertRaisesRegex(PublicDumpError, "changed during import"):
+                list(iterator)
 
     def test_rejects_truncated_xml(self):
         with self.assertRaisesRegex(PublicDumpError, "invalid or truncated"):

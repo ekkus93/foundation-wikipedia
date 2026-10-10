@@ -121,3 +121,7 @@ def iter_verified_pages(path, expected_sha256):
                         root.clear()
             except (ET.ParseError, EOFError, OSError) as error:
                 raise PublicDumpError("invalid or truncated XML/bzip2 dump") from error
+        after = os.fstat(source.fileno())
+        identity = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
+        if any(getattr(info, field) != getattr(after, field) for field in identity):
+            raise PublicDumpError("public dump changed during import")
