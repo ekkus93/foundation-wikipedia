@@ -46,10 +46,8 @@ fn verified_shard_rebuild_refuses_unindexed_tail_and_bad_manifest_hash() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-fts-verified-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-fts-verified-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let index_path = root.join("search.sqlite");
     {
@@ -82,7 +80,10 @@ fn verified_shard_rebuild_refuses_unindexed_tail_and_bad_manifest_hash() {
     // contains an unindexed article. Do not publish a partial search index.
     assert!(matches!(
         OfflineSearchIndex::replace_persisted_from_verified_shards(
-            &index_path, &catalog, &root, &expected
+            &index_path,
+            &catalog,
+            &root,
+            &expected
         ),
         Err(SearchError::Catalog(_))
     ));
@@ -101,7 +102,10 @@ fn verified_shard_rebuild_refuses_unindexed_tail_and_bad_manifest_hash() {
     incorrect.get_mut("articles.shard").unwrap().1 = "0".repeat(64);
     assert!(matches!(
         OfflineSearchIndex::replace_persisted_from_verified_shards(
-            &index_path, &catalog, &root, &incorrect
+            &index_path,
+            &catalog,
+            &root,
+            &incorrect
         ),
         Err(SearchError::Catalog(_))
     ));
@@ -110,7 +114,10 @@ fn verified_shard_rebuild_refuses_unindexed_tail_and_bad_manifest_hash() {
     // The complete catalog and independently supplied matching digest now
     // permit atomic publication of both searchable articles.
     OfflineSearchIndex::replace_persisted_from_verified_shards(
-        &index_path, &catalog, &root, &expected,
+        &index_path,
+        &catalog,
+        &root,
+        &expected,
     )
     .unwrap();
     let index = OfflineSearchIndex::open(&index_path).unwrap();

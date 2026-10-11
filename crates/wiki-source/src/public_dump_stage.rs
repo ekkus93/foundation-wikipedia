@@ -111,7 +111,16 @@ pub fn stage_verified_member<R: Read>(
             break;
         }
         parent.push(part);
-        match fs::create_dir(&parent) {
+        #[cfg(unix)]
+        let created = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder.create(&parent)
+        };
+        #[cfg(not(unix))]
+        let created = fs::create_dir(&parent);
+        match created {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(StageWriteError::Io(error)),
@@ -128,11 +137,14 @@ pub fn stage_verified_member<R: Read>(
             std::process::id(),
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
             Ok(output) => break (candidate, output),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(StageWriteError::Io(error)),
@@ -269,6 +281,22 @@ mod tests {
             bytes.len() as u64
         );
         assert_eq!(fs::read(&target).unwrap(), bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(target.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
         assert_eq!(
             stage_verified_member(&root, &descriptor, &mut Cursor::new(bytes), 1024).unwrap(),
             bytes.len() as u64
