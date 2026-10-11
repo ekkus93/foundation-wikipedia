@@ -4,6 +4,23 @@ use crate::enterprise::{JoinedEnterpriseArticle, StructuredReference};
 use serde_json::Value;
 use wiki_model::Reference;
 
+/// Never allow an upstream reference to become an executable or ambiguous link.
+fn safe_reference_url(value: &str) -> bool {
+    if value.is_empty()
+        || value.len() > 4096
+        || value.bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == b'\\\\')
+    {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(value) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "https" | "http")
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+}
+
 fn label(reference: &StructuredReference) -> Result<String, NormalizeError> {
     match reference.payload.get("title") {
         None | Some(Value::Null) => Ok(reference.identifier.clone()),
@@ -26,7 +43,7 @@ pub(crate) fn references(
             let label = label(r)?;
             let source_url = match r.payload.get("url") {
                 None | Some(Value::Null) => None,
-                Some(Value::String(s)) => Some(s.clone()),
+                Some(Value::String(s)) if safe_reference_url(s) => Some(s.clone()),
                 Some(_) => return Err(NormalizeError::InvalidReference(r.identifier.clone())),
             };
             Ok(Reference {
@@ -64,6 +81,25 @@ mod tests {
                 Err(NormalizeError::InvalidReference("cite-42".into()))
             );
         }
+    }
+
+    #[test]
+    fn rejects_active_ambiguous_and_credentialed_reference_urls() {
+        for unsafe_url in [
+            "",
+            "javascript:alert(1)",
+            "data:text/html,evil",
+            "file:///etc/passwd",
+            "/wiki/Relative",
+            "https://user:secret@example.org/path",
+            "https://example.org\\\\@evil.example/",
+            "https://example.org/with space",
+            "https://",
+        ] {
+            assert!(!safe_reference_url(unsafe_url), "{unsafe_url}");
+        }
+        assert!(safe_reference_url("https://en.wikipedia.org/wiki/Physics#Notes"));
+        assert!(safe_reference_url("http://example.org/reference?id=7"));
     }
 
     #[test]
