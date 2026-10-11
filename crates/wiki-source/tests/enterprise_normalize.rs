@@ -249,6 +249,14 @@ fn batch_rejects_mixed_generation_before_link_resolution() {
 }
 
 #[test]
+fn visual_tag_prefixes_are_not_mistaken_for_embedded_resources() {
+    let mut joined = fixture();
+    joined.rendered_html =
+        "<article><imgur>Text</imgur><mathematics>Algebra</mathematics></article>".into();
+    assert!(normalize_enterprise_article(&joined, false).is_ok());
+}
+
+#[test]
 fn rejects_unresolved_embedded_media_and_mathml() {
     for html in [
         "<svg><circle r='5'/></svg>",

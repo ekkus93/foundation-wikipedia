@@ -164,7 +164,13 @@ fn normalize_with_index(
         "<object",
         "<embed",
     ];
-    if UNRESOLVED_VISUAL_TAGS.iter().any(|tag| html.contains(tag)) {
+    if UNRESOLVED_VISUAL_TAGS.iter().any(|tag| {
+        html.match_indices(tag).any(|(offset, _)| {
+            html.as_bytes()
+                .get(offset + tag.len())
+                .is_some_and(|next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'))
+        })
+    }) {
         return Err(NormalizeError::UnresolvedVisual);
     }
     let rendered_html = sanitize_rendered_html(&joined.rendered_html)?;
