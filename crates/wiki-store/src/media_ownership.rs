@@ -237,6 +237,35 @@ impl MediaRegistry {
         Ok(())
     }
 
+    /// Release every reference held by one owner in one SQLite transaction.
+    /// The returned digests are *not* deletion authorization: another pack,
+    /// cache or user pin may still own them, and byte GC must recheck under
+    /// its own concurrency-safe protocol before deleting any object.
+    pub fn remove_all_for_owner(
+        &mut self,
+        kind: OwnerKind,
+        owner_id: &str,
+    ) -> Result<Vec<String>, MediaRegistryError> {
+        if !valid_owner_id(owner_id) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let tx = self.conn.transaction()?;
+        let digests = {
+            let mut stmt = tx.prepare(
+                "SELECT digest FROM media_owners
+                 WHERE kind=?1 AND owner_id=?2 ORDER BY digest",
+            )?;
+            let rows = stmt.query_map(params![kind.as_str(), owner_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        };
+        tx.execute(
+            "DELETE FROM media_owners WHERE kind=?1 AND owner_id=?2",
+            params![kind.as_str(), owner_id],
+        )?;
+        tx.commit()?;
+        Ok(digests)
+    }
+
     /// Candidate digests for a separate, crash-safe byte GC transaction.
     /// This query never deletes objects or their attribution records.
     pub fn unowned_digests(&self) -> Result<Vec<String>, MediaRegistryError> {
