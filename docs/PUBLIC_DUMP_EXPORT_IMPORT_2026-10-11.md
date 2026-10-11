@@ -30,6 +30,22 @@ python3 -m unittest discover -s scripts -p 'test_discover_public_current_export.
 
 Qualified at `78b62ee650cbb0e1f94982523133254f0c66a0b0`: [Rust CI 38135015909](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38135015909), [Platform CI 38135015954](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38135015954). Live upstream transfer, complete shard staging, renderer fidelity and pack/device acceptance are not yet qualified.
 
+
+## Official shard staging transport (partial SRC-003)
+
+After independently verifying the official `SHA256SUMS` origin, create a private staging directory and download the exact listed shards:
+
+```bash
+mkdir -p /private/wikimedia-staging
+python3 scripts/stage_public_current_shards.py \
+  /private/official-SHA256SUMS enwiki 2026-10-01 \
+  /private/wikimedia-staging
+```
+
+The transport refuses redirects, requires the expected official HTTPS URL for every member, bounds compressed bytes, verifies SHA-256 before publishing each file, and rechecks existing shards before reuse after restart. Incomplete transfers are discarded rather than published. The destination must be private and not concurrently writable by an adversary. The transport does **not** yet implement byte-range resume within an interrupted shard; it re-downloads incomplete shards.
+
+`python3 -m unittest discover -s scripts -p 'test_stage_public_current_shards.py'` covers verified staging, restart reuse, and local integrity rejection. This does not qualify real upstream full-generation acquisition or rendering; the JSONL and offline pack restrictions above still apply.
+
 ## Offline local invocation
 
 ```bash
