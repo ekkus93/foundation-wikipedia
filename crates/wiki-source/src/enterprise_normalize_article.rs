@@ -479,7 +479,9 @@ mod tests {
 
         let mut same_identity = page;
         same_identity.rendered_html = "<article>New safe rendering</article>".into();
-        assert!(normalize_enterprise_article_with_link_index(&same_identity, false, &index).is_ok());
+        assert!(
+            normalize_enterprise_article_with_link_index(&same_identity, false, &index).is_ok()
+        );
     }
 
     #[test]
