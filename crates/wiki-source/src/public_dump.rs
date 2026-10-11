@@ -81,6 +81,22 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
     Ok(members)
 }
 
+fn valid_page_partition(name: &str, prefix: &str) -> bool {
+    let Some(range) = name
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(".xml.bz2"))
+    else {
+        return false;
+    };
+    let Some((first, last)) = range.split_once('p') else {
+        return false;
+    };
+    match (first.parse::<u64>(), last.parse::<u64>()) {
+        (Ok(start), Ok(end)) => start > 0 && end >= start,
+        _ => false,
+    }
+}
+
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
     let d = date.as_bytes();
@@ -102,9 +118,14 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
         return false;
     }
     let prefix = format!("{wiki}-{date}-p");
+    let mut names = BTreeSet::new();
     members.iter().all(|item| {
         let name = item.relative_path.rsplit('/').next().unwrap_or("");
-        name.starts_with(&prefix) && name.ends_with(".xml.bz2")
+        safe_relative_path(&item.relative_path)
+            && item.sha256.len() == 64
+            && item.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && names.insert(item.relative_path.to_ascii_lowercase())
+            && valid_page_partition(name, &prefix)
     })
 }
 #[cfg(test)]
@@ -130,6 +151,27 @@ mod tests {
         );
         assert_eq!(parsed[0].sha256, "a".repeat(64));
         assert!(parse_sha256sums(&format!("{} *nested/enwiki.xml.bz2", "a".repeat(64))).is_ok());
+    }
+
+    #[test]
+    fn export_identity_rejects_fake_ranges_and_forged_member_descriptors() {
+        let mut members = parse_sha256sums(&line("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
+        assert!(matches_current_export(&members, "enwiki", "2026-10-01"));
+        for invalid in [
+            "enwiki-2026-10-01-pwhatever.xml.bz2",
+            "enwiki-2026-10-01-p100p1.xml.bz2",
+            "enwiki-2026-10-01-p0p100.xml.bz2",
+            "enwiki-2026-10-01-p1p2p3.xml.bz2",
+        ] {
+            members[0].relative_path = invalid.into();
+            assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
+        }
+        members[0].relative_path = "enwiki-2026-10-01-p1p100.xml.bz2".into();
+        members[0].sha256 = "not-a-digest".into();
+        assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
+        members[0].sha256 = "a".repeat(64);
+        members.push(members[0].clone());
+        assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
     }
 
     #[test]
