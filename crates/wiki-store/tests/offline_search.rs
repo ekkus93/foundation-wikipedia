@@ -407,10 +407,8 @@ fn corrupt_persisted_fts_is_rebuilt_without_touching_source_or_media() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-recover-fts-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-recover-fts-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let record = PageRecord::Article(Box::new(article(1, "Earth", "gravity")));
     let mut bytes = Vec::new();
@@ -432,7 +430,10 @@ fn corrupt_persisted_fts_is_rebuilt_without_touching_source_or_media() {
         fs::read_dir(&root)
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts."))
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".offline-fts."))
             .count(),
         0
     );
@@ -494,7 +495,10 @@ fn failed_persisted_rebuild_leaves_previously_searchable_file_unchanged() {
         fs::read_dir(&root)
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts."))
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".offline-fts."))
             .count(),
         0
     );

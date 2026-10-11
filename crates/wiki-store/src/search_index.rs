@@ -205,7 +205,11 @@ impl OfflineSearchIndex {
                     std::process::id(),
                     NEXT_REBUILD_TEMP.fetch_add(1, Ordering::Relaxed)
                 ));
-                match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                match OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&candidate)
+                {
                     Ok(file) => Some(Ok((candidate, file))),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
                     Err(error) => Some(Err(SearchError::Io(error))),
