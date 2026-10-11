@@ -136,6 +136,7 @@ pub fn join_pages_with_tombstones(
     deleted: Vec<PageKey>,
 ) -> Result<Vec<JoinedPage>, JoinError> {
     let mut tombstones = BTreeSet::new();
+    let mut project: Option<String> = None;
     for key in deleted {
         if key.page_id == 0
             || key.project.is_empty()
@@ -146,11 +147,18 @@ pub fn join_pages_with_tombstones(
         {
             return Err(JoinError::InvalidIdentity);
         }
+        if project.as_deref().is_some_and(|name| name != key.project) {
+            return Err(JoinError::MixedProject(key));
+        }
+        project = Some(key.project.clone());
         if !tombstones.insert(key.clone()) {
             return Err(JoinError::DuplicateTombstone(key));
         }
     }
     for item in structured.iter().chain(&rendered).chain(&categories) {
+        if project.as_deref().is_some_and(|name| name != item.page.project) {
+            return Err(JoinError::MixedProject(item.page.clone()));
+        }
         if tombstones.contains(&item.page) {
             return Err(JoinError::DeletedPageConflict(item.page.clone()));
         }
@@ -276,6 +284,28 @@ mod tests {
         assert_eq!(
             join_pages_with_tombstones(vec![], vec![], vec![], vec![page.clone(), page.clone()]),
             Err(JoinError::DuplicateTombstone(page))
+        );
+    }
+
+    #[test]
+    fn rejects_foreign_project_tombstones() {
+        let foreign = PageKey {
+            project: "frwiki".into(),
+            page_id: 9,
+        };
+        let local = part(1, "s").page;
+        assert_eq!(
+            join_pages_with_tombstones(
+                vec![part(1, "s")],
+                vec![part(1, "h")],
+                vec![part(1, "c")],
+                vec![foreign.clone()]
+            ),
+            Err(JoinError::MixedProject(local.clone()))
+        );
+        assert_eq!(
+            join_pages_with_tombstones(vec![], vec![], vec![], vec![local, foreign.clone()]),
+            Err(JoinError::MixedProject(foreign))
         );
     }
 
