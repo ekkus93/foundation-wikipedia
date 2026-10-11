@@ -88,9 +88,7 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
 }
 
 fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
-    let range = name
-        .strip_prefix(prefix)?
-        .strip_suffix(".xml.bz2")?;
+    let range = name.strip_prefix(prefix)?.strip_suffix(".xml.bz2")?;
     let (first, last) = range.split_once('p')?;
     let start = first.parse::<u64>().ok()?;
     let end = last.parse::<u64>().ok()?;
