@@ -156,7 +156,10 @@ pub fn join_pages_with_tombstones(
         }
     }
     for item in structured.iter().chain(&rendered).chain(&categories) {
-        if project.as_deref().is_some_and(|name| name != item.page.project) {
+        if project
+            .as_deref()
+            .is_some_and(|name| name != item.page.project)
+        {
             return Err(JoinError::MixedProject(item.page.clone()));
         }
         if tombstones.contains(&item.page) {
