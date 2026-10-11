@@ -65,6 +65,24 @@ class ExtractTests(unittest.TestCase):
             self.extract()
         self.assertFalse(self.output.exists())
 
+    def test_replaced_source_after_verification_does_not_publish(self):
+        from unittest.mock import patch
+        import extract_public_dump_pages as module
+
+        original = module._verified_source
+
+        def replace_source(*args):
+            opened, metadata = original(*args)
+            self.shard.rename(self.root / "original-shard")
+            self.write_xml(XML.replace(b"Energy = mc^2", b"replaced"))
+            return opened, metadata
+
+        with patch.object(module, "_verified_source", side_effect=replace_source):
+            with self.assertRaisesRegex(DumpExtractionError, "source changed during extraction"):
+                self.extract()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_mismatch_and_malformed_xml_leave_no_output(self):
         with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):
             extract_current_dump(self.shard, "0" * 64, "enwiki", self.output)

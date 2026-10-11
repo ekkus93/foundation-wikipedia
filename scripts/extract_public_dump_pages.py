@@ -70,20 +70,57 @@ class _BoundedXmlReader:
         return data
 
 
+def _source_identity(metadata):
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size,
+            metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_nlink)
+
+
 def _verified_source(path, expected_sha256):
+    """Keep the verified source descriptor open through extraction."""
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise DumpExtractionError("invalid expected SHA-256")
     if path.is_symlink():
         raise DumpExtractionError("symlinked source shard")
-    metadata = path.stat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-        raise DumpExtractionError("source must be a private regular file")
-    digest = hashlib.sha256()
-    with path.open("rb") as reader:
-        for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0))
+    except OSError as error:
+        raise DumpExtractionError("could not safely open source shard") from error
+    source = os.fdopen(descriptor, "rb")
+    try:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise DumpExtractionError("source must be a private regular file")
+        if _source_identity(path.lstat()) != _source_identity(metadata):
+            raise DumpExtractionError("source changed during validation")
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
+        if digest.hexdigest() != expected_sha256.lower():
+            raise DumpExtractionError("compressed source SHA-256 mismatch")
+        source.seek(0)
+        return source, metadata
+    except BaseException:
+        source.close()
+        raise
+
+
+def _verify_unchanged_source(path, source, initial, expected_sha256):
+    """Recheck the opened bytes and pathname identity before publication."""
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise DumpExtractionError("source changed during extraction") from error
+    if (_source_identity(os.fstat(source.fileno())) != _source_identity(initial)
+            or _source_identity(metadata) != _source_identity(initial)
+            or not stat.S_ISREG(metadata.st_mode)):
+        raise DumpExtractionError("source changed during extraction")
+    source.seek(0)
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        digest.update(chunk)
     if digest.hexdigest() != expected_sha256.lower():
-        raise DumpExtractionError("compressed source SHA-256 mismatch")
+        raise DumpExtractionError("source changed during extraction")
 
 
 def _page_record(page, project, source_sha256, max_text_bytes):
@@ -147,7 +184,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     first_id, last_id = int(partition.group(2)), int(partition.group(3))
     if not 0 < first_id <= last_id:
         raise DumpExtractionError("invalid page-ID partition")
-    _verified_source(path, expected_sha256)
+    source, original_metadata = _verified_source(path, expected_sha256)
     temporary = None
     count = 0
     seen = set()
@@ -156,7 +193,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                          prefix=".dump-pages.", suffix=".tmp",
                                          delete=False) as writer:
             temporary = Path(writer.name)
-            with bz2.open(path, "rb") as compressed:
+            with bz2.BZ2File(source, "rb") as compressed:
                 reader = _BoundedXmlReader(compressed, max_uncompressed_bytes)
                 root = None
                 try:
@@ -186,6 +223,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                     raise DumpExtractionError("empty MediaWiki XML export")
             writer.flush()
             os.fsync(writer.fileno())
+        _verify_unchanged_source(path, source, original_metadata, expected_sha256)
         try:
             os.link(temporary, output)
         except FileExistsError as error:
@@ -197,6 +235,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
             os.close(directory)
         return count
     finally:
+        source.close()
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
