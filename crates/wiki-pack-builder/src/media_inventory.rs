@@ -5,9 +5,9 @@
 //! infobox output. Opaque HTML fallback is rejected until that scan exists.
 
 use std::collections::{BTreeMap, BTreeSet};
+use wiki_model::{Article, Block, BlockContent, ModelError, Section};
 use wiki_store::media_inventory::RequiredMedia;
 use wiki_store::media_objects::MediaObjectStore;
-use wiki_model::{Article, Block, BlockContent, ModelError, Section};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InventoryError {
