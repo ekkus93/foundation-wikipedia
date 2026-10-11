@@ -3,11 +3,12 @@
 
 use crate::catalog::{CatalogError, SnapshotCatalog};
 use rusqlite::{params, Connection, Transaction};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, PageRecord, Section};
 
 const MAX_ARTICLES: usize = 100_000;
+const MAX_REDIRECTS: usize = 500_000;
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUERY_BYTES: usize = 8192;
 
@@ -18,6 +19,7 @@ pub enum SearchError {
     Catalog(CatalogError),
     Duplicate(ArticleKey),
     TooManyArticles,
+    TooManyRedirects,
     TooMuchText(ArticleKey),
     InvalidIdentity,
     StaleIndex,
@@ -190,10 +192,14 @@ impl OfflineSearchIndex {
         Ok(())
     }
 
-    /// Rebuild directly from a verified immutable catalog's individual frames.
-    /// Redirect records are skipped, and a corrupt late frame rolls back the
-    /// derived index rather than publishing an incomplete search corpus.
-    /// Source authenticity and completeness must be checked by the caller.
+    /// Rebuild directly from digest/identity-verified catalog frames.
+    /// Two streaming passes allow redirect titles to resolve to the canonical
+    /// installed article, never to a standalone redirect search result.
+    ///
+    /// All article indexing, alias enrichment and redirect resolution share
+    /// a single transaction. Any late corruption, loop, dangling reference or
+    /// resource limit aborts, preserving the previous complete derived index.
+    /// Source authenticity and complete snapshot membership are caller duties.
     pub fn rebuild_from_catalog(
         &mut self,
         catalog: &SnapshotCatalog,
@@ -202,11 +208,65 @@ impl OfflineSearchIndex {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM offline_article_fts", [])?;
         let mut seen = BTreeSet::new();
-        let mut count = 0;
+        let mut rows = BTreeMap::new();
+        let mut article_count = 0;
+        // First pass: index verified articles and record their FTS rowids.
         catalog.visit_records(root, |record| {
             if let PageRecord::Article(article) = record {
-                index_article(&tx, &mut seen, count, *article)?;
-                count += 1;
+                let key = article.key.clone();
+                let revision = article.revision.revision_id;
+                index_article(&tx, &mut seen, article_count, *article)?;
+                rows.insert(key, (tx.last_insert_rowid(), revision));
+                article_count += 1;
+            }
+            Ok::<(), SearchError>(())
+        })?;
+        // Second pass: verified redirect names join only to an indexed article.
+        // Never produce a second result for an alias or trust a redirect
+        // without reading every link of its exact catalog chain.
+        let mut redirect_count = 0;
+        catalog.visit_records(root, |record| {
+            if let PageRecord::Redirect(redirect) = record {
+                if redirect_count >= MAX_REDIRECTS {
+                    return Err(SearchError::TooManyRedirects);
+                }
+                redirect_count += 1;
+                if redirect.title.len() > MAX_TEXT_BYTES {
+                    return Err(SearchError::TooMuchText(redirect.from));
+                }
+                let (target, resolved) = catalog
+                    .resolve_title(root, &redirect.from.project, &redirect.title)?
+                    .ok_or(SearchError::StaleIndex)?;
+                let PageRecord::Article(article) = resolved else {
+                    return Err(SearchError::StaleIndex);
+                };
+                let (rowid, indexed_revision) =
+                    rows.get(&target).ok_or(SearchError::StaleIndex)?;
+                if *indexed_revision != article.revision.revision_id {
+                    return Err(SearchError::StaleIndex);
+                }
+                let (body_size, title_size): (i64, i64) = tx.query_row(
+                    "SELECT length(CAST(body AS BLOB)), length(CAST(title AS BLOB))
+                     FROM offline_article_fts WHERE rowid=?1",
+                    params![rowid],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                let bytes = usize::try_from(body_size)
+                    .ok()
+                    .zip(usize::try_from(title_size).ok())
+                    .and_then(|(body, title)| {
+                        body.checked_add(title)?
+                            .checked_add(1)?
+                            .checked_add(redirect.title.len())
+                    })
+                    .ok_or(SearchError::InvalidIdentity)?;
+                if bytes > MAX_TEXT_BYTES {
+                    return Err(SearchError::TooMuchText(target));
+                }
+                tx.execute(
+                    "UPDATE offline_article_fts SET body=body || ' ' || ?1 WHERE rowid=?2",
+                    params![redirect.title, rowid],
+                )?;
             }
             Ok::<(), SearchError>(())
         })?;

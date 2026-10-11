@@ -184,7 +184,14 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         index.resolve_hit(&catalog, &root, &stale),
         Err(SearchError::StaleIndex)
     ));
-    assert!(index.search("alias", 10).unwrap().is_empty());
+    let alias_hits = index.search("alias", 10).unwrap();
+    assert_eq!(alias_hits.len(), 1);
+    assert_eq!(alias_hits[0].key.page_id, 1);
+    assert_eq!(alias_hits[0].revision_id, 42);
+    assert_eq!(
+        index.resolve_hit(&catalog, &root, &alias_hits[0]).unwrap().title,
+        "Physics"
+    );
 
     // The first article is valid but the last frame is corrupt: the old
     // complete index must remain visible after the attempted replacement.
@@ -213,4 +220,76 @@ fn offline_search_matches_display_title_and_unicode_aliases() {
         assert_eq!(hits[0].key.page_id, 42);
         assert_eq!(hits[0].revision_id, 42);
     }
+}
+
+
+#[test]
+fn redirect_chains_unicode_and_single_canonical_hit() {
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("wiki-redirect-fts-{}-{stamp}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let records = [
+        PageRecord::Article(Box::new(article(1, "Earth", "terrestrial sphere"))),
+        PageRecord::Redirect(Redirect {
+            from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+            title: "地球".into(),
+            to: ArticleKey { project: "enwiki".into(), page_id: 11 },
+        }),
+        PageRecord::Redirect(Redirect {
+            from: ArticleKey { project: "enwiki".into(), page_id: 11 },
+            title: "The Blue Planet".into(),
+            to: ArticleKey { project: "enwiki".into(), page_id: 1 },
+        }),
+    ];
+    let mut bytes = Vec::new();
+    let mut frames = Vec::new();
+    for record in &records {
+        let start = bytes.len() as u64;
+        append_record_frame(&mut bytes, record).unwrap();
+        frames.push((start, bytes.len() as u64 - start));
+    }
+    fs::write(root.join("redirects.shard"), &bytes).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    for (offset, length) in frames {
+        catalog.insert_verified(&root, "redirects.shard", offset, length).unwrap();
+    }
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index.rebuild_from_catalog(&catalog, &root).unwrap();
+    for query in ["地球", "blue", "sphere"] {
+        let hits = index.search(query, 5).unwrap();
+        assert_eq!(hits.len(), 1, "unexpected hit count for {query}");
+        assert_eq!(hits[0].key.page_id, 1);
+        assert_eq!(hits[0].revision_id, 42);
+        assert_eq!(index.resolve_hit(&catalog, &root, &hits[0]).unwrap().title, "Earth");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bad_redirect_chain_preserves_last_good_index() {
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("wiki-redirect-fail-{}-{stamp}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let mut bytes = Vec::new();
+    let redirect = PageRecord::Redirect(Redirect {
+        from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+        title: "Lost title".into(),
+        to: ArticleKey { project: "enwiki".into(), page_id: 999 },
+    });
+    append_record_frame(&mut bytes, &PageRecord::Article(Box::new(article(1, "Earth", "new text")))).unwrap();
+    let next = bytes.len() as u64;
+    append_record_frame(&mut bytes, &redirect).unwrap();
+    fs::write(root.join("broken.shard"), &bytes).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    catalog.insert_verified(&root, "broken.shard", 0, next).unwrap();
+    catalog.insert_verified(&root, "broken.shard", next, bytes.len() as u64 - next).unwrap();
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index.rebuild(&[article(2, "Previous", "retained")]).unwrap();
+    assert!(matches!(
+        index.rebuild_from_catalog(&catalog, &root),
+        Err(SearchError::Catalog(_))
+    ));
+    assert_eq!(index.search("retained", 5).unwrap()[0].key.page_id, 2);
+    assert!(index.search("new", 5).unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
 }
