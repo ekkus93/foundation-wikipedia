@@ -122,7 +122,7 @@ def _check_inventory(data, project, date):
 
 def discover_completed_export(project, fetch=fetch_official):
     """Find newest published checksum inventory, skipping incomplete dates."""
-    if not re.fullmatch(r"[a-z0-9_]+", project):
+    if len(project) > 255 or not re.fullmatch(r"[a-z0-9_]+", project):
         raise PublicationError("invalid wiki project")
     index_url = BASE + project + "/"
     directory = _DirectoryLinks()
