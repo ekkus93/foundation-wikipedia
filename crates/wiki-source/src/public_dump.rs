@@ -32,8 +32,14 @@ fn safe_relative_path(path: &str) -> bool {
         && path
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/'))
+        && path.split('/').count() <= 64
         && path.split('/').all(|part| {
-            !part.is_empty() && part != "." && part != ".." && !crate::windows_device_name(part)
+            !part.is_empty()
+                && part.len() <= 255
+                && part != "."
+                && part != ".."
+                && !part.ends_with('.')
+                && !crate::windows_device_name(part)
         })
 }
 
@@ -185,6 +191,8 @@ mod tests {
             "C:drive.xml.bz2",
             "file name.xml.bz2",
             "dir/./file.xml.bz2",
+            "dir./file.xml.bz2",
+            "file.xml.bz2.",
             "CON.xml.bz2",
             "dir/NUL.txt",
             "COM1.xml.bz2",
