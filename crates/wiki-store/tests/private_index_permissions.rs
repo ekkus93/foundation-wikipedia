@@ -10,10 +10,8 @@ fn new_offline_index_is_owner_only() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-private-index-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-private-index-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let path = root.join("index.sqlite");
     let index = OfflineSearchIndex::open(&path).unwrap();
