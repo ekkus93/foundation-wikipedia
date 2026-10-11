@@ -79,7 +79,13 @@ pub fn join_pages(
     let mut r = collect(rendered, false)?;
     let mut c = collect(categories, true)?;
     let mut joined = Vec::new();
+    let mut batch_generation: Option<&str> = None;
     for (key, source) in s {
+        // A batch must not silently combine independently valid generations.
+        if batch_generation.is_some_and(|expected| expected != source.generation_id) {
+            return Err(JoinError::GenerationMismatch(key));
+        }
+        batch_generation = Some(&source.generation_id);
         let html = r
             .remove(&key)
             .ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
@@ -170,6 +176,25 @@ mod tests {
         );
         assert_eq!(result[0].rendered_html, "h1");
         assert!(result[1].categories.is_empty());
+    }
+
+    #[test]
+    fn rejects_locally_matching_pages_from_different_generations() {
+        let first = part(1, "s1");
+        let mut second = part(2, "s2");
+        second.generation_id = "20261010".into();
+        let mut html = second.clone();
+        html.payload = "h2".into();
+        let mut categories = second.clone();
+        categories.payload = "c2".into();
+        assert_eq!(
+            join_pages(
+                vec![first, second.clone()],
+                vec![part(1, "h1"), html],
+                vec![part(1, "c1"), categories]
+            ),
+            Err(JoinError::GenerationMismatch(second.page))
+        );
     }
 
     #[test]
