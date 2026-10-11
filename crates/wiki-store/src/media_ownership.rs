@@ -138,6 +138,63 @@ impl MediaRegistry {
         Ok(digest)
     }
 
+
+    /// Register all staged media and grant their owner in one SQLite transaction.
+    /// A failed item cannot leave a partially owned pack. The caller must
+    /// persist and verify every object before calling this method.
+    pub fn register_verified_owned_batch(
+        &mut self,
+        assets: &[(&[u8], &MediaNotice)],
+        kind: OwnerKind,
+        owner_id: &str,
+    ) -> Result<Vec<String>, MediaRegistryError> {
+        if !valid_owner_id(owner_id)
+            || assets.is_empty()
+            || assets.len() > 100_000
+            || assets.iter().any(|(bytes, notice)| {
+                bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 || !notice.validate()
+            })
+        {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let tx = self.conn.transaction()?;
+        let mut digests = Vec::with_capacity(assets.len());
+        for &(content, notice) in assets {
+            let bytes = i64::try_from(content.len()).map_err(|_| MediaRegistryError::InvalidInput)?;
+            let digest = format!("{:x}", Sha256::digest(content));
+            tx.execute(
+                "INSERT OR IGNORE INTO media_objects(digest,bytes) VALUES (?1,?2)",
+                params![digest, bytes],
+            )?;
+            let actual: i64 = tx.query_row(
+                "SELECT bytes FROM media_objects WHERE digest=?1",
+                params![digest],
+                |row| row.get(0),
+            )?;
+            if actual != bytes {
+                return Err(MediaRegistryError::ConflictingSize);
+            }
+            tx.execute(
+                "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
+                 VALUES (?1,?2,?3,?4,?5)",
+                params![
+                    digest,
+                    notice.mime,
+                    notice.source_url,
+                    notice.creator,
+                    notice.license
+                ],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO media_owners(digest,kind,owner_id) VALUES (?1,?2,?3)",
+                params![digest, kind.as_str(), owner_id],
+            )?;
+            digests.push(digest);
+        }
+        tx.commit()?;
+        Ok(digests)
+    }
+
     pub fn add_owner(
         &self,
         digest: &str,

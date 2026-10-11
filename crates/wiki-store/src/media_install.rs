@@ -49,6 +49,40 @@ pub fn install_owned_media(
     Ok(stored_digest)
 }
 
+
+/// Stage every object before atomically registering attribution and ownership
+/// for the complete batch. A failed stage may leave unowned deduplicated bytes,
+/// but cannot leave a partially registered pack. This is not pack activation:
+/// the caller must authenticate the manifest and verify required visuals.
+pub fn install_owned_media_batch(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<Vec<String>, MediaInstallError> {
+    if !valid_owner_id(owner_id)
+        || assets.is_empty()
+        || assets.len() > 100_000
+        || assets.iter().any(|(bytes, notice)| {
+            bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 || !notice.validate()
+        })
+    {
+        return Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let mut staged = Vec::with_capacity(assets.len());
+    for &(content, _) in assets {
+        staged.push(store.store_bytes(content).map_err(MediaInstallError::Store)?);
+    }
+    let registered = registry
+        .register_verified_owned_batch(assets, kind, owner_id)
+        .map_err(MediaInstallError::Registry)?;
+    if registered != staged {
+        return Err(MediaInstallError::IdentityMismatch);
+    }
+    Ok(staged)
+}
+
 /// Rehash every registered object for one owner. An authenticated pack
 /// manifest must separately prove that this owner has *all* required media.
 pub fn verify_registered_owner_bytes(
@@ -113,6 +147,79 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+
+    #[test]
+    fn batch_ownership_is_atomic_and_persists_across_reopen() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-batch-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let db = root.join("owners.sqlite");
+        let a = notice("Creator A");
+        let b = notice("Creator B");
+        let bad = MediaNotice {
+            license: " ".into(),
+            ..notice("Bad")
+        };
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let first: &[(&[u8], &MediaNotice)] = &[(b"diagram", &a), (b"figure", &bad)];
+        assert!(matches!(
+            install_owned_media_batch(&store, &mut registry, first, OwnerKind::Pack, "physics"),
+            Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().is_empty());
+        assert!(registry.unowned_digests().unwrap().is_empty());
+
+        let assets: &[(&[u8], &MediaNotice)] = &[
+            (b"diagram", &a),
+            (b"figure", &b),
+            (b"diagram", &b),
+        ];
+        let digests =
+            install_owned_media_batch(&store, &mut registry, assets, OwnerKind::Pack, "physics")
+                .unwrap();
+        assert_eq!(digests[0], digests[2]);
+        assert_eq!(registry.notice_count(&digests[0]).unwrap(), 2);
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().len(), 2);
+        registry.add_owner(&digests[0], OwnerKind::UserPin, "reader").unwrap();
+        drop(registry);
+
+        let registry = MediaRegistry::open(&db).unwrap();
+        let required = vec![
+            RequiredMedia {
+                digest: digests[0].clone(),
+                bytes: 7,
+            },
+            RequiredMedia {
+                digest: digests[1].clone(),
+                bytes: 6,
+            },
+        ];
+        assert_eq!(
+            verify_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "physics",
+                &required
+            )
+            .unwrap(),
+            13
+        );
+        registry.remove_owner(&digests[0], OwnerKind::Pack, "physics").unwrap();
+        registry.remove_owner(&digests[1], OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(registry.unowned_digests().unwrap(), vec![digests[1].clone()]);
+        assert_eq!(store.read_verified(&digests[0]).unwrap(), b"diagram");
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
