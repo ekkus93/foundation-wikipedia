@@ -107,13 +107,17 @@ pub fn check_media_completeness(
             .bytes
             .filter(|value| *value > 0)
             .ok_or_else(|| MediaError::MissingMetadata(resource.id.clone()))?;
+        // Content-addressed object keys are canonical lowercase SHA-256.
+        // Normalize the declared digest before lookup and deduplication so
+        // case variants cannot inflate installed-byte accounting.
+        let canonical_hash = hash.to_ascii_lowercase();
         let observed = available_verified
-            .get(hash)
+            .get(&canonical_hash)
             .ok_or_else(|| MediaError::MissingVerifiedObject(resource.id.clone()))?;
         if *observed != size {
             return Err(MediaError::ByteLengthMismatch(resource.id.clone()));
         }
-        if counted.insert(hash) {
+        if counted.insert(canonical_hash) {
             total_bytes = total_bytes
                 .checked_add(size)
                 .ok_or_else(|| MediaError::MissingMetadata(resource.id.clone()))?;

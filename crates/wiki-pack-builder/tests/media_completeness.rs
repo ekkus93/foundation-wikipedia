@@ -101,3 +101,13 @@ fn shared_objects_dedupe_and_duplicate_logical_ids_are_rejected() {
         Err(MediaError::DuplicateId("image-1".into()))
     );
 }
+
+#[test]
+fn uppercase_digest_aliases_deduplicate_against_canonical_object_keys() {
+    let first = required("figure-a", ResourceKind::Image);
+    let mut second = required("figure-b", ResourceKind::Diagram);
+    second.sha256 = Some("A".repeat(64));
+    let complete = check_media_completeness(&[first, second], &verified()).unwrap();
+    assert_eq!(complete.required_objects, 1);
+    assert_eq!(complete.unique_verified_bytes, 128);
+}
