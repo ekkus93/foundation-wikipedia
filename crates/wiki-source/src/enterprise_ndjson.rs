@@ -136,7 +136,15 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<PageKey>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, BatchImportError> {
-    if generation_id.trim().is_empty() || generation_id != generation_id.trim() {
+    if generation_id.trim().is_empty()
+        || generation_id != generation_id.trim()
+        || generation_id.len() > 255
+        || generation_id.starts_with('.')
+        || generation_id.ends_with('.')
+        || !generation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
         return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
     }
     let structured: Vec<StructuredArticle> =
@@ -287,6 +295,22 @@ mod tests {
                 limit: MAX_BATCH_RECORDS,
             }
         );
+    }
+
+    #[test]
+    fn rejects_unsafe_generation_labels_before_parsing() {
+        for generation in ["../outside", "a/b", ".hidden", "trailing.", "a b", "a".repeat(256).as_str()] {
+            let result = join_enterprise_ndjson(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                generation,
+                vec![],
+            );
+            assert_eq!(
+                result,
+                Err(BatchImportError::Join(EnterpriseError::InvalidGeneration))
+            );
+        }
     }
 
     #[test]
