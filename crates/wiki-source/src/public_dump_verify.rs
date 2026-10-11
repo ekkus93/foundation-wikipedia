@@ -9,6 +9,7 @@ pub enum DumpVerifyError {
     InvalidMember,
     InvalidLimit,
     TooLarge,
+    EmptyMember,
     DigestMismatch,
     Io(std::io::Error),
 }
@@ -45,8 +46,54 @@ pub fn verify_dump_member<R: Read>(
         }
         hash.update(&chunk[..n]);
     }
+    if total == 0 {
+        return Err(DumpVerifyError::EmptyMember);
+    }
     if !format!("{:x}", hash.finalize()).eq_ignore_ascii_case(&member.sha256) {
         return Err(DumpVerifyError::DigestMismatch);
     }
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn member(bytes: &[u8]) -> DumpChecksum {
+        DumpChecksum {
+            relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_member_even_with_matching_empty_digest() {
+        let mut input = Cursor::new(Vec::<u8>::new());
+        assert!(matches!(
+            verify_dump_member(&mut input, &member(b""), 1024),
+            Err(DumpVerifyError::EmptyMember)
+        ));
+    }
+
+    #[test]
+    fn streams_nonempty_member_and_rejects_tampering_and_budget() {
+        let content = b"verified dump bytes";
+        let descriptor = member(content);
+        let mut input = Cursor::new(content);
+        assert_eq!(
+            verify_dump_member(&mut input, &descriptor, 1024).unwrap(),
+            content.len() as u64
+        );
+        let mut corrupted = Cursor::new(b"corrupted dump bytes");
+        assert!(matches!(
+            verify_dump_member(&mut corrupted, &descriptor, 1024),
+            Err(DumpVerifyError::DigestMismatch)
+        ));
+        let mut input = Cursor::new(content);
+        assert!(matches!(
+            verify_dump_member(&mut input, &descriptor, 4),
+            Err(DumpVerifyError::TooLarge)
+        ));
+    }
 }
