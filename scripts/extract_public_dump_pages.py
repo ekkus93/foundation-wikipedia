@@ -149,7 +149,14 @@ def _page_record(page, project, source_sha256, max_text_bytes):
            for key in text_node.attrib):
         raise DumpExtractionError("unsupported revision text attributes")
     body = text_node.text or ""
-    if len(title.encode("utf-8")) > 4096 or len(body.encode("utf-8")) > max_text_bytes:
+    body_bytes = len(body.encode("utf-8"))
+    declared_bytes = text_node.get("bytes")
+    if declared_bytes is not None and (
+        not re.fullmatch(r"(0|[1-9][0-9]*)", declared_bytes)
+        or int(declared_bytes) != body_bytes
+    ):
+        raise DumpExtractionError("revision text byte count mismatch")
+    if len(title.encode("utf-8")) > 4096 or body_bytes > max_text_bytes:
         raise DumpExtractionError("oversized page title or wikitext")
     try:
         namespace = int(_text(page, "ns"))

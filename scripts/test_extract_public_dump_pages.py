@@ -55,6 +55,25 @@ class ExtractTests(unittest.TestCase):
         first = json.loads(self.output.read_text().splitlines()[0])
         self.assertEqual(first["wikitext"], "")
 
+    def test_declared_wikitext_byte_count_matches_utf8(self):
+        body = "Énergie π".encode("utf-8")
+        xml = XML.replace(b"Energy = mc^2", body)
+        xml = xml.replace(b"<text xml:space=",
+                          f"<text bytes=\"{len(body)}\" xml:space=".encode(), 1)
+        self.write_xml(xml)
+        self.assertEqual(self.extract(), 2)
+        self.assertEqual(json.loads(self.output.read_text().splitlines()[0])["wikitext"],
+                         "Énergie π")
+        self.output.unlink()
+        for value in ("0", "-1", "01", "garbage", ""):
+            malformed = xml.replace(f"bytes=\"{len(body)}\"".encode(),
+                                    f"bytes=\"{value}\"".encode(), 1)
+            self.write_xml(malformed)
+            with self.assertRaisesRegex(DumpExtractionError, "byte count mismatch"):
+                self.extract()
+            self.assertFalse(self.output.exists())
+            self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
