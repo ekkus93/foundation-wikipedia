@@ -20,6 +20,7 @@ pub enum SearchError {
     TooManyArticles,
     TooMuchText(ArticleKey),
     InvalidIdentity,
+    StaleIndex,
 }
 impl From<CatalogError> for SearchError {
     fn from(error: CatalogError) -> Self {
@@ -211,6 +212,26 @@ impl OfflineSearchIndex {
         })?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Resolve a search hit against the immutable catalog, refusing to open
+    /// a different revision (or a redirect) from the one actually indexed.
+    /// A stale hit requires a derived-index rebuild, never a silent fallback.
+    pub fn resolve_hit(
+        &self,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+        hit: &SearchHit,
+    ) -> Result<Article, SearchError> {
+        match catalog.read_record(root, &hit.key)? {
+            Some(PageRecord::Article(article))
+                if article.revision.revision_id == hit.revision_id
+                    && article.title == hit.title =>
+            {
+                Ok(*article)
+            }
+            _ => Err(SearchError::StaleIndex),
+        }
     }
 
     /// Local-only title-boosted lexical ranking, at most 100 results.
