@@ -164,8 +164,9 @@ def _page_record(page, project, source_sha256, max_text_bytes):
         raise DumpExtractionError("revision text byte count mismatch")
     if len(title.encode("utf-8")) > 4096 or body_bytes > max_text_bytes:
         raise DumpExtractionError("oversized page title or wikitext")
+    namespace_text = _text(page, "ns")
     try:
-        namespace = int(_text(page, "ns"))
+        namespace = int(namespace_text)
     except (ValueError, TypeError):
         raise DumpExtractionError("missing page namespace") from None
     redirect = _child(page, "redirect")
