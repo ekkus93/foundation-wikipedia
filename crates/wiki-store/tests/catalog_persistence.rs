@@ -54,6 +54,17 @@ fn sqlite_catalog_survives_reopen_and_detects_corrupt_shard() {
         catalog.read_record(&root, &from),
         Err(CatalogError::Io(_))
     ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let outside = root.join("outside.shard");
+        fs::write(&outside, &frame).unwrap();
+        symlink(&outside, &shard).unwrap();
+        assert!(matches!(
+            catalog.read_record(&root, &from),
+            Err(CatalogError::InvalidFrame)
+        ));
+    }
     drop(catalog);
     fs::remove_dir_all(root).unwrap();
 }
