@@ -36,7 +36,7 @@ pub enum SourceError {
 }
 
 /// Reject names that alias Windows device files even when given an extension.
-fn windows_device_name(value: &str) -> bool {
+pub(crate) fn windows_device_name(value: &str) -> bool {
     let upper = value.to_ascii_uppercase();
     let base = upper.split('.').next().unwrap_or("");
     let numbered = base.len() == 4

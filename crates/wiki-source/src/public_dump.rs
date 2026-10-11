@@ -34,7 +34,7 @@ fn safe_relative_path(path: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/'))
         && path
             .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
+            .all(|part| !part.is_empty() && part != "." && part != ".." && !crate::windows_device_name(part))
 }
 
 /// Parse GNU sha256sum-format lines (digest, two spaces or space-asterisk,
@@ -117,6 +117,9 @@ mod tests {
             "C:drive.xml.bz2",
             "file name.xml.bz2",
             "dir/./file.xml.bz2",
+            "CON.xml.bz2",
+            "dir/NUL.txt",
+            "COM1.xml.bz2",
         ] {
             assert_eq!(
                 parse_sha256sums(&line(path)),
