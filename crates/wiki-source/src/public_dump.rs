@@ -98,7 +98,7 @@ mod tests {
         );
         let parsed = parse_sha256sums(&input).unwrap();
         assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].relative_path, "enwiki-2026-10-01-p1p100.xml.bz2");
+        assert_eq!(parsed[0].relative_path, "enwiki-2026-10-01-p101p200.xml.bz2");
         assert_eq!(parsed[0].sha256, "a".repeat(64));
         assert!(parse_sha256sums(&format!("{} *nested/enwiki.xml.bz2", "a".repeat(64))).is_ok());
     }
