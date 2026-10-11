@@ -5,6 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+const MAX_MEDIA_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_DECLARED_MEDIA_BYTES: u64 = 1_u64 << 40;
+const MAX_RESOURCES: usize = 100_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     Image,
@@ -39,6 +43,7 @@ pub enum MediaError {
     ByteLengthMismatch(String),
     MissingPreview(String),
     InvalidStream(String),
+    ResourceBudget(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +64,9 @@ pub fn check_media_completeness(
     resources: &[Resource],
     available_verified: &BTreeMap<String, u64>,
 ) -> Result<MediaCompleteness, MediaError> {
+    if resources.len() > MAX_RESOURCES {
+        return Err(MediaError::ResourceBudget("resource-count".into()));
+    }
     let mut by_id = BTreeMap::new();
     for resource in resources {
         if resource.id.trim().is_empty()
@@ -111,6 +119,9 @@ pub fn check_media_completeness(
         // Normalize the declared digest before lookup and deduplication so
         // case variants cannot inflate installed-byte accounting.
         let canonical_hash = hash.to_ascii_lowercase();
+        if size > MAX_MEDIA_OBJECT_BYTES {
+            return Err(MediaError::ResourceBudget(resource.id.clone()));
+        }
         let observed = available_verified
             .get(&canonical_hash)
             .ok_or_else(|| MediaError::MissingVerifiedObject(resource.id.clone()))?;
@@ -120,7 +131,8 @@ pub fn check_media_completeness(
         if counted.insert(canonical_hash) {
             total_bytes = total_bytes
                 .checked_add(size)
-                .ok_or_else(|| MediaError::MissingMetadata(resource.id.clone()))?;
+                .filter(|total| *total <= MAX_DECLARED_MEDIA_BYTES)
+                .ok_or_else(|| MediaError::ResourceBudget(resource.id.clone()))?;
         }
     }
 

@@ -111,3 +111,15 @@ fn uppercase_digest_aliases_deduplicate_against_canonical_object_keys() {
     assert_eq!(complete.required_objects, 1);
     assert_eq!(complete.unique_verified_bytes, 128);
 }
+
+#[test]
+fn implausibly_large_visual_objects_are_rejected_even_if_claimed_verified() {
+    let mut image = required("oversized-map", ResourceKind::Map);
+    image.bytes = Some(64 * 1024 * 1024 + 1);
+    let mut observed = verified();
+    observed.insert("a".repeat(64), image.bytes.unwrap());
+    assert_eq!(
+        check_media_completeness(&[image], &observed),
+        Err(MediaError::ResourceBudget("oversized-map".into()))
+    );
+}
