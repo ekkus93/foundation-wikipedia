@@ -60,6 +60,18 @@ class _BoundedXmlReader:
             if not (data.startswith(b"<?xml") or data.startswith(b"<mediawiki")
                     or data.startswith(b"\xef\xbb\xbf<?xml")):
                 raise DumpExtractionError("expected UTF-8 MediaWiki XML")
+            # ElementTree can decode legacy single-byte encodings. An offline
+            # canonical importer must not silently accept non-UTF-8 source text.
+            if data.startswith(b"<?xml") or data.startswith(b"\xef\xbb\xbf<?xml"):
+                declaration = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+                header, separator, _ = declaration.partition(b"?>")
+                if not separator:
+                    raise DumpExtractionError("invalid XML declaration")
+                encoding = re.search(
+                    rb"""\bencoding\s*=\s*(['"])([^'"]+)\1""", header, re.IGNORECASE
+                )
+                if encoding and encoding.group(2).lower() != b"utf-8":
+                    raise DumpExtractionError("expected UTF-8 MediaWiki XML")
         self.count += len(data)
         if self.count > self.maximum:
             raise DumpExtractionError("decompressed XML exceeds budget")

@@ -110,6 +110,18 @@ class ExtractTests(unittest.TestCase):
             self.extract(max_text_bytes=5)
         self.assertFalse(self.output.exists())
 
+    def test_rejects_non_utf8_declarations_before_page_import(self):
+        for encoding in (b"ISO-8859-1", b"windows-1252", b"UTF-16"):
+            self.write_xml(
+                b'<?xml version="1.0" encoding="' + encoding +
+                b'"?><mediawiki><page/></mediawiki>'
+            )
+            with self.assertRaisesRegex(DumpExtractionError, "UTF-8"):
+                self.extract()
+            self.assertFalse(self.output.exists())
+        self.write_xml(XML.replace(b'encoding="utf-8"', b'encoding="UTF-8"'))
+        self.assertEqual(self.extract(), 2)
+
     def test_rejects_entity_declarations_and_symlinked_source(self):
         self.write_xml(b'<?xml version="1.0"?><!DOCTYPE mediawiki [<!ENTITY x "bad">]>'
                        b"<mediawiki><page/></mediawiki>")
