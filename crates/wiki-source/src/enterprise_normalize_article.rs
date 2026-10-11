@@ -16,6 +16,8 @@ pub struct EnterpriseLinkIdentity {
     pub project: String,
     pub page_id: u64,
     pub generation_id: String,
+    pub revision_id: u64,
+    pub date_modified: String,
     pub title: String,
     pub redirects: Vec<String>,
 }
@@ -26,6 +28,8 @@ impl EnterpriseLinkIdentity {
             project: page.structured.page.project.clone(),
             page_id: page.structured.page.page_id,
             generation_id: page.structured.generation_id.clone(),
+            revision_id: page.structured.revision_id,
+            date_modified: page.structured.date_modified.clone(),
             title: page.structured.name.clone(),
             redirects: page.redirects.clone(),
         }
@@ -40,7 +44,7 @@ pub struct EnterpriseLinkIndex {
     project: String,
     generation_id: String,
     by_title: BTreeMap<(String, String), ArticleKey>,
-    by_page: BTreeMap<u64, (String, Vec<String>)>,
+    by_page: BTreeMap<u64, (u64, String, String, Vec<String>)>,
 }
 
 impl EnterpriseLinkIndex {
@@ -66,6 +70,14 @@ impl EnterpriseLinkIndex {
             {
                 return Err(NormalizeError::Missing("link index generation"));
             }
+            if identity.revision_id == 0 {
+                return Err(NormalizeError::Missing("link index revision"));
+            }
+            if identity.date_modified.trim().is_empty()
+                || identity.date_modified != identity.date_modified.trim()
+            {
+                return Err(NormalizeError::Missing("link index revision timestamp"));
+            }
             let key = ArticleKey {
                 project: identity.project.clone(),
                 page_id: identity.page_id,
@@ -76,7 +88,12 @@ impl EnterpriseLinkIndex {
             }
             by_page.insert(
                 identity.page_id,
-                (identity.title.clone(), identity.redirects.clone()),
+                (
+                    identity.revision_id,
+                    identity.date_modified.clone(),
+                    identity.title.clone(),
+                    identity.redirects.clone(),
+                ),
             );
             for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
                 if title.trim().is_empty() || title != title.trim() {
@@ -106,9 +123,16 @@ impl EnterpriseLinkIndex {
         if page.structured.generation_id != self.generation_id {
             return Err(NormalizeError::GenerationMismatch);
         }
-        let Some((title, redirects)) = self.by_page.get(&page.structured.page.page_id) else {
+        let Some((revision_id, timestamp, title, redirects)) =
+            self.by_page.get(&page.structured.page.page_id)
+        else {
             return Err(NormalizeError::UnresolvedLink);
         };
+        if *revision_id != page.structured.revision_id
+            || timestamp != &page.structured.date_modified
+        {
+            return Err(NormalizeError::RevisionMismatch);
+        }
         if title != &page.structured.name || redirects != &page.redirects {
             return Err(NormalizeError::UnresolvedLink);
         }
@@ -385,6 +409,20 @@ mod tests {
             Err(NormalizeError::Missing("link index title"))
         );
 
+        let mut invalid = original.clone();
+        invalid.revision_id = 0;
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index revision"))
+        );
+
+        let mut invalid = original.clone();
+        invalid.date_modified = " ".into();
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index revision timestamp"))
+        );
+
         let mut invalid = original;
         invalid.redirects.push(" malformed ".into());
         assert_eq!(
@@ -417,6 +455,31 @@ mod tests {
             normalize_enterprise_article_with_link_index(&redirected, false, &index),
             Err(NormalizeError::UnresolvedLink)
         );
+    }
+
+    #[test]
+    fn snapshot_link_index_rejects_revision_or_timestamp_drift() {
+        let page = joined("enwiki", 42);
+        let index =
+            EnterpriseLinkIndex::build(&[EnterpriseLinkIdentity::from_joined(&page)]).unwrap();
+
+        let mut newer_revision = page.clone();
+        newer_revision.structured.revision_id += 1;
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&newer_revision, false, &index),
+            Err(NormalizeError::RevisionMismatch)
+        );
+
+        let mut changed_timestamp = page.clone();
+        changed_timestamp.structured.date_modified = "2026-10-11T00:00:00Z".into();
+        assert_eq!(
+            normalize_enterprise_article_with_link_index(&changed_timestamp, false, &index),
+            Err(NormalizeError::RevisionMismatch)
+        );
+
+        let mut same_identity = page;
+        same_identity.rendered_html = "<article>New safe rendering</article>".into();
+        assert!(normalize_enterprise_article_with_link_index(&same_identity, false, &index).is_ok());
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub enum NormalizeError {
     InvalidReference(String),
     UnresolvedLink,
     GenerationMismatch,
+    RevisionMismatch,
     ProjectMismatch,
     DuplicatePage(ArticleKey),
     TooManyBlocks,
