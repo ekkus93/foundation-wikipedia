@@ -124,13 +124,23 @@ impl OfflineSearchIndex {
 
     /// All-or-nothing replacement retains the old index if any input fails.
     pub fn rebuild(&mut self, articles: &[Article]) -> Result<(), SearchError> {
-        if articles.len() > MAX_ARTICLES {
-            return Err(SearchError::TooManyArticles);
-        }
+        self.rebuild_streaming(articles.iter().cloned().map(Ok))
+    }
+
+    /// Consume one canonical article at a time without retaining the corpus.
+    /// A source read error or late invalid article rolls back the entire index.
+    pub fn rebuild_streaming<I>(&mut self, articles: I) -> Result<(), SearchError>
+    where
+        I: IntoIterator<Item = Result<Article, SearchError>>,
+    {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM offline_article_fts", [])?;
         let mut seen = BTreeSet::new();
-        for article in articles {
+        for (position, article) in articles.into_iter().enumerate() {
+            if position >= MAX_ARTICLES {
+                return Err(SearchError::TooManyArticles);
+            }
+            let article = article?;
             article.validate().map_err(SearchError::Model)?;
             if !seen.insert((article.key.project.clone(), article.key.page_id)) {
                 return Err(SearchError::Duplicate(article.key.clone()));
