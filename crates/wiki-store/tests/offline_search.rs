@@ -170,7 +170,13 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
     assert!(index.search("retained", 10).unwrap().is_empty());
     let gravity_hit = index.search("gravity", 10).unwrap().remove(0);
     assert_eq!(gravity_hit.key.page_id, 1);
-    assert_eq!(index.resolve_hit(&catalog, &root, &gravity_hit).unwrap().title, "Physics");
+    assert_eq!(
+        index
+            .resolve_hit(&catalog, &root, &gravity_hit)
+            .unwrap()
+            .title,
+        "Physics"
+    );
     assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
     let mut stale = gravity_hit.clone();
     stale.revision_id += 1;
