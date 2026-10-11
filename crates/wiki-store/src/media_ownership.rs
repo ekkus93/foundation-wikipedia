@@ -51,7 +51,7 @@ pub struct MediaNotice {
 
 impl MediaNotice {
     pub(crate) fn validate(&self) -> bool {
-        !self.mime.trim().is_empty()
+        safe_media_mime(&self.mime)
             && safe_media_source_url(&self.source_url)
             && !self.creator.trim().is_empty()
             && !self.license.trim().is_empty()
@@ -60,6 +60,23 @@ impl MediaNotice {
             && self.creator.len() <= 4096
             && self.license.len() <= 4096
     }
+}
+
+/// Strict MIME type/subtype syntax keeps renderer and export metadata free
+/// of parameters, whitespace, or injected HTTP header delimiters. This does
+/// not validate the actual media bytes or decide whether a type is safe to render.
+fn safe_media_mime(value: &str) -> bool {
+    let Some((major, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    !major.is_empty()
+        && !subtype.is_empty()
+        && major
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && subtype.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+')
+        })
 }
 
 /// Attribution links must be absolute web URLs, never executable schemes,
@@ -414,6 +431,35 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn invalid_mime_types_cannot_enter_durable_media_attribution() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        for mime in [
+            "",
+            "image",
+            "image/",
+            "/png",
+            "image/png; charset=utf-8",
+            "image/png\r\nX-Injected: yes",
+            "image/png ",
+            "image/\tjpeg",
+            "image\\png",
+            "image/svg+xml\0",
+        ] {
+            let mut bad = notice("Author");
+            bad.mime = mime.into();
+            assert!(!bad.validate(), "accepted unsafe MIME: {mime:?}");
+            assert!(matches!(
+                registry.register_verified_bytes(b"diagram", &bad),
+                Err(MediaRegistryError::InvalidInput)
+            ));
+        }
+        let mut svg = notice("Author");
+        svg.mime = "image/svg+xml".into();
+        assert!(svg.validate());
+        assert!(registry.unowned_digests().unwrap().is_empty());
     }
 
     #[test]
