@@ -216,7 +216,7 @@ impl OfflineSearchIndex {
                 let key = article.key.clone();
                 let revision = article.revision.revision_id;
                 index_article(&tx, &mut seen, article_count, *article)?;
-                rows.insert(key, (tx.last_insert_rowid(), revision));
+                rows.insert((key.project, key.page_id), (tx.last_insert_rowid(), revision));
                 article_count += 1;
             }
             Ok::<(), SearchError>(())
@@ -240,7 +240,7 @@ impl OfflineSearchIndex {
                 let PageRecord::Article(article) = resolved else {
                     return Err(SearchError::StaleIndex);
                 };
-                let (rowid, indexed_revision) = rows.get(&target).ok_or(SearchError::StaleIndex)?;
+                let (rowid, indexed_revision) = rows.get(&(target.project.clone(), target.page_id)).ok_or(SearchError::StaleIndex)?;
                 if *indexed_revision != article.revision.revision_id {
                     return Err(SearchError::StaleIndex);
                 }
