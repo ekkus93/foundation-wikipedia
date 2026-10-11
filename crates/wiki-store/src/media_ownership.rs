@@ -162,7 +162,10 @@ impl MediaRegistry {
         }
         let mut expected = BTreeMap::new();
         for &(content, _) in assets {
-            expected.insert(format!("{:x}", Sha256::digest(content)), content.len() as u64);
+            expected.insert(
+                format!("{:x}", Sha256::digest(content)),
+                content.len() as u64,
+            );
         }
         // Acquire SQLite's writer reservation before inspecting the owner.
         // A second connection cannot both observe the old inventory and
