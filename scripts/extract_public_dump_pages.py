@@ -23,7 +23,13 @@ class DumpExtractionError(ValueError):
 
 
 def _child(parent, name):
-    return parent.find("{*}" + name)
+    """Return one direct scalar element; never silently discard nested XML."""
+    matches = parent.findall("{*}" + name)
+    if len(matches) > 1:
+        raise DumpExtractionError(f"duplicate {name} element")
+    if matches and len(matches[0]):
+        raise DumpExtractionError(f"nested XML in {name} element")
+    return matches[0] if matches else None
 
 
 def _text(parent, name):

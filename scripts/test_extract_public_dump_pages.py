@@ -81,6 +81,34 @@ class ExtractTests(unittest.TestCase):
         first = json.loads(self.output.read_text().splitlines()[0])
         self.assertEqual(first["wikitext"], "<ref>A & B</ref>")
 
+    def test_rejects_nested_or_duplicate_scalar_xml_without_publication(self):
+        # XML child elements are not wikitext: Element.text alone would silently
+        # truncate them. Valid escaped wikitext is tested separately above.
+        timestamp = b"2026-10-01T00:00:00Z"
+        invalid = (
+            (b"Energy = mc^2", b"Energy <ref>lost</ref> tail"),
+            (b"<title>Physics</title>", b"<title>Phy<em>sic</em>s</title>"),
+            (b"<ns>0</ns>", b"<ns><number>0</number></ns>"),
+            (b"<id>10</id>", b"<id><value>10</value></id>"),
+            (b"<timestamp>" + timestamp + b"</timestamp>",
+             b"<timestamp>" + timestamp + b"<unexpected/></timestamp>"),
+            (b"<id>50</id>", b"<id>50</id><id>51</id>"),
+            (b"<title>Physics</title>",
+             b"<title>Physics</title><title>Duplicate</title>"),
+            (b"<text xml:space=\\"preserve\\">Energy = mc^2</text>",
+             b"<text xml:space=\\"preserve\\">Energy = mc^2</text><text>lost</text>"),
+            (b'<redirect title="New title"/>',
+             b'<redirect title="New title"/><redirect title="Other"/>'),
+        )
+        for original, replacement in invalid:
+            with self.subTest(replacement=replacement):
+                self.write_xml(XML.replace(original, replacement, 1))
+                with self.assertRaisesRegex(DumpExtractionError,
+                                            "nested XML|duplicate"):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
