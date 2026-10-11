@@ -264,7 +264,7 @@ mod tests {
         );
         let changed = [entry(b"plot")];
         let replacement = [(b"plot".as_slice(), &bob)];
-        assert!(
+        assert!(matches!(
             install_manifest_media_batch(
                 &store,
                 &mut registry,
@@ -285,17 +285,15 @@ mod tests {
             .join(&changed[0].digest[..2])
             .join(&changed[0].digest)
             .exists());
-        assert!(matches!(
-            install_manifest_media_batch(
-                &store,
-                &mut registry,
-                &replacement,
-                &changed,
-                OwnerKind::Pack,
-                "math"
-            ),
-            Ok(_)
-        ));
+        install_manifest_media_batch(
+            &store,
+            &mut registry,
+            &replacement,
+            &changed,
+            OwnerKind::Pack,
+            "math",
+        )
+        .unwrap();
         assert_eq!(
             verify_required_owner_media(&store, &registry, OwnerKind::Pack, "math", &changed)
                 .unwrap(),
