@@ -430,8 +430,11 @@ mod tests {
         let joined = join_enterprise_ndjson_scoped(
             Cursor::new(structured(1, 17)),
             Cursor::new(regular(1, 17)),
-            "enwiki", "20261010", vec![correct.clone()],
-        ).unwrap();
+            "enwiki",
+            "20261010",
+            vec![correct.clone()],
+        )
+        .unwrap();
         assert_eq!(joined.len(), 1);
         assert_eq!(joined[0].structured.page.page_id, 1);
 
@@ -439,7 +442,9 @@ mod tests {
             join_enterprise_ndjson_scoped(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
-                "enwiki", "20261010", vec![marker("enwiki", 2, "20261009")],
+                "enwiki",
+                "20261010",
+                vec![marker("enwiki", 2, "20261009")],
             ),
             Err(BatchImportError::Join(EnterpriseError::GenerationMismatch))
         );
@@ -447,7 +452,9 @@ mod tests {
             join_enterprise_ndjson_scoped(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
-                "enwiki", "20261010", vec![marker("frwiki", 2, "20261010")],
+                "enwiki",
+                "20261010",
+                vec![marker("frwiki", 2, "20261010")],
             ),
             Err(BatchImportError::Join(EnterpriseError::InvalidIdentity))
         );
@@ -455,7 +462,9 @@ mod tests {
             join_enterprise_ndjson_scoped(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
-                "frwiki", "20261010", vec![],
+                "frwiki",
+                "20261010",
+                vec![],
             ),
             Err(BatchImportError::Join(EnterpriseError::IdentityMismatch))
         );
@@ -463,7 +472,9 @@ mod tests {
             join_enterprise_ndjson_scoped(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
-                "enwiki", "20261010", vec![correct.clone(), correct],
+                "enwiki",
+                "20261010",
+                vec![correct.clone(), correct],
             ),
             Err(BatchImportError::Join(EnterpriseError::DuplicateTombstone(
                 marker("enwiki", 2, "20261010").page
@@ -478,30 +489,42 @@ mod tests {
             join_enterprise_ndjson_scoped(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
-                "enwiki", "20261010", vec![live.clone()],
+                "enwiki",
+                "20261010",
+                vec![live.clone()],
             ),
-            Err(BatchImportError::Join(EnterpriseError::DeletedPageConflict(
-                live.page
-            )))
+            Err(BatchImportError::Join(
+                EnterpriseError::DeletedPageConflict(live.page)
+            ))
         );
         assert!(join_enterprise_ndjson_scoped(
-            Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
-            "enwiki", "20261010", vec![marker("enwiki", 1, "20261010")],
-        ).unwrap().is_empty());
+            Cursor::new(Vec::<u8>::new()),
+            Cursor::new(Vec::<u8>::new()),
+            "enwiki",
+            "20261010",
+            vec![marker("enwiki", 1, "20261010")],
+        )
+        .unwrap()
+        .is_empty());
         assert_eq!(
             join_enterprise_ndjson_scoped(
-                Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
-                "enwiki", "20261010", vec![marker("enwiki", 1, "20261009")],
+                Cursor::new(Vec::<u8>::new()),
+                Cursor::new(Vec::<u8>::new()),
+                "enwiki",
+                "20261010",
+                vec![marker("enwiki", 1, "20261009")],
             ),
             Err(BatchImportError::Join(EnterpriseError::GenerationMismatch))
         );
         assert_eq!(
             join_enterprise_ndjson_scoped(
-                Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
-                "enwiki", "../unsafe", vec![],
+                Cursor::new(Vec::<u8>::new()),
+                Cursor::new(Vec::<u8>::new()),
+                "enwiki",
+                "../unsafe",
+                vec![],
             ),
             Err(BatchImportError::Join(EnterpriseError::InvalidGeneration))
         );
     }
-
 }

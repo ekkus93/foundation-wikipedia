@@ -64,7 +64,6 @@ pub fn import_canonical_enterprise_ndjson<S: BufRead, R: BufRead>(
         .map_err(CanonicalImportError::Normalize)
 }
 
- 
 /// All-or-nothing canonical import that refuses deletion evidence lacking
 /// explicit matching project and source generation identity. Upstream feed
 /// authenticity and published completeness remain separate obligations.
@@ -75,10 +74,10 @@ pub fn import_canonical_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<DeletionMarker>,
 ) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
-    let joined = join_enterprise_ndjson_scoped(
-        structured, regular, project, generation_id, deleted,
-    ).map_err(VerifiedImportError::Batch)
-     .map_err(CanonicalImportError::Import)?;
+    let joined =
+        join_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
+            .map_err(VerifiedImportError::Batch)
+            .map_err(CanonicalImportError::Import)?;
     for article in &joined {
         validate_joined_evidence(article)
             .map_err(VerifiedImportError::Integrity)
