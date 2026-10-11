@@ -139,7 +139,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     if output.exists() or output.is_symlink():
         raise DumpExtractionError("output already exists")
     partition = re.fullmatch(
-        r"([a-z0-9_]+)-[0-9]{4}-[0-9]{2}-01-p([0-9]+)p([0-9]+)\\.xml\\.bz2",
+        r"([a-z0-9_]+)-[0-9]{4}-[0-9]{2}-01-p([0-9]+)p([0-9]+)\.xml\.bz2",
         path.name,
     )
     if partition is None or partition.group(1) != project:
