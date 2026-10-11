@@ -240,8 +240,7 @@ impl OfflineSearchIndex {
                 let PageRecord::Article(article) = resolved else {
                     return Err(SearchError::StaleIndex);
                 };
-                let (rowid, indexed_revision) =
-                    rows.get(&target).ok_or(SearchError::StaleIndex)?;
+                let (rowid, indexed_revision) = rows.get(&target).ok_or(SearchError::StaleIndex)?;
                 if *indexed_revision != article.revision.revision_id {
                     return Err(SearchError::StaleIndex);
                 }
