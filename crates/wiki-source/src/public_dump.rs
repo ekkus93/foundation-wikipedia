@@ -87,20 +87,14 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
     Ok(members)
 }
 
-fn valid_page_partition(name: &str, prefix: &str) -> bool {
-    let Some(range) = name
-        .strip_prefix(prefix)
-        .and_then(|rest| rest.strip_suffix(".xml.bz2"))
-    else {
-        return false;
-    };
-    let Some((first, last)) = range.split_once('p') else {
-        return false;
-    };
-    match (first.parse::<u64>(), last.parse::<u64>()) {
-        (Ok(start), Ok(end)) => start > 0 && end >= start,
-        _ => false,
-    }
+fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
+    let range = name
+        .strip_prefix(prefix)?
+        .strip_suffix(".xml.bz2")?;
+    let (first, last) = range.split_once('p')?;
+    let start = first.parse::<u64>().ok()?;
+    let end = last.parse::<u64>().ok()?;
+    (start > 0 && end >= start).then_some((start, end))
 }
 
 /// Check caller-selected completed export identity, not publisher trust.
@@ -125,14 +119,26 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
     }
     let prefix = format!("{wiki}-{date}-p");
     let mut names = BTreeSet::new();
-    members.iter().all(|item| {
+    let mut partitions = Vec::with_capacity(members.len());
+    for item in members {
         let name = item.relative_path.rsplit('/').next().unwrap_or("");
-        safe_relative_path(&item.relative_path)
-            && item.sha256.len() == 64
-            && item.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-            && names.insert(item.relative_path.to_ascii_lowercase())
-            && valid_page_partition(name, &prefix)
-    })
+        if !safe_relative_path(&item.relative_path)
+            || item.sha256.len() != 64
+            || !item.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !names.insert(item.relative_path.to_ascii_lowercase())
+        {
+            return false;
+        }
+        let Some(partition) = page_partition(name, &prefix) else {
+            return false;
+        };
+        partitions.push(partition);
+    }
+    // The inventory is untrusted input: the same page-ID range must not
+    // appear twice (even under different subdirectories), and overlapping
+    // ranges cannot be treated as one coherent export generation.
+    partitions.sort_unstable();
+    partitions.windows(2).all(|pair| pair[0].1 < pair[1].0)
 }
 #[cfg(test)]
 mod tests {
@@ -178,6 +184,44 @@ mod tests {
         members[0].sha256 = "a".repeat(64);
         members.push(members[0].clone());
         assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
+    }
+
+    #[test]
+    fn export_identity_rejects_overlapping_page_partitions() {
+        let adjacent = parse_sha256sums(&format!(
+            "{}\n{}",
+            line("enwiki-2026-10-01-p1p100.xml.bz2"),
+            line("enwiki-2026-10-01-p101p200.xml.bz2")
+        ))
+        .unwrap();
+        assert!(matches_current_export(&adjacent, "enwiki", "2026-10-01"));
+
+        // Page-ID gaps are not proof of an incomplete export: deleted and
+        // absent pages need not have a current-content record.
+        let gaps = parse_sha256sums(&format!(
+            "{}\n{}",
+            line("enwiki-2026-10-01-p1p100.xml.bz2"),
+            line("enwiki-2026-10-01-p200p300.xml.bz2")
+        ))
+        .unwrap();
+        assert!(matches_current_export(&gaps, "enwiki", "2026-10-01"));
+
+        for other in [
+            "enwiki-2026-10-01-p50p150.xml.bz2",
+            "enwiki-2026-10-01-p100p200.xml.bz2",
+            "nested/enwiki-2026-10-01-p1p100.xml.bz2",
+        ] {
+            let overlap = parse_sha256sums(&format!(
+                "{}\n{}",
+                line("enwiki-2026-10-01-p1p100.xml.bz2"),
+                line(other)
+            ))
+            .unwrap();
+            assert!(
+                !matches_current_export(&overlap, "enwiki", "2026-10-01"),
+                "accepted overlapping or repeated partition {other}"
+            );
+        }
     }
 
     #[test]
