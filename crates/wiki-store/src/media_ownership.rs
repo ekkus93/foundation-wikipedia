@@ -138,7 +138,6 @@ impl MediaRegistry {
         Ok(digest)
     }
 
-
     /// Register all staged media and grant their owner in one SQLite transaction.
     /// A failed item cannot leave a partially owned pack. The caller must
     /// persist and verify every object before calling this method.
@@ -160,7 +159,8 @@ impl MediaRegistry {
         let tx = self.conn.transaction()?;
         let mut digests = Vec::with_capacity(assets.len());
         for &(content, notice) in assets {
-            let bytes = i64::try_from(content.len()).map_err(|_| MediaRegistryError::InvalidInput)?;
+            let bytes =
+                i64::try_from(content.len()).map_err(|_| MediaRegistryError::InvalidInput)?;
             let digest = format!("{:x}", Sha256::digest(content));
             tx.execute(
                 "INSERT OR IGNORE INTO media_objects(digest,bytes) VALUES (?1,?2)",
