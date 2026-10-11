@@ -55,6 +55,16 @@ class ExtractTests(unittest.TestCase):
         first = json.loads(self.output.read_text().splitlines()[0])
         self.assertEqual(first["wikitext"], "")
 
+    def test_shard_project_and_page_range_are_bound_to_filename(self):
+        with self.assertRaisesRegex(DumpExtractionError, "member identity"):
+            extract_current_dump(self.shard, self.sha, "frwiki", self.output)
+        narrower = self.root / "enwiki-2026-10-01-p1p10.xml.bz2"
+        self.shard.rename(narrower)
+        self.shard = narrower
+        with self.assertRaisesRegex(DumpExtractionError, "outside declared shard"):
+            self.extract()
+        self.assertFalse(self.output.exists())
+
     def test_mismatch_and_malformed_xml_leave_no_output(self):
         with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):
             extract_current_dump(self.shard, "0" * 64, "enwiki", self.output)
