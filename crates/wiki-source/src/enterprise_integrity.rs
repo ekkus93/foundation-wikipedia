@@ -1,7 +1,7 @@
 //! Verify that beta Structured Contents references resolve within one joined
 //! article revision before using them for evidence or canonical normalization.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart};
 
@@ -9,17 +9,28 @@ use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart};
 pub enum IntegrityError {
     UnknownCitation(String),
     UnknownTableReference(String),
+    ConflictingCitationText(String),
 }
 
 fn check_parts(
     parts: &[StructuredPart],
     references: &BTreeSet<&str>,
     tables: &BTreeSet<&str>,
+    citation_texts: &mut BTreeMap<String, String>,
 ) -> Result<(), IntegrityError> {
     for part in parts {
         for citation in &part.citations {
             if !references.contains(citation.identifier.as_str()) {
                 return Err(IntegrityError::UnknownCitation(citation.identifier.clone()));
+            }
+            if let Some(previous) =
+                citation_texts.insert(citation.identifier.clone(), citation.text.clone())
+            {
+                if previous != citation.text {
+                    return Err(IntegrityError::ConflictingCitationText(
+                        citation.identifier.clone(),
+                    ));
+                }
             }
         }
         for table in &part.table_references {
@@ -29,7 +40,7 @@ fn check_parts(
                 ));
             }
         }
-        check_parts(&part.has_parts, references, tables)?;
+        check_parts(&part.has_parts, references, tables, citation_texts)?;
     }
     Ok(())
 }
@@ -50,8 +61,19 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
         .iter()
         .map(|table| table.identifier.as_str())
         .collect();
-    check_parts(&article.structured.infoboxes, &references, &tables)?;
-    check_parts(&article.structured.sections, &references, &tables)?;
+    let mut citation_texts = BTreeMap::new();
+    check_parts(
+        &article.structured.infoboxes,
+        &references,
+        &tables,
+        &mut citation_texts,
+    )?;
+    check_parts(
+        &article.structured.sections,
+        &references,
+        &tables,
+        &mut citation_texts,
+    )?;
     Ok(())
 }
 
@@ -136,5 +158,16 @@ mod tests {
                 confidence_score: None,
             });
         assert_eq!(validate_joined_evidence(&article), Ok(()));
+
+        // One revision-local reference identifier must not acquire two
+        // incompatible visible markers in separate article blocks.
+        let repeated = article.structured.sections[0].has_parts[0].clone();
+        article.structured.infoboxes.push(repeated);
+        assert_eq!(validate_joined_evidence(&article), Ok(()));
+        article.structured.infoboxes[0].citations[0].text = "[99]".into();
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::ConflictingCitationText("cite1".into()))
+        );
     }
 }
