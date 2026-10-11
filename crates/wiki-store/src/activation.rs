@@ -102,7 +102,9 @@ impl ActiveSnapshotStore {
             }
         }
         let mut bytes = Vec::new();
-        Read::by_ref(&mut opened).take(130).read_to_end(&mut bytes)?;
+        Read::by_ref(&mut opened)
+            .take(130)
+            .read_to_end(&mut bytes)?;
         if bytes.len() > 129
             || bytes.len() as u64 != opened_meta.len()
             || opened.metadata()?.len() != opened_meta.len()
