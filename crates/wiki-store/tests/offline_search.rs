@@ -504,3 +504,45 @@ fn failed_persisted_rebuild_leaves_previously_searchable_file_unchanged() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn persisted_rebuild_rejects_symlinked_database_or_parent_directory() {
+    use std::os::unix::fs::symlink;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-fts-symlink-{}-{stamp}",
+        std::process::id()
+    ));
+    let real = root.join("real");
+    fs::create_dir_all(&real).unwrap();
+    let outside = real.join("outside.db");
+    fs::write(&outside, b"protected data").unwrap();
+    let catalog = SnapshotCatalog::in_memory().unwrap();
+
+    let linked_file = root.join("index.sqlite");
+    symlink(&outside, &linked_file).unwrap();
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(&linked_file, &catalog, &real),
+        Err(SearchError::UnsafePath)
+    ));
+    assert_eq!(fs::read(&outside).unwrap(), b"protected data");
+
+    let linked_parent = root.join("linked-parent");
+    symlink(&real, &linked_parent).unwrap();
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(
+            &linked_parent.join("index.sqlite"),
+            &catalog,
+            &real
+        ),
+        Err(SearchError::UnsafePath)
+    ));
+    assert_eq!(fs::read(&outside).unwrap(), b"protected data");
+    assert_eq!(fs::read_dir(&real).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
