@@ -37,3 +37,7 @@ The extractor now requires canonical decimal page/revision IDs, bounded signed n
 ## Compressed shard size guard (2026-10-11)
 
 Before hashing or decompressing, the XML extractor now bounds compressed shard file size through a configurable limit (1 GiB default, 16 GiB hard ceiling), alongside its existing decompressed-byte, page-count and text limits. Regression tests exercise rejection and exact-boundary acceptance. Exact code SHA `661e164eaabedbf379b7e831171704a2c8b31610` passed Rust CI 38127926395 and Platform CI 38127926360. This is partial SRC-003 hardening; official-source and renderer acceptance remain open.
+
+## Completed-publication discovery increment (2026-10-11)
+
+`scripts/discover_public_dump_inventory.py` now reads the official per-wiki HTTPS directory listing, validates dated candidates, probes the newest first for the published `SHA256SUMS` completion signal, skips unpublished 404 candidates, bounds and checks the checksum inventory, rejects off-origin redirects and writes the complete inventory without overwriting an existing file. The CLI prints the exact official checksum URL, wiki, date, member count and inventory digest. Synthetic offline tests cover incomplete newer exports, invalid publication origins, malformed inventories and atomic staging. Exact code SHA `fd7308fc512681569686efa80d749f59005c7092` passed Rust CI 38128250754 and Platform CI 38128250760. Live Wikimedia discovery, shard download/resume, renderer fidelity and offline pack acceptance remain unqualified; SRC-003 is still unchecked.
