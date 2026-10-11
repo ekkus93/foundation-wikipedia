@@ -33,6 +33,8 @@ fn verified_import_rejects_missing_citation_and_accepts_matching_one() {
     }]);
     let mut regular = base();
     regular["article_body"] = serde_json::json!({"html": "<article>Text</article>"});
+    regular["categories"] = serde_json::json!([]);
+    regular["redirects"] = serde_json::json!([]);
     let run = |source: &serde_json::Value| {
         import_verified_enterprise_ndjson(
             Cursor::new(source.to_string()),
