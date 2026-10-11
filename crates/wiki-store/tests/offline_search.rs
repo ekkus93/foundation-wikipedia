@@ -1,7 +1,9 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wiki_model::{Article, ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+use wiki_model::{Article, ArticleKey, Block, BlockContent, PageRecord, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
+use wiki_store::catalog::SnapshotCatalog;
+use wiki_store::record_codec::append_record_frame;
 use wiki_store::search_index::{OfflineSearchIndex, SearchError};
 
 fn article(page_id: u64, title: &str, body: &str) -> Article {
@@ -117,4 +119,55 @@ fn streaming_source_failure_rolls_back_and_success_replaces_revision() {
         .unwrap();
     assert!(index.search("gravity", 5).unwrap().is_empty());
     assert_eq!(index.search("molecules", 5).unwrap()[0].key.page_id, 2);
+}
+
+#[test]
+fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("wiki-catalog-fts-{}-{stamp}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let records = [
+        PageRecord::Article(Box::new(article(1, "Physics", "gravity"))),
+        PageRecord::Redirect(Redirect {
+            from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+            title: "Physics alias".into(),
+            to: ArticleKey { project: "enwiki".into(), page_id: 1 },
+        }),
+        PageRecord::Article(Box::new(article(2, "Chemistry", "molecules"))),
+    ];
+    let mut shard = Vec::new();
+    let mut frames = Vec::new();
+    for record in &records {
+        let offset = shard.len() as u64;
+        append_record_frame(&mut shard, record).unwrap();
+        frames.push((offset, shard.len() as u64 - offset));
+    }
+    fs::write(root.join("records.shard"), &shard).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    for (offset, bytes) in &frames {
+        catalog.insert_verified(&root, "records.shard", *offset, *bytes).unwrap();
+    }
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index.rebuild(&[article(99, "Previous", "retained")]).unwrap();
+    index.rebuild_from_catalog(&catalog, &root).unwrap();
+    assert!(index.search("retained", 10).unwrap().is_empty());
+    assert_eq!(index.search("gravity", 10).unwrap()[0].key.page_id, 1);
+    assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
+    assert!(index.search("alias", 10).unwrap().is_empty());
+
+    // The first article is valid but the last frame is corrupt: the old
+    // complete index must remain visible after the attempted replacement.
+    let last = frames[2].0 as usize;
+    shard[last + 12] ^= 1;
+    fs::write(root.join("records.shard"), &shard).unwrap();
+    assert!(matches!(
+        index.rebuild_from_catalog(&catalog, &root),
+        Err(SearchError::Catalog(_))
+    ));
+    assert_eq!(index.search("gravity", 10).unwrap()[0].key.page_id, 1);
+    assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
+    fs::remove_dir_all(root).unwrap();
 }

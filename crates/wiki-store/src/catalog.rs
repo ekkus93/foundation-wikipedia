@@ -452,6 +452,37 @@ impl SnapshotCatalog {
         Ok(count)
     }
 
+    /// Visit catalog entries in stable key order, decoding and verifying one
+    /// frame at a time. No complete corpus is materialized in memory. The
+    /// caller must authenticate the source snapshot before using this index.
+    pub fn visit_records<E, F>(&self, root: &Path, mut visit: F) -> Result<(), E>
+    where
+        E: From<CatalogError>,
+        F: FnMut(PageRecord) -> Result<(), E>,
+    {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT project, page_id FROM records ORDER BY project, page_id")
+            .map_err(CatalogError::from)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(CatalogError::from)?;
+        for row in rows {
+            let (project, page_id) = row.map_err(CatalogError::from)?;
+            let key = ArticleKey {
+                project,
+                page_id: as_u64(page_id)?,
+            };
+            let record = self
+                .read_record(root, &key)?
+                .ok_or(CatalogError::InvalidCatalogEntry)?;
+            visit(record)?;
+        }
+        Ok(())
+    }
+
     /// Resolve an article title through at most 32 verified redirect records.
     /// A dangling target, cycle or excessive chain never counts as success.
     pub fn resolve_title(

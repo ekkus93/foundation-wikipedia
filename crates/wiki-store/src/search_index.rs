@@ -1,9 +1,11 @@
 //! Derived, rebuildable offline full-text search over canonical articles.
 //! Source authority and complete pack membership are verified elsewhere.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
+use std::path::Path;
+use crate::catalog::{CatalogError, SnapshotCatalog};
 use std::collections::BTreeSet;
-use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
+use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, PageRecord, Section};
 
 const MAX_ARTICLES: usize = 100_000;
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
@@ -13,10 +15,16 @@ const MAX_QUERY_BYTES: usize = 8192;
 pub enum SearchError {
     Sql(rusqlite::Error),
     Model(ModelError),
+    Catalog(CatalogError),
     Duplicate(ArticleKey),
     TooManyArticles,
     TooMuchText(ArticleKey),
     InvalidIdentity,
+}
+impl From<CatalogError> for SearchError {
+    fn from(error: CatalogError) -> Self {
+        Self::Catalog(error)
+    }
 }
 impl From<rusqlite::Error> for SearchError {
     fn from(error: rusqlite::Error) -> Self {
@@ -106,6 +114,36 @@ fn query_expression(query: &str) -> Option<String> {
     )
 }
 
+fn index_article(
+    tx: &Transaction<'_>,
+    seen: &mut BTreeSet<(String, u64)>,
+    position: usize,
+    article: Article,
+) -> Result<(), SearchError> {
+    if position >= MAX_ARTICLES {
+        return Err(SearchError::TooManyArticles);
+    }
+    article.validate().map_err(SearchError::Model)?;
+    if !seen.insert((article.key.project.clone(), article.key.page_id)) {
+        return Err(SearchError::Duplicate(article.key.clone()));
+    }
+    let mut text = String::new();
+    append_blocks(&article.lead, &mut text);
+    append_sections(&article.sections, &mut text);
+    if text.len().saturating_add(article.title.len()) > MAX_TEXT_BYTES {
+        return Err(SearchError::TooMuchText(article.key.clone()));
+    }
+    let page = i64::try_from(article.key.page_id).map_err(|_| SearchError::InvalidIdentity)?;
+    let revision = i64::try_from(article.revision.revision_id)
+        .map_err(|_| SearchError::InvalidIdentity)?;
+    tx.execute(
+        "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+         VALUES (?1,?2,?3,?4,?5)",
+        params![article.key.project, page, revision, article.title, text],
+    )?;
+    Ok(())
+}
+
 impl OfflineSearchIndex {
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
         Self::initialize(Connection::open(path)?)
@@ -137,30 +175,32 @@ impl OfflineSearchIndex {
         tx.execute("DELETE FROM offline_article_fts", [])?;
         let mut seen = BTreeSet::new();
         for (position, article) in articles.into_iter().enumerate() {
-            if position >= MAX_ARTICLES {
-                return Err(SearchError::TooManyArticles);
-            }
-            let article = article?;
-            article.validate().map_err(SearchError::Model)?;
-            if !seen.insert((article.key.project.clone(), article.key.page_id)) {
-                return Err(SearchError::Duplicate(article.key.clone()));
-            }
-            let mut text = String::new();
-            append_blocks(&article.lead, &mut text);
-            append_sections(&article.sections, &mut text);
-            if text.len().saturating_add(article.title.len()) > MAX_TEXT_BYTES {
-                return Err(SearchError::TooMuchText(article.key.clone()));
-            }
-            let page =
-                i64::try_from(article.key.page_id).map_err(|_| SearchError::InvalidIdentity)?;
-            let revision = i64::try_from(article.revision.revision_id)
-                .map_err(|_| SearchError::InvalidIdentity)?;
-            tx.execute(
-                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
-                 VALUES (?1,?2,?3,?4,?5)",
-                params![article.key.project, page, revision, article.title, text],
-            )?;
+            index_article(&tx, &mut seen, position, article?)?;
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Rebuild directly from a verified immutable catalog's individual frames.
+    /// Redirect records are skipped, and a corrupt late frame rolls back the
+    /// derived index rather than publishing an incomplete search corpus.
+    /// Source authenticity and completeness must be checked by the caller.
+    pub fn rebuild_from_catalog(
+        &mut self,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+    ) -> Result<(), SearchError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM offline_article_fts", [])?;
+        let mut seen = BTreeSet::new();
+        let mut count = 0;
+        catalog.visit_records(root, |record| {
+            if let PageRecord::Article(article) = record {
+                index_article(&tx, &mut seen, count, *article)?;
+                count += 1;
+            }
+            Ok::<(), SearchError>(())
+        })?;
         tx.commit()?;
         Ok(())
     }
