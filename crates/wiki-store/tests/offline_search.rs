@@ -420,6 +420,11 @@ fn corrupt_persisted_fts_is_rebuilt_without_touching_source_or_media() {
         .unwrap();
     let index_path = root.join("derived.sqlite");
     fs::write(&index_path, b"corrupt SQLite bytes").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&index_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &root).unwrap();
     #[cfg(unix)]
     {
@@ -553,4 +558,57 @@ fn persisted_rebuild_rejects_symlinked_database_or_parent_directory() {
     assert_eq!(fs::read(&outside).unwrap(), b"protected data");
     assert_eq!(fs::read_dir(&real).unwrap().count(), 1);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn persisted_index_open_and_rebuild_reject_unsafe_permissions_links_and_ancestors() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-fts-private-{}-{stamp}",
+        std::process::id()
+    ));
+    let real = root.join("real");
+    let nested = real.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let index_path = nested.join("search.sqlite");
+    fs::write(&index_path, b"existing search index").unwrap();
+    let catalog = SnapshotCatalog::in_memory().unwrap();
+
+    // Neither SQLite opening nor atomic replacement may touch a database
+    // whose contents have already been exposed by the filesystem.
+    fs::set_permissions(&index_path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(OfflineSearchIndex::open(&index_path), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &real),
+        Err(SearchError::UnsafePath)
+    ));
+    fs::set_permissions(&index_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let second_link = nested.join("another-name.sqlite");
+    fs::hard_link(&index_path, &second_link).unwrap();
+    assert!(matches!(OfflineSearchIndex::open(&index_path), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &real),
+        Err(SearchError::UnsafePath)
+    ));
+    fs::remove_file(&second_link).unwrap();
+
+    // The direct parent is a real directory; a higher ancestor is a
+    // symlink, and must be rejected before any SQLite sidecar is created.
+    let alias = root.join("linked-grandparent");
+    symlink(&real, &alias).unwrap();
+    let via_alias = alias.join("nested").join("search.sqlite");
+    assert!(matches!(OfflineSearchIndex::open(&via_alias), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(&via_alias, &catalog, &real),
+        Err(SearchError::UnsafePath)
+    ));
+    assert_eq!(fs::read(&index_path).unwrap(), b"existing search index");
+    fs::remove_dir_all(&root).unwrap();
 }

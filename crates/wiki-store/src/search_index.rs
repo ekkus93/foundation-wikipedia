@@ -167,8 +167,46 @@ fn index_article(
     Ok(())
 }
 
+
+fn validate_index_path(path: &Path) -> Result<(), SearchError> {
+    // This is a derived private database, never an arbitrary caller-supplied
+    // SQLite pathname. Validate every ancestor, not only the direct parent.
+    // The directory must be exclusively controlled by the caller throughout
+    // opening/replacement; this cannot protect against concurrent renames.
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    for ancestor in parent.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let meta = fs::symlink_metadata(ancestor)?;
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return Err(SearchError::UnsafePath);
+        }
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+            Err(SearchError::UnsafePath)
+        }
+        Ok(meta) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // Never read/write a multiply-linked database or accept an
+                // existing DB accessible to other local users.
+                if meta.nlink() != 1 || meta.mode() & 0o077 != 0 {
+                    return Err(SearchError::UnsafePath);
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SearchError::Io(error)),
+    }
+}
+
 impl OfflineSearchIndex {
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
+        validate_index_path(path)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -203,19 +241,8 @@ impl OfflineSearchIndex {
         catalog: &SnapshotCatalog,
         root: &Path,
     ) -> Result<(), SearchError> {
+        validate_index_path(path)?;
         let parent = path.parent().ok_or(SearchError::UnsafePath)?;
-        let parent_meta = fs::symlink_metadata(parent)?;
-        if !parent_meta.is_dir() || parent_meta.file_type().is_symlink() {
-            return Err(SearchError::UnsafePath);
-        }
-        match fs::symlink_metadata(path) {
-            Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
-                return Err(SearchError::UnsafePath);
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(SearchError::Io(error)),
-        }
         let (staged, file) = (0..32)
             .find_map(|_| {
                 let candidate = parent.join(format!(
