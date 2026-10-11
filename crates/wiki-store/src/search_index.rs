@@ -205,11 +205,16 @@ impl OfflineSearchIndex {
                     std::process::id(),
                     NEXT_REBUILD_TEMP.fetch_add(1, Ordering::Relaxed)
                 ));
-                match OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&candidate)
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true);
+                // Derived FTS content can include private offline articles.
+                // Never expose a staged (or published) index via a permissive umask.
+                #[cfg(unix)]
                 {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                match options.open(&candidate) {
                     Ok(file) => Some(Ok((candidate, file))),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
                     Err(error) => Some(Err(SearchError::Io(error))),

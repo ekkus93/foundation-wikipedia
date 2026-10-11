@@ -421,6 +421,16 @@ fn corrupt_persisted_fts_is_rebuilt_without_touching_source_or_media() {
     let index_path = root.join("derived.sqlite");
     fs::write(&index_path, b"corrupt SQLite bytes").unwrap();
     OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // The atomically published file must not inherit the normal 0644
+        // permissions of a default create-new file on common CI systems.
+        assert_eq!(
+            fs::metadata(&index_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     let index = OfflineSearchIndex::open(&index_path).unwrap();
     let hits = index.search("gravity", 10).unwrap();
     assert_eq!(hits.len(), 1);
