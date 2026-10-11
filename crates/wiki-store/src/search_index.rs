@@ -169,6 +169,24 @@ fn index_article(
 
 impl OfflineSearchIndex {
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            match fs::symlink_metadata(path) {
+                Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+                    return Err(SearchError::UnsafePath);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .mode(0o600)
+                        .open(path)?;
+                }
+                Err(error) => return Err(SearchError::Io(error)),
+            }
+        }
         Self::initialize(Connection::open(path)?)
     }
 
