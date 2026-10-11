@@ -154,6 +154,16 @@ class ExtractTests(unittest.TestCase):
                 self.assertFalse(self.output.exists())
                 self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_real_wikimedia_meta_current_partition_filename(self):
+        published = self.root / "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2"
+        self.shard.rename(published)
+        self.shard = published
+        self.assertEqual(self.extract(), 2)
+        self.assertEqual(
+            [json.loads(line)["page_id"] for line in self.output.read_text().splitlines()],
+            [10, 20],
+        )
+
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
