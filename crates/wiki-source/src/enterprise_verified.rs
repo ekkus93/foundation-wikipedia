@@ -3,8 +3,10 @@ use std::io::BufRead;
 
 use crate::enterprise::JoinedEnterpriseArticle;
 use crate::enterprise_integrity::{validate_joined_evidence, IntegrityError};
-use crate::enterprise_ndjson::{join_enterprise_ndjson, BatchImportError};
-use crate::join::PageKey;
+use crate::enterprise_ndjson::{
+    join_enterprise_ndjson, join_enterprise_ndjson_scoped, BatchImportError,
+};
+use crate::join::{DeletionMarker, PageKey};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VerifiedImportError {
@@ -58,6 +60,30 @@ pub fn import_canonical_enterprise_ndjson<S: BufRead, R: BufRead>(
 ) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
     let joined = import_verified_enterprise_ndjson(structured, regular, generation_id, deleted)
         .map_err(CanonicalImportError::Import)?;
+    enterprise_normalize_article::normalize_enterprise_batch(&joined)
+        .map_err(CanonicalImportError::Normalize)
+}
+
+ 
+/// All-or-nothing canonical import that refuses deletion evidence lacking
+/// explicit matching project and source generation identity. Upstream feed
+/// authenticity and published completeness remain separate obligations.
+pub fn import_canonical_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
+    structured: S,
+    regular: R,
+    project: &str,
+    generation_id: &str,
+    deleted: Vec<DeletionMarker>,
+) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
+    let joined = join_enterprise_ndjson_scoped(
+        structured, regular, project, generation_id, deleted,
+    ).map_err(VerifiedImportError::Batch)
+     .map_err(CanonicalImportError::Import)?;
+    for article in &joined {
+        validate_joined_evidence(article)
+            .map_err(VerifiedImportError::Integrity)
+            .map_err(CanonicalImportError::Import)?;
+    }
     enterprise_normalize_article::normalize_enterprise_batch(&joined)
         .map_err(CanonicalImportError::Normalize)
 }

@@ -1,6 +1,7 @@
 //! Bounded, line-attributed import of Wikimedia Enterprise NDJSON companions.
 //! Never silently skip corrupt records or join different page revisions.
 
+use std::collections::BTreeSet;
 use std::io::{BufRead, Read};
 
 use crate::enterprise::{
@@ -8,7 +9,7 @@ use crate::enterprise::{
     JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
     MAX_ENTERPRISE_RECORD_BYTES,
 };
-use crate::join::PageKey;
+use crate::join::{DeletionMarker, PageKey};
 
 /// An import chunk must remain bounded even if an upstream file is enormous.
 /// Callers can partition verified snapshots into independently staged chunks.
@@ -155,6 +156,66 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
         parse_regular_companion(line, generation_id)
     })?;
     join_enterprise_batch(structured, regular, deleted).map_err(BatchImportError::Join)
+}
+
+/// Import an Enterprise NDJSON batch with an explicit authoritative project
+/// and generation for BOTH live components and deletion evidence.
+///
+/// The legacy PageKey-only overload remains for compatibility, but must not
+/// be used as proof of same-generation deletion. This API cannot authenticate
+/// a caller-provided deletion feed or source generation by itself.
+pub fn join_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
+    structured: S,
+    regular: R,
+    project: &str,
+    generation_id: &str,
+    deleted: Vec<DeletionMarker>,
+) -> Result<Vec<JoinedEnterpriseArticle>, BatchImportError> {
+    if project.is_empty()
+        || project.len() > 255
+        || !project
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(BatchImportError::Join(EnterpriseError::InvalidIdentity));
+    }
+    if generation_id.is_empty()
+        || generation_id.len() > 255
+        || generation_id.starts_with('.')
+        || generation_id.ends_with('.')
+        || !generation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
+    }
+    let mut seen = BTreeSet::new();
+    let mut tombstones = Vec::with_capacity(deleted.len());
+    for marker in deleted {
+        if marker.page.page_id == 0
+            || marker.page.project != project
+            || marker.page.project.len() > 255
+        {
+            return Err(BatchImportError::Join(EnterpriseError::InvalidIdentity));
+        }
+        if marker.generation_id != generation_id {
+            return Err(BatchImportError::Join(EnterpriseError::GenerationMismatch));
+        }
+        if !seen.insert(marker.page.clone()) {
+            return Err(BatchImportError::Join(EnterpriseError::DuplicateTombstone(
+                marker.page,
+            )));
+        }
+        tombstones.push(marker.page);
+    }
+    let joined = join_enterprise_ndjson(structured, regular, generation_id, tombstones)?;
+    if joined
+        .iter()
+        .any(|record| record.structured.page.project != project)
+    {
+        return Err(BatchImportError::Join(EnterpriseError::IdentityMismatch));
+    }
+    Ok(joined)
 }
 
 #[cfg(test)]
@@ -352,4 +413,95 @@ mod tests {
             BatchImportError::Join(EnterpriseError::DeletedPageConflict(page))
         );
     }
+
+    fn marker(project: &str, page_id: u64, generation: &str) -> DeletionMarker {
+        DeletionMarker {
+            page: PageKey {
+                project: project.into(),
+                page_id,
+            },
+            generation_id: generation.into(),
+        }
+    }
+
+    #[test]
+    fn scoped_enterprise_import_requires_matching_generation_and_project() {
+        let correct = marker("enwiki", 2, "20261010");
+        let joined = join_enterprise_ndjson_scoped(
+            Cursor::new(structured(1, 17)),
+            Cursor::new(regular(1, 17)),
+            "enwiki", "20261010", vec![correct.clone()],
+        ).unwrap();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].structured.page.page_id, 1);
+
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                "enwiki", "20261010", vec![marker("enwiki", 2, "20261009")],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::GenerationMismatch))
+        );
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                "enwiki", "20261010", vec![marker("frwiki", 2, "20261010")],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::InvalidIdentity))
+        );
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                "frwiki", "20261010", vec![],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::IdentityMismatch))
+        );
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                "enwiki", "20261010", vec![correct.clone(), correct],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::DuplicateTombstone(
+                marker("enwiki", 2, "20261010").page
+            )))
+        );
+    }
+
+    #[test]
+    fn scoped_import_rejects_live_deleted_and_invalid_tombstone_only_batches() {
+        let live = marker("enwiki", 1, "20261010");
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(structured(1, 17)),
+                Cursor::new(regular(1, 17)),
+                "enwiki", "20261010", vec![live.clone()],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::DeletedPageConflict(
+                live.page
+            )))
+        );
+        assert!(join_enterprise_ndjson_scoped(
+            Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
+            "enwiki", "20261010", vec![marker("enwiki", 1, "20261010")],
+        ).unwrap().is_empty());
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
+                "enwiki", "20261010", vec![marker("enwiki", 1, "20261009")],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::GenerationMismatch))
+        );
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()),
+                "enwiki", "../unsafe", vec![],
+            ),
+            Err(BatchImportError::Join(EnterpriseError::InvalidGeneration))
+        );
+    }
+
 }
