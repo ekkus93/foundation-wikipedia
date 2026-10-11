@@ -337,7 +337,6 @@ fn bad_redirect_chain_preserves_last_good_index() {
     fs::remove_dir_all(root).unwrap();
 }
 
-
 #[test]
 fn cyclic_redirects_cannot_replace_previously_published_search_index() {
     let stamp = SystemTime::now()
