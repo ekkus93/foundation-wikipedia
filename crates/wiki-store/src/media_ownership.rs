@@ -361,6 +361,36 @@ mod tests {
     }
 
     #[test]
+    fn batch_rolls_back_earlier_rows_when_later_size_conflicts() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let first = b"diagram";
+        let second = b"figure";
+        let first_digest = format!("{:x}", Sha256::digest(first));
+        let second_digest = format!("{:x}", Sha256::digest(second));
+        registry
+            .conn
+            .execute(
+                "INSERT INTO media_objects(digest,bytes) VALUES (?1,?2)",
+                params![second_digest, 99],
+            )
+            .unwrap();
+        let attribution = notice("Creator");
+        let assets: &[(&[u8], &MediaNotice)] =
+            &[(first, &attribution), (second, &attribution)];
+        assert!(matches!(
+            registry.register_verified_owned_batch(assets, OwnerKind::Pack, "physics"),
+            Err(MediaRegistryError::ConflictingSize)
+        ));
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
+        assert_eq!(registry.notice_count(&first_digest).unwrap(), 0);
+        assert_eq!(registry.notice_count(&second_digest).unwrap(), 0);
+        assert_eq!(registry.unowned_digests().unwrap(), vec![second_digest]);
+    }
+
+    #[test]
     fn invalid_owners_and_unregistered_objects_fail_closed() {
         let mut registry = MediaRegistry::in_memory().unwrap();
         assert!(matches!(
