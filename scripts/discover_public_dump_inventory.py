@@ -162,6 +162,82 @@ def save_inventory(output, data):
             temporary.unlink(missing_ok=True)
 
 
+def open_official_stream(url):
+    """Open a verified-origin response for bounded streaming by the caller."""
+    _official_url(url)
+    request = Request(url, headers={"User-Agent": "foundation-wikipedia-src003/0.1"})
+    response = build_opener(_OfficialRedirect()).open(request, timeout=30)
+    try:
+        _official_url(response.geturl())
+    except BaseException:
+        response.close()
+        raise
+    return response
+
+
+def download_verified_shard(project, member, output, *,
+                            fetch=fetch_official, stream=open_official_stream,
+                            max_compressed_bytes=1024 * 1024 * 1024):
+    """Discover publication and stage one SHA-256 verified compressed member.
+
+    No partial download is published. This is a full-fetch transport; resume
+    support and integration with the Rust staged verifier remain future work.
+    """
+    if not 0 < max_compressed_bytes <= 2**34:
+        raise PublicationError("invalid compressed download budget")
+    metadata, inventory = discover_completed_export(project, fetch)
+    _check_inventory(inventory, project, metadata["date"])
+    digest = None
+    for line in inventory.decode("utf-8").splitlines():
+        if line[66:] == member:
+            digest = line[:64].lower()
+            break
+    if digest is None:
+        raise PublicationError("member absent from completed checksum inventory")
+    output = Path(output)
+    if not output.parent.is_dir() or output.parent.is_symlink():
+        raise PublicationError("unsafe output directory")
+    if output.exists() or output.is_symlink():
+        raise PublicationError("shard output already exists")
+    url = metadata["checksum_url"].removesuffix("SHA256SUMS") + member
+    _official_url(url)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=output.parent,
+                                         prefix=".dump-shard.", delete=False) as writer:
+            temporary = Path(writer.name)
+            sha = hashlib.sha256()
+            size = 0
+            with stream(url) as response:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_compressed_bytes:
+                        raise PublicationError("compressed download exceeds budget")
+                    sha.update(chunk)
+                    writer.write(chunk)
+            if size == 0 or sha.hexdigest() != digest:
+                raise PublicationError("compressed download SHA-256 mismatch")
+            writer.flush()
+            os.fsync(writer.fileno())
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            raise PublicationError("shard output already exists") from None
+        descriptor = os.open(output.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return {"publication": metadata, "member": member,
+                "sha256": digest, "bytes": size, "url": url}
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project")

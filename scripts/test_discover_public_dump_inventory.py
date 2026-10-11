@@ -1,12 +1,14 @@
 """Offline discovery fixtures for official current-content publications."""
 from pathlib import Path
+import hashlib
+import io
 import tempfile
 import unittest
 from urllib.error import HTTPError
 
 from discover_public_dump_inventory import (
     BASE, PublicationError, _official_url, discover_completed_export,
-    save_inventory,
+    save_inventory, download_verified_shard,
 )
 
 
@@ -64,6 +66,46 @@ class DiscoveryTests(unittest.TestCase):
             return b"not a checksum"
         with self.assertRaisesRegex(PublicationError, "inventory member"):
             discover_completed_export("enwiki", bad_fetch)
+
+    def test_downloads_only_inventory_listed_hash_verified_shard(self):
+        payload = b"compressed synthetic shard bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        member = "enwiki-2026-10-01-p1p100.xml.bz2"
+        listed = (digest + "  " + member + "\n").encode()
+
+        def fetch(url, limit):
+            if url.endswith("enwiki/"):
+                return b'<a href="2026-10-01/">Oct</a>'
+            if url.endswith("SHA256SUMS"):
+                return listed
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / member
+            def stream(url):
+                self.assertTrue(url.endswith(member))
+                return io.BytesIO(payload)
+
+            receipt = download_verified_shard("enwiki", member, output,
+                                              fetch=fetch, stream=stream)
+            self.assertEqual(output.read_bytes(), payload)
+            self.assertEqual(receipt["sha256"], digest)
+            self.assertEqual(receipt["bytes"], len(payload))
+            with self.assertRaisesRegex(PublicationError, "already exists"):
+                download_verified_shard("enwiki", member, output,
+                                        fetch=fetch, stream=stream)
+            output.unlink()
+            with self.assertRaisesRegex(PublicationError, "absent"):
+                download_verified_shard("enwiki", "other.xml.bz2", output,
+                                        fetch=fetch, stream=stream)
+            with self.assertRaisesRegex(PublicationError, "SHA-256 mismatch"):
+                download_verified_shard("enwiki", member, output, fetch=fetch,
+                                        stream=lambda url: io.BytesIO(b"tampered"))
+            with self.assertRaisesRegex(PublicationError, "exceeds budget"):
+                download_verified_shard("enwiki", member, output, fetch=fetch,
+                                        stream=stream, max_compressed_bytes=8)
+            self.assertFalse(output.exists())
+            self.assertFalse(list(Path(directory).glob(".dump-shard.*")))
 
     def test_staging_is_atomic_and_never_overwrites(self):
         with tempfile.TemporaryDirectory() as directory:
