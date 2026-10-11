@@ -138,6 +138,15 @@ def extract_current_dump(path, expected_sha256, project, output, *,
         raise DumpExtractionError("unsafe output parent")
     if output.exists() or output.is_symlink():
         raise DumpExtractionError("output already exists")
+    partition = re.fullmatch(
+        r"([a-z0-9_]+)-[0-9]{4}-[0-9]{2}-01-p([0-9]+)p([0-9]+)\\.xml\\.bz2",
+        path.name,
+    )
+    if partition is None or partition.group(1) != project:
+        raise DumpExtractionError("unexpected current-export member identity")
+    first_id, last_id = int(partition.group(2)), int(partition.group(3))
+    if not 0 < first_id <= last_id:
+        raise DumpExtractionError("invalid page-ID partition")
     _verified_source(path, expected_sha256)
     temporary = None
     count = 0
@@ -160,6 +169,8 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                         if event == "end" and tag == "page":
                             record = _page_record(element, project, expected_sha256,
                                                   max_text_bytes)
+                            if not first_id <= record["page_id"] <= last_id:
+                                raise DumpExtractionError("page ID outside declared shard partition")
                             if record["page_id"] in seen:
                                 raise DumpExtractionError("duplicate page ID in shard")
                             seen.add(record["page_id"])
