@@ -299,7 +299,14 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_generation_labels_before_parsing() {
-        for generation in ["../outside", "a/b", ".hidden", "trailing.", "a b", "a".repeat(256).as_str()] {
+        for generation in [
+            "../outside",
+            "a/b",
+            ".hidden",
+            "trailing.",
+            "a b",
+            "a".repeat(256).as_str(),
+        ] {
             let result = join_enterprise_ndjson(
                 Cursor::new(structured(1, 17)),
                 Cursor::new(regular(1, 17)),
