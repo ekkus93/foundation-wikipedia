@@ -143,6 +143,35 @@ def _verify_unchanged_source(path, source, initial, expected_sha256):
         raise DumpExtractionError("source changed during extraction")
 
 
+def _validated_content_text(node, max_text_bytes):
+    """Validate XML text identity and byte length without losing nested elements."""
+    if any(key not in ("bytes", "{http://www.w3.org/XML/1998/namespace}space")
+           for key in node.attrib):
+        raise DumpExtractionError("unsupported revision text attributes")
+    body = node.text or ""
+    size = len(body.encode("utf-8"))
+    declared = node.get("bytes")
+    if declared is not None and (
+        not re.fullmatch(r"(0|[1-9][0-9]*)", declared) or int(declared) != size
+    ):
+        raise DumpExtractionError("revision text byte count mismatch")
+    if size > max_text_bytes:
+        raise DumpExtractionError("oversized page title or wikitext")
+    return body, size
+
+
+def _content_model(parent, *, allow_legacy=False):
+    model, content_format = _text(parent, "model"), _text(parent, "format")
+    if model is None and content_format is None and allow_legacy:
+        return "wikitext", "text/x-wiki"
+    if (model is None or content_format is None
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}", model)
+            or not re.fullmatch(r"[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+",
+                                content_format)):
+        raise DumpExtractionError("invalid revision content model or format")
+    return model, content_format
+
+
 def _page_record(page, project, source_sha256, max_text_bytes):
     revisions = page.findall("{*}revision")
     if len(revisions) != 1:
@@ -160,19 +189,35 @@ def _page_record(page, project, source_sha256, max_text_bytes):
         datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError:
         raise DumpExtractionError("invalid revision timestamp") from None
-    if any(key not in ("bytes", "{http://www.w3.org/XML/1998/namespace}space")
-           for key in text_node.attrib):
-        raise DumpExtractionError("unsupported revision text attributes")
-    body = text_node.text or ""
-    body_bytes = len(body.encode("utf-8"))
-    declared_bytes = text_node.get("bytes")
-    if declared_bytes is not None and (
-        not re.fullmatch(r"(0|[1-9][0-9]*)", declared_bytes)
-        or int(declared_bytes) != body_bytes
-    ):
-        raise DumpExtractionError("revision text byte count mismatch")
-    if len(title.encode("utf-8")) > 4096 or body_bytes > max_text_bytes:
+    body, body_bytes = _validated_content_text(text_node, max_text_bytes)
+    if len(title.encode("utf-8")) > 4096:
         raise DumpExtractionError("oversized page title or wikitext")
+    model, content_format = _content_model(revision, allow_legacy=True)
+    extra_slots = []
+    seen_roles = {"main"}
+    for content in revision.findall("{*}content"):
+        role = _text(content, "role")
+        if role is None or not re.fullmatch(r"[A-Za-z][-+./A-Za-z0-9]*", role):
+            raise DumpExtractionError("invalid content slot role")
+        if role in seen_roles:
+            raise DumpExtractionError("duplicate content slot role")
+        seen_roles.add(role)
+        origin = _positive_id(_text(content, "origin"))
+        slot_model, slot_format = _content_model(content)
+        slot_node = _child(content, "text")
+        if slot_node is None:
+            raise DumpExtractionError("missing content slot text")
+        slot_text, slot_bytes = _validated_content_text(slot_node, max_text_bytes)
+        body_bytes += slot_bytes
+        if body_bytes > max_text_bytes:
+            raise DumpExtractionError("oversized combined revision content")
+        extra_slots.append({
+            "role": role,
+            "origin_revision_id": origin,
+            "content_model": slot_model,
+            "content_format": slot_format,
+            "source_text": slot_text,
+        })
     namespace_text = _text(page, "ns")
     if namespace_text is None or not re.fullmatch(r"(0|-?[1-9][0-9]*)", namespace_text):
         raise DumpExtractionError("missing page namespace")
@@ -191,7 +236,11 @@ def _page_record(page, project, source_sha256, max_text_bytes):
         "namespace": namespace,
         "title": title,
         "redirect_target": target,
-        "wikitext": body,
+        "wikitext": body if model == "wikitext" else None,
+        "source_text": body,
+        "content_model": model,
+        "content_format": content_format,
+        "additional_slots": extra_slots,
         "source_sha256": source_sha256.lower(),
     }
 

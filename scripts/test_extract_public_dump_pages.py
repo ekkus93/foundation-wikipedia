@@ -74,6 +74,54 @@ class ExtractTests(unittest.TestCase):
             self.assertFalse(self.output.exists())
             self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_extra_mcr_content_slots_preserve_model_role_origin_and_bytes(self):
+        additional = (
+            b"<content><role>mediainfo</role><origin>50</origin>"
+            b"<model>wikibase-mediainfo</model><format>application/json</format>"
+            b'<text bytes="2">{}</text></content>'
+        )
+        self.write_xml(XML.replace(b"</text></revision>",
+                                   b"</text>" + additional + b"</revision>", 1))
+        self.assertEqual(self.extract(), 2)
+        first = json.loads(self.output.read_text().splitlines()[0])
+        self.assertEqual(first["content_model"], "wikitext")
+        self.assertEqual(first["content_format"], "text/x-wiki")
+        self.assertEqual(first["source_text"], first["wikitext"])
+        self.assertEqual(first["additional_slots"], [{
+            "role": "mediainfo", "origin_revision_id": 50,
+            "content_model": "wikibase-mediainfo",
+            "content_format": "application/json", "source_text": "{}",
+        }])
+
+    def test_non_wikitext_main_content_is_not_mislabeled_as_wikitext(self):
+        extra = b"<model>Scribunto</model><format>text/plain</format>"
+        self.write_xml(XML.replace(b"<text xml:space", extra + b"<text xml:space", 1))
+        self.assertEqual(self.extract(), 2)
+        first = json.loads(self.output.read_text().splitlines()[0])
+        self.assertEqual(first["content_model"], "Scribunto")
+        self.assertEqual(first["source_text"], "Energy = mc^2")
+        self.assertIsNone(first["wikitext"])
+
+    def test_missing_or_duplicate_mcr_roles_reject_entire_shard(self):
+        cases = (
+            b"<content><role>main</role><origin>50</origin>"
+            b"<model>wikitext</model><format>text/x-wiki</format>"
+            b"<text>duplicate</text></content>",
+            b"<content><role>mediainfo</role><model>json</model>"
+            b"<format>application/json</format><text>{}</text></content>",
+            b"<content><role>mediainfo</role><origin>50</origin>"
+            b"<model>json</model><format>application/json</format>"
+            b'<text bytes="10">{}</text></content>',
+        )
+        for content in cases:
+            with self.subTest(content=content):
+                self.write_xml(XML.replace(b"</text></revision>",
+                                           b"</text>" + content + b"</revision>", 1))
+                with self.assertRaises(DumpExtractionError):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_escaped_wikitext_markup_roundtrips_without_xml_children(self):
         body = b"&lt;ref&gt;A &amp; B&lt;/ref&gt;"
         self.write_xml(XML.replace(b"Energy = mc^2", body))
