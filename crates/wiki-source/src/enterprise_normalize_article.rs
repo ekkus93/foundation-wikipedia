@@ -143,9 +143,10 @@ fn normalize_with_index(
     // Reject unresolved embedded media and rich visual markup before HTML
     // sanitization can silently remove required offline article content.
     let html = joined.rendered_html.to_ascii_lowercase();
-    const UNRESOLVED_VISUAL_TAGS: [&str; 12] = [
-        "<img", "<picture", "<video", "<audio", "<source", "<track", "<svg", "<math", "<canvas",
-        "<iframe", "<object", "<embed",
+    const UNRESOLVED_VISUAL_TAGS: [&str; 19] = [
+        "<img", "<picture", "<figure", "<figcaption", "<image", "<map", "<area", "<style", "<link",
+        "<video", "<audio", "<source", "<track", "<svg", "<math", "<canvas", "<iframe", "<object",
+        "<embed",
     ];
     if UNRESOLVED_VISUAL_TAGS.iter().any(|tag| html.contains(tag)) {
         return Err(NormalizeError::UnresolvedVisual);

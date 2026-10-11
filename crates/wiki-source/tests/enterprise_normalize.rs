@@ -259,6 +259,11 @@ fn rejects_unresolved_embedded_media_and_mathml() {
         "<object data='chart.svg'></object>",
         "<embed src='chart.svg'>",
         "<source src='diagram.webm'>",
+        "<figure><figcaption>Unverified diagram</figcaption></figure>",
+        "<map name='image-map'><area href='/wiki/Physics'></map>",
+        "<style>.diagram { background: url(diagram.svg) }</style>",
+        "<link rel='stylesheet' href='math.css'>",
+        "<image href='diagram.svg'>",
     ] {
         let mut joined = fixture();
         joined.rendered_html = html.to_owned();
