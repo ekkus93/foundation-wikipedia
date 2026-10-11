@@ -122,5 +122,96 @@ class StagingTests(unittest.TestCase):
         self.assertEqual((self.stage / self.name).read_bytes(), b"forged")
 
 
+    def test_interrupted_transfer_resumes_exact_bytes(self):
+        from urllib.error import URLError
+
+        class BrokenResponse(FakeResponse):
+            def read(self, size):
+                if self.offset == 6:
+                    raise URLError("simulated connection loss")
+                chunk = self.data[self.offset:6]
+                self.offset += len(chunk)
+                return chunk
+
+        class BrokenOpener:
+            def open(self, request, timeout):
+                return BrokenResponse(request.full_url, self_data)
+
+        self_data = self.data
+        with self.assertRaisesRegex(DumpExtractionError, "HTTPS failure"):
+            self.stage_members(BrokenOpener())
+        part = self.stage / (self.name + ".part")
+        self.assertEqual(part.read_bytes(), self.data[:6])
+        self.assertFalse((self.stage / self.name).exists())
+
+        observed = []
+
+        class ResumeOpener:
+            def open(self, request, timeout):
+                observed.append(request.get_header("Range"))
+                return RangeResponse(request.full_url, self_data[6:],
+                                     "bytes 6-" + str(len(self_data) - 1) +
+                                     "/" + str(len(self_data)))
+
+        class RangeResponse(FakeResponse):
+            def __init__(self, url, data, content_range):
+                super().__init__(url, data, status=206)
+                self.headers = {
+                    "Content-Range": content_range,
+                    "Content-Length": str(len(data)),
+                }
+
+        result = self.stage_members(ResumeOpener())
+        self.assertEqual(observed, ["bytes=6-"])
+        self.assertEqual(result["resumed"], 1)
+        self.assertEqual((self.stage / self.name).read_bytes(), self.data)
+        self.assertFalse(part.exists())
+
+    def test_resume_rejects_incorrect_or_ignored_ranges(self):
+        part = self.stage / (self.name + ".part")
+        for response_status, range_header in (
+            (200, ""),
+            (206, ""),
+            (206, "bytes 0-10/11"),
+            (206, "bytes 6-100/101"),
+        ):
+            with self.subTest(status=response_status, range=range_header):
+                part.write_bytes(self.data[:6])
+
+                class BadResume:
+                    def open(self, request, timeout):
+                        self_request_range = request.get_header("Range")
+                        self_outer.assertEqual(self_request_range, "bytes=6-")
+                        response = FakeResponse(request.full_url,
+                                                self_data[6:],
+                                                status=response_status)
+                        response.headers = {"Content-Range": range_header}
+                        return response
+
+                self_outer, self_data = self, self.data
+                with self.assertRaises(DumpExtractionError):
+                    self.stage_members(BadResume())
+                self.assertEqual(part.read_bytes(), self.data[:6])
+                self.assertFalse((self.stage / self.name).exists())
+
+    def test_complete_partial_promotes_without_network(self):
+        part = self.stage / (self.name + ".part")
+        part.write_bytes(self.data)
+        result = self.stage_members(FakeOpener(self.data, fail=True))
+        self.assertEqual(result["resumed"], 1)
+        self.assertEqual((self.stage / self.name).read_bytes(), self.data)
+        self.assertFalse(part.exists())
+
+    def test_symlinked_interrupted_shard_is_rejected(self):
+        part = self.stage / (self.name + ".part")
+        real = self.root / "other"
+        real.write_bytes(self.data[:6])
+        part.symlink_to(real)
+        with self.assertRaisesRegex(DumpExtractionError, "unsafe interrupted shard"):
+            self.stage_members(FakeOpener(self.data))
+        self.assertFalse((self.stage / self.name).exists())
+        self.assertEqual(real.read_bytes(), self.data[:6])
+
+
 if __name__ == "__main__":
     unittest.main()
