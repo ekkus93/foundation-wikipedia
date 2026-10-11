@@ -186,6 +186,15 @@ class ExtractTests(unittest.TestCase):
             self.extract(max_text_bytes=5)
         self.assertFalse(self.output.exists())
 
+    def test_compressed_input_budget_is_checked_before_hash_or_publication(self):
+        with self.assertRaisesRegex(DumpExtractionError, "compressed source exceeds budget"):
+            self.extract(max_compressed_bytes=8)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+        with self.assertRaisesRegex(DumpExtractionError, "invalid extraction budget"):
+            self.extract(max_compressed_bytes=0)
+        self.assertEqual(self.extract(max_compressed_bytes=self.shard.stat().st_size), 2)
+
     def test_rejects_non_utf8_declarations_before_page_import(self):
         for encoding in (b"ISO-8859-1", b"windows-1252", b"UTF-16"):
             self.write_xml(

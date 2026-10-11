@@ -93,7 +93,7 @@ def _source_identity(metadata):
             metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_nlink)
 
 
-def _verified_source(path, expected_sha256):
+def _verified_source(path, expected_sha256, max_compressed_bytes):
     """Keep the verified source descriptor open through extraction."""
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
         raise DumpExtractionError("invalid expected SHA-256")
@@ -109,6 +109,8 @@ def _verified_source(path, expected_sha256):
         metadata = os.fstat(source.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise DumpExtractionError("source must be a private regular file")
+        if not 0 < metadata.st_size <= max_compressed_bytes:
+            raise DumpExtractionError("compressed source exceeds budget")
         if _source_identity(path.lstat()) != _source_identity(metadata):
             raise DumpExtractionError("source changed during validation")
         digest = hashlib.sha256()
@@ -196,14 +198,16 @@ def _page_record(page, project, source_sha256, max_text_bytes):
 
 def extract_current_dump(path, expected_sha256, project, output, *,
                          max_uncompressed_bytes=512 * 1024 * 1024,
-                         max_pages=1_000_000, max_text_bytes=8 * 1024 * 1024):
+                         max_pages=1_000_000, max_text_bytes=8 * 1024 * 1024,
+                         max_compressed_bytes=1024 * 1024 * 1024):
     """Verify compressed bytes, stream one shard, atomically publish JSONL."""
     path, output = Path(path), Path(output)
     if not re.fullmatch(r"[a-z0-9_]+", project):
         raise DumpExtractionError("invalid wiki project")
     if not (0 < max_uncompressed_bytes <= 2**34
             and 0 < max_pages <= 10_000_000
-            and 0 < max_text_bytes <= 64 * 1024 * 1024):
+            and 0 < max_text_bytes <= 64 * 1024 * 1024
+            and 0 < max_compressed_bytes <= 2**34):
         raise DumpExtractionError("invalid extraction budget")
     if output.parent.is_symlink() or not output.parent.is_dir():
         raise DumpExtractionError("unsafe output parent")
@@ -218,7 +222,8 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     first_id, last_id = int(partition.group(2)), int(partition.group(3))
     if not 0 < first_id <= last_id:
         raise DumpExtractionError("invalid page-ID partition")
-    source, original_metadata = _verified_source(path, expected_sha256)
+    source, original_metadata = _verified_source(path, expected_sha256,
+                                                 max_compressed_bytes)
     temporary = None
     count = 0
     seen = set()
