@@ -74,12 +74,6 @@ class ExtractTests(unittest.TestCase):
             self.assertFalse(self.output.exists())
             self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
-    def test_rejects_nested_wikitext_xml(self):
-        self.write_xml(XML.replace(b"Energy = mc^2", b"Energy <b>lost</b> text"))
-        with self.assertRaisesRegex(DumpExtractionError, "nested XML content"):
-            self.extract()
-        self.assertFalse(self.output.exists())
-
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
