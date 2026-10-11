@@ -29,9 +29,9 @@ fn safe_relative_path(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 4096
         && !path.starts_with('/')
-        && path.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/')
-        })
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/'))
         && path
             .split('/')
             .all(|part| !part.is_empty() && part != "." && part != "..")
@@ -100,11 +100,7 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].relative_path, "enwiki-2026-10-01-p1p100.xml.bz2");
         assert_eq!(parsed[0].sha256, "a".repeat(64));
-        assert!(parse_sha256sums(&format!(
-            "{} *nested/enwiki.xml.bz2",
-            "a".repeat(64)
-        ))
-        .is_ok());
+        assert!(parse_sha256sums(&format!("{} *nested/enwiki.xml.bz2", "a".repeat(64))).is_ok());
     }
 
     #[test]
@@ -135,16 +131,16 @@ mod tests {
     #[test]
     fn rejects_incomplete_or_malformed_checksum_lines() {
         assert_eq!(parse_sha256sums(""), Err(DumpChecksumError::EmptyInventory));
-        for text in [
-            "not-a-checksum",
-            "0  file.xml.bz2",
-            "g".repeat(64).as_str(),
-        ] {
+        for text in ["not-a-checksum", "0  file.xml.bz2"] {
             assert_eq!(
                 parse_sha256sums(text),
                 Err(DumpChecksumError::InvalidLine(1))
             );
         }
+        assert_eq!(
+            parse_sha256sums(&format!("{}  file.xml.bz2", "g".repeat(64))),
+            Err(DumpChecksumError::InvalidLine(1))
+        );
         assert_eq!(
             parse_sha256sums(&format!("{} file.xml.bz2", "a".repeat(64))),
             Err(DumpChecksumError::InvalidLine(1))
