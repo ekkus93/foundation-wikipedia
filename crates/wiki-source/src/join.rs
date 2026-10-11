@@ -177,7 +177,6 @@ pub fn join_pages_with_tombstones(
     join_pages(structured, rendered, categories)
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeletionMarker {
     pub page: PageKey,
@@ -206,20 +205,24 @@ pub fn join_pages_with_generation_tombstones(
         if key.page_id == 0
             || key.project.is_empty()
             || key.project.len() > 255
-            || !key.project.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
-            })
+            || !key
+                .project
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
             || id.is_empty()
             || id.len() > 255
             || id.starts_with('.')
             || id.ends_with('.')
-            || !id.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-            })
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
             return Err(JoinError::InvalidIdentity);
         }
-        if project.as_deref().is_some_and(|expected| expected != key.project) {
+        if project
+            .as_deref()
+            .is_some_and(|expected| expected != key.project)
+        {
             return Err(JoinError::MixedProject(key));
         }
         if generation.as_deref().is_some_and(|expected| expected != id) {
@@ -491,14 +494,19 @@ mod tests {
         };
         assert_eq!(
             join_pages_with_generation_tombstones(
-                vec![live.clone()], vec![html.clone()], vec![categories.clone()],
+                vec![live.clone()],
+                vec![html.clone()],
+                vec![categories.clone()],
                 vec![conflict.clone()],
             ),
             Err(JoinError::DeletedPageConflict(conflict.page))
         );
         assert_eq!(
             join_pages_with_generation_tombstones(
-                vec![live], vec![html], vec![categories], vec![local],
+                vec![live],
+                vec![html],
+                vec![categories],
+                vec![local],
             )
             .unwrap()
             .len(),
@@ -517,15 +525,18 @@ mod tests {
         stale.generation_id = "20261010".into();
         assert_eq!(
             join_pages_with_generation_tombstones(
-                vec![], vec![], vec![], vec![first.clone(), stale.clone()],
+                vec![],
+                vec![],
+                vec![],
+                vec![first.clone(), stale.clone()],
             ),
             Err(JoinError::GenerationMismatch(stale.page))
         );
-        assert!(join_pages_with_generation_tombstones(
-            vec![], vec![], vec![], vec![first],
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            join_pages_with_generation_tombstones(vec![], vec![], vec![], vec![first],)
+                .unwrap()
+                .is_empty()
+        );
     }
 
 }
