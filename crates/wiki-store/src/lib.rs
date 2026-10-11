@@ -14,3 +14,4 @@ pub mod media_ownership;
 pub mod media_install;
 pub mod media_inventory;
 pub mod media_manifest_install;
+pub mod search_index;
