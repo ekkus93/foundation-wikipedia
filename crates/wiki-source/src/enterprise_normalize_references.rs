@@ -8,7 +8,9 @@ use wiki_model::Reference;
 fn safe_reference_url(value: &str) -> bool {
     if value.is_empty()
         || value.len() > 4096
-        || value.bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == 92)
+        || value
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == 92)
     {
         return false;
     }
@@ -98,7 +100,9 @@ mod tests {
         ] {
             assert!(!safe_reference_url(unsafe_url), "{unsafe_url}");
         }
-        assert!(safe_reference_url("https://en.wikipedia.org/wiki/Physics#Notes"));
+        assert!(safe_reference_url(
+            "https://en.wikipedia.org/wiki/Physics#Notes"
+        ));
         assert!(safe_reference_url("http://example.org/reference?id=7"));
     }
 
