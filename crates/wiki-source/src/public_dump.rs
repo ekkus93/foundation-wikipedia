@@ -95,8 +95,9 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
         || !d[5..7].iter().all(u8::is_ascii_digit)
         || d[7] != b'-'
         || &d[8..] != b"01"
-        || d[5..7] < *b"01"
-        || d[5..7] > *b"12"
+        || (d[5] == b'0' && d[6] == b'0')
+        || d[5] > b'1'
+        || (d[5] == b'1' && d[6] > b'2')
     {
         return false;
     }
