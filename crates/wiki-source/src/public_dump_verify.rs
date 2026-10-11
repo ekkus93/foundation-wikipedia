@@ -1,8 +1,8 @@
 //! Streaming digest validation for verified public export inventories.
 use std::io::Read;
 
-use sha2::{Digest, Sha256};
 use crate::public_dump::{parse_sha256sums, DumpChecksum};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug)]
 pub enum DumpVerifyError {
