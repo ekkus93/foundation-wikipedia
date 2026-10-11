@@ -1,5 +1,7 @@
 """Offline end-to-end staging fixtures for the completed current-content export."""
 import hashlib
+import bz2
+from extract_public_dump_export import extract_current_export
 import io
 import json
 from pathlib import Path
@@ -51,6 +53,26 @@ class StageTests(unittest.TestCase):
         self.assertIn(self.a, (self.target / "SHA256SUMS").read_text())
         with self.assertRaisesRegex(PublicationError, "already exists"):
             self.stage()
+
+    def test_offline_staging_to_complete_revision_jsonl_import(self):
+        def xml(page_id):
+            return (f'<?xml version="1.0" encoding="utf-8"?>'
+                    f'<mediawiki><page><title>Article {page_id}</title><ns>0</ns>'
+                    f'<id>{page_id}</id><revision><id>{page_id + 1000}</id>'
+                    f'<timestamp>2026-10-01T00:00:00Z</timestamp>'
+                    f'<text>Wiki {page_id}</text></revision></page></mediawiki>').encode()
+
+        self.payloads = {self.a: bz2.compress(xml(10)),
+                         self.b: bz2.compress(xml(110))}
+        receipt = self.stage()
+        output = self.root / "revisions.jsonl"
+        self.assertEqual(
+            extract_current_export(self.target, self.target / "SHA256SUMS",
+                                   "enwiki", self.date, output), 2
+        )
+        entries = [json.loads(line) for line in output.read_text().splitlines()]
+        self.assertEqual([entry["page_id"] for entry in entries], [10, 110])
+        self.assertEqual(receipt["members"], 2)
 
     def test_corrupted_later_member_does_not_publish_partial_directory(self):
         def corrupted(url):
