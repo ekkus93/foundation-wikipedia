@@ -137,7 +137,6 @@ impl MediaRegistry {
         tx.commit()?;
         Ok(digest)
     }
-
     /// Register all staged media and grant their owner in one SQLite transaction.
     /// A failed item cannot leave a partially owned pack. The caller must
     /// persist and verify every object before calling this method.
