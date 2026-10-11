@@ -400,3 +400,103 @@ fn cyclic_redirects_cannot_replace_previously_published_search_index() {
     assert!(index.search("published", 10).unwrap().is_empty());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn corrupt_persisted_fts_is_rebuilt_without_touching_source_or_media() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-recover-fts-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let record = PageRecord::Article(Box::new(article(1, "Earth", "gravity")));
+    let mut bytes = Vec::new();
+    append_record_frame(&mut bytes, &record).unwrap();
+    fs::write(root.join("data.shard"), &bytes).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    catalog
+        .insert_verified(&root, "data.shard", 0, bytes.len() as u64)
+        .unwrap();
+    let index_path = root.join("derived.sqlite");
+    fs::write(&index_path, b"corrupt SQLite bytes").unwrap();
+    OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &root).unwrap();
+    let index = OfflineSearchIndex::open(&index_path).unwrap();
+    let hits = index.search("gravity", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].key.page_id, 1);
+    assert_eq!(fs::read(root.join("data.shard")).unwrap(), bytes);
+    assert_eq!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts."))
+            .count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_persisted_rebuild_leaves_previously_searchable_file_unchanged() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-recover-rollback-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let index_path = root.join("derived.sqlite");
+    {
+        let mut index = OfflineSearchIndex::open(&index_path).unwrap();
+        index
+            .rebuild(&[article(3, "Previous", "retained snapshot")])
+            .unwrap();
+    }
+    let before = fs::read(&index_path).unwrap();
+    let redirect = PageRecord::Redirect(Redirect {
+        from: ArticleKey {
+            project: "enwiki".into(),
+            page_id: 10,
+        },
+        title: "Missing target".into(),
+        to: ArticleKey {
+            project: "enwiki".into(),
+            page_id: 999,
+        },
+    });
+    let mut bytes = Vec::new();
+    append_record_frame(&mut bytes, &redirect).unwrap();
+    fs::write(root.join("bad.shard"), &bytes).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    catalog
+        .insert_verified(&root, "bad.shard", 0, bytes.len() as u64)
+        .unwrap();
+    assert!(matches!(
+        OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &root),
+        Err(SearchError::Catalog(_))
+    ));
+    assert_eq!(fs::read(&index_path).unwrap(), before);
+    assert_eq!(
+        OfflineSearchIndex::open(&index_path)
+            .unwrap()
+            .search("retained", 10)
+            .unwrap()[0]
+            .key
+            .page_id,
+        3
+    );
+    assert_eq!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts."))
+            .count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}

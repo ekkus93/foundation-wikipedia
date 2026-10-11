@@ -4,8 +4,13 @@
 use crate::catalog::{CatalogError, SnapshotCatalog};
 use rusqlite::{params, Connection, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, PageRecord, Section};
+
+static NEXT_REBUILD_TEMP: AtomicU64 = AtomicU64::new(0);
 
 const MAX_ARTICLES: usize = 100_000;
 const MAX_REDIRECTS: usize = 500_000;
@@ -15,6 +20,8 @@ const MAX_QUERY_BYTES: usize = 8192;
 #[derive(Debug)]
 pub enum SearchError {
     Sql(rusqlite::Error),
+    Io(io::Error),
+    UnsafePath,
     Model(ModelError),
     Catalog(CatalogError),
     Duplicate(ArticleKey),
@@ -23,6 +30,11 @@ pub enum SearchError {
     TooMuchText(ArticleKey),
     InvalidIdentity,
     StaleIndex,
+}
+impl From<io::Error> for SearchError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 impl From<CatalogError> for SearchError {
     fn from(error: CatalogError) -> Self {
@@ -158,6 +170,68 @@ fn index_article(
 impl OfflineSearchIndex {
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
         Self::initialize(Connection::open(path)?)
+    }
+
+    /// Rebuild a derived SQLite FTS5 file from verified catalog frames, even
+    /// when the existing index is corrupt or cannot be opened.
+    ///
+    /// Call only with exclusive access to a private writable directory and no
+    /// active SQLite connections to `path`. A fresh staged database is fully
+    /// built and fsynced before replacing the existing pathname. Any source,
+    /// SQLite, or pre-publication I/O failure leaves the prior file untouched.
+    /// The caller must independently authenticate and verify the snapshot.
+    pub fn replace_persisted_from_catalog(
+        path: &Path,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+    ) -> Result<(), SearchError> {
+        let parent = path.parent().ok_or(SearchError::UnsafePath)?;
+        let parent_meta = fs::symlink_metadata(parent)?;
+        if !parent_meta.is_dir() || parent_meta.file_type().is_symlink() {
+            return Err(SearchError::UnsafePath);
+        }
+        match fs::symlink_metadata(path) {
+            Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
+                return Err(SearchError::UnsafePath);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SearchError::Io(error)),
+        }
+        let (staged, file) = (0..32)
+            .find_map(|_| {
+                let candidate = parent.join(format!(
+                    ".offline-fts.{}.{}.sqlite",
+                    std::process::id(),
+                    NEXT_REBUILD_TEMP.fetch_add(1, Ordering::Relaxed)
+                ));
+                match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                    Ok(file) => Some(Ok((candidate, file))),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                    Err(error) => Some(Err(SearchError::Io(error))),
+                }
+            })
+            .ok_or(SearchError::UnsafePath)??;
+        drop(file);
+        let result = (|| -> Result<(), SearchError> {
+            {
+                let mut index = Self::open(&staged)?;
+                index.rebuild_from_catalog(catalog, root)?;
+            }
+            File::open(&staged)?.sync_all()?;
+            #[cfg(unix)]
+            File::open(parent)?.sync_all()?;
+            // Do not publish a partially indexed SQLite file. The candidate
+            // was closed successfully before this atomic same-directory swap.
+            fs::rename(&staged, path)?;
+            #[cfg(unix)]
+            File::open(parent)?.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(staged);
+        }
+        result
     }
     pub fn in_memory() -> Result<Self, SearchError> {
         Self::initialize(Connection::open_in_memory()?)
