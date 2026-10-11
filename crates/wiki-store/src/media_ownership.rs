@@ -71,7 +71,10 @@ fn safe_media_source_url(url: &str) -> bool {
     else {
         return false;
     };
-    if rest.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\') {
+    if rest
+        .bytes()
+        .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\')
+    {
         return false;
     }
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
