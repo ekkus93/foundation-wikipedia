@@ -81,6 +81,17 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
     Ok(members)
 }
 
+/// Check caller-selected completed export identity, not publisher trust.
+pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
+    if members.is_empty() || wiki.is_empty() || date.len() != 10 || !date.ends_with("-01") {
+        return false;
+    }
+    let prefix = format!("{wiki}-{date}-p");
+    members.iter().all(|item| {
+        let name = item.relative_path.rsplit('/').next().unwrap_or("");
+        name.starts_with(&prefix) && name.ends_with(".xml.bz2")
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
