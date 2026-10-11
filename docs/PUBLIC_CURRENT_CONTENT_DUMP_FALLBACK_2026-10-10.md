@@ -14,7 +14,7 @@ The upstream data contains **unparsed XML/wikitext**, not high-fidelity rendered
 
 `wiki-source::public_dump::parse_sha256sums` parses bounded GNU-style SHA-256 inventories, normalizes digest case, rejects malformed checksum lines, path traversal, absolute/ambiguous paths, Windows separators and case-colliding duplicates, and returns deterministic lexically ordered members. The parser does not fetch files, authenticate the source, decompress XML or mark a snapshot ready. `wiki-source::public_dump_verify::verify_dump_member` separately rehashes a bounded caller-supplied byte stream against the parsed member digest. It does not download data or establish source authenticity.
 
-## Remaining acceptance work
+A second partial helper, `wiki-source::public_dump_stage::verify_staged_export`, verifies every declared shard on disk under a private staging root. It rejects symlinked paths, missing or altered shards, and oversized streams. This is not upstream authentication, XML parsing, snapshot activation or protection against a concurrently malicious writer of the staging directory.\n\n## Remaining acceptance work
 
 1. Discover completed official exports without assuming dates; preserve the exact publication URL, wiki ID and release date.
 2. Integrate official-origin download, resume and staged activation with bounded streaming SHA-256 verification for every member.
