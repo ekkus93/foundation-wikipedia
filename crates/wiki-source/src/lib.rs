@@ -8,6 +8,7 @@ pub mod enterprise_verified;
 pub mod join;
 pub mod public_dump;
 pub mod public_dump_verify;
+pub mod public_dump_stage;
 
 use std::collections::BTreeSet;
 
