@@ -80,7 +80,11 @@ impl MediaObjectStore {
                 std::process::id(),
                 NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
             ));
-            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
                 Ok(output) => break (candidate, output),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(MediaObjectError::Io(error)),
