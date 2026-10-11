@@ -1,10 +1,10 @@
 //! Derived, rebuildable offline full-text search over canonical articles.
 //! Source authority and complete pack membership are verified elsewhere.
 
-use rusqlite::{params, Connection, Transaction};
-use std::path::Path;
 use crate::catalog::{CatalogError, SnapshotCatalog};
+use rusqlite::{params, Connection, Transaction};
 use std::collections::BTreeSet;
+use std::path::Path;
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, PageRecord, Section};
 
 const MAX_ARTICLES: usize = 100_000;
@@ -134,8 +134,8 @@ fn index_article(
         return Err(SearchError::TooMuchText(article.key.clone()));
     }
     let page = i64::try_from(article.key.page_id).map_err(|_| SearchError::InvalidIdentity)?;
-    let revision = i64::try_from(article.revision.revision_id)
-        .map_err(|_| SearchError::InvalidIdentity)?;
+    let revision =
+        i64::try_from(article.revision.revision_id).map_err(|_| SearchError::InvalidIdentity)?;
     tx.execute(
         "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
          VALUES (?1,?2,?3,?4,?5)",

@@ -1,7 +1,10 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wiki_model::{Article, ArticleKey, Block, BlockContent, PageRecord, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
+use wiki_model::{
+    Article, ArticleKey, Block, BlockContent, PageRecord, Redirect, Revision,
+    ARTICLE_SCHEMA_VERSION,
+};
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::record_codec::append_record_frame;
 use wiki_store::search_index::{OfflineSearchIndex, SearchError};
@@ -127,14 +130,21 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("wiki-catalog-fts-{}-{stamp}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("wiki-catalog-fts-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let records = [
         PageRecord::Article(Box::new(article(1, "Physics", "gravity"))),
         PageRecord::Redirect(Redirect {
-            from: ArticleKey { project: "enwiki".into(), page_id: 10 },
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
             title: "Physics alias".into(),
-            to: ArticleKey { project: "enwiki".into(), page_id: 1 },
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 1,
+            },
         }),
         PageRecord::Article(Box::new(article(2, "Chemistry", "molecules"))),
     ];
@@ -148,10 +158,14 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
     fs::write(root.join("records.shard"), &shard).unwrap();
     let mut catalog = SnapshotCatalog::in_memory().unwrap();
     for (offset, bytes) in &frames {
-        catalog.insert_verified(&root, "records.shard", *offset, *bytes).unwrap();
+        catalog
+            .insert_verified(&root, "records.shard", *offset, *bytes)
+            .unwrap();
     }
     let mut index = OfflineSearchIndex::in_memory().unwrap();
-    index.rebuild(&[article(99, "Previous", "retained")]).unwrap();
+    index
+        .rebuild(&[article(99, "Previous", "retained")])
+        .unwrap();
     index.rebuild_from_catalog(&catalog, &root).unwrap();
     assert!(index.search("retained", 10).unwrap().is_empty());
     assert_eq!(index.search("gravity", 10).unwrap()[0].key.page_id, 1);
