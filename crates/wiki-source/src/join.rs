@@ -79,13 +79,16 @@ pub fn join_pages(
     let mut r = collect(rendered, false)?;
     let mut c = collect(categories, true)?;
     let mut joined = Vec::new();
-    let mut batch_generation: Option<&str> = None;
+    let mut batch_generation: Option<String> = None;
     for (key, source) in s {
         // A batch must not silently combine independently valid generations.
-        if batch_generation.is_some_and(|expected| expected != source.generation_id) {
+        if batch_generation
+            .as_deref()
+            .is_some_and(|expected| expected != source.generation_id)
+        {
             return Err(JoinError::GenerationMismatch(key));
         }
-        batch_generation = Some(&source.generation_id);
+        batch_generation = Some(source.generation_id.clone());
         let html = r
             .remove(&key)
             .ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
