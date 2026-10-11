@@ -569,10 +569,8 @@ fn persisted_index_open_and_rebuild_reject_unsafe_permissions_links_and_ancestor
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-fts-private-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-fts-private-{}-{stamp}", std::process::id()));
     let real = root.join("real");
     let nested = real.join("nested");
     fs::create_dir_all(&nested).unwrap();
@@ -583,7 +581,10 @@ fn persisted_index_open_and_rebuild_reject_unsafe_permissions_links_and_ancestor
     // Neither SQLite opening nor atomic replacement may touch a database
     // whose contents have already been exposed by the filesystem.
     fs::set_permissions(&index_path, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(matches!(OfflineSearchIndex::open(&index_path), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::open(&index_path),
+        Err(SearchError::UnsafePath)
+    ));
     assert!(matches!(
         OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &real),
         Err(SearchError::UnsafePath)
@@ -592,7 +593,10 @@ fn persisted_index_open_and_rebuild_reject_unsafe_permissions_links_and_ancestor
 
     let second_link = nested.join("another-name.sqlite");
     fs::hard_link(&index_path, &second_link).unwrap();
-    assert!(matches!(OfflineSearchIndex::open(&index_path), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::open(&index_path),
+        Err(SearchError::UnsafePath)
+    ));
     assert!(matches!(
         OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &real),
         Err(SearchError::UnsafePath)
@@ -604,7 +608,10 @@ fn persisted_index_open_and_rebuild_reject_unsafe_permissions_links_and_ancestor
     let alias = root.join("linked-grandparent");
     symlink(&real, &alias).unwrap();
     let via_alias = alias.join("nested").join("search.sqlite");
-    assert!(matches!(OfflineSearchIndex::open(&via_alias), Err(SearchError::UnsafePath)));
+    assert!(matches!(
+        OfflineSearchIndex::open(&via_alias),
+        Err(SearchError::UnsafePath)
+    ));
     assert!(matches!(
         OfflineSearchIndex::replace_persisted_from_catalog(&via_alias, &catalog, &real),
         Err(SearchError::UnsafePath)

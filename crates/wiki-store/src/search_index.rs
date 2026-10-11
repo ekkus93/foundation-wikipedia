@@ -167,13 +167,15 @@ fn index_article(
     Ok(())
 }
 
-
 fn validate_index_path(path: &Path) -> Result<(), SearchError> {
     // This is a derived private database, never an arbitrary caller-supplied
     // SQLite pathname. Validate every ancestor, not only the direct parent.
     // The directory must be exclusively controlled by the caller throughout
     // opening/replacement; this cannot protect against concurrent renames.
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     for ancestor in parent.ancestors() {
         if ancestor.as_os_str().is_empty() {
             continue;
