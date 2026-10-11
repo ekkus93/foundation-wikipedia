@@ -1,8 +1,8 @@
 //! Derived, rebuildable offline full-text search over canonical articles.
 //! Source authority and complete pack membership are verified elsewhere.
 
-use std::collections::BTreeSet;
 use rusqlite::{params, Connection};
+use std::collections::BTreeSet;
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
 
 const MAX_ARTICLES: usize = 100_000;
@@ -19,7 +19,9 @@ pub enum SearchError {
     InvalidIdentity,
 }
 impl From<rusqlite::Error> for SearchError {
-    fn from(error: rusqlite::Error) -> Self { Self::Sql(error) }
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Sql(error)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,29 +31,44 @@ pub struct SearchHit {
     pub title: String,
 }
 
-pub struct OfflineSearchIndex { conn: Connection }
+pub struct OfflineSearchIndex {
+    conn: Connection,
+}
 
 fn append_blocks(blocks: &[Block], text: &mut String) {
     for block in blocks {
         match &block.content {
             BlockContent::Paragraph(s) | BlockContent::Quote(s) => {
-                text.push_str(s); text.push(' ');
+                text.push_str(s);
+                text.push(' ');
             }
-            BlockContent::List(items) => for s in items {
-                text.push_str(s); text.push(' ');
-            },
-            BlockContent::Table(rows) => for s in rows.iter().flatten() {
-                text.push_str(s); text.push(' ');
-            },
+            BlockContent::List(items) => {
+                for s in items {
+                    text.push_str(s);
+                    text.push(' ');
+                }
+            }
+            BlockContent::Table(rows) => {
+                for s in rows.iter().flatten() {
+                    text.push_str(s);
+                    text.push(' ');
+                }
+            }
             BlockContent::Math { source, .. } => {
-                text.push_str(source); text.push(' ');
+                text.push_str(source);
+                text.push(' ');
             }
-            BlockContent::Infobox(fields) => for (key, value) in fields {
-                text.push_str(key); text.push(' ');
-                text.push_str(value); text.push(' ');
-            },
+            BlockContent::Infobox(fields) => {
+                for (key, value) in fields {
+                    text.push_str(key);
+                    text.push(' ');
+                    text.push_str(value);
+                    text.push(' ');
+                }
+            }
             BlockContent::Footnote(note) => {
-                text.push_str(&note.text); text.push(' ');
+                text.push_str(&note.text);
+                text.push(' ');
             }
             BlockContent::HtmlFallback(_) | BlockContent::Media { .. } => {}
         }
@@ -60,23 +77,33 @@ fn append_blocks(blocks: &[Block], text: &mut String) {
 
 fn append_sections(sections: &[Section], text: &mut String) {
     for section in sections {
-        text.push_str(&section.heading); text.push(' ');
+        text.push_str(&section.heading);
+        text.push(' ');
         append_blocks(&section.blocks, text);
         append_sections(&section.subsections, text);
     }
 }
 
 fn query_expression(query: &str) -> Option<String> {
-    if query.len() > MAX_QUERY_BYTES { return None; }
+    if query.len() > MAX_QUERY_BYTES {
+        return None;
+    }
     let tokens: BTreeSet<_> = query
         .split(|c: char| !c.is_alphanumeric())
         .filter(|term| !term.is_empty())
         .take(32)
         .map(str::to_lowercase)
         .collect();
-    if tokens.is_empty() { return None; }
-    Some(tokens.iter().map(|term| format!("\"{term}\""))
-        .collect::<Vec<_>>().join(" OR "))
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(
+        tokens
+            .iter()
+            .map(|term| format!("\"{term}\""))
+            .collect::<Vec<_>>()
+            .join(" OR "),
+    )
 }
 
 impl OfflineSearchIndex {
@@ -90,14 +117,16 @@ impl OfflineSearchIndex {
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS offline_article_fts USING fts5(
                 project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
-                title, body, tokenize='unicode61');"
+                title, body, tokenize='unicode61');",
         )?;
         Ok(Self { conn })
     }
 
     /// All-or-nothing replacement retains the old index if any input fails.
     pub fn rebuild(&mut self, articles: &[Article]) -> Result<(), SearchError> {
-        if articles.len() > MAX_ARTICLES { return Err(SearchError::TooManyArticles); }
+        if articles.len() > MAX_ARTICLES {
+            return Err(SearchError::TooManyArticles);
+        }
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM offline_article_fts", [])?;
         let mut seen = BTreeSet::new();
@@ -112,8 +141,8 @@ impl OfflineSearchIndex {
             if text.len().saturating_add(article.title.len()) > MAX_TEXT_BYTES {
                 return Err(SearchError::TooMuchText(article.key.clone()));
             }
-            let page = i64::try_from(article.key.page_id)
-                .map_err(|_| SearchError::InvalidIdentity)?;
+            let page =
+                i64::try_from(article.key.page_id).map_err(|_| SearchError::InvalidIdentity)?;
             let revision = i64::try_from(article.revision.revision_id)
                 .map_err(|_| SearchError::InvalidIdentity)?;
             tx.execute(
@@ -128,7 +157,9 @@ impl OfflineSearchIndex {
 
     /// Local-only title-boosted lexical ranking, at most 100 results.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, SearchError> {
-        if limit == 0 { return Ok(Vec::new()); }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let Some(expression) = query_expression(query) else {
             return Ok(Vec::new());
         };
@@ -136,11 +167,15 @@ impl OfflineSearchIndex {
             "SELECT project,page_id,revision_id,title FROM offline_article_fts
              WHERE offline_article_fts MATCH ?1
              ORDER BY bm25(offline_article_fts, 4.0, 1.0),
-                      project, CAST(page_id AS INTEGER) LIMIT ?2"
+                      project, CAST(page_id AS INTEGER) LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![expression, limit.min(100) as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?, row.get::<_, String>(3)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
         })?;
         let mut hits = Vec::new();
         for row in rows {
@@ -150,8 +185,7 @@ impl OfflineSearchIndex {
                     project,
                     page_id: u64::try_from(page).map_err(|_| SearchError::InvalidIdentity)?,
                 },
-                revision_id: u64::try_from(revision)
-                    .map_err(|_| SearchError::InvalidIdentity)?,
+                revision_id: u64::try_from(revision).map_err(|_| SearchError::InvalidIdentity)?,
                 title,
             });
         }
