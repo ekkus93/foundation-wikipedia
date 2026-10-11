@@ -12,6 +12,24 @@ Only a completed publication should expose `SHA256SUMS`. The file lists each com
 
 **The program itself does not fetch or independently authenticate this URL.** Before calling it, an acquiring application must pin the intended Wikimedia HTTPS authority and completed generation, obtain the checksum file from the verified official source, and stage **all** checksum-listed compressed members into a private, non-concurrently-writable directory with their relative names unchanged. A local checksum file and self-consistent files alone establish only internal integrity, not Wikimedia origin or completeness.
 
+
+## Official completed-export inventory discovery (partial SRC-001/SRC-003)
+
+```bash
+python3 scripts/discover_public_current_export.py \\
+  enwiki 2026-10-01 /private/official-SHA256SUMS
+```
+
+This helper constructs the **fixed Wikimedia HTTPS origin** for the newer `mediawiki_content_current` publication, refuses redirects, bounds the response to 32 MiB, validates the complete page-range checksum inventory and atomically publishes it without overwriting an existing file. Wikimedia documents that the official `SHA256SUMS` marker appears only after the generation is complete. The JSON output records the exact source URL, manifest SHA-256 and member count; `shards_verified: false` explicitly indicates that referenced XML bytes have not been downloaded or verified. TLS origin validation is not a separate signed publisher attestation. No fallback mirror or legacy publication is discovered by this helper.
+
+Synthetic HTTPS-response acceptance (including 404/not-yet-completed, wrong final origin, invalid dates and malicious inventories) runs with:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_discover_public_current_export.py'
+```
+
+Qualified at `78b62ee650cbb0e1f94982523133254f0c66a0b0`: [Rust CI 38135015909](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38135015909), [Platform CI 38135015954](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38135015954). Live upstream transfer, complete shard staging, renderer fidelity and pack/device acceptance are not yet qualified.
+
 ## Offline local invocation
 
 ```bash
