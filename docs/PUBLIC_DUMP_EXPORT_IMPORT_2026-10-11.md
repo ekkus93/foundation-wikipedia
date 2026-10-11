@@ -44,7 +44,7 @@ python3 scripts/stage_public_current_shards.py \
 
 The transport refuses redirects, requires the expected official HTTPS URL for every member, bounds compressed bytes, verifies SHA-256 before publishing each file, and rechecks existing shards before reuse after restart. Incomplete transfers are discarded rather than published. The destination must be private and not concurrently writable by an adversary. The transport does **not** yet implement byte-range resume within an interrupted shard; it re-downloads incomplete shards.
 
-`python3 -m unittest discover -s scripts -p 'test_stage_public_current_shards.py'` covers verified staging and restart reuse; an explicit local-integrity negative regression remains pending. This does not qualify real upstream full-generation acquisition or rendering; the JSONL and offline pack restrictions above still apply.
+`python3 -m unittest discover -s scripts -p 'test_stage_public_current_shards.py'` covers verified staging and restart reuse; negative transport integrity tests and a two-shard discovery-to-JSONL synthetic pipeline now also run in CI. Neither substitutes for live publisher/fidelity acceptance. This does not qualify real upstream full-generation acquisition or rendering; the JSONL and offline pack restrictions above still apply.
 
 ## Offline local invocation
 
