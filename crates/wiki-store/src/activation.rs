@@ -5,7 +5,7 @@
 //! An existing manifest alone does not establish upstream authenticity.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -87,8 +87,26 @@ impl ActiveSnapshotStore {
         if !meta.file_type().is_file() || meta.len() > 129 {
             return Err(ActivationError::CorruptCurrentPointer);
         }
-        let bytes = fs::read(&pointer)?;
-        if bytes.len() > 129 {
+        // Read through the descriptor we inspected, rather than reopening
+        // the path by name during a possible concurrent replacement.
+        let mut opened = File::open(&pointer)?;
+        let opened_meta = opened.metadata()?;
+        if !opened_meta.is_file() || opened_meta.len() != meta.len() {
+            return Err(ActivationError::CorruptCurrentPointer);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if meta.ino() != opened_meta.ino() || meta.dev() != opened_meta.dev() {
+                return Err(ActivationError::CorruptCurrentPointer);
+            }
+        }
+        let mut bytes = Vec::new();
+        opened.by_ref().take(130).read_to_end(&mut bytes)?;
+        if bytes.len() > 129
+            || bytes.len() as u64 != opened_meta.len()
+            || opened.metadata()?.len() != opened_meta.len()
+        {
             return Err(ActivationError::CorruptCurrentPointer);
         }
         let id = std::str::from_utf8(&bytes).map_err(|_| ActivationError::CorruptCurrentPointer)?;
@@ -173,6 +191,30 @@ mod interruption_tests {
         ));
         fs::create_dir_all(root.join("snapshots")).unwrap();
         symlink("missing-snapshot-pointer", root.join("current")).unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        assert!(matches!(
+            store.current(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_symlink_to_valid_snapshot_pointer_is_never_accepted() {
+        use std::os::unix::fs::symlink;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("wiki-live-link-{}-{stamp}", std::process::id()));
+        let snapshot = root.join("snapshots/old");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("manifest.json"), "{}").unwrap();
+        fs::write(root.join("saved-current"), b"old\n").unwrap();
+        symlink("saved-current", root.join("current")).unwrap();
         let store = ActiveSnapshotStore::new(&root);
         assert!(matches!(
             store.current(),
