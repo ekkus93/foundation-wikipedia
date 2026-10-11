@@ -88,18 +88,56 @@ fn safe_media_source_url(url: &str) -> bool {
     else {
         return false;
     };
-    if rest
-        .bytes()
-        .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\')
+    if url
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control() || character == '\\')
     {
         return false;
     }
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    !authority.is_empty()
-        && !authority.contains('@')
-        && !authority.starts_with(':')
-        && !authority.starts_with('.')
-        && !authority.ends_with('.')
+    if authority.is_empty() || authority.contains('@') || authority.contains('%') {
+        return false;
+    }
+    let port = if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some((address, suffix)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        if suffix.is_empty() {
+            None
+        } else {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return false;
+            };
+            Some(port)
+        }
+    } else {
+        let (hostname, port) = match authority.rsplit_once(':') {
+            Some((hostname, port)) => (hostname, Some(port)),
+            None => (authority, None),
+        };
+        if hostname.len() > 253
+            || !hostname.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && label.as_bytes()[0].is_ascii_alphanumeric()
+                    && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+        {
+            return false;
+        }
+        port
+    };
+    port.is_none_or(|port| {
+        !port.is_empty()
+            && port.bytes().all(|byte| byte.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|number| number > 0)
+    })
 }
 
 pub struct MediaRegistry {
@@ -475,6 +513,16 @@ mod tests {
             "https://commons.wikimedia.org/evil\\path",
             "https://commons.wikimedia.org/evil\npath",
             "https://commons.wikimedia.org/space in path",
+            "https://wiki.example.org:abc/File:Example.png",
+            "https://wiki.example.org:0/File:Example.png",
+            "https://wiki.example.org:65536/File:Example.png",
+            "https://wiki.example.org:/File:Example.png",
+            "https://wiki.example.org%40evil.test/File:Example.png",
+            "https://-wiki.example.org/File:Example.png",
+            "https://wiki..example.org/File:Example.png",
+            "https://[not-an-ipv6]/File:Example.png",
+            "https://[::1/File:Example.png",
+            "https://[::1]oops/File:Example.png",
         ] {
             let mut bad = notice("Author");
             bad.source_url = source.to_owned();
@@ -485,6 +533,9 @@ mod tests {
             ));
         }
         assert!(notice("Author").validate());
+        let mut ipv6 = notice("Author");
+        ipv6.source_url = "https://[2001:db8::1]:443/wiki/File:Example.png".into();
+        assert!(ipv6.validate());
         assert_eq!(registry.unowned_digests().unwrap().len(), 0);
     }
 
