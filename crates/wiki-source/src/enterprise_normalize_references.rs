@@ -8,7 +8,7 @@ use wiki_model::Reference;
 fn safe_reference_url(value: &str) -> bool {
     if value.is_empty()
         || value.len() > 4096
-        || value.bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == b'\\\\')
+        || value.bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control() || byte == 92)
     {
         return false;
     }
