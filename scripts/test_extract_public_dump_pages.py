@@ -74,6 +74,13 @@ class ExtractTests(unittest.TestCase):
             self.assertFalse(self.output.exists())
             self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_escaped_wikitext_markup_roundtrips_without_xml_children(self):
+        body = b"&lt;ref&gt;A &amp; B&lt;/ref&gt;"
+        self.write_xml(XML.replace(b"Energy = mc^2", body))
+        self.assertEqual(self.extract(), 2)
+        first = json.loads(self.output.read_text().splitlines()[0])
+        self.assertEqual(first["wikitext"], "<ref>A & B</ref>")
+
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
