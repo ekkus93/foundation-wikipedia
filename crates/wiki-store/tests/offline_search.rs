@@ -97,3 +97,24 @@ fn disk_backed_index_survives_reopen_and_can_be_rebuilt() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn streaming_source_failure_rolls_back_and_success_replaces_revision() {
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index.rebuild(&[article(1, "Physics", "gravity")]).unwrap();
+    let interrupted = vec![
+        Ok(article(2, "Chemistry", "molecules")),
+        Err(SearchError::InvalidIdentity),
+    ];
+    assert!(matches!(
+        index.rebuild_streaming(interrupted),
+        Err(SearchError::InvalidIdentity)
+    ));
+    assert_eq!(index.search("gravity", 5).unwrap().len(), 1);
+    assert!(index.search("molecules", 5).unwrap().is_empty());
+    index
+        .rebuild_streaming(vec![Ok(article(2, "Chemistry", "molecules"))])
+        .unwrap();
+    assert!(index.search("gravity", 5).unwrap().is_empty());
+    assert_eq!(index.search("molecules", 5).unwrap()[0].key.page_id, 2);
+}
