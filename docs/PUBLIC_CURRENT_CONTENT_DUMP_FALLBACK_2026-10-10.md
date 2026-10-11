@@ -23,3 +23,9 @@ A second partial helper, `wiki-source::public_dump_stage::verify_staged_export`,
 5. Add representative public dump fixtures and end-to-end pack/read acceptance, including mandatory offline images and attribution.
 
 **Qualification boundary:** SRC-003 remains unchecked until the importer, renderer and public-dump article acceptance are demonstrated. This document records a defensible public source contract, not completed fallback support.
+
+## Extractor regression and known limitations (2026-10-11)
+
+The synthetic XML regression suite confirms that properly escaped reference-like wikitext survives XML decoding intact, including `&lt;ref&gt;` and `&amp;`. The exact-head test commit `288bebadfcac6ff269745c97a769ba04375d9cf2` passed Rust workspace CI 38125786299 and Platform shells CI 38125786265.
+
+**Unresolved:** The current `scripts/extract_public_dump_pages.py` scalar-field helper reads `Element.text` without rejecting nested child elements. Unexpected nested XML inside a revision `<text>` field, title, ID, timestamp or namespace may therefore truncate content silently. The importer must reject nested or duplicate scalar XML fields before production acceptance. Escaped markup is valid wikitext and must continue to round-trip. The regression above does not establish acceptance of malformed nested XML. SRC-003 remains unchecked.
