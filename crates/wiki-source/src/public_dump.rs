@@ -32,9 +32,9 @@ fn safe_relative_path(path: &str) -> bool {
         && path
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/'))
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != ".." && !crate::windows_device_name(part))
+        && path.split('/').all(|part| {
+            !part.is_empty() && part != "." && part != ".." && !crate::windows_device_name(part)
+        })
 }
 
 /// Parse GNU sha256sum-format lines (digest, two spaces or space-asterisk,
