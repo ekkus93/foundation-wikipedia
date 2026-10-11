@@ -33,6 +33,7 @@ pub enum JoinError {
     Duplicate(PageKey),
     RevisionMismatch(PageKey),
     GenerationMismatch(PageKey),
+    MixedProject(PageKey),
     MissingComponent(PageKey),
     DeletedPageConflict(PageKey),
     DuplicateTombstone(PageKey),
@@ -80,7 +81,15 @@ pub fn join_pages(
     let mut c = collect(categories, true)?;
     let mut joined = Vec::new();
     let mut batch_generation: Option<String> = None;
+    let mut batch_project: Option<String> = None;
     for (key, source) in s {
+        if batch_project
+            .as_deref()
+            .is_some_and(|expected| expected != key.project)
+        {
+            return Err(JoinError::MixedProject(key));
+        }
+        batch_project = Some(key.project.clone());
         // A batch must not silently combine independently valid generations.
         if batch_generation
             .as_deref()
@@ -197,6 +206,25 @@ mod tests {
                 vec![part(1, "c1"), categories]
             ),
             Err(JoinError::GenerationMismatch(second.page))
+        );
+    }
+
+    #[test]
+    fn rejects_locally_matching_pages_from_different_projects() {
+        let first = part(1, "s1");
+        let mut second = part(2, "s2");
+        second.page.project = "frwiki".into();
+        let mut html = second.clone();
+        html.payload = "h2".into();
+        let mut categories = second.clone();
+        categories.payload = "c2".into();
+        assert_eq!(
+            join_pages(
+                vec![first, second.clone()],
+                vec![part(1, "h1"), html],
+                vec![part(1, "c1"), categories]
+            ),
+            Err(JoinError::MixedProject(second.page))
         );
     }
 
