@@ -177,6 +177,66 @@ pub fn join_pages_with_tombstones(
     join_pages(structured, rendered, categories)
 }
 
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeletionMarker {
+    pub page: PageKey,
+    pub generation_id: String,
+}
+
+/// Join revision-matched components with deletion markers from the SAME source
+/// generation. Prefer this over the legacy PageKey-only tombstone API when
+/// deleted-page evidence is used to qualify a canonical snapshot.
+///
+/// A tombstone without a source generation cannot prove same-snapshot deletion.
+pub fn join_pages_with_generation_tombstones(
+    structured: Vec<Component>,
+    rendered: Vec<Component>,
+    categories: Vec<Component>,
+    deleted: Vec<DeletionMarker>,
+) -> Result<Vec<JoinedPage>, JoinError> {
+    let joined = join_pages(structured, rendered, categories)?;
+    let live_pages: BTreeSet<_> = joined.iter().map(|page| page.page.clone()).collect();
+    let mut project = joined.first().map(|page| page.page.project.clone());
+    let mut generation = joined.first().map(|page| page.generation_id.clone());
+    let mut deleted_pages = BTreeSet::new();
+    for marker in deleted {
+        let key = marker.page;
+        let id = marker.generation_id;
+        if key.page_id == 0
+            || key.project.is_empty()
+            || key.project.len() > 255
+            || !key.project.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+            })
+            || id.is_empty()
+            || id.len() > 255
+            || id.starts_with('.')
+            || id.ends_with('.')
+            || !id.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+            })
+        {
+            return Err(JoinError::InvalidIdentity);
+        }
+        if project.as_deref().is_some_and(|expected| expected != key.project) {
+            return Err(JoinError::MixedProject(key));
+        }
+        if generation.as_deref().is_some_and(|expected| expected != id) {
+            return Err(JoinError::GenerationMismatch(key));
+        }
+        project = Some(key.project.clone());
+        generation = Some(id);
+        if !deleted_pages.insert(key.clone()) {
+            return Err(JoinError::DuplicateTombstone(key));
+        }
+        if live_pages.contains(&key) {
+            return Err(JoinError::DeletedPageConflict(key));
+        }
+    }
+    Ok(joined)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,4 +444,88 @@ mod tests {
             Err(JoinError::EmptyPayload)
         );
     }
+
+    #[test]
+    fn generation_scoped_tombstones_reject_stale_and_foreign_deletions() {
+        let live = part(1, "structured");
+        let html = part(1, "rendered");
+        let categories = part(1, "");
+        let local = DeletionMarker {
+            page: part(2, "deleted").page,
+            generation_id: "20261009".into(),
+        };
+        let mut stale = local.clone();
+        stale.generation_id = "20261008".into();
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![live.clone()],
+                vec![html.clone()],
+                vec![categories.clone()],
+                vec![stale.clone()],
+            ),
+            Err(JoinError::GenerationMismatch(stale.page))
+        );
+        let mut foreign = local.clone();
+        foreign.page.project = "frwiki".into();
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![live.clone()],
+                vec![html.clone()],
+                vec![categories.clone()],
+                vec![foreign.clone()],
+            ),
+            Err(JoinError::MixedProject(foreign.page))
+        );
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![live.clone()],
+                vec![html.clone()],
+                vec![categories.clone()],
+                vec![local.clone(), local.clone()],
+            ),
+            Err(JoinError::DuplicateTombstone(local.page.clone()))
+        );
+        let conflict = DeletionMarker {
+            page: live.page.clone(),
+            generation_id: live.generation_id.clone(),
+        };
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![live.clone()], vec![html.clone()], vec![categories.clone()],
+                vec![conflict.clone()],
+            ),
+            Err(JoinError::DeletedPageConflict(conflict.page))
+        );
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![live], vec![html], vec![categories], vec![local],
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn tombstone_only_batches_are_generation_and_project_scoped() {
+        let first = DeletionMarker {
+            page: part(10, "deleted").page,
+            generation_id: "20261009".into(),
+        };
+        let mut stale = first.clone();
+        stale.page.page_id = 11;
+        stale.generation_id = "20261010".into();
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![], vec![], vec![], vec![first.clone(), stale.clone()],
+            ),
+            Err(JoinError::GenerationMismatch(stale.page))
+        );
+        assert!(join_pages_with_generation_tombstones(
+            vec![], vec![], vec![], vec![first],
+        )
+        .unwrap()
+        .is_empty());
+    }
+
 }
