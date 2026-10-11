@@ -4,13 +4,17 @@
 //! renderer must separately scan sanitized HTML, CSS, fonts, MathML and
 //! infobox output. Opaque HTML fallback is rejected until that scan exists.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use wiki_store::media_inventory::RequiredMedia;
+use wiki_store::media_objects::MediaObjectStore;
 use wiki_model::{Article, Block, BlockContent, ModelError, Section};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InventoryError {
     InvalidArticle(ModelError),
     UnresolvedHtmlFallback,
+    MissingDigest(usize),
+    UnverifiedObject(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,4 +106,33 @@ pub fn collect_structured_media(
         referenced_media: media.into_iter().collect(),
         rendered_dependencies_verified: false,
     })
+}
+
+/// Rehash every structured media object referenced by the exact canonical
+/// article revision. Multiple references to identical bytes are deduplicated
+/// deterministically; attribution is retained separately by
+/// collect_structured_media_notices.
+///
+/// This does NOT certify offline completeness: rendered HTML, CSS, fonts,
+/// equations and other renderer dependencies still require a separate scan.
+pub fn verify_structured_media_objects(
+    article: &Article,
+    store: &MediaObjectStore,
+) -> Result<Vec<RequiredMedia>, InventoryError> {
+    let inventory = collect_structured_media(article)?;
+    let mut required = BTreeMap::new();
+    for index in inventory.referenced_media {
+        let digest = article.media[index]
+            .sha256
+            .as_deref()
+            .ok_or(InventoryError::MissingDigest(index))?;
+        let bytes = store
+            .read_verified(digest)
+            .map_err(|_| InventoryError::UnverifiedObject(index))?;
+        required.insert(digest.to_owned(), bytes.len() as u64);
+    }
+    Ok(required
+        .into_iter()
+        .map(|(digest, bytes)| RequiredMedia { digest, bytes })
+        .collect())
 }

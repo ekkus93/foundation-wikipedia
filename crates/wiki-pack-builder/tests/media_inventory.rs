@@ -1,8 +1,12 @@
+use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
+use wiki_store::media_objects::MediaObjectStore;
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, MediaAsset, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
 use wiki_pack_builder::media_inventory::{
-    collect_structured_media, collect_structured_media_notices, InventoryError,
+    collect_structured_media, collect_structured_media_notices, verify_structured_media_objects,
+    InventoryError,
 };
 
 fn sample() -> Article {
@@ -127,4 +131,65 @@ fn opaque_html_fallback_cannot_be_silently_classed_offline_ready() {
         collect_structured_media(&article),
         Err(InventoryError::UnresolvedHtmlFallback)
     );
+}
+
+#[test]
+fn verified_structured_objects_are_hashed_and_deduplicated() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-builder-media-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let store = MediaObjectStore::new(&root);
+    let digest = store.store_bytes(b"diagram").unwrap();
+    let mut article = sample();
+    article.media[0].sha256 = Some(digest.clone());
+    article.media[1].sha256 = Some(digest.clone());
+    let required = verify_structured_media_objects(&article, &store).unwrap();
+    assert_eq!(required.len(), 1);
+    assert_eq!(required[0].digest, digest);
+    assert_eq!(required[0].bytes, 7);
+    // This only proves typed media references, not HTML/CSS completeness.
+    assert!(!collect_structured_media(&article)
+        .unwrap()
+        .rendered_dependencies_verified);
+
+    article.media[0].sha256 = None;
+    assert_eq!(
+        verify_structured_media_objects(&article, &store),
+        Err(InventoryError::MissingDigest(0))
+    );
+    article.media[0].sha256 = Some(digest.clone());
+    fs::write(root.join(&digest[..2]).join(&digest), b"tampered").unwrap();
+    assert_eq!(
+        verify_structured_media_objects(&article, &store),
+        Err(InventoryError::UnverifiedObject(0))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unresolved_html_fallback_blocks_structured_object_verification() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-builder-html-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let store = MediaObjectStore::new(&root);
+    let mut article = sample();
+    article.lead[0].content =
+        BlockContent::HtmlFallback("<img src='external.png'>".into());
+    assert_eq!(
+        verify_structured_media_objects(&article, &store),
+        Err(InventoryError::UnresolvedHtmlFallback)
+    );
+    fs::remove_dir_all(root).unwrap();
 }
