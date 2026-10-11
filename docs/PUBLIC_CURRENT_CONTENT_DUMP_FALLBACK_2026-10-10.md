@@ -33,3 +33,7 @@ The synthetic XML regression suite confirms that properly escaped reference-like
 ## Current-revision metadata validation (2026-10-11)
 
 The extractor now requires canonical decimal page/revision IDs, bounded signed namespace values, and strict UTC revision timestamps with valid calendar dates. Negative fixture cases verify that malformed metadata never publishes JSONL. Exact code SHA `7b19f1e08e9460a0ba1f7cbd30c7d6050a887e4f` passed Rust CI 38127672003 and Platform CI 38127672013. SRC-003 remains incomplete pending authenticated upstream acquisition, rendering fidelity and offline acceptance.
+
+## Compressed shard size guard (2026-10-11)
+
+Before hashing or decompressing, the XML extractor now bounds compressed shard file size through a configurable limit (1 GiB default, 16 GiB hard ceiling), alongside its existing decompressed-byte, page-count and text limits. Regression tests exercise rejection and exact-boundary acceptance. Exact code SHA `661e164eaabedbf379b7e831171704a2c8b31610` passed Rust CI 38127926395 and Platform CI 38127926360. This is partial SRC-003 hardening; official-source and renderer acceptance remain open.
