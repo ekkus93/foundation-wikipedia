@@ -128,7 +128,11 @@ pub fn stage_verified_member<R: Read>(
             std::process::id(),
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
-        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(output) => break (candidate, output),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(StageWriteError::Io(error)),
@@ -147,7 +151,9 @@ pub fn stage_verified_member<R: Read>(
             if n == 0 {
                 break;
             }
-            total = total.checked_add(n as u64).ok_or(StageWriteError::TooLarge)?;
+            total = total
+                .checked_add(n as u64)
+                .ok_or(StageWriteError::TooLarge)?;
             if total > max_bytes {
                 return Err(StageWriteError::TooLarge);
             }
