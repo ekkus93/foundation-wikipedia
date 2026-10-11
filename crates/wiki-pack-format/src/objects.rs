@@ -70,10 +70,7 @@ pub fn verify_manifest_directory(
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if opened.dev() != before.dev()
-                || opened.ino() != before.ino()
-                || opened.nlink() != 1
-            {
+            if opened.dev() != before.dev() || opened.ino() != before.ino() || opened.nlink() != 1 {
                 return Err(ObjectVerifyError::UnsafePath);
             }
         }
@@ -130,10 +127,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wpack-objects-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wpack-objects-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         root
     }
