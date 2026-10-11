@@ -264,7 +264,7 @@ mod tests {
         );
         let changed = [entry(b"plot")];
         let replacement = [(b"plot".as_slice(), &bob)];
-        assert!(matches!(
+        assert!(
             install_manifest_media_batch(
                 &store,
                 &mut registry,
