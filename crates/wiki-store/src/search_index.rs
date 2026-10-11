@@ -289,6 +289,24 @@ impl OfflineSearchIndex {
         }
         result
     }
+    /// Publish a rebuilt search index only after verifying complete shard
+    /// coverage and SHA-256 digests against an independently authenticated
+    /// manifest. This does NOT authenticate the supplied manifest itself.
+    ///
+    /// Keep the source snapshot immutable and hold exclusive ownership of the
+    /// destination directory throughout verification and publication.
+    /// Catalog frames alone cannot prove that unindexed shard bytes are absent.
+    pub fn replace_persisted_from_verified_shards(
+        path: &Path,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+        expected_shards: &BTreeMap<String, (u64, String)>,
+    ) -> Result<(), SearchError> {
+        validate_index_path(path)?;
+        catalog.verify_manifest_shard_hashes(root, expected_shards)?;
+        Self::replace_persisted_from_catalog(path, catalog, root)
+    }
+
     pub fn in_memory() -> Result<Self, SearchError> {
         Self::initialize(Connection::open_in_memory()?)
     }
