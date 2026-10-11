@@ -182,6 +182,18 @@ impl Manifest {
                 return Err(ManifestError::ResourceBudget);
             }
         }
+        // A file object cannot also be a parent directory of another object.
+        // Validate after collecting all names so input order cannot affect
+        // acceptance, including on case-insensitive filesystems.
+        for name in &paths {
+            let mut ancestor = name.as_str();
+            while let Some((parent, _)) = ancestor.rsplit_once('/') {
+                if paths.contains(parent) {
+                    return Err(ManifestError::DuplicateObject);
+                }
+                ancestor = parent;
+            }
+        }
         Ok(())
     }
 }
@@ -276,6 +288,26 @@ mod transcript_tests {
         invalid = sample();
         invalid.objects[0].path = "media/\u{2066}figure.svg".into();
         assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+    }
+
+    #[test]
+    fn rejects_file_directory_path_collisions_regardless_of_input_order() {
+        let mut invalid = sample();
+        invalid.objects[0].path = "media".into();
+        invalid.objects[1].path = "media/charts/chart.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+        assert_eq!(
+            invalid.identity_transcript(),
+            Err(ManifestError::DuplicateObject)
+        );
+
+        invalid.objects.reverse();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+        invalid.objects[0].path = "MEDIA/charts/chart.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+
+        invalid.objects[1].path = "medial".into();
+        assert_eq!(invalid.validate(), Ok(()));
     }
 
     #[test]
