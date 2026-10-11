@@ -10,3 +10,4 @@ workspace = true
 
 [dependencies]
 wiki-model = { path = "../wiki-model" }
+sha2 = "0.10"

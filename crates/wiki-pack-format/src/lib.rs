@@ -4,4 +4,5 @@
 //! production API until its canonical TODO tasks are implemented.
 
 pub mod manifest;
+pub mod objects;
 pub mod trust;
