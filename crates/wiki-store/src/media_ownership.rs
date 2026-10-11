@@ -52,7 +52,7 @@ pub struct MediaNotice {
 impl MediaNotice {
     pub(crate) fn validate(&self) -> bool {
         !self.mime.trim().is_empty()
-            && !self.source_url.trim().is_empty()
+            && safe_media_source_url(&self.source_url)
             && !self.creator.trim().is_empty()
             && !self.license.trim().is_empty()
             && self.mime.len() <= 255
@@ -60,6 +60,26 @@ impl MediaNotice {
             && self.creator.len() <= 4096
             && self.license.len() <= 4096
     }
+}
+
+/// Attribution links must be absolute web URLs, never executable schemes,
+/// whitespace-bearing browser ambiguities, or credential-bearing authorities.
+fn safe_media_source_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    if rest.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b == b'\\') {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !authority.starts_with(':')
+        && !authority.starts_with('.')
+        && !authority.ends_with('.')
 }
 
 pub struct MediaRegistry {
@@ -391,6 +411,32 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn unsafe_attribution_source_urls_are_rejected_before_registration() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        for source in [
+            "",
+            "javascript:alert(1)",
+            "data:text/html,malicious",
+            "//commons.wikimedia.org/wiki/File:Figure.png",
+            "https:///wiki/File:Figure.png",
+            "https://user@commons.wikimedia.org/wiki/File:Figure.png",
+            "https://commons.wikimedia.org/evil\\path",
+            "https://commons.wikimedia.org/evil\npath",
+            "https://commons.wikimedia.org/space in path",
+        ] {
+            let mut bad = notice("Author");
+            bad.source_url = source.to_owned();
+            assert!(!bad.validate(), "accepted unsafe source: {source:?}");
+            assert!(matches!(
+                registry.register_verified_bytes(b"figure", &bad),
+                Err(MediaRegistryError::InvalidInput)
+            ));
+        }
+        assert!(notice("Author").validate());
+        assert_eq!(registry.unowned_digests().unwrap().len(), 0);
     }
 
     #[test]
