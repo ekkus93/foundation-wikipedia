@@ -213,7 +213,13 @@ def extract_current_dump(path, expected_sha256, project, output, *,
         raise DumpExtractionError("unsafe output parent")
     if output.exists() or output.is_symlink():
         raise DumpExtractionError("output already exists")
+    # Wikimedia's published page-partition filenames use YYYYMMDD and
+    # pages-meta-currentN.xml-pSTARTpEND.bz2. The older form remains
+    # supported solely for existing synthetic fixture compatibility.
     partition = re.fullmatch(
+        r"([a-z0-9_]+)-[0-9]{8}-pages-meta-current[1-9][0-9]*"
+        r"\.xml-p([0-9]+)p([0-9]+)\.bz2", path.name,
+    ) or re.fullmatch(
         r"([a-z0-9_]+)-[0-9]{4}-[0-9]{2}-01-p([0-9]+)p([0-9]+)\.xml\.bz2",
         path.name,
     )
