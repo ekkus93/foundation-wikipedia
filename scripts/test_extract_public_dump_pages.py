@@ -95,8 +95,8 @@ class ExtractTests(unittest.TestCase):
             (b"<id>50</id>", b"<id>50</id><id>51</id>"),
             (b"<title>Physics</title>",
              b"<title>Physics</title><title>Duplicate</title>"),
-            (b"<text xml:space=\\"preserve\\">Energy = mc^2</text>",
-             b"<text xml:space=\\"preserve\\">Energy = mc^2</text><text>lost</text>"),
+            (b'<text xml:space="preserve">Energy = mc^2</text>',
+             b'<text xml:space="preserve">Energy = mc^2</text><text>lost</text>'),
             (b'<redirect title="New title"/>',
              b'<redirect title="New title"/><redirect title="Other"/>'),
         )
