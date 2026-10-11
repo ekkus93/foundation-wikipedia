@@ -476,4 +476,46 @@ mod tests {
             Err(MediaRegistryError::UnknownObject)
         ));
     }
+    #[test]
+    fn registry_rejects_inventory_conflict_before_writing_notices_or_owners() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let alice = notice("Alice");
+        let bob = notice("Bob");
+        let initial = [(b"diagram".as_slice(), &alice)];
+        let first = registry
+            .register_verified_owned_batch(&initial, OwnerKind::Pack, "physics")
+            .unwrap();
+        let conflicting = [
+            (b"diagram".as_slice(), &bob),
+            (b"plot".as_slice(), &bob),
+        ];
+        assert!(matches!(
+            registry.register_verified_owned_batch(
+                &conflicting,
+                OwnerKind::Pack,
+                "physics"
+            ),
+            Err(MediaRegistryError::ConflictingInventory)
+        ));
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "physics").unwrap(),
+            vec![(first[0].clone(), 7)]
+        );
+        assert_eq!(registry.notice_count(&first[0]).unwrap(), 1);
+        let plot = format!("{:x}", Sha256::digest(b"plot"));
+        assert_eq!(registry.notice_count(&plot).unwrap(), 0);
+        assert!(registry.unowned_digests().unwrap().is_empty());
+
+        // Repeating the same inventory may add a distinct valid attribution,
+        // but never adds an extra digest to this owner's inventory.
+        let same = [(b"diagram".as_slice(), &bob)];
+        assert_eq!(
+            registry
+                .register_verified_owned_batch(&same, OwnerKind::Pack, "physics")
+                .unwrap(),
+            first
+        );
+        assert_eq!(registry.notice_count(&first[0]).unwrap(), 2);
+    }
+
 }
