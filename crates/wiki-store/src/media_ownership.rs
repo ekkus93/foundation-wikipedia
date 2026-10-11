@@ -485,16 +485,9 @@ mod tests {
         let first = registry
             .register_verified_owned_batch(&initial, OwnerKind::Pack, "physics")
             .unwrap();
-        let conflicting = [
-            (b"diagram".as_slice(), &bob),
-            (b"plot".as_slice(), &bob),
-        ];
+        let conflicting = [(b"diagram".as_slice(), &bob), (b"plot".as_slice(), &bob)];
         assert!(matches!(
-            registry.register_verified_owned_batch(
-                &conflicting,
-                OwnerKind::Pack,
-                "physics"
-            ),
+            registry.register_verified_owned_batch(&conflicting, OwnerKind::Pack, "physics"),
             Err(MediaRegistryError::ConflictingInventory)
         ));
         assert_eq!(
@@ -517,5 +510,4 @@ mod tests {
         );
         assert_eq!(registry.notice_count(&first[0]).unwrap(), 2);
     }
-
 }
