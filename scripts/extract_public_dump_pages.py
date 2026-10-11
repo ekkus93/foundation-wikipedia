@@ -93,9 +93,13 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     revision = revisions[0]
     title = _text(page, "title")
     timestamp = _text(revision, "timestamp")
-    body = _text(revision, "text")
-    if not title or not title.strip() or not timestamp or body is None:
+    text_node = _child(revision, "text")
+    if not title or not title.strip() or not timestamp or text_node is None:
         raise DumpExtractionError("missing page title, revision time or wikitext")
+    if any(key not in ("bytes", "{http://www.w3.org/XML/1998/namespace}space")
+           for key in text_node.attrib):
+        raise DumpExtractionError("unsupported revision text attributes")
+    body = text_node.text or ""
     if len(title.encode("utf-8")) > 4096 or len(body.encode("utf-8")) > max_text_bytes:
         raise DumpExtractionError("oversized page title or wikitext")
     try:
