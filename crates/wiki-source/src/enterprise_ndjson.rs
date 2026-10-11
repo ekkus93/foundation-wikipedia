@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::io::{BufRead, Read};
 
 use crate::enterprise::{
-    join_enterprise_batch, parse_regular_companion, parse_structured_article, EnterpriseError,
+    join_enterprise_batch, parse_regular_companion_complete, parse_structured_article, EnterpriseError,
     JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
     MAX_ENTERPRISE_RECORD_BYTES,
 };
@@ -153,7 +153,7 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
             parse_structured_article(line, generation_id)
         })?;
     let regular: Vec<RegularArticleCompanion> = parse_lines(regular, InputKind::Regular, |line| {
-        parse_regular_companion(line, generation_id)
+        parse_regular_companion_complete(line, generation_id)
     })?;
     join_enterprise_batch(structured, regular, deleted).map_err(BatchImportError::Join)
 }
@@ -527,4 +527,46 @@ mod tests {
             Err(BatchImportError::Join(EnterpriseError::InvalidGeneration))
         );
     }
+
+    #[test]
+    fn snapshot_import_rejects_omitted_categories_and_redirects() {
+        let source = structured(1, 17);
+        let regular = regular(1, 17);
+        let missing_categories = regular.replace(
+            r#","categories":[{"name":"Science"}]"#, "",
+        );
+        assert_ne!(regular, missing_categories);
+        assert_eq!(
+            join_enterprise_ndjson(
+                Cursor::new(source.clone()),
+                Cursor::new(missing_categories),
+                "20261010", vec![],
+            ),
+            Err(BatchImportError::Parse {
+                kind: InputKind::Regular,
+                line: 1,
+                error: EnterpriseError::MissingField("categories"),
+            })
+        );
+        let missing_redirects = regular.replace(r#","redirects":[]"#, "");
+        assert_ne!(regular, missing_redirects);
+        assert_eq!(
+            join_enterprise_ndjson(
+                Cursor::new(source),
+                Cursor::new(missing_redirects),
+                "20261010", vec![],
+            ),
+            Err(BatchImportError::Parse {
+                kind: InputKind::Regular,
+                line: 1,
+                error: EnterpriseError::MissingField("redirects"),
+            })
+        );
+        assert!(join_enterprise_ndjson(
+            Cursor::new(structured(1, 17)),
+            Cursor::new(regular(1, 17)),
+            "20261010", vec![],
+        ).is_ok());
+    }
+
 }

@@ -565,13 +565,21 @@ fn parse_string_array(
 
 /// Parse the regular Wikimedia Enterprise article record used to provide the
 /// fields deliberately omitted from Structured Contents.
-pub fn parse_regular_companion(
+fn parse_regular_companion_inner(
     input: &str,
     generation_id: &str,
+    complete_memberships: bool,
 ) -> Result<RegularArticleCompanion, EnterpriseError> {
     let root = parse_json(input)?;
     let map = object(&root, "article")?;
     let (page, revision_id, namespace, language, name) = identity(map, generation_id)?;
+    if complete_memberships {
+        for field in ["categories", "redirects"] {
+            if !map.contains_key(field) {
+                return Err(EnterpriseError::MissingField(field));
+            }
+        }
+    }
     let article_body = object(
         map.get("article_body")
             .ok_or(EnterpriseError::MissingField("article_body"))?,
@@ -590,6 +598,24 @@ pub fn parse_regular_companion(
         categories: parse_string_array(map, "categories")?,
         redirects: parse_string_array(map, "redirects")?,
     })
+}
+
+/// Permissive online companion parser. Missing categories/redirects are not
+/// evidence that a bulk snapshot has complete category/redirect membership.
+pub fn parse_regular_companion(
+    input: &str,
+    generation_id: &str,
+) -> Result<RegularArticleCompanion, EnterpriseError> {
+    parse_regular_companion_inner(input, generation_id, false)
+}
+
+/// Snapshot companion parser: explicitly declared empty arrays are allowed,
+/// but omitted membership collections are incomplete source evidence.
+pub fn parse_regular_companion_complete(
+    input: &str,
+    generation_id: &str,
+) -> Result<RegularArticleCompanion, EnterpriseError> {
+    parse_regular_companion_inner(input, generation_id, true)
 }
 
 /// Join beta Structured Contents with the regular article payload only when all
