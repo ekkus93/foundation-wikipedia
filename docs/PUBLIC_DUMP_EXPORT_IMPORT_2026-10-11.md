@@ -24,7 +24,7 @@ python3 scripts/extract_public_dump_export.py \
 
 The destination parent must already exist and the output file must not exist. The importer validates the declared member set, project/date and non-overlapping page-ID partitions; bounds compressed bytes, extracted page counts and output bytes; hashes all compressed shards before extraction; extracts each member with the bounded single-shard importer; rechecks all input hashes; then publishes one combined JSONL through a no-overwrite hard link. A failure before publication leaves no final output. Records preserve project, page ID, exact revision ID/timestamp, namespace, redirect target, wikitext, and source member SHA-256.
 
-The supported dataset is the current-content *page-range* XML/bzip2 export. History-only overflow `p...r...r...` members and legacy multistream/index naming must not be silently reinterpreted as this format. Partitions may have page-ID gaps; gaps alone are not evidence of a missing shard. A checksum inventory with even one unsupported member fails closed.
+The importer supports two current-revision page-range XML/bzip2 layouts: `mediawiki_content_current` (`enwiki-2026-10-01-p1p100.xml.bz2`) and public `pages-meta-currentN` (`enwiki-20261001-pages-meta-current1.xml-p1p100.bz2`). Supply the date as `YYYY-MM-01` for either layout. Mixing layouts in one inventory fails closed. History, multistream and index members are not supported. Page-ID gaps are permitted. Filenames alone do not establish publication authenticity or completeness.
 
 ## Reproducible synthetic acceptance
 
