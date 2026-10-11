@@ -74,9 +74,9 @@ fn safe_media_mime(value: &str) -> bool {
         && major
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        && subtype.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+')
-        })
+        && subtype
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'+'))
 }
 
 /// Attribution links must be absolute web URLs, never executable schemes,
