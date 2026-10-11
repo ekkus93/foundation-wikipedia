@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::media_install::{install_owned_media_batch, MediaInstallError};
+use crate::media_install::{
+    install_owned_media_batch, verify_required_owner_media, MediaInstallError,
+};
 use crate::media_inventory::RequiredMedia;
 use crate::media_objects::MediaObjectStore;
 use crate::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
@@ -72,11 +74,23 @@ pub fn install_manifest_media_batch(
         return Err(ManifestMediaInstallError::InventoryMismatch);
     }
 
-    // This routine stages every verified content-addressed object before the
-    // registry's single SQLite ownership transaction. Failed staging cannot
-    // produce a partially installed owner.
-    install_owned_media_batch(store, registry, assets, kind, owner_id)
-        .map_err(ManifestMediaInstallError::Install)
+    // Reject an obvious reinstall conflict before staging any new bytes.
+    // The registry repeats this check *inside* an IMMEDIATE SQLite transaction,
+    // since another installer can change ownership after this preflight.
+    let existing = registry
+        .owned_media(kind, owner_id)
+        .map_err(|error| ManifestMediaInstallError::Install(MediaInstallError::Registry(error)))?;
+    if !existing.is_empty() && existing.into_iter().collect::<BTreeMap<_, _>>() != expected {
+        return Err(ManifestMediaInstallError::InventoryMismatch);
+    }
+
+    let installed = install_owned_media_batch(store, registry, assets, kind, owner_id)
+        .map_err(ManifestMediaInstallError::Install)?;
+    // Never report a successful install without checking both the exact owner
+    // inventory and the stored bytes against the caller-authenticated manifest.
+    verify_required_owner_media(store, registry, kind, owner_id, required)
+        .map_err(ManifestMediaInstallError::Install)?;
+    Ok(installed)
 }
 
 #[cfg(test)]
@@ -210,4 +224,102 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn reinstall_is_idempotent_and_conflicting_manifest_is_rejected_without_staging() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-reinstall-{}-{stamp}", std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let alice = notice("Alice");
+        let bob = notice("Bob");
+        let original = [entry(b"diagram")];
+        let initial = [(b"diagram".as_slice(), &alice)];
+        let first = install_manifest_media_batch(
+            &store, &mut registry, &initial, &original, OwnerKind::Pack, "physics"
+        ).unwrap();
+        assert_eq!(
+            install_manifest_media_batch(
+                &store, &mut registry, &initial, &original, OwnerKind::Pack, "physics"
+            ).unwrap(),
+            first
+        );
+        let changed = [entry(b"plot")];
+        let replacement = [(b"plot".as_slice(), &bob)];
+        assert!(matches!(
+            install_manifest_media_batch(
+                &store, &mut registry, &replacement, &changed, OwnerKind::Pack, "physics"
+            ),
+            Err(ManifestMediaInstallError::InventoryMismatch)
+        ));
+        assert_eq!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &original)
+                .unwrap(),
+            7
+        );
+        assert_eq!(registry.notice_count(&changed[0].digest).unwrap(), 0);
+        assert!(!root.join(&changed[0].digest[..2]).join(&changed[0].digest).exists());
+        assert!(matches!(
+            install_manifest_media_batch(
+                &store, &mut registry, &replacement, &changed, OwnerKind::Pack, "math"
+            ),
+            Ok(_)
+        ));
+        assert_eq!(
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "math", &changed)
+                .unwrap(),
+            4
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_conflicting_reinstalls_never_union_owner_inventory() {
+        use std::sync::{Arc, Barrier};
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-race-{}-{stamp}", std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let db = root.join("owners.sqlite");
+        // Initialize schema before launching competing connections.
+        drop(MediaRegistry::open(&db).unwrap());
+        let barrier = Arc::new(Barrier::new(2));
+        let workers: Vec<_> = [b"diagram".as_slice(), b"plot".as_slice()]
+            .into_iter()
+            .map(|bytes| {
+                let barrier = Arc::clone(&barrier);
+                let root = root.clone();
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    let mut registry = MediaRegistry::open(&db).unwrap();
+                    let store = MediaObjectStore::new(&root);
+                    let n = notice("Author");
+                    let required = [entry(bytes)];
+                    let assets = [(bytes, &n)];
+                    barrier.wait();
+                    install_manifest_media_batch(
+                        &store, &mut registry, &assets, &required, OwnerKind::Pack, "physics"
+                    ).is_ok()
+                })
+            })
+            .collect();
+        let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|success| **success).count(), 1);
+        let registry = MediaRegistry::open(&db).unwrap();
+        let owned = registry.owned_media(OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(owned.len(), 1);
+        let store = MediaObjectStore::new(&root);
+        assert_eq!(
+            verify_required_owner_media(
+                &store, &registry, OwnerKind::Pack, "physics",
+                &[RequiredMedia { digest: owned[0].0.clone(), bytes: owned[0].1 }]
+            ).unwrap(),
+            owned[0].1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }

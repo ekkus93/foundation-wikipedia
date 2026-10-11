@@ -4,7 +4,9 @@
 //! This registry records verified byte identity and attribution notices; it
 //! does not certify an object as installed or authorize deletion of its bytes.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::BTreeMap;
+
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug)]
@@ -12,6 +14,7 @@ pub enum MediaRegistryError {
     Sql(rusqlite::Error),
     InvalidInput,
     ConflictingSize,
+    ConflictingInventory,
     UnknownObject,
 }
 
@@ -137,9 +140,11 @@ impl MediaRegistry {
         tx.commit()?;
         Ok(digest)
     }
-    /// Register all staged media and grant their owner in one SQLite transaction.
-    /// A failed item cannot leave a partially owned pack. The caller must
-    /// persist and verify every object before calling this method.
+    /// Register staged media with an exact, immutable inventory for this owner.
+    /// Reinstalling the same inventory is idempotent; a different inventory
+    /// must be rejected, never silently appended. An IMMEDIATE transaction
+    /// serializes competing batch installers before the ownership comparison.
+    /// The caller must persist and verify every object before this operation.
     pub fn register_verified_owned_batch(
         &mut self,
         assets: &[(&[u8], &MediaNotice)],
@@ -155,7 +160,38 @@ impl MediaRegistry {
         {
             return Err(MediaRegistryError::InvalidInput);
         }
-        let tx = self.conn.transaction()?;
+        let mut expected = BTreeMap::new();
+        for &(content, _) in assets {
+            expected.insert(format!("{:x}", Sha256::digest(content)), content.len() as u64);
+        }
+        // Acquire SQLite's writer reservation before inspecting the owner.
+        // A second connection cannot both observe the old inventory and
+        // append a different one while this transaction is in progress.
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing = {
+            let mut stmt = tx.prepare(
+                "SELECT o.digest, o.bytes FROM media_owners r
+                 JOIN media_objects o ON o.digest=r.digest
+                 WHERE r.kind=?1 AND r.owner_id=?2 ORDER BY o.digest",
+            )?;
+            let rows = stmt.query_map(params![kind.as_str(), owner_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            let mut existing = BTreeMap::new();
+            for row in rows {
+                let (digest, size) = row?;
+                existing.insert(
+                    digest,
+                    u64::try_from(size).map_err(|_| MediaRegistryError::InvalidInput)?,
+                );
+            }
+            existing
+        };
+        if !existing.is_empty() && existing != expected {
+            return Err(MediaRegistryError::ConflictingInventory);
+        }
         let mut digests = Vec::with_capacity(assets.len());
         for &(content, notice) in assets {
             let bytes =
