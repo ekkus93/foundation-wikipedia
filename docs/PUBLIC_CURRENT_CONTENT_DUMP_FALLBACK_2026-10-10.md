@@ -29,3 +29,7 @@ A second partial helper, `wiki-source::public_dump_stage::verify_staged_export`,
 The synthetic XML regression suite confirms that properly escaped reference-like wikitext survives XML decoding intact, including `&lt;ref&gt;` and `&amp;`. The exact-head test commit `288bebadfcac6ff269745c97a769ba04375d9cf2` passed Rust workspace CI 38125786299 and Platform shells CI 38125786265.
 
 **Follow-up qualified:** Nested or duplicate scalar XML fields now fail closed instead of silently truncating wikitext or metadata; properly escaped markup still round-trips. Exact code SHA `979409939644650467c7b3492483614a562ebf94` passed [Rust CI 38127400374](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38127400374) and [Platform CI 38127400336](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38127400336). The importer still lacks authenticated official-source acquisition, Parsoid-compatible rendering and end-to-end offline acceptance. SRC-003 remains unchecked.
+
+## Current-revision metadata validation (2026-10-11)
+
+The extractor now requires canonical decimal page/revision IDs, bounded signed namespace values, and strict UTC revision timestamps with valid calendar dates. Negative fixture cases verify that malformed metadata never publishes JSONL. Exact code SHA `7b19f1e08e9460a0ba1f7cbd30c7d6050a887e4f` passed Rust CI 38127672003 and Platform CI 38127672013. SRC-003 remains incomplete pending authenticated upstream acquisition, rendering fidelity and offline acceptance.
