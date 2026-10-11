@@ -1,6 +1,5 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wiki_store::media_objects::MediaObjectStore;
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, MediaAsset, Revision, Section, ARTICLE_SCHEMA_VERSION,
 };
@@ -8,6 +7,7 @@ use wiki_pack_builder::media_inventory::{
     collect_structured_media, collect_structured_media_notices, verify_structured_media_objects,
     InventoryError,
 };
+use wiki_store::media_objects::MediaObjectStore;
 
 fn sample() -> Article {
     Article {
@@ -139,10 +139,8 @@ fn verified_structured_objects_are_hashed_and_deduplicated() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-builder-media-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-builder-media-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let store = MediaObjectStore::new(&root);
     let digest = store.store_bytes(b"diagram").unwrap();
@@ -154,9 +152,11 @@ fn verified_structured_objects_are_hashed_and_deduplicated() {
     assert_eq!(required[0].digest, digest);
     assert_eq!(required[0].bytes, 7);
     // This only proves typed media references, not HTML/CSS completeness.
-    assert!(!collect_structured_media(&article)
-        .unwrap()
-        .rendered_dependencies_verified);
+    assert!(
+        !collect_structured_media(&article)
+            .unwrap()
+            .rendered_dependencies_verified
+    );
 
     article.media[0].sha256 = None;
     assert_eq!(
