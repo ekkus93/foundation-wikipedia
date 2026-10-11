@@ -83,7 +83,21 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
 
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
-    if members.is_empty() || wiki.is_empty() || date.len() != 10 || !date.ends_with("-01") {
+    let d = date.as_bytes();
+    if members.is_empty()
+        || wiki.is_empty()
+        || !wiki
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        || d.len() != 10
+        || !d[..4].iter().all(u8::is_ascii_digit)
+        || d[4] != b'-'
+        || !d[5..7].iter().all(u8::is_ascii_digit)
+        || d[7] != b'-'
+        || &d[8..] != b"01"
+        || d[5..7] < *b"01"
+        || d[5..7] > *b"12"
+    {
         return false;
     }
     let prefix = format!("{wiki}-{date}-p");
