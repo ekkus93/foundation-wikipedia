@@ -72,6 +72,33 @@ class ExportTests(unittest.TestCase):
             self.extract()
         self.assert_no_publication()
 
+    def test_aggregate_page_and_output_budgets_fail_without_partial_publication(self):
+        with self.assertRaisesRegex(DumpExtractionError, "page budget"):
+            self.extract(max_total_pages=1)
+        self.assert_no_publication()
+        with self.assertRaisesRegex(DumpExtractionError, "JSONL byte budget"):
+            self.extract(max_output_bytes=20)
+        self.assert_no_publication()
+        with self.assertRaisesRegex(DumpExtractionError, "invalid export budget"):
+            self.extract(max_total_pages=0)
+        self.assert_no_publication()
+
+    def test_changed_first_shard_after_extraction_is_rejected(self):
+        from unittest.mock import patch
+        import extract_public_dump_export as module
+        real = module.extract_current_dump
+
+        def mutate_after_second(*args, **kwargs):
+            count = real(*args, **kwargs)
+            if args[0].name == self.second:
+                (self.stage / self.first).write_bytes(b"mutated after parsing")
+            return count
+
+        with patch.object(module, "extract_current_dump", side_effect=mutate_after_second):
+            with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):
+                self.extract()
+        self.assert_no_publication()
+
     def test_second_shard_invalid_xml_does_not_publish_first_shard(self):
         self.shards[self.second] = bz2.compress(b"<?xml version='1.0'?><mediawiki><page>")
         self.write_inventory()

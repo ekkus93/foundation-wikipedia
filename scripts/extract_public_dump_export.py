@@ -87,10 +87,11 @@ def _inventory(path, project, date):
 
 def _private_shard(root, relative):
     path = root
-    for part in relative.split("/"):
+    parts = relative.split("/")
+    for index, part in enumerate(parts):
         path = path / part
         meta = path.lstat()
-        if path.name == relative.split("/")[-1]:
+        if index == len(parts) - 1:
             if not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1:
                 raise DumpExtractionError("unsafe staged shard")
         elif not stat.S_ISDIR(meta.st_mode):
@@ -100,11 +101,15 @@ def _private_shard(root, relative):
 
 def extract_current_export(staging_dir, checksum_file, project, date, output,
                            *, max_member_bytes=MAX_MEMBER_BYTES,
-                           max_total_bytes=MAX_TOTAL_BYTES):
+                           max_total_bytes=MAX_TOTAL_BYTES,
+                           max_total_pages=10_000_000, max_output_bytes=1 << 40):
     """All declared members must pass before atomically publishing combined JSONL."""
     staging_dir, checksum_file, output = map(Path, (staging_dir, checksum_file, output))
-    if not 0 < max_member_bytes <= MAX_TOTAL_BYTES or not 0 < max_total_bytes <= MAX_TOTAL_BYTES:
-        raise DumpExtractionError("invalid export byte budget")
+    if (not 0 < max_member_bytes <= MAX_TOTAL_BYTES
+            or not 0 < max_total_bytes <= MAX_TOTAL_BYTES
+            or not 0 < max_total_pages <= 10_000_000
+            or not 0 < max_output_bytes <= MAX_TOTAL_BYTES):
+        raise DumpExtractionError("invalid export budget")
     if (not stat.S_ISDIR(staging_dir.lstat().st_mode)
             or not stat.S_ISDIR(output.parent.lstat().st_mode)
             or output.exists() or output.is_symlink()):
@@ -127,11 +132,17 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         with joined.open("wb") as writer:
             for index, (path, digest) in enumerate(paths):
                 part = work / f"part-{index:06d}.jsonl"
+                remaining = max_total_pages - count
+                if remaining <= 0:
+                    raise DumpExtractionError("export exceeds aggregate page budget")
                 count += extract_current_dump(
-                    path, digest, project, part, max_compressed_bytes=max_member_bytes
+                    path, digest, project, part,
+                    max_compressed_bytes=max_member_bytes, max_pages=remaining,
                 )
                 with part.open("rb") as reader:
                     for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                        if writer.tell() + len(chunk) > max_output_bytes:
+                            raise DumpExtractionError("export exceeds aggregate JSONL byte budget")
                         writer.write(chunk)
                 part.unlink()
             writer.flush()
