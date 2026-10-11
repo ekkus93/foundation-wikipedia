@@ -178,15 +178,12 @@ fn unresolved_html_fallback_blocks_structured_object_verification() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-builder-html-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-builder-html-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
     let store = MediaObjectStore::new(&root);
     let mut article = sample();
-    article.lead[0].content =
-        BlockContent::HtmlFallback("<img src='external.png'>".into());
+    article.lead[0].content = BlockContent::HtmlFallback("<img src='external.png'>".into());
     assert_eq!(
         verify_structured_media_objects(&article, &store),
         Err(InventoryError::UnresolvedHtmlFallback)
