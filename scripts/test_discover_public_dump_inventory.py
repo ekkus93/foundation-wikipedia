@@ -67,6 +67,46 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(PublicationError, "inventory member"):
             discover_completed_export("enwiki", bad_fetch)
 
+    def test_inventory_rejects_overlapping_partitions_and_unsafe_paths(self):
+        date = "2026-10-01"
+        prefix = f"enwiki-{date}-p"
+
+        def check(paths):
+            data = "".join(f"{'a' * 64}  {path}\n" for path in paths).encode()
+
+            def fetch(url, limit):
+                if url.endswith("enwiki/"):
+                    return b'<a href="2026-10-01/">Oct</a>'
+                if url.endswith("SHA256SUMS"):
+                    return data
+                raise AssertionError(url)
+
+            return discover_completed_export("enwiki", fetch)
+
+        adjacent = [f"{prefix}1p100.xml.bz2", f"{prefix}101p200.xml.bz2"]
+        self.assertEqual(check(adjacent)[0]["member_count"], 2)
+        # Gaps are legitimate when IDs were deleted or never assigned.
+        self.assertEqual(check([adjacent[0], f"{prefix}201p300.xml.bz2"])[0]
+                         ["member_count"], 2)
+        for members in (
+            [adjacent[0], f"{prefix}100p200.xml.bz2"],
+            [adjacent[0], f"other/{prefix}1p100.xml.bz2"],
+            [adjacent[0], f"{prefix}50p150.xml.bz2"],
+        ):
+            with self.subTest(members=members):
+                with self.assertRaisesRegex(PublicationError, "overlapping"):
+                    check(members)
+        for path in (
+            f"CON/{prefix}1p100.xml.bz2",
+            f"nested/COM1/{prefix}1p100.xml.bz2",
+            f"{'a' * 256}/{prefix}1p100.xml.bz2",
+            f"{prefix}0p100.xml.bz2",
+            f"{prefix}1p18446744073709551616.xml.bz2",
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(PublicationError):
+                    check([path])
+
     def test_downloads_only_inventory_listed_hash_verified_shard(self):
         payload = b"compressed synthetic shard bytes"
         digest = hashlib.sha256(payload).hexdigest()

@@ -73,6 +73,14 @@ def _release_date(link):
     return link[:-1]
 
 
+def _windows_device_name(part):
+    """Mirror the Rust checksum parser's reserved-device path guard."""
+    base = part.split(".", 1)[0].upper()
+    return (base in ("CON", "PRN", "AUX", "NUL")
+            or (len(base) == 4 and base[:3] in ("COM", "LPT")
+                and base[3] in "123456789"))
+
+
 def _check_inventory(data, project, date):
     try:
         lines = data.decode("utf-8").splitlines()
@@ -81,6 +89,7 @@ def _check_inventory(data, project, date):
     if not lines or len(lines) > 100_000:
         raise PublicationError("empty or oversized checksum inventory")
     names = set()
+    partitions = []
     prefix = f"{project}-{date}-p"
     for line in lines:
         match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *]([a-zA-Z0-9_./-]+)", line)
@@ -88,19 +97,26 @@ def _check_inventory(data, project, date):
             raise PublicationError("invalid checksum inventory member")
         path = match.group(2)
         parts = path.split("/")
-        if (any(not part or part in (".", "..") or part.endswith(".")
+        if (any(not part or len(part) > 255 or part in (".", "..")
+                or part.endswith(".") or _windows_device_name(part)
                 for part in parts) or len(parts) > 64 or len(path) > 4096):
             raise PublicationError("unsafe checksum inventory path")
         name = parts[-1]
         suffix = name.removeprefix(prefix).removesuffix(".xml.bz2")
         page_range = re.fullmatch(r"([0-9]+)p([0-9]+)", suffix)
-        if (not name.startswith(prefix) or not name.endswith(".xml.bz2")
-                or page_range is None or int(page_range[1]) <= 0
-                or int(page_range[2]) < int(page_range[1])):
+        if not name.startswith(prefix) or not name.endswith(".xml.bz2") or page_range is None:
+            raise PublicationError("unexpected current-content member")
+        first, last = map(int, page_range.groups())
+        if not 0 < first <= last <= 2**64 - 1:
             raise PublicationError("unexpected current-content member")
         if path.lower() in names:
             raise PublicationError("duplicate checksum inventory member")
         names.add(path.lower())
+        partitions.append((first, last))
+    partitions.sort()
+    if any(previous[1] >= current[0]
+           for previous, current in zip(partitions, partitions[1:])):
+        raise PublicationError("overlapping current-content page partitions")
     return len(names)
 
 
