@@ -8,6 +8,7 @@ caller-supplied SHA-256 alone does not prove publisher authenticity.
 """
 import argparse
 import bz2
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -38,10 +39,9 @@ def _text(parent, name):
 
 
 def _positive_id(value):
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
-        raise DumpExtractionError("missing or invalid page/revision identity") from None
+    if value is None or not re.fullmatch(r"[1-9][0-9]*", value):
+        raise DumpExtractionError("missing or invalid page/revision identity")
+    result = int(value)
     if result <= 0 or result > 2**63 - 1:
         raise DumpExtractionError("invalid page/revision identity")
     return result
@@ -151,6 +151,13 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     text_node = _child(revision, "text")
     if not title or not title.strip() or not timestamp or text_node is None:
         raise DumpExtractionError("missing page title, revision time or wikitext")
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+                        timestamp):
+        raise DumpExtractionError("invalid revision timestamp")
+    try:
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise DumpExtractionError("invalid revision timestamp") from None
     if any(key not in ("bytes", "{http://www.w3.org/XML/1998/namespace}space")
            for key in text_node.attrib):
         raise DumpExtractionError("unsupported revision text attributes")
@@ -165,10 +172,11 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     if len(title.encode("utf-8")) > 4096 or body_bytes > max_text_bytes:
         raise DumpExtractionError("oversized page title or wikitext")
     namespace_text = _text(page, "ns")
-    try:
-        namespace = int(namespace_text)
-    except (ValueError, TypeError):
-        raise DumpExtractionError("missing page namespace") from None
+    if namespace_text is None or not re.fullmatch(r"(0|-?[1-9][0-9]*)", namespace_text):
+        raise DumpExtractionError("missing page namespace")
+    namespace = int(namespace_text)
+    if not -(2**31) <= namespace < 2**31:
+        raise DumpExtractionError("invalid page namespace")
     redirect = _child(page, "redirect")
     target = redirect.get("title") if redirect is not None else None
     if redirect is not None and (not target or not target.strip()):

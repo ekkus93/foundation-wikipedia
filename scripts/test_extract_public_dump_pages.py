@@ -109,6 +109,28 @@ class ExtractTests(unittest.TestCase):
                 self.assertFalse(self.output.exists())
                 self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_rejects_noncanonical_ids_namespaces_and_revision_times(self):
+        cases = (
+            (b"<id>10</id>", b"<id>+10</id>", "identity"),
+            (b"<id>10</id>", b"<id>01</id>", "identity"),
+            (b"<id>50</id>", b"<id>5_0</id>", "identity"),
+            (b"<id>10</id>", b"<id>9223372036854775808</id>", "identity"),
+            (b"<ns>0</ns>", b"<ns>1_0</ns>", "namespace"),
+            (b"<ns>0</ns>", b"<ns>-0</ns>", "namespace"),
+            (b"<ns>0</ns>", b"<ns>2147483648</ns>", "namespace"),
+            (b"<timestamp>2026-10-01T00:00:00Z</timestamp>",
+             b"<timestamp>2026-02-30T00:00:00Z</timestamp>", "timestamp"),
+            (b"<timestamp>2026-10-01T00:00:00Z</timestamp>",
+             b"<timestamp>2026-10-01T00:00:00+00:00</timestamp>", "timestamp"),
+        )
+        for old, new, diagnostic in cases:
+            with self.subTest(new=new):
+                self.write_xml(XML.replace(old, new, 1))
+                with self.assertRaisesRegex(DumpExtractionError, diagnostic):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_shard_project_and_page_range_are_bound_to_filename(self):
         with self.assertRaisesRegex(DumpExtractionError, "member identity"):
             extract_current_dump(self.shard, self.sha, "frwiki", self.output)
