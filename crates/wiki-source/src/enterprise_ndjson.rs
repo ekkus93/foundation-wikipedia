@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::io::{BufRead, Read};
 
 use crate::enterprise::{
-    join_enterprise_batch, parse_regular_companion_complete, parse_structured_article, EnterpriseError,
-    JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
+    join_enterprise_batch, parse_regular_companion_complete, parse_structured_article,
+    EnterpriseError, JoinedEnterpriseArticle, RegularArticleCompanion, StructuredArticle,
     MAX_ENTERPRISE_RECORD_BYTES,
 };
 use crate::join::{DeletionMarker, PageKey};
@@ -532,15 +532,14 @@ mod tests {
     fn snapshot_import_rejects_omitted_categories_and_redirects() {
         let source = structured(1, 17);
         let regular = regular(1, 17);
-        let missing_categories = regular.replace(
-            r#","categories":[{"name":"Science"}]"#, "",
-        );
+        let missing_categories = regular.replace(r#","categories":[{"name":"Science"}]"#, "");
         assert_ne!(regular, missing_categories);
         assert_eq!(
             join_enterprise_ndjson(
                 Cursor::new(source.clone()),
                 Cursor::new(missing_categories),
-                "20261010", vec![],
+                "20261010",
+                vec![],
             ),
             Err(BatchImportError::Parse {
                 kind: InputKind::Regular,
@@ -554,7 +553,8 @@ mod tests {
             join_enterprise_ndjson(
                 Cursor::new(source),
                 Cursor::new(missing_redirects),
-                "20261010", vec![],
+                "20261010",
+                vec![],
             ),
             Err(BatchImportError::Parse {
                 kind: InputKind::Regular,
@@ -565,8 +565,9 @@ mod tests {
         assert!(join_enterprise_ndjson(
             Cursor::new(structured(1, 17)),
             Cursor::new(regular(1, 17)),
-            "20261010", vec![],
-        ).is_ok());
+            "20261010",
+            vec![],
+        )
+        .is_ok());
     }
-
 }
