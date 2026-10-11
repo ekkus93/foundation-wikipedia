@@ -99,6 +99,14 @@ class ExportTests(unittest.TestCase):
                 self.extract()
         self.assert_no_publication()
 
+    def test_rejects_symlinked_checksum_inventory(self):
+        original = self.root / "inventory-original"
+        self.inventory.rename(original)
+        self.inventory.symlink_to(original)
+        with self.assertRaisesRegex(DumpExtractionError, "symlinked checksum inventory"):
+            self.extract()
+        self.assert_no_publication()
+
     def test_second_shard_invalid_xml_does_not_publish_first_shard(self):
         self.shards[self.second] = bz2.compress(b"<?xml version='1.0'?><mediawiki><page>")
         self.write_inventory()
