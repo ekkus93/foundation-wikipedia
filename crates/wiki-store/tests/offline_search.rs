@@ -336,3 +336,68 @@ fn bad_redirect_chain_preserves_last_good_index() {
     assert!(index.search("new", 5).unwrap().is_empty());
     fs::remove_dir_all(root).unwrap();
 }
+
+
+#[test]
+fn cyclic_redirects_cannot_replace_previously_published_search_index() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "wiki-redirect-cycle-{}-{stamp}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let records = [
+        PageRecord::Article(Box::new(article(1, "Earth", "not yet published"))),
+        PageRecord::Redirect(Redirect {
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
+            title: "Loop A".into(),
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11,
+            },
+        }),
+        PageRecord::Redirect(Redirect {
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 11,
+            },
+            title: "Loop B".into(),
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 10,
+            },
+        }),
+    ];
+    let mut bytes = Vec::new();
+    let mut offsets = Vec::new();
+    for record in &records {
+        let start = bytes.len() as u64;
+        append_record_frame(&mut bytes, record).unwrap();
+        offsets.push((start, bytes.len() as u64 - start));
+    }
+    fs::write(root.join("cycle.shard"), &bytes).unwrap();
+    let mut catalog = SnapshotCatalog::in_memory().unwrap();
+    for (start, frame_bytes) in offsets {
+        catalog
+            .insert_verified(&root, "cycle.shard", start, frame_bytes)
+            .unwrap();
+    }
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index
+        .rebuild(&[article(2, "Previous", "old snapshot")])
+        .unwrap();
+    assert!(matches!(
+        index.rebuild_from_catalog(&catalog, &root),
+        Err(SearchError::Catalog(_))
+    ));
+    assert_eq!(index.search("snapshot", 10).unwrap()[0].key.page_id, 2);
+    assert!(index.search("Loop", 10).unwrap().is_empty());
+    assert!(index.search("published", 10).unwrap().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
