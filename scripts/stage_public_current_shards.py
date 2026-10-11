@@ -7,6 +7,7 @@ Caller must authenticate the checksum inventory before using this transport.
 """
 import argparse
 import hashlib
+import hmac
 import os
 from pathlib import Path
 import re
@@ -15,7 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
 
 from discover_public_current_export import NoRedirect, official_url
-from extract_public_dump_export import DumpExtractionError, _inventory
+from extract_public_dump_export import (DumpExtractionError, MAX_INVENTORY_BYTES,
+                                        _inventory)
 from extract_public_dump_pages import _verified_source
 
 CHUNK = 1024 * 1024
@@ -182,6 +184,55 @@ def stage_verified_members(inventory, project, date, staging_dir, *, opener=None
             "compressed_bytes": total}
 
 
+
+def stage_official_verified_members(inventory, project, date, staging_dir,
+                                    *, opener=None, **budgets):
+    """Revalidate a pinned official HTTPS checksum inventory before shard I/O.
+
+    This proves the inventory matches the currently published HTTPS bytes,
+    NOT a signed Wikimedia publisher attestation or renderer fidelity.
+    """
+    inventory = Path(inventory)
+    # Validate member identities before any network or staging side effects.
+    _inventory(inventory, project, date)
+    fd = os.open(inventory, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as source:
+        before = os.fstat(source.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or not 0 < before.st_size <= MAX_INVENTORY_BYTES):
+            raise DumpExtractionError("unsafe official inventory file")
+        local = source.read(MAX_INVENTORY_BYTES + 1)
+        if os.fstat(source.fileno()) != before or len(local) != before.st_size:
+            raise DumpExtractionError("official inventory changed during verification")
+
+    opener = opener if opener is not None else build_opener(NoRedirect())
+    url = official_url(project, date)
+    try:
+        with opener.open(Request(url, headers={
+            "User-Agent": "FoundationWikipedia/0.1",
+            "Accept-Encoding": "identity",
+        }), timeout=30) as response:
+            if response.status != 200 or response.geturl() != url:
+                raise DumpExtractionError("unexpected official inventory response")
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise DumpExtractionError("compressed official inventory response")
+            published = response.read(MAX_INVENTORY_BYTES + 1)
+    except HTTPError as error:
+        if error.code == 404:
+            raise DumpExtractionError("official export not yet published") from error
+        raise DumpExtractionError("official inventory HTTP failure") from error
+    except (URLError, TimeoutError, ConnectionError) as error:
+        raise DumpExtractionError("official inventory HTTPS failure") from error
+    if not (0 < len(published) <= MAX_INVENTORY_BYTES):
+        raise DumpExtractionError("empty or oversized official inventory")
+    if not hmac.compare_digest(hashlib.sha256(local).digest(),
+                               hashlib.sha256(published).digest()):
+        raise DumpExtractionError("local inventory differs from official publication")
+    # The same opener is retained for both preflight and data. The staging
+    # function validates every shard independently before no-clobber publish.
+    return stage_verified_members(inventory, project, date, staging_dir,
+                                  opener=opener, **budgets)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inventory", type=Path)
@@ -189,8 +240,8 @@ def main():
     parser.add_argument("month")
     parser.add_argument("staging_dir", type=Path)
     args = parser.parse_args()
-    print(stage_verified_members(args.inventory, args.project,
-                                 args.month, args.staging_dir))
+    print(stage_official_verified_members(args.inventory, args.project,
+                                          args.month, args.staging_dir))
 
 
 if __name__ == "__main__":

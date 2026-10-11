@@ -6,7 +6,8 @@ import unittest
 from urllib.error import URLError
 
 from extract_public_dump_export import DumpExtractionError
-from stage_public_current_shards import stage_verified_members
+from stage_public_current_shards import (stage_verified_members,
+                                         stage_official_verified_members)
 
 
 class FakeResponse:
@@ -212,6 +213,59 @@ class StagingTests(unittest.TestCase):
             self.stage_members(FakeOpener(self.data))
         self.assertFalse((self.stage / self.name).exists())
         self.assertEqual(real.read_bytes(), self.data[:6])
+
+
+    def test_official_preflight_matches_publication_before_any_shard_requests(self):
+        seen = []
+        inventory_bytes = self.inventory.read_bytes()
+        local_data = self.data
+
+        class OfficialOpener:
+            def open(self, request, timeout):
+                seen.append(request.full_url)
+                if request.full_url.endswith("/SHA256SUMS"):
+                    return FakeResponse(request.full_url, inventory_bytes)
+                return FakeResponse(request.full_url, local_data)
+
+        result = stage_official_verified_members(
+            self.inventory, "enwiki", "2026-10-01",
+            self.stage, opener=OfficialOpener(),
+        )
+        self.assertEqual(result["downloaded"], 1)
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(seen[0].endswith("/SHA256SUMS"))
+        self.assertEqual((self.stage / self.name).read_bytes(), self.data)
+
+    def test_official_preflight_rejects_forged_or_unavailable_publication(self):
+        observed = []
+        inventory_bytes = self.inventory.read_bytes()
+
+        class ForgedOfficialOpener:
+            def __init__(self, *, redirect=False, unavailable=False):
+                self.redirect, self.unavailable = redirect, unavailable
+
+            def open(self, request, timeout):
+                observed.append(request.full_url)
+                if not request.full_url.endswith("/SHA256SUMS"):
+                    self_outer.fail("shard download attempted after rejected publication")
+                if self.unavailable:
+                    return FakeResponse(request.full_url, inventory_bytes, status=404)
+                if self.redirect:
+                    return FakeResponse("https://mirror.invalid/SHA256SUMS",
+                                        inventory_bytes)
+                return FakeResponse(request.full_url, b"forged SHA256SUMS")
+
+        self_outer = self
+        for options in ({}, {"redirect": True}, {"unavailable": True}):
+            with self.subTest(options=options):
+                observed.clear()
+                with self.assertRaises(DumpExtractionError):
+                    stage_official_verified_members(
+                        self.inventory, "enwiki", "2026-10-01",
+                        self.stage, opener=ForgedOfficialOpener(**options),
+                    )
+                self.assertEqual(len(observed), 1)
+                self.assertFalse((self.stage / self.name).exists())
 
 
 if __name__ == "__main__":
