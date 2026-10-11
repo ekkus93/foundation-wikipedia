@@ -564,7 +564,7 @@ mod tests {
         );
         assert!(join_enterprise_ndjson(
             Cursor::new(structured(1, 17)),
-            Cursor::new(regular(1, 17)),
+            Cursor::new(regular),
             "20261010",
             vec![],
         )
