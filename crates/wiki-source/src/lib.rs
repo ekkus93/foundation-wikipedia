@@ -51,6 +51,7 @@ impl SourceGeneration {
     /// Validate publication metadata before trusting any mirror or cache.
     pub fn validate(&self) -> Result<(), SourceError> {
         if self.project.is_empty()
+            || self.project.len() > 255
             || !self
                 .project
                 .bytes()
@@ -59,6 +60,7 @@ impl SourceGeneration {
             return Err(SourceError::InvalidProject);
         }
         if self.upstream_id.is_empty()
+            || self.upstream_id.len() > 255
             || self.upstream_id == "."
             || self.upstream_id == ".."
             || self.upstream_id.starts_with('.')
@@ -81,6 +83,7 @@ impl SourceGeneration {
         for file in &self.files {
             if file.bytes == 0
                 || file.name.is_empty()
+                || file.name.len() > 255
                 || file.name.contains('/')
                 || file.name.contains('\\')
                 || file.name == "."
@@ -189,6 +192,22 @@ mod tests {
         assert_eq!(
             colliding.validate(),
             Err(SourceError::DuplicateFile("ARTICLES.PARQUET".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_source_identity_fields() {
+        let mut invalid = sample();
+        invalid.project = "a".repeat(256);
+        assert_eq!(invalid.validate(), Err(SourceError::InvalidProject));
+        invalid = sample();
+        invalid.upstream_id = "a".repeat(256);
+        assert_eq!(invalid.validate(), Err(SourceError::MissingGeneration));
+        invalid = sample();
+        invalid.files[0].name = format!("{}.xml", "a".repeat(252));
+        assert_eq!(
+            invalid.validate(),
+            Err(SourceError::InvalidFile(invalid.files[0].name.clone()))
         );
     }
 
