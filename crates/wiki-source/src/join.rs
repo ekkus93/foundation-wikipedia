@@ -53,8 +53,14 @@ fn collect(
                 .project
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            || item.generation_id.trim().is_empty()
-            || item.generation_id != item.generation_id.trim()
+            || item.generation_id.is_empty()
+            || item.generation_id.len() > 255
+            || item.generation_id.starts_with('.')
+            || item.generation_id.ends_with('.')
+            || !item
+                .generation_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
             return Err(JoinError::InvalidIdentity);
         }
@@ -199,6 +205,31 @@ mod tests {
         );
         assert_eq!(result[0].rendered_html, "h1");
         assert!(result[1].categories.is_empty());
+    }
+
+    #[test]
+    fn rejects_unsafe_join_generation_labels_before_provenance_linkage() {
+        for invalid in ["", " ", ".snapshot", "snapshot.", "../outside", "2026/10/01",
+                        "2026\\stage", "2026\n10", "2026\0export"] {
+            let mut structured = part(1, "structured");
+            structured.generation_id = invalid.into();
+            let mut html = structured.clone();
+            html.payload = "rendered".into();
+            let mut categories = structured.clone();
+            categories.payload = "".into();
+            assert_eq!(
+                join_pages(vec![structured], vec![html], vec![categories]),
+                Err(JoinError::InvalidIdentity),
+                "accepted generation label {invalid:?}"
+            );
+        }
+        let mut valid = part(1, "s");
+        valid.generation_id = "2026-10-01T00_00_00Z".into();
+        let mut html = valid.clone();
+        html.payload = "h".into();
+        let mut categories = valid.clone();
+        categories.payload = "".into();
+        assert_eq!(join_pages(vec![valid], vec![html], vec![categories]).unwrap().len(), 1);
     }
 
     #[test]
