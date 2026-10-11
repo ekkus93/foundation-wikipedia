@@ -48,10 +48,17 @@ def _inventory(path, project, date):
         datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         raise DumpExtractionError("invalid export date") from None
-    meta = path.lstat()
-    if not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1 or meta.st_size > MAX_INVENTORY_BYTES:
-        raise DumpExtractionError("unsafe or oversized checksum inventory")
-    text = path.read_bytes()
+    if path.is_symlink():
+        raise DumpExtractionError("symlinked checksum inventory")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as reader:
+        meta = os.fstat(reader.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1
+                or not 0 < meta.st_size <= MAX_INVENTORY_BYTES):
+            raise DumpExtractionError("unsafe or oversized checksum inventory")
+        text = reader.read(MAX_INVENTORY_BYTES + 1)
+        if os.fstat(reader.fileno()) != meta:
+            raise DumpExtractionError("checksum inventory changed during read")
     if not text or len(text) > MAX_INVENTORY_BYTES:
         raise DumpExtractionError("empty or oversized checksum inventory")
     try:
