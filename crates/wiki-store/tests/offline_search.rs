@@ -185,3 +185,18 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
     assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn offline_search_matches_display_title_and_unicode_aliases() {
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    let mut earth = article(42, "Earth", "terrestrial planet");
+    earth.display_title = "Planet Earth".into();
+    earth.aliases = vec!["The Blue Planet".into(), "地球".into()];
+    index.rebuild(&[earth]).unwrap();
+    for query in ["blue", "地球", "planet"] {
+        let hits = index.search(query, 5).unwrap();
+        assert_eq!(hits.len(), 1, "missing title variant: {query}");
+        assert_eq!(hits[0].key.page_id, 42);
+        assert_eq!(hits[0].revision_id, 42);
+    }
+}

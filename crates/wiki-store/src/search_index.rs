@@ -130,6 +130,14 @@ fn index_article(
     let mut text = String::new();
     append_blocks(&article.lead, &mut text);
     append_sections(&article.sections, &mut text);
+    // Searchable title variants are canonical article metadata, not separate
+    // redirect records. Preserve one exact revision identity per result.
+    text.push_str(&article.display_title);
+    text.push(' ');
+    for alias in &article.aliases {
+        text.push_str(alias);
+        text.push(' ');
+    }
     if text.len().saturating_add(article.title.len()) > MAX_TEXT_BYTES {
         return Err(SearchError::TooMuchText(article.key.clone()));
     }
