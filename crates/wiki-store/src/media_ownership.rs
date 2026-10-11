@@ -375,8 +375,7 @@ mod tests {
             )
             .unwrap();
         let attribution = notice("Creator");
-        let assets: &[(&[u8], &MediaNotice)] =
-            &[(first, &attribution), (second, &attribution)];
+        let assets: &[(&[u8], &MediaNotice)] = &[(first, &attribution), (second, &attribution)];
         assert!(matches!(
             registry.register_verified_owned_batch(assets, OwnerKind::Pack, "physics"),
             Err(MediaRegistryError::ConflictingSize)
