@@ -69,7 +69,16 @@ def _inventory(path, project, date):
         raise DumpExtractionError("invalid checksum inventory length")
     parsed = []
     seen = set()
-    prefix = re.compile(rf"{re.escape(project)}-{re.escape(date)}-p([0-9]+)p([0-9]+)\.xml\.bz2")
+    # Support both the new content-current export and public numbered
+    # pages-meta-current partitions without mixing their generations.
+    current_prefix = re.compile(
+        rf"{re.escape(project)}-{re.escape(date)}-p([0-9]+)p([0-9]+)\.xml\.bz2"
+    )
+    legacy_prefix = re.compile(
+        rf"{re.escape(project)}-{date.replace('-', '')}-pages-meta-current"
+        r"[1-9][0-9]*\.xml-p([0-9]+)p([0-9]+)\.bz2"
+    )
+    formats = set()
     for line in records:
         match = re.fullmatch(r"([0-9A-Fa-f]{64}) [ *](.+)", line)
         if match is None:
@@ -78,13 +87,19 @@ def _inventory(path, project, date):
         if not _safe_member_path(relative) or relative.lower() in seen:
             raise DumpExtractionError("unsafe or duplicate shard path")
         seen.add(relative.lower())
-        range_match = prefix.fullmatch(relative.rsplit("/", 1)[-1])
-        if range_match is None:
+        basename = relative.rsplit("/", 1)[-1]
+        current = current_prefix.fullmatch(basename)
+        legacy = legacy_prefix.fullmatch(basename)
+        if current is None and legacy is None:
             raise DumpExtractionError("unexpected export member identity")
+        formats.add("current-content" if current is not None else "pages-meta-current")
+        range_match = current if current is not None else legacy
         first, last = (int(value) for value in range_match.groups())
         if not 0 < first <= last <= 2**63 - 1:
             raise DumpExtractionError("invalid shard page-ID partition")
         parsed.append((first, last, relative, digest.lower()))
+    if len(formats) != 1:
+        raise DumpExtractionError("mixed current-content export formats")
     parsed.sort()
     for previous, current in zip(parsed, parsed[1:]):
         if previous[1] >= current[0]:
