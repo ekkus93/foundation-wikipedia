@@ -72,16 +72,21 @@ impl MediaObjectStore {
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return Err(MediaObjectError::UnsafeDirectory);
         }
-        let temp = parent.join(format!(
-            ".{}.{}.tmp",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
+        // A process killed before cleanup can leave a temp file behind.
+        // PID reuse must not make the next install fail or overwrite that file.
+        let (temp, mut output) = loop {
+            let candidate = parent.join(format!(
+                ".{}.{}.tmp",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                Ok(output) => break (candidate, output),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(MediaObjectError::Io(error)),
+            }
+        };
         let result = (|| -> Result<(), MediaObjectError> {
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp)?;
             output.write_all(bytes)?;
             output.sync_all()?;
             drop(output);
@@ -175,6 +180,30 @@ mod tests {
             store.read_verified(&digest),
             Err(MediaObjectError::DigestMismatch)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn abandoned_temporary_files_do_not_block_publishing() {
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let bytes = b"recover after interrupted write";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let parent = root.join(&digest[..2]);
+        fs::create_dir(&parent).unwrap();
+        // Cover the next several counter values even if tests run in parallel.
+        let next = NEXT_TEMP.load(Ordering::Relaxed);
+        let abandoned: Vec<_> = (next..next + 32)
+            .map(|index| parent.join(format!(".{}.{}.tmp", std::process::id(), index)))
+            .collect();
+        for path in &abandoned {
+            fs::write(path, b"orphaned partial payload").unwrap();
+        }
+        assert_eq!(store.store_bytes(bytes).unwrap(), digest);
+        assert_eq!(store.read_verified(&digest).unwrap(), bytes);
+        for path in &abandoned {
+            assert_eq!(fs::read(path).unwrap(), b"orphaned partial payload");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
