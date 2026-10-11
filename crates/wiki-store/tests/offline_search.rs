@@ -514,10 +514,8 @@ fn persisted_rebuild_rejects_symlinked_database_or_parent_directory() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-fts-symlink-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wiki-fts-symlink-{}-{stamp}", std::process::id()));
     let real = root.join("real");
     fs::create_dir_all(&real).unwrap();
     let outside = real.join("outside.db");
