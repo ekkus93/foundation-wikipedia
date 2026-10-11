@@ -60,6 +60,15 @@ pub fn verify_staged_export(
             {
                 return Err(StagedDumpError::UnsafeStagingPath);
             }
+            #[cfg(unix)]
+            if is_last {
+                use std::os::unix::fs::MetadataExt;
+                // A checksum-valid hard link into a mutable outside location
+                // is not an isolated staged source.
+                if metadata.nlink() != 1 {
+                    return Err(StagedDumpError::UnsafeStagingPath);
+                }
+            }
         }
         let mut file = File::open(&path).map_err(StagedDumpError::Io)?;
         let size = verify_dump_member(&mut file, member, max_member_bytes)
@@ -187,6 +196,15 @@ pub fn stage_verified_member<R: Read>(
                 if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
                     return Err(StageWriteError::UnsafeStagingPath);
                 }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    // Existing published members must not alias mutable
+                    // files outside the private staging tree.
+                    if metadata.nlink() != 1 {
+                        return Err(StageWriteError::UnsafeStagingPath);
+                    }
+                }
                 let mut existing = File::open(&target).map_err(StageWriteError::Io)?;
                 let size = verify_dump_member(&mut existing, member, max_bytes)
                     .map_err(StageWriteError::Existing)?;
@@ -307,6 +325,36 @@ mod tests {
         ));
         assert_eq!(fs::read_dir(root.join("nested")).unwrap().count(), 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_staging_rejects_hardlinked_external_member() {
+        use std::io::Cursor;
+
+        let root = root();
+        let outside = root.with_extension("outside");
+        let bytes = b"valid content from a mutable outside file";
+        fs::write(&outside, bytes).unwrap();
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let target = root.join(name);
+        fs::hard_link(&outside, &target).unwrap();
+        let descriptor = member(name, bytes);
+
+        assert!(matches!(
+            verify_staged_export(&root, &[descriptor.clone()], "enwiki", "2026-10-01", 1024),
+            Err(StagedDumpError::UnsafeStagingPath)
+        ));
+        assert!(matches!(
+            stage_verified_member(&root, &descriptor, &mut Cursor::new(bytes), 1024),
+            Err(StageWriteError::UnsafeStagingPath)
+        ));
+        assert_eq!(fs::read(&outside).unwrap(), bytes);
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[cfg(unix)]
