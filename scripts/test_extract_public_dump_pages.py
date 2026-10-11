@@ -81,6 +81,29 @@ class ExtractTests(unittest.TestCase):
         first = json.loads(self.output.read_text().splitlines()[0])
         self.assertEqual(first["wikitext"], "<ref>A & B</ref>")
 
+    def test_unsupported_xml_nesting_and_namespace_fail_before_publication(self):
+        cases = (
+            (XML.replace(b"<page>", b"<siteinfo><page>", 1)
+                .replace(b"</page>", b"</page></siteinfo>", 1),
+             "page outside"),
+            (XML.replace(b"http://www.mediawiki.org/xml/export-0.11/",
+                         b"http://untrusted.example/export-0.11/"), "namespace"),
+            (XML.replace(b"<page>", b"<" + b"wrap>" * 65 + b"<page>", 1)
+                .replace(b"</page>", b"</page>" + b"</wrap>" * 65, 1), "nesting"),
+        )
+        for malformed, error in cases:
+            with self.subTest(error=error):
+                self.write_xml(malformed)
+                with self.assertRaisesRegex(DumpExtractionError, error):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
+    def test_valid_siteinfo_sibling_remains_supported(self):
+        siteinfo = b"<siteinfo><sitename>Wikipedia</sitename></siteinfo>"
+        self.write_xml(XML.replace(b"<page>", siteinfo + b"<page>", 1))
+        self.assertEqual(self.extract(), 2)
+
     def test_rejects_nested_or_duplicate_scalar_xml_without_publication(self):
         # XML child elements are not wikitext: Element.text alone would silently
         # truncate them. Valid escaped wikitext is tested separately above.

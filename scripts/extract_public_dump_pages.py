@@ -235,14 +235,30 @@ def extract_current_dump(path, expected_sha256, project, output, *,
             with bz2.BZ2File(source, "rb") as compressed:
                 reader = _BoundedXmlReader(compressed, max_uncompressed_bytes)
                 root = None
+                depth = 0
                 try:
                     for event, element in ET.iterparse(reader, events=("start", "end")):
                         tag = element.tag.rsplit("}", 1)[-1]
-                        if root is None:
-                            if event != "start" or tag != "mediawiki":
-                                raise DumpExtractionError("not a MediaWiki XML export")
-                            root = element
-                        if event == "end" and tag == "page":
+                        if event == "start":
+                            depth += 1
+                            if depth > 64:
+                                raise DumpExtractionError("XML nesting exceeds budget")
+                            if root is None:
+                                if depth != 1 or tag != "mediawiki":
+                                    raise DumpExtractionError("not a MediaWiki XML export")
+                                namespace = (
+                                    element.tag.split("}", 1)[0][1:]
+                                    if element.tag.startswith("{") else ""
+                                )
+                                if namespace not in (
+                                    "", "http://www.mediawiki.org/xml/export-0.10/",
+                                    "http://www.mediawiki.org/xml/export-0.11/",
+                                ):
+                                    raise DumpExtractionError("unsupported MediaWiki XML namespace")
+                                root = element
+                            elif tag == "page" and depth != 2:
+                                raise DumpExtractionError("page outside MediaWiki root")
+                        if event == "end" and tag == "page" and depth == 2:
                             record = _page_record(element, project, expected_sha256,
                                                   max_text_bytes)
                             if not first_id <= record["page_id"] <= last_id:
@@ -256,6 +272,8 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                             json.dump(record, writer, ensure_ascii=False, sort_keys=True)
                             writer.write("\n")
                             root.clear()
+                        if event == "end":
+                            depth -= 1
                 except ET.ParseError as error:
                     raise DumpExtractionError("malformed MediaWiki XML") from error
                 if root is None or count == 0:
