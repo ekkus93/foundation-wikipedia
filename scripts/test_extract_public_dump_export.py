@@ -132,6 +132,57 @@ class ExportTests(unittest.TestCase):
             self.extract()
         self.assert_no_publication()
 
+
+    def test_official_pages_meta_current_numbered_shards(self):
+        first = "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2"
+        second = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2"
+        self.shards = {first: bz2.compress(xml(10)),
+                       second: bz2.compress(xml(110))}
+        self.write_inventory()
+        self.assertEqual(self.extract(), 2)
+        entries = [json.loads(line) for line in self.output.read_text().splitlines()]
+        self.assertEqual([entry["page_id"] for entry in entries], [10, 110])
+        self.assertEqual([entry["source_text"] for entry in entries],
+                         ["Wiki 10", "Wiki 110"])
+
+    def test_rejects_mixed_export_formats_and_wrong_legacy_members(self):
+        legacy = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2"
+        self.shards = {self.first: bz2.compress(xml(10)),
+                       legacy: bz2.compress(xml(110))}
+        self.write_inventory()
+        with self.assertRaisesRegex(DumpExtractionError, "mixed current-content"):
+            self.extract()
+        self.assert_no_publication()
+
+        for invalid in (
+            "enwiki-20260901-pages-meta-current2.xml-p101p200.bz2",
+            "enwiki-20261001-pages-meta-history2.xml-p101p200.bz2",
+            "enwiki-20261001-pages-meta-current2.xml-p101r10r20.bz2",
+            "enwiki-20261001-pages-meta-current0.xml-p101p200.bz2",
+        ):
+            with self.subTest(member=invalid):
+                self.shards = {
+                    "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2":
+                        bz2.compress(xml(10)),
+                    invalid: bz2.compress(xml(110)),
+                }
+                self.write_inventory()
+                with self.assertRaisesRegex(DumpExtractionError, "member identity"):
+                    self.extract()
+                self.assert_no_publication()
+
+    def test_rejects_overlapping_public_numbered_shards(self):
+        self.shards = {
+            "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2":
+                bz2.compress(xml(10)),
+            "enwiki-20261001-pages-meta-current2.xml-p100p200.bz2":
+                bz2.compress(xml(110)),
+        }
+        self.write_inventory()
+        with self.assertRaisesRegex(DumpExtractionError, "overlapping"):
+            self.extract()
+        self.assert_no_publication()
+
     @unittest.skipUnless(hasattr(Path, "symlink_to"), "symlinks unavailable")
     def test_symlinked_member_or_staging_root_is_rejected(self):
         self.stage.joinpath(self.first).unlink()
