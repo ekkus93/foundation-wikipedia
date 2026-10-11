@@ -29,3 +29,18 @@ fn wrong_digest_is_rejected() {
         Err(DumpVerifyError::DigestMismatch)
     ));
 }
+
+#[test]
+fn rejects_too_small_stream_quota() {
+    use wiki_source::public_dump_verify::DumpVerifyError;
+
+    let bytes = b"data";
+    let member = DumpChecksum {
+        relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    };
+    assert!(matches!(
+        verify_dump_member(&mut Cursor::new(bytes), &member, 2),
+        Err(DumpVerifyError::TooLarge)
+    ));
+}
