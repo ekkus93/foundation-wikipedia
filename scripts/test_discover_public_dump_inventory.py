@@ -48,6 +48,8 @@ class DiscoveryTests(unittest.TestCase):
                                           HTTPError(url, 404, "missing", {}, None)))
         with self.assertRaisesRegex(PublicationError, "invalid wiki project"):
             discover_completed_export("../enwiki", fetch)
+        with self.assertRaisesRegex(PublicationError, "invalid wiki project"):
+            discover_completed_export("e" * 256, fetch)
 
     def test_rejects_untrusted_origin_and_invalid_checksum_inventory(self):
         for url in (
