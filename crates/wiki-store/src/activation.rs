@@ -118,16 +118,21 @@ impl ActiveSnapshotStore {
         if !self.candidate_is_staged(id)? {
             return Err(ActivationError::CandidateNotStaged);
         }
-        let temp = self.root.join(format!(
-            ".current.{}.{}.tmp",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
+        // A previous crash may leave a private temporary path behind.
+        // Never truncate or adopt it: pick a fresh create_new name instead.
+        let (temp, mut file) = loop {
+            let candidate = self.root.join(format!(
+                ".current.{}.{}.tmp",
+                std::process::id(),
+                NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+            ));
+            match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                Ok(file) => break (candidate, file),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(ActivationError::Io(error)),
+            }
+        };
         let result = (|| -> Result<(), ActivationError> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp)?;
             file.write_all(id.as_bytes())?;
             file.write_all(b"\n")?;
             file.sync_all()?;
@@ -198,6 +203,35 @@ mod interruption_tests {
             store.current(),
             Err(ActivationError::CorruptCurrentPointer)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn abandoned_current_temporaries_do_not_block_snapshot_activation() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-abandoned-pointer-{}-{stamp}",
+            std::process::id()
+        ));
+        let candidate = root.join("snapshots/new");
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), "{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        let next = NEXT_TEMP.load(Ordering::Relaxed);
+        let abandoned: Vec<_> = (next..next + 32)
+            .map(|index| root.join(format!(".current.{}.{}.tmp", std::process::id(), index)))
+            .collect();
+        for path in &abandoned {
+            fs::write(path, b"incomplete previous activation").unwrap();
+        }
+        store.switch_to_prevalidated("new").unwrap();
+        assert_eq!(store.current().unwrap(), Some("new".into()));
+        for path in &abandoned {
+            assert_eq!(fs::read(path).unwrap(), b"incomplete previous activation");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
