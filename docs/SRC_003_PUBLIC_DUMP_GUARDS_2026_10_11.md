@@ -1,0 +1,9 @@
+# SRC-003 — Public dump member identity and streaming verification (partial)
+
+The public current-content fallback is not yet production-qualified; these changes harden its existing import preflight.
+
+1. Exact `4869bfd7b0b7fa99dc0b5244c5fa832e960a5e3e`: `matches_current_export` now validates numeric nonzero, ascending page-range member filenames, SHA-256 syntax, safe paths and duplicate member identities rather than accepting any matching prefix/suffix. Rust workspace [38114161090](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114161090) and Platform shells [38114161096](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114161096) passed.
+2. Exact `261adfcf7c12b48649aa0b828bcf1e972bc71277`: GNU SHA256SUMS paths reject trailing-dot Windows aliases, components over 255 bytes and paths over 64 components. Rust workspace [38114245529](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114245529) and Platform shells [38114245569](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114245569) passed.
+3. Exact `e90da440e0473a7a926ebedbc224419f3b317ec7`: the bounded streaming SHA-256 verifier rejects zero-byte members even when their empty-content digest matches; tests cover accepted bytes, corruption and over-budget input. Rust workspace [38114305172](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114305172) and Platform shells [38114305114](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38114305114) passed.
+
+**SRC-003 remains unchecked.** These are checksum and identity guards, not proof of a complete official source generation, Parsoid/MediaWiki-compatible template/Lua/math/reference rendering, source fidelity or representative real-dump-to-offline-pack acceptance. The canonical TODO remains authoritative; its large-file write was rejected by the tool safety gate, so evidence is preserved here pending reconciliation.
