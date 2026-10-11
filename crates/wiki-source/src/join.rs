@@ -48,6 +48,7 @@ fn collect(
         if item.page.page_id == 0
             || item.revision_id == 0
             || item.page.project.is_empty()
+            || item.page.project.len() > 255
             || !item
                 .page
                 .project
@@ -146,6 +147,7 @@ pub fn join_pages_with_tombstones(
     for key in deleted {
         if key.page_id == 0
             || key.project.is_empty()
+            || key.project.len() > 255
             || !key
                 .project
                 .bytes()
@@ -332,6 +334,20 @@ mod tests {
         assert_eq!(
             join_pages_with_tombstones(vec![], vec![], vec![], vec![page.clone(), page.clone()]),
             Err(JoinError::DuplicateTombstone(page))
+        );
+    }
+
+    #[test]
+    fn rejects_overlong_project_identity_in_live_and_deleted_pages() {
+        let mut part = part(1, "structured");
+        part.page.project = "a".repeat(256);
+        assert_eq!(
+            join_pages(vec![part.clone()], vec![], vec![]),
+            Err(JoinError::InvalidIdentity)
+        );
+        assert_eq!(
+            join_pages_with_tombstones(vec![], vec![], vec![], vec![part.page]),
+            Err(JoinError::InvalidIdentity)
         );
     }
 
