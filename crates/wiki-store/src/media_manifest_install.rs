@@ -32,7 +32,11 @@ pub fn install_manifest_media_batch(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
-    if required.is_empty() || required.len() > 100_000 || assets.is_empty() || assets.len() > 100_000 {
+    if required.is_empty()
+        || required.len() > 100_000
+        || assets.is_empty()
+        || assets.len() > 100_000
+    {
         return Err(ManifestMediaInstallError::InvalidManifest);
     }
 
@@ -100,44 +104,68 @@ mod tests {
 
     #[test]
     fn exact_inventory_persists_shared_media_and_distinct_notices() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-manifest-install-{}-{stamp}", std::process::id()));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-install-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir(&root).unwrap();
         let store = MediaObjectStore::new(&root);
         let db = root.join("registry.sqlite");
         let a = notice("Alice");
         let b = notice("Bob");
         let required = vec![entry(b"diagram"), entry(b"plot")];
-        let assets: &[(&[u8], &MediaNotice)] = &[
-            (b"diagram", &a),
-            (b"plot", &a),
-            (b"diagram", &b),
-        ];
+        let assets: &[(&[u8], &MediaNotice)] = &[(b"diagram", &a), (b"plot", &a), (b"diagram", &b)];
         let mut registry = MediaRegistry::open(&db).unwrap();
         let installed = install_manifest_media_batch(
-            &store, &mut registry, assets, &required, OwnerKind::Pack, "physics",
-        ).unwrap();
+            &store,
+            &mut registry,
+            assets,
+            &required,
+            OwnerKind::Pack,
+            "physics",
+        )
+        .unwrap();
         assert_eq!(installed[0], installed[2]);
         assert_eq!(registry.notice_count(&installed[0]).unwrap(), 2);
-        registry.add_owner(&installed[0], OwnerKind::UserPin, "reader").unwrap();
+        registry
+            .add_owner(&installed[0], OwnerKind::UserPin, "reader")
+            .unwrap();
         drop(registry);
 
         let registry = MediaRegistry::open(&db).unwrap();
         assert_eq!(
-            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required).unwrap(),
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required)
+                .unwrap(),
             11,
         );
-        registry.remove_owner(&installed[0], OwnerKind::Pack, "physics").unwrap();
-        registry.remove_owner(&installed[1], OwnerKind::Pack, "physics").unwrap();
-        assert_eq!(registry.unowned_digests().unwrap(), vec![installed[1].clone()]);
+        registry
+            .remove_owner(&installed[0], OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .remove_owner(&installed[1], OwnerKind::Pack, "physics")
+            .unwrap();
+        assert_eq!(
+            registry.unowned_digests().unwrap(),
+            vec![installed[1].clone()]
+        );
         assert_eq!(store.read_verified(&installed[0]).unwrap(), b"diagram");
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn missing_extra_duplicate_or_wrong_size_manifest_does_not_write() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-manifest-reject-{}-{stamp}", std::process::id()));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-reject-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir(&root).unwrap();
         let store = MediaObjectStore::new(&root);
         let mut registry = MediaRegistry::in_memory().unwrap();
@@ -157,15 +185,26 @@ mod tests {
             (vec![uppercase, two.clone()], true),
         ] {
             let result = install_manifest_media_batch(
-                &store, &mut registry, assets, &manifest, OwnerKind::Pack, "physics",
+                &store,
+                &mut registry,
+                assets,
+                &manifest,
+                OwnerKind::Pack,
+                "physics",
             );
             assert!(matches!(
                 result,
                 Err(ManifestMediaInstallError::InvalidManifest)
                     | Err(ManifestMediaInstallError::InventoryMismatch)
             ));
-            assert_eq!(matches!(result, Err(ManifestMediaInstallError::InvalidManifest)), invalid);
-            assert!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().is_empty());
+            assert_eq!(
+                matches!(result, Err(ManifestMediaInstallError::InvalidManifest)),
+                invalid
+            );
+            assert!(registry
+                .owned_media(OwnerKind::Pack, "physics")
+                .unwrap()
+                .is_empty());
             assert!(registry.unowned_digests().unwrap().is_empty());
         }
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
