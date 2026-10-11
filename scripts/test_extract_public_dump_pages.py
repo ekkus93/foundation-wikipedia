@@ -49,6 +49,12 @@ class ExtractTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpExtractionError, "already exists"):
             self.extract()
 
+    def test_empty_current_wikitext_is_preserved(self):
+        self.write_xml(XML.replace(b"Energy = mc^2", b""))
+        self.assertEqual(self.extract(), 2)
+        first = json.loads(self.output.read_text().splitlines()[0])
+        self.assertEqual(first["wikitext"], "")
+
     def test_mismatch_and_malformed_xml_leave_no_output(self):
         with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):
             extract_current_dump(self.shard, "0" * 64, "enwiki", self.output)
