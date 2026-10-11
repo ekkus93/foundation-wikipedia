@@ -88,7 +88,7 @@ class ExtractTests(unittest.TestCase):
              "page outside"),
             (XML.replace(b"http://www.mediawiki.org/xml/export-0.11/",
                          b"http://untrusted.example/export-0.11/"), "namespace"),
-            (XML.replace(b"<page>", b"<" + b"wrap>" * 65 + b"<page>", 1)
+            (XML.replace(b"<page>", b"<wrap>" * 65 + b"<page>", 1)
                 .replace(b"</page>", b"</page>" + b"</wrap>" * 65, 1), "nesting"),
         )
         for malformed, error in cases:
