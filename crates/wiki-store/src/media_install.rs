@@ -49,7 +49,6 @@ pub fn install_owned_media(
     Ok(stored_digest)
 }
 
-
 /// Stage every object before atomically registering attribution and ownership
 /// for the complete batch. A failed stage may leave unowned deduplicated bytes,
 /// but cannot leave a partially registered pack. This is not pack activation:
@@ -68,11 +67,17 @@ pub fn install_owned_media_batch(
             bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 || !notice.validate()
         })
     {
-        return Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput));
+        return Err(MediaInstallError::Registry(
+            MediaRegistryError::InvalidInput,
+        ));
     }
     let mut staged = Vec::with_capacity(assets.len());
     for &(content, _) in assets {
-        staged.push(store.store_bytes(content).map_err(MediaInstallError::Store)?);
+        staged.push(
+            store
+                .store_bytes(content)
+                .map_err(MediaInstallError::Store)?,
+        );
     }
     let registered = registry
         .register_verified_owned_batch(assets, kind, owner_id)
@@ -149,17 +154,13 @@ mod tests {
         }
     }
 
-
     #[test]
     fn batch_ownership_is_atomic_and_persists_across_reopen() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-batch-{}-{stamp}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("wiki-batch-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let store = MediaObjectStore::new(&root);
         let db = root.join("owners.sqlite");
@@ -173,23 +174,33 @@ mod tests {
         let first: &[(&[u8], &MediaNotice)] = &[(b"diagram", &a), (b"figure", &bad)];
         assert!(matches!(
             install_owned_media_batch(&store, &mut registry, first, OwnerKind::Pack, "physics"),
-            Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput))
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::InvalidInput
+            ))
         ));
-        assert!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
         assert!(registry.unowned_digests().unwrap().is_empty());
 
-        let assets: &[(&[u8], &MediaNotice)] = &[
-            (b"diagram", &a),
-            (b"figure", &b),
-            (b"diagram", &b),
-        ];
+        let assets: &[(&[u8], &MediaNotice)] =
+            &[(b"diagram", &a), (b"figure", &b), (b"diagram", &b)];
         let digests =
             install_owned_media_batch(&store, &mut registry, assets, OwnerKind::Pack, "physics")
                 .unwrap();
         assert_eq!(digests[0], digests[2]);
         assert_eq!(registry.notice_count(&digests[0]).unwrap(), 2);
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().len(), 2);
-        registry.add_owner(&digests[0], OwnerKind::UserPin, "reader").unwrap();
+        assert_eq!(
+            registry
+                .owned_media(OwnerKind::Pack, "physics")
+                .unwrap()
+                .len(),
+            2
+        );
+        registry
+            .add_owner(&digests[0], OwnerKind::UserPin, "reader")
+            .unwrap();
         drop(registry);
 
         let registry = MediaRegistry::open(&db).unwrap();
@@ -204,19 +215,20 @@ mod tests {
             },
         ];
         assert_eq!(
-            verify_required_owner_media(
-                &store,
-                &registry,
-                OwnerKind::Pack,
-                "physics",
-                &required
-            )
-            .unwrap(),
+            verify_required_owner_media(&store, &registry, OwnerKind::Pack, "physics", &required)
+                .unwrap(),
             13
         );
-        registry.remove_owner(&digests[0], OwnerKind::Pack, "physics").unwrap();
-        registry.remove_owner(&digests[1], OwnerKind::Pack, "physics").unwrap();
-        assert_eq!(registry.unowned_digests().unwrap(), vec![digests[1].clone()]);
+        registry
+            .remove_owner(&digests[0], OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .remove_owner(&digests[1], OwnerKind::Pack, "physics")
+            .unwrap();
+        assert_eq!(
+            registry.unowned_digests().unwrap(),
+            vec![digests[1].clone()]
+        );
         assert_eq!(store.read_verified(&digests[0]).unwrap(), b"diagram");
         drop(registry);
         fs::remove_dir_all(root).unwrap();
