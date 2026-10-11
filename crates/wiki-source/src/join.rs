@@ -209,8 +209,17 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_join_generation_labels_before_provenance_linkage() {
-        for invalid in ["", " ", ".snapshot", "snapshot.", "../outside", "2026/10/01",
-                        "2026\\stage", "2026\n10", "2026\0export"] {
+        for invalid in [
+            "",
+            " ",
+            ".snapshot",
+            "snapshot.",
+            "../outside",
+            "2026/10/01",
+            "2026\\stage",
+            "2026\n10",
+            "2026\0export",
+        ] {
             let mut structured = part(1, "structured");
             structured.generation_id = invalid.into();
             let mut html = structured.clone();
@@ -229,7 +238,12 @@ mod tests {
         html.payload = "h".into();
         let mut categories = valid.clone();
         categories.payload = "".into();
-        assert_eq!(join_pages(vec![valid], vec![html], vec![categories]).unwrap().len(), 1);
+        assert_eq!(
+            join_pages(vec![valid], vec![html], vec![categories])
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
