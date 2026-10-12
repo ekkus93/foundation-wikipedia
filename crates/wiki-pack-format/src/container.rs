@@ -27,6 +27,7 @@ pub enum ContainerError {
     ObjectLength(String),
     ObjectDigest(String),
     TrailingBytes,
+    UnsafeStagingPath,
 }
 
 impl From<io::Error> for ContainerError {
@@ -115,7 +116,7 @@ fn parse_transcript(bytes: &[u8]) -> Result<Manifest, ContainerError> {
     Ok(manifest)
 }
 
-fn canonical_objects(manifest: &Manifest) -> Vec<&Object> {
+pub(crate) fn canonical_objects(manifest: &Manifest) -> Vec<&Object> {
     let mut objects: Vec<_> = manifest.objects.iter().collect();
     objects.sort_by(|a, b| a.path.cmp(&b.path));
     objects
