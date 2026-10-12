@@ -452,22 +452,15 @@ mod tests {
             Err(StagedDumpError::UnsafeStagingPath)
         ));
         assert!(matches!(
-            stage_verified_member(
-                &aliased_root,
-                &descriptor,
-                &mut Cursor::new(bytes),
-                1024
-            ),
+            stage_verified_member(&aliased_root, &descriptor, &mut Cursor::new(bytes), 1024),
             Err(StageWriteError::UnsafeStagingPath)
         ));
         // A direct private path to the identical bytes is still valid.
         assert_eq!(
-            verify_staged_export(&direct, &[descriptor], "enwiki", "2026-10-01", 1024)
-                .unwrap(),
+            verify_staged_export(&direct, &[descriptor], "enwiki", "2026-10-01", 1024).unwrap(),
             bytes.len() as u64
         );
         fs::remove_file(alias).unwrap();
         fs::remove_dir_all(parent).unwrap();
     }
-
 }
