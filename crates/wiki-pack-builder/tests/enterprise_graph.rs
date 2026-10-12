@@ -195,11 +195,13 @@ fn pinned_selection_rejects_unjoined_explicit_ids_and_category_page_ids() {
         JoinedSelectionError::NotMainspace(999)
     );
     rules.exclude = vec![2];
-    assert!(resolve_joined_revision_pinned(&records, &BTreeSet::new(), &rules)
-        .unwrap()
-        .selection
-        .page_ids
-        .is_empty());
+    assert!(
+        resolve_joined_revision_pinned(&records, &BTreeSet::new(), &rules)
+            .unwrap()
+            .selection
+            .page_ids
+            .is_empty()
+    );
 }
 
 #[test]
@@ -222,6 +224,8 @@ fn pinned_selection_preserves_unresolved_aliases_and_rejects_mixed_sources() {
     records[1].structured.generation_id = "20261002".into();
     assert!(matches!(
         resolve_joined_revision_pinned(&records, &BTreeSet::new(), &rules),
-        Err(JoinedSelectionError::Graph(GraphBuildError::MixedGeneration))
+        Err(JoinedSelectionError::Graph(
+            GraphBuildError::MixedGeneration
+        ))
     ));
 }
