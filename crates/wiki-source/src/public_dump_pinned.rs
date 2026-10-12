@@ -124,7 +124,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let filename = "enwiki-2026-10-01-p1p100.xml.bz2";
         let bytes = b"fixture shard";
-        let raw = format!("{:x}  {filename}\\n", Sha256::digest(bytes));
+        let raw = format!("{:x}  {filename}\n", Sha256::digest(bytes));
         let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let inventory =
             parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
@@ -153,5 +153,4 @@ mod tests {
         ));
         std::fs::remove_dir_all(root).unwrap();
     }
-
 }
