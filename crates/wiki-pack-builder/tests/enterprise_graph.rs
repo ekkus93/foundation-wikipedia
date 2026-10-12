@@ -4,12 +4,7 @@ use wiki_pack_builder::selection::{resolve, Rules};
 use wiki_source::enterprise::{JoinedEnterpriseArticle, StructuredArticle};
 use wiki_source::join::PageKey;
 
-fn record(
-    id: u64,
-    namespace: i32,
-    title: &str,
-    categories: &[&str],
-) -> JoinedEnterpriseArticle {
+fn record(id: u64, namespace: i32, title: &str, categories: &[&str]) -> JoinedEnterpriseArticle {
     JoinedEnterpriseArticle {
         structured: StructuredArticle {
             page: PageKey {
@@ -64,7 +59,10 @@ fn joined_categories_feed_deterministic_resolver() {
     reordered.reverse();
     let again = graph_from_joined(&reordered, &BTreeSet::new()).unwrap();
     assert_eq!(again.graph["Category:Math"].articles, vec![3]);
-    assert_eq!(again.graph["Category:Math"].children, vec!["Category:Algebra"]);
+    assert_eq!(
+        again.graph["Category:Math"].children,
+        vec!["Category:Algebra"]
+    );
 }
 
 #[test]
@@ -98,13 +96,12 @@ fn administrative_policy_is_explicit_and_redirect_aliases_are_not_ids() {
     let mut article = record(2, 0, "Group", &["Category:Maintenance"]);
     article.redirects.push("Group theory alias".into());
     let records = vec![record(20, 14, "Category:Maintenance", &[]), article];
-    let graph = graph_from_joined(
-        &records,
-        &BTreeSet::from(["Category:Maintenance".into()]),
-    )
-    .unwrap();
+    let graph =
+        graph_from_joined(&records, &BTreeSet::from(["Category:Maintenance".into()])).unwrap();
     assert!(graph.graph["Category:Maintenance"].administrative);
-    assert!(graph.unresolved_redirect_titles.contains("Group theory alias"));
+    assert!(graph
+        .unresolved_redirect_titles
+        .contains("Group theory alias"));
     let rules = Rules {
         roots: vec!["Category:Maintenance".into()],
         include: vec![],
