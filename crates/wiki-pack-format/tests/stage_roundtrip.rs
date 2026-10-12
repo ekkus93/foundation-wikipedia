@@ -52,5 +52,6 @@ fn verified_envelope_stages_into_private_tree() {
         fs::read(directory.join("articles/1.cbor")).unwrap(),
         payload
     );
+    assert!(directory.is_dir());
     fs::remove_dir_all(parent).unwrap();
 }
