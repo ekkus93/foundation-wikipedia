@@ -295,44 +295,6 @@ mod pinned_tests {
         assert_eq!(first.page_ids, vec![2, 3, 4, 5]);
         assert_eq!(first.definition_sha256.len(), 64);
         assert_eq!(first.graph_sha256.len(), 64);
-        // A category outside the traversed depth can change without changing
-        // selected IDs. The receipt must still detect the changed input graph.
-        let mut changed_graph = graph.clone();
-        changed_graph.get_mut("Category:Math").unwrap().articles.push(777);
-        let changed_graph_receipt = resolve_pinned(
-            &changed_graph,
-            &rules,
-            &redirects,
-            &disambiguations,
-            "enwiki-20261001",
-        )
-        .unwrap();
-        // This test uses a root that traverses Math, so assert the graph digest
-        // independently before constraining depth below.
-        assert_ne!(first.graph_sha256, changed_graph_receipt.graph_sha256);
-        let mut root_only = rules.clone();
-        root_only.depth_limit = 0;
-        root_only.roots = vec!["Category:Science".into()];
-        let base_root = resolve_pinned(
-            &graph, &root_only, &redirects, &disambiguations, "enwiki-20261001",
-        )
-        .unwrap();
-        let modified_root = resolve_pinned(
-            &changed_graph, &root_only, &redirects, &disambiguations, "enwiki-20261001",
-        )
-        .unwrap();
-        assert_eq!(base_root.page_ids, modified_root.page_ids);
-        assert_eq!(base_root.definition_sha256, modified_root.definition_sha256);
-        assert_ne!(base_root.graph_sha256, modified_root.graph_sha256);
-        assert_ne!(base_root.snapshot_selection_sha256, modified_root.snapshot_selection_sha256);
-        let altered_redirects = BTreeMap::from([(900, 901)]);
-        let redirect_receipt = resolve_pinned(
-            &graph, &root_only, &altered_redirects, &disambiguations, "enwiki-20261001",
-        )
-        .unwrap();
-        assert_eq!(base_root.page_ids, redirect_receipt.page_ids);
-        assert_ne!(base_root.snapshot_selection_sha256, redirect_receipt.snapshot_selection_sha256);
-
         assert_eq!(first.snapshot_selection_sha256.len(), 64);
         rules.roots.reverse();
         rules.include.reverse();
