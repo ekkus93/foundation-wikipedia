@@ -193,6 +193,13 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     if len(title.encode("utf-8")) > 4096:
         raise DumpExtractionError("oversized page title or wikitext")
     model, content_format = _content_model(revision, allow_legacy=True)
+    # Preserve the main slot's revision ancestry and slot-origin identity.
+    # In export-0.11 they are optional; omission must not be confused with
+    # the current revision ID or inferred from the text content.
+    parent_value = _text(revision, "parentid")
+    origin_value = _text(revision, "origin")
+    parent_revision_id = _positive_id(parent_value) if parent_value is not None else None
+    main_origin_revision_id = _positive_id(origin_value) if origin_value is not None else None
     extra_slots = []
     seen_roles = {"main"}
     for content in revision.findall("{*}content"):
@@ -232,6 +239,8 @@ def _page_record(page, project, source_sha256, max_text_bytes):
         "project": project,
         "page_id": _positive_id(_text(page, "id")),
         "revision_id": _positive_id(_text(revision, "id")),
+        "parent_revision_id": parent_revision_id,
+        "main_origin_revision_id": main_origin_revision_id,
         "timestamp": timestamp,
         "namespace": namespace,
         "title": title,

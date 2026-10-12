@@ -55,6 +55,45 @@ class ExtractTests(unittest.TestCase):
         first = json.loads(self.output.read_text().splitlines()[0])
         self.assertEqual(first["wikitext"], "")
 
+    def test_main_slot_ancestry_and_multilingual_markup_are_preserved(self):
+        # MediaWiki export-0.11 provides optional parentid and origin for
+        # revision ancestry/main-slot provenance; raw wikitext stays unrendered.
+        message = "عِلْم 中文 \u200fπ = 3.14; {{Infobox}} <ref name='x'>مرجع</ref>"
+        escaped = (message.replace("&", "&amp;").replace("<", "&lt;")
+                   .replace(">", "&gt;")).encode("utf-8")
+        page = XML.replace(
+            b"<revision><id>50</id>",
+            b"<revision><id>50</id><parentid>40</parentid><origin>45</origin>",
+            1,
+        ).replace(b"Energy = mc^2", escaped, 1)
+        self.write_xml(page)
+        self.assertEqual(self.extract(), 2)
+        record = json.loads(self.output.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(record["parent_revision_id"], 40)
+        self.assertEqual(record["main_origin_revision_id"], 45)
+        self.assertEqual(record["revision_id"], 50)
+        self.assertEqual(record["wikitext"], message)
+        self.assertEqual(record["source_text"], message)
+        self.assertIsNone(record["redirect_target"])
+        self.assertIsNone(json.loads(self.output.read_text().splitlines()[1])
+                          ["parent_revision_id"])
+
+    def test_invalid_parent_or_main_slot_origin_fail_before_output(self):
+        for element in ("parentid", "origin"):
+            for invalid in ("0", "-1", "01", "bad", "9223372036854775808"):
+                with self.subTest(element=element, invalid=invalid):
+                    replacement = (
+                        b"<revision><id>50</id><" + element.encode() + b">"
+                        + invalid.encode() + b"</" + element.encode() + b">"
+                    )
+                    self.write_xml(
+                        XML.replace(b"<revision><id>50</id>", replacement, 1)
+                    )
+                    with self.assertRaisesRegex(DumpExtractionError, "identity"):
+                        self.extract()
+                    self.assertFalse(self.output.exists())
+                    self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_declared_wikitext_byte_count_matches_utf8(self):
         body = "Énergie π".encode("utf-8")
         xml = XML.replace(b"Energy = mc^2", body)
