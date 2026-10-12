@@ -7,6 +7,7 @@ pub mod enterprise_ndjson;
 pub mod enterprise_verified;
 pub mod join;
 pub mod public_dump;
+pub mod public_dump_pinned;
 pub mod public_dump_stage;
 pub mod public_dump_verify;
 
