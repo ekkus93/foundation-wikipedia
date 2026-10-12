@@ -5,7 +5,10 @@
 //! a safe archive installer, or an atomic output publisher.
 
 use crate::container::{write_container, ContainerError};
-use crate::manifest::{Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES, MAX_PACK_OBJECTS};
+use crate::manifest::{
+    Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES,
+    MAX_PACK_OBJECTS,
+};
 use crate::objects::{verify_manifest_directory, ObjectVerifyError};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -73,10 +76,7 @@ fn hash_object(path: &Path) -> Result<(u64, String), ExportError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if before.ino() != opened.ino()
-            || before.dev() != opened.dev()
-            || opened.nlink() != 1
-        {
+        if before.ino() != opened.ino() || before.dev() != opened.dev() || opened.nlink() != 1 {
             return Err(ExportError::InvalidTree);
         }
     }
@@ -95,7 +95,9 @@ fn hash_object(path: &Path) -> Result<(u64, String), ExportError> {
         if n == 0 {
             break;
         }
-        total = total.checked_add(n as u64).ok_or(ExportError::ResourceBudget)?;
+        total = total
+            .checked_add(n as u64)
+            .ok_or(ExportError::ResourceBudget)?;
         if total > before.len() {
             return Err(ExportError::InvalidTree);
         }
@@ -149,7 +151,9 @@ pub fn custom_manifest_from_tree(
                     return Err(ExportError::ResourceBudget);
                 }
                 let (bytes, sha256) = hash_object(&path)?;
-                declared = declared.checked_add(bytes).ok_or(ExportError::ResourceBudget)?;
+                declared = declared
+                    .checked_add(bytes)
+                    .ok_or(ExportError::ResourceBudget)?;
                 if declared > MAX_DECLARED_BYTES {
                     return Err(ExportError::ResourceBudget);
                 }
@@ -210,8 +214,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("wiki-export-{}-{stamp}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("wiki-export-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         root
     }
