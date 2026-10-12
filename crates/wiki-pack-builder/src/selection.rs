@@ -174,6 +174,8 @@ fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, Re
 pub struct PinnedResolution {
     pub snapshot_id: String,
     pub definition_sha256: String,
+    /// Full supplied category graph, redirects and disambiguation input digest.
+    pub graph_sha256: String,
     pub snapshot_selection_sha256: String,
     pub page_ids: Vec<u64>,
     pub warnings: Vec<String>,
@@ -206,9 +208,9 @@ fn append_ids(out: &mut Vec<u8>, values: &[u64]) {
 
 /// Produce stable hashes for a definition and its resolved page-ID selection.
 /// Root and include/exclude order is intentionally immaterial. The snapshot
-/// identity is included in the selection digest to prevent cross-snapshot
-/// reuse of a selection receipt even when the selected page IDs are equal.
-/// This does not hash or authenticate the actual category graph or its pages.
+/// identity and full input graph digest are included in the selection digest
+/// to prevent reuse across inconsistent inputs with the same selected IDs.
+/// This detects local drift but does not authenticate Wikimedia provenance.
 pub fn resolve_pinned(
     graph: &BTreeMap<String, Category>,
     rules: &Rules,
@@ -233,13 +235,16 @@ pub fn resolve_pinned(
     definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
     let definition_sha256 = wiki_pack_format::sha256_hex(&definition);
 
-    let mut selection = b"foundation-wikipedia/topic-selection/v1\0".to_vec();
+    let graph_sha256 = crate::graph_digest::graph_digest(graph, redirects, disambiguations);
+    let mut selection = b"foundation-wikipedia/topic-selection/v2\0".to_vec();
     append_text(&mut selection, snapshot_id);
     append_text(&mut selection, &definition_sha256);
+    append_text(&mut selection, &graph_sha256);
     append_ids(&mut selection, &resolved.page_ids);
     Ok(PinnedResolution {
         snapshot_id: snapshot_id.to_owned(),
         definition_sha256,
+        graph_sha256,
         snapshot_selection_sha256: wiki_pack_format::sha256_hex(&selection),
         page_ids: resolved.page_ids,
         warnings: resolved.warnings,
@@ -289,6 +294,7 @@ mod pinned_tests {
         .unwrap();
         assert_eq!(first.page_ids, vec![2, 3, 4, 5]);
         assert_eq!(first.definition_sha256.len(), 64);
+        assert_eq!(first.graph_sha256.len(), 64);
         assert_eq!(first.snapshot_selection_sha256.len(), 64);
         rules.roots.reverse();
         rules.include.reverse();
