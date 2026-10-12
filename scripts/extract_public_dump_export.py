@@ -9,6 +9,7 @@ The result is raw, unrendered wikitext, not an installable pack.
 import argparse
 from datetime import datetime
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -169,6 +170,45 @@ def _verify_exact_staged_members(root, records, checksum_file):
         raise DumpExtractionError("could not verify exact staged export tree") from error
 
 
+def _validate_staged_publication_receipt(root, checksum_file, records, project, date):
+    """Check local staged metadata consistency, NOT Wikimedia authenticity."""
+    if checksum_file.parent != root or checksum_file.name != "SHA256SUMS":
+        return
+    receipt_path = root / "PUBLICATION.json"
+    try:
+        fd = os.open(receipt_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as reader:
+            info = os.fstat(reader.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 65536:
+                raise DumpExtractionError("unsafe staged publication receipt")
+            payload = reader.read(65537)
+            if len(payload) != info.st_size or os.fstat(reader.fileno()) != info:
+                raise DumpExtractionError("staged publication receipt changed")
+        receipt = json.loads(payload)
+    except (OSError, ValueError, TypeError, UnicodeDecodeError) as error:
+        raise DumpExtractionError("invalid staged publication receipt") from error
+    if not isinstance(receipt, dict) or not isinstance(receipt.get("publication"), dict):
+        raise DumpExtractionError("invalid staged publication receipt identity")
+    publication = receipt["publication"]
+    expected_url = (
+        "https://dumps.wikimedia.org/other/mediawiki_content_current/"
+        f"{project}/{date}/xml/bzip2/SHA256SUMS"
+    )
+    if (publication.get("project") != project
+            or publication.get("date") != date
+            or publication.get("checksum_url") != expected_url
+            or publication.get("member_count") != len(records)
+            or receipt.get("members") != len(records)
+            or receipt.get("source") != "Wikimedia mediawiki_content_current; unrendered"
+            or receipt.get("status") != "staged-only; NOT offline-ready"):
+        raise DumpExtractionError("staged publication identity mismatch")
+    # The inventory is already parsed using a bounded, no-symlink reader, and
+    # the complete staging tree is exclusive to the caller by contract.
+    if publication.get("sha256") != hashlib.sha256(checksum_file.read_bytes()).hexdigest():
+        raise DumpExtractionError("staged publication inventory digest mismatch")
+
+
 def extract_current_export(staging_dir, checksum_file, project, date, output,
                            *, max_member_bytes=MAX_MEMBER_BYTES,
                            max_total_bytes=MAX_TOTAL_BYTES,
@@ -186,6 +226,9 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         raise DumpExtractionError("unsafe staging/output path or existing output")
     records = _inventory(checksum_file, project, date)
     _verify_exact_staged_members(staging_dir, records, checksum_file)
+    _validate_staged_publication_receipt(
+        staging_dir, checksum_file, records, project, date,
+    )
     paths = []
     total_bytes = 0
     for _, _, name, digest in records:
@@ -228,6 +271,9 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         # publish records against a different declared source inventory.
         if _inventory(checksum_file, project, date) != records:
             raise DumpExtractionError("checksum inventory changed during extraction")
+        _validate_staged_publication_receipt(
+            staging_dir, checksum_file, records, project, date,
+        )
         try:
             os.link(joined, output)
         except FileExistsError:

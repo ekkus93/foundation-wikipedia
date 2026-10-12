@@ -74,6 +74,46 @@ class StageTests(unittest.TestCase):
         self.assertEqual([entry["page_id"] for entry in entries], [10, 110])
         self.assertEqual(receipt["members"], 2)
 
+    def test_in_tree_publication_receipt_must_match_checksum_identity(self):
+        def xml(page_id):
+            return (f'<mediawiki><page><title>Article {page_id}</title><ns>0</ns>'
+                    f'<id>{page_id}</id><revision><id>{page_id + 1000}</id>'
+                    '<timestamp>2026-10-01T00:00:00Z</timestamp>'
+                    f'<text>Wiki {page_id}</text></revision></page></mediawiki>').encode()
+
+        self.payloads = {self.a: bz2.compress(xml(10)),
+                         self.b: bz2.compress(xml(110))}
+        self.stage()
+        original = json.loads((self.target / "PUBLICATION.json").read_text())
+        output = self.root / "revisions.jsonl"
+        for variant in ("date", "member_count", "sha256", "missing"):
+            with self.subTest(variant=variant):
+                data = json.loads(json.dumps(original))
+                if variant == "date":
+                    data["publication"]["date"] = "2026-09-01"
+                elif variant == "member_count":
+                    data["members"] += 1
+                elif variant == "sha256":
+                    data["publication"]["sha256"] = "0" * 64
+                else:
+                    data = {"publication": "forged"}
+                (self.target / "PUBLICATION.json").write_text(json.dumps(data))
+                with self.assertRaisesRegex(
+                    ValueError, "staged publication|invalid staged publication",
+                ):
+                    extract_current_export(
+                        self.target, self.target / "SHA256SUMS",
+                        "enwiki", self.date, output,
+                    )
+                self.assertFalse(output.exists())
+        (self.target / "PUBLICATION.json").write_text(json.dumps(original))
+        self.assertEqual(
+            extract_current_export(
+                self.target, self.target / "SHA256SUMS",
+                "enwiki", self.date, output,
+            ), 2,
+        )
+
     def test_corrupted_later_member_does_not_publish_partial_directory(self):
         def corrupted(url):
             if url.endswith(self.b):
