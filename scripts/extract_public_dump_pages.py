@@ -342,8 +342,8 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                             if siteinfo_seen or count:
                                 raise DumpExtractionError("duplicate or late siteinfo")
                             siteinfo_seen = True
-                            dbname = _text(element, "dbname")
-                            if dbname is not None and dbname != project:
+                            dbname_node = _child(element, "dbname")
+                            if dbname_node is not None and dbname_node.text != project:
                                 raise DumpExtractionError("dump siteinfo project mismatch")
                             root.clear()
                         if event == "end" and tag == "page" and depth == 2:
