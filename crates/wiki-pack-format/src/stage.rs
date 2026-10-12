@@ -111,4 +111,3 @@ pub fn stage_container<R: Read + Seek>(
     File::open(parent)?.sync_all()?;
     Ok((manifest, root))
 }
-
