@@ -418,7 +418,13 @@ mod pinned_tests {
             page_limit: 10,
         };
         let check = |redirects: &BTreeMap<u64, u64>| {
-            resolve_pinned(&graph, &rules, redirects, &BTreeSet::new(), "enwiki-20261001")
+            resolve_pinned(
+                &graph,
+                &rules,
+                redirects,
+                &BTreeSet::new(),
+                "enwiki-20261001",
+            )
         };
         let cycle = BTreeMap::from([(100, 101), (101, 100)]);
         assert_eq!(check(&cycle), Err(ResolveError::RedirectCycle(100)));
