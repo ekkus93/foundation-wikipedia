@@ -275,3 +275,141 @@ fn pinned_selection_changes_when_unselected_source_revision_or_alias_changes() {
         changed.revision_selection_sha256
     );
 }
+
+#[test]
+fn joined_page_id_redirects_are_snapshot_bound_and_order_independent() {
+    use wiki_pack_builder::enterprise_graph::{
+        resolve_joined_revision_pinned_with_redirects, PageRedirectIdentity,
+    };
+    let records = vec![
+        record(20, 14, "Category:Math", &[]),
+        record(2, 0, "Group", &["Category:Math"]),
+        record(3, 0, "Number", &[]),
+    ];
+    let redirect = |from_page_id, to_page_id| PageRedirectIdentity {
+        project: "enwiki".into(),
+        generation_id: "20261001".into(),
+        from_page_id,
+        to_page_id,
+    };
+    let rules = Rules {
+        roots: vec![],
+        include: vec![101],
+        exclude: vec![],
+        depth_limit: 0,
+        page_limit: 10,
+    };
+    let mapping = vec![redirect(100, 2), redirect(101, 100)];
+    let selected =
+        resolve_joined_revision_pinned_with_redirects(&records, &BTreeSet::new(), &rules, &mapping)
+            .unwrap();
+    assert_eq!(selected.selection.page_ids, vec![2]);
+    assert_eq!(selected.page_revisions[&2], 102);
+    assert!(selected
+        .selection
+        .warnings
+        .contains(&"Resolved redirect: 101 -> 2".into()));
+    let mut reordered = mapping.clone();
+    reordered.reverse();
+    assert_eq!(
+        selected,
+        resolve_joined_revision_pinned_with_redirects(
+            &records,
+            &BTreeSet::new(),
+            &rules,
+            &reordered,
+        )
+        .unwrap()
+    );
+    assert_ne!(
+        selected.revision_selection_sha256,
+        resolve_joined_revision_pinned_with_redirects(
+            &records,
+            &BTreeSet::new(),
+            &rules,
+            &[redirect(100, 3), redirect(101, 100)],
+        )
+        .unwrap()
+        .revision_selection_sha256
+    );
+    let excluding = Rules {
+        roots: vec!["Category:Math".into()],
+        include: vec![],
+        exclude: vec![101],
+        depth_limit: 0,
+        page_limit: 10,
+    };
+    assert!(resolve_joined_revision_pinned_with_redirects(
+        &records,
+        &BTreeSet::new(),
+        &excluding,
+        &mapping,
+    )
+    .unwrap()
+    .selection
+    .page_ids
+    .is_empty());
+}
+
+#[test]
+fn joined_page_id_redirects_reject_mismatches_cycles_and_missing_mainspace() {
+    use wiki_pack_builder::enterprise_graph::{
+        resolve_joined_revision_pinned_with_redirects, PageRedirectIdentity, RedirectBuildError,
+    };
+    let records = vec![
+        record(20, 14, "Category:Math", &[]),
+        record(2, 0, "Group", &["Category:Math"]),
+    ];
+    let rules = Rules {
+        roots: vec!["Category:Math".into()],
+        include: vec![],
+        exclude: vec![],
+        depth_limit: 0,
+        page_limit: 10,
+    };
+    let identity = |from_page_id, to_page_id| PageRedirectIdentity {
+        project: "enwiki".into(),
+        generation_id: "20261001".into(),
+        from_page_id,
+        to_page_id,
+    };
+    let check = |redirects: Vec<PageRedirectIdentity>| {
+        resolve_joined_revision_pinned_with_redirects(
+            &records,
+            &BTreeSet::new(),
+            &rules,
+            &redirects,
+        )
+        .unwrap_err()
+    };
+    assert_eq!(
+        check(vec![identity(101, 999)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::MissingMainspaceTarget(999))
+    );
+    assert_eq!(
+        check(vec![identity(101, 20)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::MissingMainspaceTarget(20))
+    );
+    assert_eq!(
+        check(vec![identity(101, 102), identity(102, 101)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::Cycle(101))
+    );
+    assert_eq!(
+        check(vec![identity(2, 2)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::ConflictsWithJoinedPage(2))
+    );
+    assert_eq!(
+        check(vec![identity(101, 2), identity(101, 2)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::DuplicateSource(101))
+    );
+    assert_eq!(
+        check(vec![identity(0, 2)]),
+        JoinedSelectionError::Redirect(RedirectBuildError::InvalidId)
+    );
+    let mut mixed = identity(101, 2);
+    mixed.generation_id = "20261002".into();
+    assert_eq!(
+        check(vec![mixed]),
+        JoinedSelectionError::Redirect(RedirectBuildError::MixedSource)
+    );
+}
