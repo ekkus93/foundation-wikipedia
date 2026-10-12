@@ -5,6 +5,7 @@
 //! a safe archive installer, or an atomic output publisher.
 
 use crate::container::{write_container, ContainerError};
+use std::collections::BTreeSet;
 use crate::manifest::{
     Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES,
     MAX_PACK_OBJECTS,
@@ -181,6 +182,54 @@ pub fn custom_manifest_from_tree(
     Ok(manifest)
 }
 
+/// Reject any new, missing, or unlisted object between inventory and
+/// publication. Checking only declared hashes cannot detect new files.
+/// The tree must still be exclusively owned to defeat rename races.
+fn verify_object_membership(root: &Path, manifest: &Manifest) -> Result<(), ExportError> {
+    manifest.validate()?;
+    let mut expected: BTreeSet<String> = manifest
+        .objects
+        .iter()
+        .map(|object| object.path.clone())
+        .collect();
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    let mut directories = 0usize;
+    while let Some((dir, prefix)) = stack.pop() {
+        directories += 1;
+        if directories > MAX_PACK_OBJECTS {
+            return Err(ExportError::ResourceBudget);
+        }
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let filename = entry.file_name();
+            let filename = filename.to_str().ok_or(ExportError::InvalidTree)?;
+            let relative = if prefix.is_empty() {
+                filename.to_owned()
+            } else {
+                format!("{prefix}/{filename}")
+            };
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path)?;
+            if meta.file_type().is_symlink() {
+                return Err(ExportError::InvalidTree);
+            }
+            if meta.is_dir() {
+                stack.push((path, relative));
+            } else if meta.is_file() {
+                if !expected.remove(&relative) {
+                    return Err(ExportError::InvalidTree);
+                }
+            } else {
+                return Err(ExportError::InvalidTree);
+            }
+        }
+    }
+    if !expected.is_empty() {
+        return Err(ExportError::InvalidTree);
+    }
+    Ok(())
+}
+
 /// Verify every inventoried object again, then stream the canonical envelope.
 /// The output writer may contain partial bytes on error; never publish before
 /// this returns Ok AND the caller re-verifies and fsyncs the complete output.
@@ -193,6 +242,7 @@ pub fn write_custom_tree<W: Write>(
     if !matches!(manifest.origin, Origin::Custom { .. }) {
         return Err(ExportError::InvalidTree);
     }
+    verify_object_membership(root, manifest)?;
     verify_manifest_directory(manifest, root).map_err(ExportError::Verify)?;
     write_container(output, manifest, |object, writer| {
         let path = root.join(&object.path);
@@ -251,6 +301,12 @@ mod tests {
         fs::write(root.join("article.cbor"), b"original").unwrap();
         let manifest =
             custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math").unwrap();
+        fs::write(root.join("unlisted.svg"), b"new required diagram").unwrap();
+        assert!(matches!(
+            write_custom_tree(&root, &manifest, &mut Vec::new()),
+            Err(ExportError::InvalidTree)
+        ));
+        fs::remove_file(root.join("unlisted.svg")).unwrap();
         fs::write(root.join("article.cbor"), b"tampered").unwrap();
         assert!(matches!(
             write_custom_tree(&root, &manifest, &mut Vec::new()),
