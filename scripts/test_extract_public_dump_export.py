@@ -104,6 +104,26 @@ class ExportTests(unittest.TestCase):
                 self.extract()
         self.assert_no_publication()
 
+    def test_mutated_checksum_inventory_after_shard_parsing_never_publishes(self):
+        from unittest.mock import patch
+        import extract_public_dump_export as module
+        original = module.extract_current_dump
+
+        def rewrite_inventory_after_last_shard(*args, **kwargs):
+            count = original(*args, **kwargs)
+            if args[0].name == self.second:
+                contents = self.inventory.read_bytes()
+                replacement = b"f" if contents[:1] != b"f" else b"e"
+                self.inventory.write_bytes(replacement + contents[1:])
+            return count
+
+        with patch.object(
+            module, "extract_current_dump", side_effect=rewrite_inventory_after_last_shard,
+        ):
+            with self.assertRaisesRegex(DumpExtractionError, "inventory changed"):
+                self.extract()
+        self.assert_no_publication()
+
     def test_rejects_symlinked_checksum_inventory(self):
         original = self.root / "inventory-original"
         self.inventory.rename(original)

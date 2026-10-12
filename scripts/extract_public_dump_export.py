@@ -223,6 +223,11 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
             source, _ = _verified_source(path, digest, max_member_bytes)
             source.close()
         _verify_exact_staged_members(staging_dir, records, checksum_file)
+        # Re-parse the same local SHA256SUMS after extraction: a private tree
+        # may have changed while its members were being processed. Never
+        # publish records against a different declared source inventory.
+        if _inventory(checksum_file, project, date) != records:
+            raise DumpExtractionError("checksum inventory changed during extraction")
         try:
             os.link(joined, output)
         except FileExistsError:
