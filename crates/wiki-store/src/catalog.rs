@@ -81,11 +81,18 @@ pub struct SnapshotCatalog {
 }
 
 fn valid_shard_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
     !name.is_empty()
         && name.len() <= 255
         && name != "."
         && name != ".."
         && !name.starts_with('.')
+        && !name.ends_with('.')
+        && !reserved
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
@@ -583,6 +590,21 @@ mod tests {
             rendered_html: "<article>Earth</article>".into(),
             is_disambiguation: false,
         }))
+    }
+
+    #[test]
+    fn shard_names_are_portable_and_reject_windows_device_aliases() {
+        for name in [
+            "", ".", "..", ".hidden", "article.", "CON", "con.shard",
+            "PRN.txt", "aux", "NUL.bin", "COM1", "com9.shard",
+            "LPT1.bin", "lpt9", "folder/shard", "shard\\name",
+            "a:b", "a name", "bad\u{0000}name",
+        ] {
+            assert!(!valid_shard_name(name), "unsafe shard name accepted: {name:?}");
+        }
+        for name in ["articles-001.shard", "COM0.bin", "LPT0", "CONSOLE.bin"] {
+            assert!(valid_shard_name(name), "safe shard name rejected: {name:?}");
+        }
     }
 
     #[test]
