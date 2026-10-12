@@ -226,6 +226,14 @@ pub fn resolve_pinned(
     {
         return Err(ResolveError::InvalidSnapshot);
     }
+    // A receipt fingerprints the entire supplied graph, not just the visited
+    // subset. Reject malformed identities even in unselected source records.
+    if graph.values().any(|category| category.articles.contains(&0))
+        || redirects.iter().any(|(&from, &to)| from == 0 || to == 0)
+        || disambiguations.contains(&0)
+    {
+        return Err(ResolveError::InvalidPage);
+    }
     let resolved = resolve_with_redirects(graph, rules, redirects, disambiguations)?;
     let mut definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
     append_strings(&mut definition, &rules.roots);
@@ -343,4 +351,41 @@ mod pinned_tests {
             );
         }
     }
+    #[test]
+    fn pinned_receipts_reject_invalid_unselected_source_identities() {
+        let rules = Rules {
+            roots: vec!["Category:Selected".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 10,
+        };
+        let mut graph = BTreeMap::from([
+            (
+                "Category:Selected".into(),
+                Category { articles: vec![1], children: vec![], administrative: false }),
+            (
+                "Category:Unselected".into(),
+                Category { articles: vec![0], children: vec![], administrative: false }),
+        ]);
+        let mut redirects = BTreeMap::new();
+        let mut disambiguations = BTreeSet::new();
+        let pinned = |graph: &BTreeMap<String, Category>,
+                      redirects: &BTreeMap<u64, u64>,
+                      disambiguations: &BTreeSet<u64>| {
+            resolve_pinned(graph, &rules, redirects, disambiguations, "enwiki-20261001")
+        };
+        assert_eq!(pinned(&graph, &redirects, &disambiguations), Err(ResolveError::InvalidPage));
+        graph.get_mut("Category:Unselected").unwrap().articles = vec![2];
+        assert!(pinned(&graph, &redirects, &disambiguations).is_ok());
+        redirects.insert(99, 0);
+        assert_eq!(pinned(&graph, &redirects, &disambiguations), Err(ResolveError::InvalidPage));
+        redirects.clear();
+        redirects.insert(0, 99);
+        assert_eq!(pinned(&graph, &redirects, &disambiguations), Err(ResolveError::InvalidPage));
+        redirects.clear();
+        disambiguations.insert(0);
+        assert_eq!(pinned(&graph, &redirects, &disambiguations), Err(ResolveError::InvalidPage));
+    }
+
 }
