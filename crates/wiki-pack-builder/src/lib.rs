@@ -4,6 +4,7 @@
 //! production API until its canonical TODO tasks are implemented.
 
 pub mod curated;
+pub mod graph_digest;
 pub mod media;
 pub mod media_inventory;
 pub mod selection;
