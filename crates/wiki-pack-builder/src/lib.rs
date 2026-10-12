@@ -8,6 +8,7 @@ pub mod enterprise_graph;
 pub mod graph_digest;
 pub mod media;
 pub mod media_inventory;
+pub mod preview;
 pub mod selection;
 
 /// Shared provisional pack envelope contract for CLI and future desktop UI.
