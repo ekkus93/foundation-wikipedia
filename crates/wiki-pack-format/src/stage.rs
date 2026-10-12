@@ -99,6 +99,17 @@ pub fn stage_container<R: Read + Seek>(
             }
             output.sync_all()?;
         }
+        // The first pass rejected trailing bytes, but an input that changes
+        // between passes must not smuggle an appended payload through staging.
+        let mut extra = [0u8; 1];
+        loop {
+            match input.read(&mut extra) {
+                Ok(0) => break,
+                Ok(_) => return Err(ContainerError::TrailingBytes),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(ContainerError::Io(error)),
+            }
+        }
         verify_manifest_directory(&manifest, &root)
             .map_err(|_| ContainerError::UnsafeStagingPath)?;
         File::open(&root)?.sync_all()?;

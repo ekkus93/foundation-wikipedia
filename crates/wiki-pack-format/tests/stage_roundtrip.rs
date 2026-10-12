@@ -61,5 +61,35 @@ fn verified_envelope_stages_into_private_tree() {
             0
         );
     }
+    // A mutable input may have grown after the initial complete-envelope
+    // validation. Stage must reject a second-pass tail and delete all files.
+    struct AppendAfterVerification {
+        input: Cursor<Vec<u8>>,
+        appended: bool,
+    }
+    impl std::io::Read for AppendAfterVerification {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::io::Read::read(&mut self.input, buf)
+        }
+    }
+    impl std::io::Seek for AppendAfterVerification {
+        fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            if !self.appended && pos == std::io::SeekFrom::Start(8) {
+                self.input.get_mut().push(0xff);
+                self.appended = true;
+            }
+            std::io::Seek::seek(&mut self.input, pos)
+        }
+    }
+    let mut changed = AppendAfterVerification {
+        input: Cursor::new(envelope.clone()),
+        appended: false,
+    };
+    assert!(matches!(
+        stage_container(&mut changed, &parent, "changed"),
+        Err(wiki_pack_format::container::ContainerError::TrailingBytes)
+    ));
+    assert!(!parent.join("changed").exists());
+
     fs::remove_dir_all(parent).unwrap();
 }
