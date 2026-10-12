@@ -20,7 +20,7 @@ fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
-    println!("       wiki-pack preview-topic <local-category-graph.json>");
+    println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack --help");
@@ -182,12 +182,16 @@ fn main() {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
         Some("preview-topic") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 1 {
-                eprintln!("preview-topic requires exactly one local JSON input");
-                usage();
-                std::process::exit(2);
-            }
-            if let Err(error) = preview_topic::run(Path::new(&fields[0])) {
+            let (json_output, input) = match fields.as_slice() {
+                [input] => (false, input),
+                [flag, input] if flag.as_os_str() == OsStr::new("--json") => (true, input),
+                _ => {
+                    eprintln!("preview-topic requires [--json] and one local JSON input");
+                    usage();
+                    std::process::exit(2);
+                }
+            };
+            if let Err(error) = preview_topic::run(Path::new(input), json_output) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

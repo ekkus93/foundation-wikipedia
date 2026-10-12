@@ -365,3 +365,74 @@ fn cli_preview_rejects_duplicate_categories_and_missing_roots() {
         .contains("topic preview rejected"));
     fs::remove_dir_all(parent).unwrap();
 }
+
+#[test]
+fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
+    let (parent, _) = fixture(false);
+    let input = parent.join("topic.json");
+    let first = r#"{
+        "snapshot_id": "enwiki-20261001",
+        "roots": ["Category:Math"],
+        "include": [101],
+        "exclude": [3],
+        "depth_limit": 1,
+        "page_limit": 10,
+        "categories": [
+            {"name": "Category:Math", "articles": [3, 2], "children": []},
+            {"name": "Category:Other", "articles": [7], "children": []}
+        ],
+        "redirects": [{"from": 101, "to": 2}]
+    }"#;
+    fs::write(&input, first).unwrap();
+    let args = [std::ffi::OsStr::new("--json"), input.as_os_str()];
+    let output = invoke("preview-topic", &args);
+    assert!(output.status.success(), "{output:?}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["schema_version"], 1);
+    assert_eq!(parsed["source"], "local-untrusted-category-graph");
+    assert_eq!(parsed["source_authenticated"], false);
+    assert_eq!(parsed["publisher_signature_verified"], false);
+    assert_eq!(parsed["offline_ready"], false);
+    assert_eq!(parsed["pack_installed"], false);
+    assert_eq!(parsed["snapshot_label"], "enwiki-20261001");
+    assert_eq!(parsed["selected_page_ids"], serde_json::json!([2]));
+    assert_eq!(parsed["selected_page_count"], 1);
+    assert_eq!(parsed["visited_category_count"], 1);
+    assert_eq!(parsed["explicit_include_ids"], 1);
+    assert_eq!(parsed["explicit_exclude_ids"], 1);
+    assert_eq!(parsed["largest_category"]["name"], "Category:Math");
+    assert!(parsed["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|warning| warning == "Resolved redirect: 101 -> 2"));
+    for key in ["definition_sha256", "graph_sha256", "selection_sha256"] {
+        assert_eq!(parsed[key].as_str().unwrap().len(), 64);
+    }
+
+    // Record order and member order must not change the machine-readable
+    // selection, which is suitable for an exact-receipt GUI preview.
+    let reordered = first
+        .replace(
+            r#"{"name": "Category:Math", "articles": [3, 2], "children": []},
+            {"name": "Category:Other", "articles": [7], "children": []}"#,
+            r#"{"name": "Category:Other", "articles": [7], "children": []},
+            {"name": "Category:Math", "articles": [2, 3], "children": []}"#,
+        );
+    fs::write(&input, reordered).unwrap();
+    let second = invoke("preview-topic", &args);
+    assert!(second.status.success(), "{second:?}");
+    let again: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(parsed, again);
+
+    fs::write(&input, first.replace("Category:Math", "Category:Missing")).unwrap();
+    let invalid = invoke("preview-topic", &args);
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(invalid.stdout.is_empty());
+    let usage = invoke(
+        "preview-topic",
+        &[std::ffi::OsStr::new("--json"), input.as_os_str(), input.as_os_str()],
+    );
+    assert_eq!(usage.status.code(), Some(2));
+    fs::remove_dir_all(parent).unwrap();
+}

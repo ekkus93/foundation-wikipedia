@@ -58,7 +58,7 @@ fn safe_category_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
-pub fn run(path: &Path) -> Result<(), String> {
+pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     let file = File::open(path).map_err(|error| format!("cannot open preview input: {error}"))?;
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1)
@@ -137,6 +137,42 @@ pub fn run(path: &Path) -> Result<(), String> {
         &input.snapshot_id,
     )
     .map_err(|error| format!("topic preview rejected: {error:?}"))?;
+    if json_output {
+        // Machine-readable pre-download preview for a future GUI/builder
+        // integration. No field here confers publisher trust or installability.
+        let result = serde_json::json!({
+            "schema_version": 1,
+            "source": "local-untrusted-category-graph",
+            "source_authenticated": false,
+            "publisher_signature_verified": false,
+            "offline_ready": false,
+            "pack_installed": false,
+            "snapshot_label": preview.selection.snapshot_id,
+            "definition_sha256": preview.selection.definition_sha256,
+            "graph_sha256": preview.selection.graph_sha256,
+            "selection_sha256": preview.selection.snapshot_selection_sha256,
+            "selected_page_ids": preview.selection.page_ids,
+            "selected_page_count": preview.selected_page_count,
+            "visited_category_count": preview.visited_category_count,
+            "skipped_administrative_count": preview.skipped_administrative_count,
+            "inspected_article_mentions": preview.inspected_article_mentions,
+            "inspected_child_category_mentions": preview.inspected_child_category_mentions,
+            "explicit_include_ids": preview.explicit_include_ids,
+            "explicit_exclude_ids": preview.explicit_exclude_ids,
+            "largest_category": preview.largest_category.as_ref().map(|category| {
+                serde_json::json!({
+                    "name": category.name,
+                    "article_mentions": category.article_mentions,
+                    "child_categories": category.child_categories,
+                })
+            }),
+            "warnings": preview.warnings,
+        });
+        let encoded = serde_json::to_string(&result)
+            .map_err(|error| format!("cannot serialize topic preview: {error}"))?;
+        println!("{encoded}");
+        return Ok(());
+    }
     println!("Local topic preview; source publication/authenticity: NOT VERIFIED");
     println!("No media fetched; no pack built, signed, or installed");
     println!(
