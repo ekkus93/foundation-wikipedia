@@ -36,6 +36,11 @@ class ExportTests(unittest.TestCase):
 
     def write_inventory(self):
         # Reverse inventory order to require deterministic page-ID ordering.
+        # Each regenerated fixture describes a new generation; remove stale
+        # shards from the prior version so exact-tree verification can run.
+        for previous in self.stage.iterdir():
+            if previous.is_file() and previous.name not in self.shards:
+                previous.unlink()
         for path, data in self.shards.items():
             (self.stage / path).write_bytes(data)
         self.inventory.write_text("".join(
@@ -68,7 +73,7 @@ class ExportTests(unittest.TestCase):
             self.extract()
         self.assert_no_publication()
         (self.stage / self.second).unlink()
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(DumpExtractionError, "missing declared staged export member"):
             self.extract()
         self.assert_no_publication()
 

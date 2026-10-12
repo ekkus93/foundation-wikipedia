@@ -122,13 +122,18 @@ def _private_shard(root, relative):
 
 
 
-def _verify_exact_staged_members(root, records):
+def _verify_exact_staged_members(root, records, checksum_file):
     """Reject undeclared files, directories, links and leftover temp shards.
 
     This is a fail-closed preflight only. The caller must keep the private
     staging tree free from concurrent modifications during extraction.
     """
     expected_files = {name for _, _, name, _ in records}
+    # A staged publication produced by stage_completed_export includes only
+    # these two fixed metadata files alongside the digest-declared shards.
+    # Neither file proves publisher authenticity or offline-readiness.
+    if checksum_file.parent == root and checksum_file.name == "SHA256SUMS":
+        expected_files.update(("SHA256SUMS", "PUBLICATION.json"))
     expected_directories = set()
     for relative in expected_files:
         parts = relative.split("/")
@@ -180,7 +185,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
             or output.exists() or output.is_symlink()):
         raise DumpExtractionError("unsafe staging/output path or existing output")
     records = _inventory(checksum_file, project, date)
-    _verify_exact_staged_members(staging_dir, records)
+    _verify_exact_staged_members(staging_dir, records, checksum_file)
     paths = []
     total_bytes = 0
     for _, _, name, digest in records:
@@ -217,7 +222,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         for path, digest in paths:
             source, _ = _verified_source(path, digest, max_member_bytes)
             source.close()
-        _verify_exact_staged_members(staging_dir, records)
+        _verify_exact_staged_members(staging_dir, records, checksum_file)
         try:
             os.link(joined, output)
         except FileExistsError:
