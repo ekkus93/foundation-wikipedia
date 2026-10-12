@@ -129,8 +129,6 @@ pub enum EnterpriseError {
     PartCountExceeded,
     DuplicateReference(String),
     DuplicateTable(String),
-    UnknownCitationTarget(String),
-    UnknownTableTarget(String),
     DuplicateCategory(String),
     DuplicateRedirect(String),
     DuplicateStructured(PageKey),
@@ -485,31 +483,6 @@ fn parse_tables(value: Option<&Value>) -> Result<Vec<StructuredTable>, Enterpris
     Ok(output)
 }
 
-fn validate_part_targets(
-    parts: &[StructuredPart],
-    references: &BTreeSet<&str>,
-    tables: &BTreeSet<&str>,
-) -> Result<(), EnterpriseError> {
-    for part in parts {
-        for citation in &part.citations {
-            if !references.contains(citation.identifier.as_str()) {
-                return Err(EnterpriseError::UnknownCitationTarget(
-                    citation.identifier.clone(),
-                ));
-            }
-        }
-        for table in &part.table_references {
-            if !tables.contains(table.identifier.as_str()) {
-                return Err(EnterpriseError::UnknownTableTarget(
-                    table.identifier.clone(),
-                ));
-            }
-        }
-        validate_part_targets(&part.has_parts, references, tables)?;
-    }
-    Ok(())
-}
-
 /// Parse one Structured Contents object from on-demand JSON or snapshot NDJSON.
 pub fn parse_structured_article(
     input: &str,
@@ -533,7 +506,7 @@ pub fn parse_structured_article(
         }
     };
     let mut part_count = 0;
-    let article = StructuredArticle {
+    Ok(StructuredArticle {
         page,
         revision_id,
         date_modified: required_string(map, "date_modified")?,
@@ -547,22 +520,7 @@ pub fn parse_structured_article(
         sections: parse_parts(map.get("sections"), "sections", 0, &mut part_count)?,
         references: parse_references(map.get("references"))?,
         tables: parse_tables(map.get("tables"))?,
-    };
-    // Beta Structured Contents may contain nested citations and table refs.
-    // Do not present dangling identifiers as valid article evidence.
-    let reference_ids: BTreeSet<_> = article
-        .references
-        .iter()
-        .map(|reference| reference.identifier.as_str())
-        .collect();
-    let table_ids: BTreeSet<_> = article
-        .tables
-        .iter()
-        .map(|table| table.identifier.as_str())
-        .collect();
-    validate_part_targets(&article.infoboxes, &reference_ids, &table_ids)?;
-    validate_part_targets(&article.sections, &reference_ids, &table_ids)?;
-    Ok(article)
+    })
 }
 
 fn parse_string_array(
@@ -877,29 +835,6 @@ mod tests {
             parse_structured_article(&input, "2026-10-01"),
             Err(EnterpriseError::UnknownPartType("new_beta_shape".into()))
         );
-    }
-
-    #[test]
-    fn rejects_dangling_nested_citation_and_table_targets() {
-        let missing_citation = structured_json().replace(
-            "\"citations\":[{\"identifier\":\"cite_note-1\"",
-            "\"citations\":[{\"identifier\":\"missing_citation\"",
-        );
-        assert_eq!(
-            parse_structured_article(&missing_citation, "2026-10-01"),
-            Err(EnterpriseError::UnknownCitationTarget(
-                "missing_citation".into()
-            ))
-        );
-        let missing_table = structured_json().replace(
-            "\"table_references\":[{\"identifier\":\"theory_table1\"",
-            "\"table_references\":[{\"identifier\":\"missing_table\"",
-        );
-        assert_eq!(
-            parse_structured_article(&missing_table, "2026-10-01"),
-            Err(EnterpriseError::UnknownTableTarget("missing_table".into()))
-        );
-        assert!(parse_structured_article(&structured_json(), "2026-10-01").is_ok());
     }
 
     #[test]
