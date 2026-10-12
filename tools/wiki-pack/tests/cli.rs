@@ -105,3 +105,83 @@ fn usage_errors_and_missing_input_fail_closed() {
     assert_eq!(unknown.status.code(), Some(2));
     fs::remove_dir_all(parent).unwrap();
 }
+
+#[test]
+fn cli_export_custom_roundtrip_is_verified_and_never_overwrites() {
+    let (parent, _) = fixture(false);
+    let source = parent.join("custom-objects");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(source.join("media")).unwrap();
+    fs::write(source.join("article.cbor"), b"verified canonical article").unwrap();
+    fs::write(source.join("media/diagram.svg"), b"<svg/>").unwrap();
+    let output = parent.join("custom-output.wpack");
+    let args: [&std::ffi::OsStr; 6] = [
+        source.as_os_str(),
+        std::ffi::OsStr::new("physics"),
+        std::ffi::OsStr::new("enwiki"),
+        std::ffi::OsStr::new("20261001"),
+        std::ffi::OsStr::new("physics-definition"),
+        output.as_os_str(),
+    ];
+    let exported = invoke("export-custom", &args);
+    assert!(exported.status.success(), "{exported:?}");
+    let verified = invoke("verify", &[output.as_os_str()]);
+    assert!(verified.status.success(), "{verified:?}");
+    let inspected = invoke("inspect", &[output.as_os_str()]);
+    assert!(inspected.status.success(), "{inspected:?}");
+    assert!(String::from_utf8(inspected.stdout)
+        .unwrap()
+        .contains("Claimed origin: custom (physics-definition)"));
+    let original = fs::read(&output).unwrap();
+    let second = invoke("export-custom", &args);
+    assert_eq!(second.status.code(), Some(1));
+    assert_eq!(fs::read(&output).unwrap(), original);
+    assert_eq!(
+        fs::read_dir(&parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".fwpack-export."))
+            .count(),
+        0
+    );
+    let inside = source.join("self.wpack");
+    let forbidden: [&std::ffi::OsStr; 6] = [
+        source.as_os_str(),
+        std::ffi::OsStr::new("physics"),
+        std::ffi::OsStr::new("enwiki"),
+        std::ffi::OsStr::new("20261001"),
+        std::ffi::OsStr::new("physics-definition"),
+        inside.as_os_str(),
+    ];
+    assert_eq!(invoke("export-custom", &forbidden).status.code(), Some(1));
+    assert!(!inside.exists());
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_export_custom_refuses_symlinked_source() {
+    use std::os::unix::fs::symlink;
+    let (parent, _) = fixture(false);
+    let source = parent.join("custom-source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("article.cbor"), b"content").unwrap();
+    symlink(&source, parent.join("linked-source")).unwrap();
+    let output = parent.join("unsafe.wpack");
+    let linked = parent.join("linked-source");
+    let args: [&std::ffi::OsStr; 6] = [
+        linked.as_os_str(),
+        std::ffi::OsStr::new("physics"),
+        std::ffi::OsStr::new("enwiki"),
+        std::ffi::OsStr::new("20261001"),
+        std::ffi::OsStr::new("physics"),
+        output.as_os_str(),
+    ];
+    let result = invoke("export-custom", &args);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(!output.exists());
+    fs::remove_dir_all(parent).unwrap();
+}
