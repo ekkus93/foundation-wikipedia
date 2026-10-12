@@ -6,3 +6,6 @@
 pub mod media;
 pub mod media_inventory;
 pub mod selection;
+
+/// Shared provisional pack envelope contract for CLI and future desktop UI.
+pub use wiki_pack_format;

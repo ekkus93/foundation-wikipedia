@@ -2,8 +2,8 @@ use std::fs::{self, File};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wiki_pack_format::container::write_container;
-use wiki_pack_format::manifest::{Manifest, Object, Origin, FORMAT_VERSION};
+use wiki_pack_builder::wiki_pack_format::container::write_container;
+use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin, FORMAT_VERSION};
 
 fn fixture(official: bool) -> (std::path::PathBuf, std::path::PathBuf) {
     let parent = std::env::temp_dir().join(format!(

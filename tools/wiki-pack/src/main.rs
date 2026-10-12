@@ -6,8 +6,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
-use wiki_pack_format::container::verify_container;
-use wiki_pack_format::manifest::Origin;
+use wiki_pack_builder::wiki_pack_format::container::verify_container;
+use wiki_pack_builder::wiki_pack_format::manifest::Origin;
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
