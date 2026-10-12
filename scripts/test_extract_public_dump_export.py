@@ -217,7 +217,7 @@ class ExportTests(unittest.TestCase):
         }
         (self.stage / first).write_bytes(self.shards[first])
         self.inventory.write_text("".join(
-            f"{hashlib.sha256(data).hexdigest()}  {name}\\n"
+            f"{hashlib.sha256(data).hexdigest()}  {name}\n"
             for name, data in self.shards.items()
         ))
         self.assertEqual(self.extract(), 2)
