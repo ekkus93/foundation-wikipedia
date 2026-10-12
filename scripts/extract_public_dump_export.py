@@ -170,7 +170,8 @@ def _verify_exact_staged_members(root, records, checksum_file):
         raise DumpExtractionError("could not verify exact staged export tree") from error
 
 
-def _validate_staged_publication_receipt(root, checksum_file, records, project, date):
+def _validate_staged_publication_receipt(root, checksum_file, records, project, date,
+                                         verified_total_bytes=None):
     """Check local staged metadata consistency, NOT Wikimedia authenticity."""
     if checksum_file.parent != root or checksum_file.name != "SHA256SUMS":
         return
@@ -190,6 +191,12 @@ def _validate_staged_publication_receipt(root, checksum_file, records, project, 
         raise DumpExtractionError("invalid staged publication receipt") from error
     if not isinstance(receipt, dict) or not isinstance(receipt.get("publication"), dict):
         raise DumpExtractionError("invalid staged publication receipt identity")
+    if (type(receipt.get("compressed_bytes")) is not int
+            or not 0 < receipt["compressed_bytes"] <= MAX_TOTAL_BYTES):
+        raise DumpExtractionError("invalid staged publication compressed byte count")
+    if (verified_total_bytes is not None
+            and receipt["compressed_bytes"] != verified_total_bytes):
+        raise DumpExtractionError("staged publication compressed byte count mismatch")
     publication = receipt["publication"]
     expected_url = (
         "https://dumps.wikimedia.org/other/mediawiki_content_current/"
@@ -273,6 +280,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
             raise DumpExtractionError("checksum inventory changed during extraction")
         _validate_staged_publication_receipt(
             staging_dir, checksum_file, records, project, date,
+            verified_total_bytes=total_bytes,
         )
         try:
             os.link(joined, output)

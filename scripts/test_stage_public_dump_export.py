@@ -86,7 +86,7 @@ class StageTests(unittest.TestCase):
         self.stage()
         original = json.loads((self.target / "PUBLICATION.json").read_text())
         output = self.root / "revisions.jsonl"
-        for variant in ("date", "member_count", "sha256", "missing"):
+        for variant in ("date", "member_count", "sha256", "compressed_bytes", "missing"):
             with self.subTest(variant=variant):
                 data = json.loads(json.dumps(original))
                 if variant == "date":
@@ -95,6 +95,8 @@ class StageTests(unittest.TestCase):
                     data["members"] += 1
                 elif variant == "sha256":
                     data["publication"]["sha256"] = "0" * 64
+                elif variant == "compressed_bytes":
+                    data["compressed_bytes"] += 1
                 else:
                     data = {"publication": "forged"}
                 (self.target / "PUBLICATION.json").write_text(json.dumps(data))
@@ -113,6 +115,42 @@ class StageTests(unittest.TestCase):
                 "enwiki", self.date, output,
             ), 2,
         )
+
+    def test_mutated_receipt_after_shard_parsing_never_publishes(self):
+        from unittest.mock import patch
+        import extract_public_dump_export as module
+
+        def xml(page_id):
+            return (f'<mediawiki><page><title>Article {page_id}</title><ns>0</ns>'
+                    f'<id>{page_id}</id><revision><id>{page_id + 1000}</id>'
+                    '<timestamp>2026-10-01T00:00:00Z</timestamp>'
+                    f'<text>Wiki {page_id}</text></revision></page></mediawiki>').encode()
+
+        self.payloads = {self.a: bz2.compress(xml(10)),
+                         self.b: bz2.compress(xml(110))}
+        self.stage()
+        original = module.extract_current_dump
+        output = self.root / "revisions.jsonl"
+
+        def mutate_after_final_shard(*args, **kwargs):
+            count = original(*args, **kwargs)
+            if args[0].name == self.b:
+                receipt_path = self.target / "PUBLICATION.json"
+                receipt = json.loads(receipt_path.read_text())
+                receipt["compressed_bytes"] += 1
+                receipt_path.write_text(json.dumps(receipt))
+            return count
+
+        with patch.object(module, "extract_current_dump",
+                          side_effect=mutate_after_final_shard):
+            with self.assertRaisesRegex(
+                ValueError, "staged publication compressed byte count mismatch",
+            ):
+                extract_current_export(
+                    self.target, self.target / "SHA256SUMS",
+                    "enwiki", self.date, output,
+                )
+        self.assertFalse(output.exists())
 
     def test_corrupted_later_member_does_not_publish_partial_directory(self):
         def corrupted(url):
