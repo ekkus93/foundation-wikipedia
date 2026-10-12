@@ -48,6 +48,9 @@ fn verified_envelope_stages_into_private_tree() {
     let (actual, directory) =
         stage_container(&mut Cursor::new(&envelope), &parent, "candidate").unwrap();
     assert_eq!(actual, manifest);
-    assert_eq!(fs::read(directory.join("articles/1.cbor")).unwrap(), payload);
+    assert_eq!(
+        fs::read(directory.join("articles/1.cbor")).unwrap(),
+        payload
+    );
     fs::remove_dir_all(parent).unwrap();
 }
