@@ -12,6 +12,10 @@ pub mod public_dump_verify;
 
 use std::collections::BTreeSet;
 
+/// Provisional resource bounds for one verified source generation.
+pub const MAX_SOURCE_FILES: usize = 10_000;
+pub const MAX_SOURCE_GENERATION_BYTES: u64 = 1_u64 << 50;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceFile {
     pub name: String,
@@ -35,6 +39,7 @@ pub enum SourceError {
     EmptyFileSet,
     InvalidFile(String),
     DuplicateFile(String),
+    ResourceBudget,
 }
 
 /// Reject names that alias Windows device files even when given an extension.
@@ -79,8 +84,16 @@ impl SourceGeneration {
         if self.files.is_empty() {
             return Err(SourceError::EmptyFileSet);
         }
+        if self.files.len() > MAX_SOURCE_FILES {
+            return Err(SourceError::ResourceBudget);
+        }
+        let mut total_bytes = 0u64;
         let mut names = BTreeSet::new();
         for file in &self.files {
+            total_bytes = total_bytes
+                .checked_add(file.bytes)
+                .filter(|sum| *sum <= MAX_SOURCE_GENERATION_BYTES)
+                .ok_or(SourceError::ResourceBudget)?;
             if file.bytes == 0
                 || file.name.is_empty()
                 || file.name.len() > 255
@@ -209,6 +222,21 @@ mod tests {
             invalid.validate(),
             Err(SourceError::InvalidFile(invalid.files[0].name.clone()))
         );
+    }
+
+    #[test]
+    fn rejects_oversized_source_generation_before_staging() {
+        let mut oversized = sample();
+        oversized.files[0].bytes = MAX_SOURCE_GENERATION_BYTES + 1;
+        assert_eq!(oversized.validate(), Err(SourceError::ResourceBudget));
+        oversized.files[0].bytes = u64::MAX;
+        assert_eq!(oversized.validate(), Err(SourceError::ResourceBudget));
+        let mut too_many = sample();
+        too_many.files = vec![too_many.files[0].clone(); MAX_SOURCE_FILES + 1];
+        assert_eq!(too_many.validate(), Err(SourceError::ResourceBudget));
+        let mut at_limit = sample();
+        at_limit.files[0].bytes = MAX_SOURCE_GENERATION_BYTES;
+        assert_eq!(at_limit.validate(), Ok(()));
     }
 
     #[test]
