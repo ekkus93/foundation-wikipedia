@@ -3,20 +3,31 @@
 
 use std::collections::BTreeSet;
 
-use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart};
+use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart, MAX_PART_DEPTH, MAX_PARTS};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntegrityError {
     UnknownCitation(String),
     UnknownTableReference(String),
+    PartDepthExceeded,
+    PartCountExceeded,
 }
 
 fn check_parts(
     parts: &[StructuredPart],
     references: &BTreeSet<&str>,
     tables: &BTreeSet<&str>,
+    depth: usize,
+    count: &mut usize,
 ) -> Result<(), IntegrityError> {
+    if depth > MAX_PART_DEPTH {
+        return Err(IntegrityError::PartDepthExceeded);
+    }
     for part in parts {
+        *count = count.checked_add(1).ok_or(IntegrityError::PartCountExceeded)?;
+        if *count > MAX_PARTS {
+            return Err(IntegrityError::PartCountExceeded);
+        }
         for citation in &part.citations {
             if !references.contains(citation.identifier.as_str()) {
                 return Err(IntegrityError::UnknownCitation(citation.identifier.clone()));
@@ -29,7 +40,7 @@ fn check_parts(
                 ));
             }
         }
-        check_parts(&part.has_parts, references, tables)?;
+        check_parts(&part.has_parts, references, tables, depth + 1, count)?;
     }
     Ok(())
 }
@@ -50,8 +61,9 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
         .iter()
         .map(|table| table.identifier.as_str())
         .collect();
-    check_parts(&article.structured.infoboxes, &references, &tables)?;
-    check_parts(&article.structured.sections, &references, &tables)?;
+    let mut count = 0;
+    check_parts(&article.structured.infoboxes, &references, &tables, 0, &mut count)?;
+    check_parts(&article.structured.sections, &references, &tables, 0, &mut count)?;
     Ok(())
 }
 
