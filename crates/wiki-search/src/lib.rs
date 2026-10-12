@@ -162,6 +162,32 @@ impl CorpusLexicalIndex {
         hits.truncate(limit.min(100));
         hits
     }
+
+    /// Apply a global evidence-word budget to the stable corpus ranking.
+    /// Skip oversized passages rather than truncating revision-scoped evidence.
+    pub fn search_with_word_budget(
+        &self,
+        query: &str,
+        limit: usize,
+        budget: usize,
+    ) -> Vec<CorpusHit> {
+        if limit == 0 || budget == 0 {
+            return Vec::new();
+        }
+        let mut used = 0usize;
+        let mut selected = Vec::new();
+        for hit in self.search(query, 100) {
+            if selected.len() >= limit {
+                break;
+            }
+            let words = tokenize(&hit.evidence.excerpt).len();
+            if words <= budget.saturating_sub(used) {
+                used += words;
+                selected.push(hit);
+            }
+        }
+        selected
+    }
 }
 
 /// An answer may cite only passages actually supplied to its model context.
@@ -582,6 +608,27 @@ mod tests {
         assert!(left.search("", 50).is_empty());
         assert!(left.search("physics", 0).is_empty());
         assert_eq!(left.search("physics", 1).len(), 1);
+    }
+
+    #[test]
+    fn corpus_evidence_budget_applies_across_articles() {
+        let a = sample();
+        let mut b = sample();
+        b.key.page_id = 5;
+        b.sections.clear();
+        let corpus = CorpusLexicalIndex::build(&[a, b]).unwrap();
+        let query = "physics gravity";
+        let all = corpus.search(query, 10);
+        assert_eq!(all.len(), 3);
+        assert!(corpus.search_with_word_budget(query, 10, 0).is_empty());
+        assert_eq!(corpus.search_with_word_budget(query, 10, 3), all[..1]);
+        assert_eq!(corpus.search_with_word_budget(query, 10, 6), all[..2]);
+        assert_eq!(corpus.search_with_word_budget(query, 10, 9), all);
+        assert_eq!(corpus.search_with_word_budget(query, 1, 100), all[..1]);
+        assert!(corpus.search_with_word_budget(query, 0, 100).is_empty());
+        assert!(corpus
+            .search_with_word_budget(&"x".repeat(MAX_LEXICAL_QUERY_BYTES + 1), 10, 100)
+            .is_empty());
     }
 
     #[test]
