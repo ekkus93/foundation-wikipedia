@@ -126,7 +126,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "wpack-stage-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         create_private_dir(&root).unwrap();
         let bytes = b"article";
