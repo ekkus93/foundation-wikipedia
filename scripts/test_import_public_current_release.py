@@ -107,7 +107,12 @@ class ImportTests(unittest.TestCase):
                          (self.root / "pages.jsonl").read_bytes())
 
     def test_forged_inventory_refused_before_shard_io_or_output(self):
-        (self.work / "SHA256SUMS").write_bytes(self.inventory.replace(b"0", b"f", 1))
+        # Always alter one checksum hex digit, never a generation filename.
+        # Replacing an arbitrary '0' can hit the date instead and cause an
+        # earlier local parse failure that never exercises remote revalidation.
+        forged = bytearray(self.inventory)
+        forged[0] = ord("f") if forged[0] != ord("f") else ord("e")
+        (self.work / "SHA256SUMS").write_bytes(forged)
         source = Opener({self.url: self.inventory})
         with self.assertRaises(DumpExtractionError):
             self.import_release(source)
