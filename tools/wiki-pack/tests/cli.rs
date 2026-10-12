@@ -284,3 +284,70 @@ fn cli_staged_official_claim_is_never_trusted() {
     assert!(stdout.contains("pack NOT INSTALLED"));
     fs::remove_dir_all(parent).unwrap();
 }
+#[test]
+fn cli_previews_untrusted_local_category_graph_without_building_a_pack() {
+    let (parent, _) = fixture(false);
+    let input = parent.join("topic.json");
+    fs::write(
+        &input,
+        r#"{
+            "snapshot_id": "enwiki-20261001",
+            "roots": ["Category:Math"],
+            "include": [101],
+            "exclude": [3],
+            "depth_limit": 1,
+            "page_limit": 10,
+            "categories": [
+                {"name": "Category:Math", "articles": [2, 3], "children": []}
+            ],
+            "redirects": [{"from": 101, "to": 2}]
+        }"#,
+    )
+    .unwrap();
+    let output = invoke("preview-topic", &[input.as_os_str()]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("source publication/authenticity: NOT VERIFIED"));
+    assert!(text.contains("Selected page IDs: 1"));
+    assert!(text.contains("Visited categories: 1"));
+    assert!(text.contains("Resolved redirect: 101 -> 2"));
+    assert!(text.contains("Definition SHA-256:"));
+    assert!(text.contains("Selection SHA-256:"));
+    assert!(text.contains("no pack built, signed, or installed"));
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn cli_preview_rejects_duplicate_categories_and_missing_roots() {
+    let (parent, _) = fixture(false);
+    let input = parent.join("topic.json");
+    let base = r#"{
+        "snapshot_id": "enwiki-20261001",
+        "roots": ["Category:Math"],
+        "depth_limit": 1,
+        "page_limit": 10,
+        "categories": [
+            {"name": "Category:Math", "articles": [2]},
+            {"name": "Category:Math", "articles": [3]}
+        ]
+    }"#;
+    fs::write(&input, base).unwrap();
+    let duplicate = invoke("preview-topic", &[input.as_os_str()]);
+    assert_eq!(duplicate.status.code(), Some(1));
+    assert!(duplicate.stdout.is_empty());
+    assert!(String::from_utf8(duplicate.stderr)
+        .unwrap()
+        .contains("duplicate category name"));
+    fs::write(&input, base.replace("Category:Math\", \"articles\": [3]", "Category:Other\", \"articles\": [3]")).unwrap();
+    let missing = invoke("preview-topic", &[input.as_os_str()]);
+    assert_eq!(missing.status.code(), Some(0));
+    fs::write(&input, base.replace("Category:Math\"]", "Category:Missing\"]")).unwrap();
+    let invalid = invoke("preview-topic", &[input.as_os_str()]);
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(invalid.stdout.is_empty());
+    assert!(String::from_utf8(invalid.stderr)
+        .unwrap()
+        .contains("topic preview rejected"));
+    fs::remove_dir_all(parent).unwrap();
+}
+

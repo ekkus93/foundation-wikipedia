@@ -1,5 +1,7 @@
 //! Verification and provisional custom export of unsigned FWPACK01 envelopes.
 //! These commands do not install packs or verify publisher signatures.
+mod preview_topic;
+
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
@@ -18,6 +20,7 @@ fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
+    println!("       wiki-pack preview-topic <local-category-graph.json>");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack --help");
@@ -177,6 +180,18 @@ fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("preview-topic") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 1 {
+                eprintln!("preview-topic requires exactly one local JSON input");
+                usage();
+                std::process::exit(2);
+            }
+            if let Err(error) = preview_topic::run(Path::new(&fields[0])) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("stage-unsigned") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 3 {
