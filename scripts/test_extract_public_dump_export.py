@@ -171,6 +171,58 @@ class ExportTests(unittest.TestCase):
                     self.extract()
                 self.assert_no_publication()
 
+
+    def test_undeclared_staging_entries_fail_closed_before_publishing(self):
+        extra_file = self.stage / "not-in-SHA256SUMS.xml.bz2"
+        extra_file.write_bytes(b"untrusted")
+        with self.assertRaisesRegex(DumpExtractionError, "undeclared staged export file"):
+            self.extract()
+        self.assert_no_publication()
+        extra_file.unlink()
+
+        extra_directory = self.stage / "leftover"
+        extra_directory.mkdir()
+        with self.assertRaisesRegex(DumpExtractionError, "undeclared staged export directory"):
+            self.extract()
+        self.assert_no_publication()
+        extra_directory.rmdir()
+
+        temp_file = self.stage / ".incomplete.tmp"
+        temp_file.write_bytes(b"partial")
+        with self.assertRaisesRegex(DumpExtractionError, "undeclared staged export file"):
+            self.extract()
+        self.assert_no_publication()
+        temp_file.unlink()
+
+    def test_exact_tree_rejects_symlinks_even_when_extra_alias_is_checksum_valid(self):
+        alias = self.stage / "additional-alias"
+        try:
+            alias.symlink_to(self.stage / self.first)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation unsupported")
+        with self.assertRaisesRegex(DumpExtractionError, "unsafe staged export entry"):
+            self.extract()
+        self.assert_no_publication()
+        alias.unlink()
+
+    def test_exact_tree_allows_only_declared_nested_paths(self):
+        first = "nested/enwiki-2026-10-01-p1p100.xml.bz2"
+        second = "enwiki-2026-10-01-p101p200.xml.bz2"
+        (self.stage / self.first).unlink()
+        nested = self.stage / "nested"
+        nested.mkdir()
+        self.shards = {
+            first: bz2.compress(xml(10)),
+            second: bz2.compress(xml(110)),
+        }
+        (self.stage / first).write_bytes(self.shards[first])
+        self.inventory.write_text("".join(
+            f"{hashlib.sha256(data).hexdigest()}  {name}\\n"
+            for name, data in self.shards.items()
+        ))
+        self.assertEqual(self.extract(), 2)
+        self.assertEqual(len(self.output.read_text().splitlines()), 2)
+
     def test_rejects_overlapping_public_numbered_shards(self):
         self.shards = {
             "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2":

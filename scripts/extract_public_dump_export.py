@@ -121,6 +121,49 @@ def _private_shard(root, relative):
     return path
 
 
+
+def _verify_exact_staged_members(root, records):
+    """Reject undeclared files, directories, links and leftover temp shards.
+
+    This is a fail-closed preflight only. The caller must keep the private
+    staging tree free from concurrent modifications during extraction.
+    """
+    expected_files = {name for _, _, name, _ in records}
+    expected_directories = set()
+    for relative in expected_files:
+        parts = relative.split("/")
+        for count in range(1, len(parts)):
+            expected_directories.add("/".join(parts[:count]))
+    try:
+        metadata = root.lstat()
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise DumpExtractionError("unsafe staged export root")
+        for ancestor in root.parents:
+            if ancestor.is_symlink():
+                raise DumpExtractionError("symlinked staging ancestor")
+        pending = [(root, "")]
+        observed = set()
+        while pending:
+            directory, prefix = pending.pop()
+            for item in directory.iterdir():
+                relative = prefix + item.name
+                kind = item.lstat().st_mode
+                if stat.S_ISREG(kind):
+                    if relative not in expected_files:
+                        raise DumpExtractionError("undeclared staged export file")
+                    observed.add(relative)
+                elif stat.S_ISDIR(kind):
+                    if relative not in expected_directories:
+                        raise DumpExtractionError("undeclared staged export directory")
+                    pending.append((item, relative + "/"))
+                else:
+                    raise DumpExtractionError("unsafe staged export entry")
+        if observed != expected_files:
+            raise DumpExtractionError("missing declared staged export member")
+    except OSError as error:
+        raise DumpExtractionError("could not verify exact staged export tree") from error
+
+
 def extract_current_export(staging_dir, checksum_file, project, date, output,
                            *, max_member_bytes=MAX_MEMBER_BYTES,
                            max_total_bytes=MAX_TOTAL_BYTES,
@@ -137,6 +180,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
             or output.exists() or output.is_symlink()):
         raise DumpExtractionError("unsafe staging/output path or existing output")
     records = _inventory(checksum_file, project, date)
+    _verify_exact_staged_members(staging_dir, records)
     paths = []
     total_bytes = 0
     for _, _, name, digest in records:
@@ -173,6 +217,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         for path, digest in paths:
             source, _ = _verified_source(path, digest, max_member_bytes)
             source.close()
+        _verify_exact_staged_members(staging_dir, records)
         try:
             os.link(joined, output)
         except FileExistsError:
