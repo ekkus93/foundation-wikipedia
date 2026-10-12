@@ -132,6 +132,34 @@ fn cli_export_custom_roundtrip_is_verified_and_never_overwrites() {
     assert!(String::from_utf8(inspected.stdout)
         .unwrap()
         .contains("Claimed origin: custom (physics-definition)"));
+    // End-to-end CLI path: exported bytes must stage into the exact
+    // original structured content, without publisher-trust elevation.
+    let private = parent.join("roundtrip-private");
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&private).unwrap();
+    let stage_args: [&std::ffi::OsStr; 3] = [
+        output.as_os_str(),
+        private.as_os_str(),
+        std::ffi::OsStr::new("roundtrip"),
+    ];
+    let staged = invoke("stage-unsigned", &stage_args);
+    assert!(staged.status.success(), "{staged:?}");
+    assert!(String::from_utf8(staged.stdout)
+        .unwrap()
+        .contains("pack NOT INSTALLED"));
+    assert_eq!(
+        fs::read(private.join("roundtrip/article.cbor")).unwrap(),
+        fs::read(source.join("article.cbor")).unwrap()
+    );
+    assert_eq!(
+        fs::read(private.join("roundtrip/media/diagram.svg")).unwrap(),
+        fs::read(source.join("media/diagram.svg")).unwrap()
+    );
     let original = fs::read(&output).unwrap();
     let second = invoke("export-custom", &args);
     assert_eq!(second.status.code(), Some(1));
