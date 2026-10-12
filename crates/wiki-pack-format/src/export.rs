@@ -5,13 +5,13 @@
 //! a safe archive installer, or an atomic output publisher.
 
 use crate::container::{write_container, ContainerError};
-use std::collections::BTreeSet;
 use crate::manifest::{
     Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES,
     MAX_PACK_OBJECTS,
 };
 use crate::objects::{verify_manifest_directory, ObjectVerifyError};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::Path;
