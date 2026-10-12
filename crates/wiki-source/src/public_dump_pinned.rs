@@ -50,7 +50,6 @@ pub fn parse_pinned_inventory(
     })
 }
 
-
 /// Stage only a member declared by the digest-pinned inventory. This does
 /// not independently authenticate the caller's expected inventory digest.
 pub fn stage_pinned_member<R: std::io::Read>(
@@ -119,7 +118,10 @@ mod tests {
         use std::io::Cursor;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!("wiki-pinned-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let filename = "enwiki-2026-10-01-p1p100.xml.bz2";
