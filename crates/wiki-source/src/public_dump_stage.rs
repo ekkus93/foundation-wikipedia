@@ -17,6 +17,21 @@ use crate::public_dump_verify::{verify_dump_member, DumpVerifyError};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
+/// A regular staging root is insufficient when an ancestor is a symlink:
+/// opening root/member would still follow that alias into a different tree.
+/// This is a preflight check; the caller must also prevent concurrent renames.
+fn has_symlink_ancestor(root: &Path) -> std::io::Result<bool> {
+    for ancestor in root.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        if fs::symlink_metadata(ancestor)?.file_type().is_symlink() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[derive(Debug)]
 pub enum StagedDumpError {
     InvalidInventory,
@@ -42,8 +57,11 @@ pub fn verify_staged_export(
     {
         return Err(StagedDumpError::InvalidInventory);
     }
+    if has_symlink_ancestor(root).map_err(StagedDumpError::Io)? {
+        return Err(StagedDumpError::UnsafeStagingPath);
+    }
     let metadata = fs::symlink_metadata(root).map_err(StagedDumpError::Io)?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+    if !metadata.file_type().is_dir() {
         return Err(StagedDumpError::UnsafeStagingPath);
     }
     let mut total = 0u64;
@@ -109,8 +127,11 @@ pub fn stage_verified_member<R: Read>(
     if max_bytes == 0 || max_bytes > (1u64 << 42) {
         return Err(StageWriteError::TooLarge);
     }
+    if has_symlink_ancestor(root).map_err(StageWriteError::Io)? {
+        return Err(StageWriteError::UnsafeStagingPath);
+    }
     let metadata = fs::symlink_metadata(root).map_err(StageWriteError::Io)?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+    if !metadata.file_type().is_dir() {
         return Err(StageWriteError::UnsafeStagingPath);
     }
     let mut parent = root.to_path_buf();
@@ -401,4 +422,52 @@ mod tests {
         fs::remove_file(root_link).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_ancestor_of_otherwise_regular_staging_root() {
+        use std::io::Cursor;
+        use std::os::unix::fs::symlink;
+
+        let parent = root();
+        let direct = parent.join("staging");
+        fs::create_dir(&direct).unwrap();
+        let alias = parent.with_extension("alias");
+        symlink(&parent, &alias).unwrap();
+        let aliased_root = alias.join("staging");
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let bytes = b"same verified bytes";
+        let descriptor = member(name, bytes);
+        fs::write(direct.join(name), bytes).unwrap();
+
+        // Even though the final staging directory is regular, its parent
+        // alias would redirect reads/writes outside the requested path.
+        assert!(matches!(
+            verify_staged_export(
+                &aliased_root,
+                &[descriptor.clone()],
+                "enwiki",
+                "2026-10-01",
+                1024
+            ),
+            Err(StagedDumpError::UnsafeStagingPath)
+        ));
+        assert!(matches!(
+            stage_verified_member(
+                &aliased_root,
+                &descriptor,
+                &mut Cursor::new(bytes),
+                1024
+            ),
+            Err(StageWriteError::UnsafeStagingPath)
+        ));
+        // A direct private path to the identical bytes is still valid.
+        assert_eq!(
+            verify_staged_export(&direct, &[descriptor], "enwiki", "2026-10-01", 1024)
+                .unwrap(),
+            bytes.len() as u64
+        );
+        fs::remove_file(alias).unwrap();
+        fs::remove_dir_all(parent).unwrap();
+    }
+
 }
