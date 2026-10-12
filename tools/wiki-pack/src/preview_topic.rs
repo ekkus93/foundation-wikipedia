@@ -83,7 +83,10 @@ pub fn run(path: &Path) -> Result<(), String> {
     let mut edges = 0usize;
     for category in input.categories {
         if !safe_category_name(&category.name)
-            || category.children.iter().any(|name| !safe_category_name(name))
+            || category
+                .children
+                .iter()
+                .any(|name| !safe_category_name(name))
             || category.articles.contains(&0)
         {
             return Err("invalid category member or name".into());
@@ -136,7 +139,10 @@ pub fn run(path: &Path) -> Result<(), String> {
     .map_err(|error| format!("topic preview rejected: {error:?}"))?;
     println!("Local topic preview; source publication/authenticity: NOT VERIFIED");
     println!("No media fetched; no pack built, signed, or installed");
-    println!("Snapshot label (untrusted): {}", preview.selection.snapshot_id);
+    println!(
+        "Snapshot label (untrusted): {}",
+        preview.selection.snapshot_id
+    );
     println!("Selected page IDs: {}", preview.selected_page_count);
     println!("Visited categories: {}", preview.visited_category_count);
     println!(
@@ -147,7 +153,10 @@ pub fn run(path: &Path) -> Result<(), String> {
         "Raw article/category mentions inspected: {}/{}",
         preview.inspected_article_mentions, preview.inspected_child_category_mentions
     );
-    println!("Definition SHA-256: {}", preview.selection.definition_sha256);
+    println!(
+        "Definition SHA-256: {}",
+        preview.selection.definition_sha256
+    );
     println!("Graph SHA-256: {}", preview.selection.graph_sha256);
     println!(
         "Selection SHA-256: {}",
