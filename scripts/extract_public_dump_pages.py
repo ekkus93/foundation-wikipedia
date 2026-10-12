@@ -300,6 +300,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                 reader = _BoundedXmlReader(compressed, max_uncompressed_bytes)
                 root = None
                 root_namespace = None
+                siteinfo_seen = False
                 depth = 0
                 try:
                     for event, element in ET.iterparse(reader, events=("start", "end")):
@@ -333,6 +334,18 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                 root = element
                             elif tag == "page" and depth != 2:
                                 raise DumpExtractionError("page outside MediaWiki root")
+                            elif tag == "siteinfo" and depth != 2:
+                                raise DumpExtractionError("siteinfo outside MediaWiki root")
+                        if event == "end" and tag == "siteinfo" and depth == 2:
+                            # Optional dump siteinfo must agree with the project
+                            # claimed by the shard filename and caller.
+                            if siteinfo_seen or count:
+                                raise DumpExtractionError("duplicate or late siteinfo")
+                            siteinfo_seen = True
+                            dbname = _text(element, "dbname")
+                            if dbname is not None and dbname != project:
+                                raise DumpExtractionError("dump siteinfo project mismatch")
+                            root.clear()
                         if event == "end" and tag == "page" and depth == 2:
                             record = _page_record(element, project, expected_sha256,
                                                   max_text_bytes)

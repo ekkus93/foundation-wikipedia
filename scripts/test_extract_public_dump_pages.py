@@ -212,6 +212,40 @@ class ExtractTests(unittest.TestCase):
         self.write_xml(XML.replace(b"<page>", siteinfo + b"<page>", 1))
         self.assertEqual(self.extract(), 2)
 
+    def test_siteinfo_database_identity_matches_claimed_dump_project(self):
+        valid = b"<siteinfo><sitename>Wikipedia</sitename><dbname>enwiki</dbname></siteinfo>"
+        self.write_xml(XML.replace(b"<page>", valid + b"<page>", 1))
+        self.assertEqual(self.extract(), 2)
+        self.output.unlink()
+        for dbname in (b"frwiki", b"Enwiki", b"enwiki2", b"", b"enwiki "):
+            with self.subTest(dbname=dbname):
+                forged = valid.replace(b"<dbname>enwiki</dbname>",
+                                       b"<dbname>" + dbname + b"</dbname>")
+                self.write_xml(XML.replace(b"<page>", forged + b"<page>", 1))
+                with self.assertRaisesRegex(DumpExtractionError, "siteinfo project mismatch"):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
+    def test_duplicate_late_or_nested_siteinfo_rejected_without_publication(self):
+        siteinfo = b"<siteinfo><dbname>enwiki</dbname></siteinfo>"
+        cases = (
+            XML.replace(b"<page>", siteinfo + siteinfo + b"<page>", 1),
+            XML.replace(b"</mediawiki>", siteinfo + b"</mediawiki>"),
+            XML.replace(b"<page>", b"<page>" + siteinfo, 1),
+            XML.replace(b"<page>", b"<siteinfo><dbname><em>enwiki</em></dbname>"
+                        b"</siteinfo><page>", 1),
+        )
+        for candidate in cases:
+            with self.subTest(candidate=candidate[:110]):
+                self.write_xml(candidate)
+                with self.assertRaisesRegex(
+                    DumpExtractionError, "siteinfo|nested XML",
+                ):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_rejects_nested_or_duplicate_scalar_xml_without_publication(self):
         # XML child elements are not wikitext: Element.text alone would silently
         # truncate them. Valid escaped wikitext is tested separately above.
