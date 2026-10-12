@@ -185,3 +185,71 @@ fn cli_export_custom_refuses_symlinked_source() {
     assert!(!output.exists());
     fs::remove_dir_all(parent).unwrap();
 }
+
+#[test]
+fn cli_unsigned_staging_is_private_and_never_installs_or_replaces() {
+    let (parent, original) = fixture(false);
+    let private = parent.join("private-stage");
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&private).unwrap();
+    let args: [&std::ffi::OsStr; 3] = [
+        original.as_os_str(),
+        private.as_os_str(),
+        std::ffi::OsStr::new("candidate"),
+    ];
+    let accepted = invoke("stage-unsigned", &args);
+    assert!(accepted.status.success(), "{accepted:?}");
+    let stdout = String::from_utf8(accepted.stdout).unwrap();
+    assert!(stdout.contains("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED"));
+    assert!(stdout.contains("Publisher signature: NOT VERIFIED"));
+    assert_eq!(
+        fs::read(private.join("candidate/articles/1.cbor")).unwrap(),
+        b"article"
+    );
+    let retry = invoke("stage-unsigned", &args);
+    assert_eq!(retry.status.code(), Some(1));
+    assert_eq!(
+        fs::read(private.join("candidate/articles/1.cbor")).unwrap(),
+        b"article"
+    );
+    let mut corrupt = fs::read(&original).unwrap();
+    *corrupt.last_mut().unwrap() ^= 1;
+    fs::write(&original, corrupt).unwrap();
+    let corrupt_args: [&std::ffi::OsStr; 3] = [
+        original.as_os_str(),
+        private.as_os_str(),
+        std::ffi::OsStr::new("invalid"),
+    ];
+    assert_eq!(invoke("stage-unsigned", &corrupt_args).status.code(), Some(1));
+    assert!(!private.join("invalid").exists());
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn cli_staged_official_claim_is_never_trusted() {
+    let (parent, original) = fixture(true);
+    let private = parent.join("private-stage");
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&private).unwrap();
+    let args: [&std::ffi::OsStr; 3] = [
+        original.as_os_str(),
+        private.as_os_str(),
+        std::ffi::OsStr::new("claimed"),
+    ];
+    let result = invoke("stage-unsigned", &args);
+    assert!(result.status.success(), "{result:?}");
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(stdout.contains("claim NOT authenticated"));
+    assert!(stdout.contains("pack NOT INSTALLED"));
+    fs::remove_dir_all(parent).unwrap();
+}

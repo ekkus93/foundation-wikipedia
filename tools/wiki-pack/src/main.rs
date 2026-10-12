@@ -12,12 +12,14 @@ use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, wri
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::Origin;
+use wiki_pack_builder::wiki_pack_format::stage::stage_container;
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
+    println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -150,10 +152,51 @@ fn export_custom_tree(
     Ok(())
 }
 
+/// Verify, then extract into a private staging directory. This deliberately
+/// never changes installed packs or confers publisher trust.
+fn stage_unsigned(source: PathBuf, parent: PathBuf, name: &str) -> Result<(), String> {
+    let input = File::open(&source).map_err(|error| format!("cannot open input: {error}"))?;
+    let (manifest, staged) = stage_container(&mut BufReader::new(input), &parent, name)
+        .map_err(|error| format!("unsigned staging rejected: {error:?}"))?;
+    println!("Envelope verified and staged: {}", staged.display());
+    println!("Pack ID: {}", manifest.pack_id);
+    match manifest.origin {
+        Origin::Official { publisher } => {
+            println!("Claimed official publisher: {publisher}; claim NOT authenticated");
+        }
+        Origin::Custom { definition_id } => {
+            println!("Claimed custom definition: {definition_id}");
+        }
+    }
+    println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
+    println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+    Ok(())
+}
+
 fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("stage-unsigned") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 3 {
+                eprintln!("stage-unsigned requires exactly three arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(name) = fields[2].to_str() else {
+                eprintln!("Staging directory name must be UTF-8");
+                std::process::exit(2);
+            };
+            if let Err(error) = stage_unsigned(
+                PathBuf::from(&fields[0]),
+                PathBuf::from(&fields[1]),
+                name,
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("export-custom") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 6 {
