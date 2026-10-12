@@ -123,6 +123,7 @@ pub struct CorpusHit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TitleHit {
     pub article: ArticleKey,
+    pub revision_id: u64,
     pub title: String,
     pub matched_alias: Option<String>,
     pub score: usize,
@@ -220,6 +221,7 @@ impl CorpusLexicalIndex {
                         project: project.clone(),
                         page_id: *page_id,
                     },
+                    revision_id: index.revision_id,
                     title: index.title.clone(),
                     matched_alias,
                     score: best,
@@ -717,6 +719,7 @@ mod tests {
         let matches = corpus.search_titles("gravitation", 10);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].article.page_id, 9);
+        assert_eq!(matches[0].revision_id, 12);
         assert_eq!(matches[0].title, "Gravitation");
         assert_eq!(matches[0].matched_alias, None);
         assert_eq!(matches[1].article.page_id, 10);
