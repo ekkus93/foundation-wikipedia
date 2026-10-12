@@ -291,20 +291,41 @@ fn validate_redirect_identities(
             return Err(RedirectBuildError::DuplicateSource(identity.from_page_id));
         }
     }
+    // Memoize (terminal mainspace page, hop count). Each edge is traversed
+    // once, even when many redirect sources share a long chain suffix.
+    let mut resolved: BTreeMap<u64, (u64, usize)> = BTreeMap::new();
     for &start in redirects.keys() {
+        if resolved.contains_key(&start) {
+            continue;
+        }
+        let mut path = Vec::new();
         let mut seen = BTreeSet::new();
         let mut current = start;
-        while let Some(&next) = redirects.get(&current) {
+        let (terminal, mut depth) = loop {
+            if let Some(&(target, hops)) = resolved.get(&current) {
+                break (target, hops);
+            }
+            let Some(&next) = redirects.get(&current) else {
+                if !mainspace.contains_key(&current) {
+                    return Err(RedirectBuildError::MissingMainspaceTarget(current));
+                }
+                break (current, 0);
+            };
             if !seen.insert(current) {
                 return Err(RedirectBuildError::Cycle(current));
             }
-            if seen.len() > 4096 {
+            path.push(current);
+            if path.len() > 4096 {
                 return Err(RedirectBuildError::TooDeep);
             }
             current = next;
+        };
+        if path.len().saturating_add(depth) > 4096 {
+            return Err(RedirectBuildError::TooDeep);
         }
-        if !mainspace.contains_key(&current) {
-            return Err(RedirectBuildError::MissingMainspaceTarget(current));
+        for from in path.into_iter().rev() {
+            depth += 1;
+            resolved.insert(from, (terminal, depth));
         }
     }
     Ok(redirects)

@@ -413,3 +413,52 @@ fn joined_page_id_redirects_reject_mismatches_cycles_and_missing_mainspace() {
         JoinedSelectionError::Redirect(RedirectBuildError::MixedSource)
     );
 }
+
+#[test]
+fn redirect_chain_depth_is_bounded_even_with_cached_suffixes() {
+    use wiki_pack_builder::enterprise_graph::{
+        resolve_joined_revision_pinned_with_redirects, PageRedirectIdentity, RedirectBuildError,
+    };
+    let records = vec![
+        record(20, 14, "Category:Math", &[]),
+        record(2, 0, "Group", &["Category:Math"]),
+    ];
+    let rules = Rules {
+        roots: vec!["Category:Math".into()],
+        include: vec![],
+        exclude: vec![],
+        depth_limit: 0,
+        page_limit: 10,
+    };
+    let chain: Vec<_> = (100..4196)
+        .map(|id| PageRedirectIdentity {
+            project: "enwiki".into(),
+            generation_id: "20261001".into(),
+            from_page_id: id,
+            to_page_id: if id == 4195 { 2 } else { id + 1 },
+        })
+        .collect();
+    assert!(resolve_joined_revision_pinned_with_redirects(
+        &records,
+        &BTreeSet::new(),
+        &rules,
+        &chain,
+    )
+    .is_ok());
+    let mut too_long = chain;
+    too_long.push(PageRedirectIdentity {
+        project: "enwiki".into(),
+        generation_id: "20261001".into(),
+        from_page_id: 99,
+        to_page_id: 100,
+    });
+    assert_eq!(
+        resolve_joined_revision_pinned_with_redirects(
+            &records,
+            &BTreeSet::new(),
+            &rules,
+            &too_long,
+        ),
+        Err(JoinedSelectionError::Redirect(RedirectBuildError::TooDeep))
+    );
+}
