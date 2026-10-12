@@ -67,6 +67,17 @@ class ExportTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpExtractionError, "existing output"):
             self.extract()
 
+    def test_rejects_duplicate_revision_id_across_distinct_shards(self):
+        # Page partitions do not overlap, but revision identity still must.
+        collision = xml(110).replace(b"<revision><id>1110</id>",
+                                     b"<revision><id>1010</id>")
+        self.shards[self.second] = bz2.compress(collision)
+        self.write_inventory()
+        with self.assertRaisesRegex(DumpExtractionError,
+                                    "duplicate revision ID across export shards"):
+            self.extract()
+        self.assert_no_publication()
+
     def test_mismatched_or_missing_shard_never_publishes_partial_export(self):
         (self.stage / self.second).write_bytes(b"wrong")
         with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):

@@ -7,6 +7,7 @@ publisher identity, completeness of the real export, or offline article fidelity
 The result is raw, unrendered wikitext, not an installable pack.
 """
 import argparse
+from contextlib import closing
 from datetime import datetime
 import hashlib
 import json
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sqlite3
 import tempfile
 
 from extract_public_dump_pages import DumpExtractionError, _verified_source, extract_current_dump
@@ -250,24 +252,40 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         work = Path(directory)
         count = 0
         joined = work / "combined.jsonl"
-        with joined.open("wb") as writer:
-            for index, (path, digest) in enumerate(paths):
-                part = work / f"part-{index:06d}.jsonl"
-                remaining = max_total_pages - count
-                if remaining <= 0:
-                    raise DumpExtractionError("export exceeds aggregate page budget")
-                count += extract_current_dump(
-                    path, digest, project, part,
-                    max_compressed_bytes=max_member_bytes, max_pages=remaining,
-                )
-                with part.open("rb") as reader:
-                    for chunk in iter(lambda: reader.read(1024 * 1024), b""):
-                        if writer.tell() + len(chunk) > max_output_bytes:
-                            raise DumpExtractionError("export exceeds aggregate JSONL byte budget")
-                        writer.write(chunk)
-                part.unlink()
-            writer.flush()
-            os.fsync(writer.fileno())
+        # Revision IDs must be unique across the complete export, not just
+        # within individual non-overlapping page-ID partitions. Disk-backed
+        # uniqueness avoids retaining the entire set in process memory.
+        with closing(sqlite3.connect(work / "seen-revisions.sqlite")) as revisions:
+            revisions.execute("CREATE TABLE revisions (id INTEGER PRIMARY KEY)")
+            with joined.open("wb") as writer:
+                for index, (path, digest) in enumerate(paths):
+                    part = work / f"part-{index:06d}.jsonl"
+                    remaining = max_total_pages - count
+                    if remaining <= 0:
+                        raise DumpExtractionError("export exceeds aggregate page budget")
+                    count += extract_current_dump(
+                        path, digest, project, part,
+                        max_compressed_bytes=max_member_bytes, max_pages=remaining,
+                    )
+                    with part.open("rb") as reader:
+                        for line in reader:
+                            revision_id = json.loads(line)["revision_id"]
+                            try:
+                                revisions.execute(
+                                    "INSERT INTO revisions (id) VALUES (?)", (revision_id,),
+                                )
+                            except sqlite3.IntegrityError as error:
+                                raise DumpExtractionError(
+                                    "duplicate revision ID across export shards"
+                                ) from error
+                            if writer.tell() + len(line) > max_output_bytes:
+                                raise DumpExtractionError(
+                                    "export exceeds aggregate JSONL byte budget"
+                                )
+                            writer.write(line)
+                    part.unlink()
+                writer.flush()
+                os.fsync(writer.fileno())
         # No publication if the source changed after an earlier shard was parsed.
         for path, digest in paths:
             source, _ = _verified_source(path, digest, max_member_bytes)
