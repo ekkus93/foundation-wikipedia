@@ -20,10 +20,11 @@ fn fixture() -> (PathBuf, PinnedInventory) {
         ("enwiki-2026-10-01-p1p100.xml.bz2", b"first"),
         ("nested/enwiki-2026-10-01-p101p200.xml.bz2", b"second"),
     ];
-    let raw = paths
-        .iter()
-        .map(|(name, data)| format!("{:x}  {name}\n", Sha256::digest(data)))
-        .collect::<String>();
+    let mut raw = String::new();
+    for (name, data) in paths {
+        use std::fmt::Write as _;
+        writeln!(raw, "{:x}  {name}", Sha256::digest(data)).unwrap();
+    }
     let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
     let inventory =
         parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
