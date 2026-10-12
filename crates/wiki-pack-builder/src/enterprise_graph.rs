@@ -280,9 +280,14 @@ fn validate_redirect_identities(
             return Err(RedirectBuildError::InvalidId);
         }
         if joined.page_revisions.contains_key(&identity.from_page_id) {
-            return Err(RedirectBuildError::ConflictsWithJoinedPage(identity.from_page_id));
+            return Err(RedirectBuildError::ConflictsWithJoinedPage(
+                identity.from_page_id,
+            ));
         }
-        if redirects.insert(identity.from_page_id, identity.to_page_id).is_some() {
+        if redirects
+            .insert(identity.from_page_id, identity.to_page_id)
+            .is_some()
+        {
             return Err(RedirectBuildError::DuplicateSource(identity.from_page_id));
         }
     }
