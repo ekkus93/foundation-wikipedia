@@ -426,7 +426,7 @@ fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
 
     fs::write(
         &input,
-        first.replace("Category:Math\"]", "Category:Missing\"]")),
+        first.replace("Category:Math\"]", "Category:Missing\"]"),
     )
     .unwrap();
     let invalid = invoke("preview-topic", &args);
