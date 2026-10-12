@@ -31,10 +31,7 @@ pub struct JoinedCategoryGraph {
 }
 
 fn category_title(raw: &str) -> Result<String, GraphBuildError> {
-    if raw.is_empty()
-        || raw.trim() != raw
-        || raw.chars().any(char::is_control)
-        || raw.contains('#')
+    if raw.is_empty() || raw.trim() != raw || raw.chars().any(char::is_control) || raw.contains('#')
     {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
