@@ -56,7 +56,10 @@ fn verified_envelope_stages_into_private_tree() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&directory).unwrap().permissions().mode() & 0o077, 0);
+        assert_eq!(
+            fs::metadata(&directory).unwrap().permissions().mode() & 0o077,
+            0
+        );
     }
     fs::remove_dir_all(parent).unwrap();
 }
