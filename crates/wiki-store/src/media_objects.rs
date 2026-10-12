@@ -131,7 +131,14 @@ impl MediaObjectStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if before.ino() != opened.ino() || before.dev() != opened.dev() {
+            // A second hard link outside the store permits another filename
+            // to mutate verified bytes after publication. Reject such objects
+            // rather than treating their matching digest as immutable storage.
+            if before.ino() != opened.ino()
+                || before.dev() != opened.dev()
+                || before.nlink() != 1
+                || opened.nlink() != 1
+            {
                 return Err(MediaObjectError::UnsafeObject);
             }
         }
@@ -139,8 +146,16 @@ impl MediaObjectStore {
         std::io::Read::by_ref(&mut file)
             .take(MAX_OBJECT_BYTES + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 != opened.len() || file.metadata()?.len() != opened.len() {
+        let after = file.metadata()?;
+        if bytes.len() as u64 != opened.len() || after.len() != opened.len() {
             return Err(MediaObjectError::UnsafeObject);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if after.nlink() != 1 {
+                return Err(MediaObjectError::UnsafeObject);
+            }
         }
         if format!("{:x}", Sha256::digest(&bytes)) != digest {
             return Err(MediaObjectError::DigestMismatch);
@@ -265,6 +280,33 @@ mod tests {
             Err(MediaObjectError::UnsafeDirectory)
         ));
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn externally_hardlinked_object_is_not_accepted_as_immutable() {
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let content = b"offline diagram cannot be externally mutable";
+        let digest = store.store_bytes(content).unwrap();
+        let object = root.join(&digest[..2]).join(&digest);
+        let outside = root.with_extension("outside-hardlink");
+        fs::hard_link(&object, &outside).unwrap();
+
+        // The digest still matches, but an outside filename can rewrite the
+        // inode, so neither reads nor deduplicated installs may accept it.
+        assert!(matches!(
+            store.read_verified(&digest),
+            Err(MediaObjectError::UnsafeObject)
+        ));
+        assert!(matches!(
+            store.store_bytes(content),
+            Err(MediaObjectError::UnsafeObject)
+        ));
+        assert_eq!(fs::read(&outside).unwrap(), content);
+        fs::remove_file(&outside).unwrap();
+        assert_eq!(store.read_verified(&digest).unwrap(), content);
         fs::remove_dir_all(root).unwrap();
     }
 
