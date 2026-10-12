@@ -188,11 +188,9 @@ fn main() {
                 eprintln!("Staging directory name must be UTF-8");
                 std::process::exit(2);
             };
-            if let Err(error) = stage_unsigned(
-                PathBuf::from(&fields[0]),
-                PathBuf::from(&fields[1]),
-                name,
-            ) {
+            if let Err(error) =
+                stage_unsigned(PathBuf::from(&fields[0]), PathBuf::from(&fields[1]), name)
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

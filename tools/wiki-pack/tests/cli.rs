@@ -225,7 +225,10 @@ fn cli_unsigned_staging_is_private_and_never_installs_or_replaces() {
         private.as_os_str(),
         std::ffi::OsStr::new("invalid"),
     ];
-    assert_eq!(invoke("stage-unsigned", &corrupt_args).status.code(), Some(1));
+    assert_eq!(
+        invoke("stage-unsigned", &corrupt_args).status.code(),
+        Some(1)
+    );
     assert!(!private.join("invalid").exists());
     fs::remove_dir_all(parent).unwrap();
 }
