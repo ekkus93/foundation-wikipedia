@@ -97,7 +97,13 @@ impl ActiveSnapshotStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if meta.ino() != opened_meta.ino() || meta.dev() != opened_meta.dev() {
+            // An outside hard link could rewrite the active snapshot selector
+            // without going through the verified atomic switch protocol.
+            if meta.ino() != opened_meta.ino()
+                || meta.dev() != opened_meta.dev()
+                || meta.nlink() != 1
+                || opened_meta.nlink() != 1
+            {
                 return Err(ActivationError::CorruptCurrentPointer);
             }
         }
@@ -105,11 +111,19 @@ impl ActiveSnapshotStore {
         Read::by_ref(&mut opened)
             .take(130)
             .read_to_end(&mut bytes)?;
+        let after = opened.metadata()?;
         if bytes.len() > 129
             || bytes.len() as u64 != opened_meta.len()
-            || opened.metadata()?.len() != opened_meta.len()
+            || after.len() != opened_meta.len()
         {
             return Err(ActivationError::CorruptCurrentPointer);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if after.nlink() != 1 {
+                return Err(ActivationError::CorruptCurrentPointer);
+            }
         }
         let id = std::str::from_utf8(&bytes).map_err(|_| ActivationError::CorruptCurrentPointer)?;
         let id = id.strip_suffix('\n').unwrap_or(id);
@@ -198,6 +212,33 @@ mod interruption_tests {
             store.current(),
             Err(ActivationError::CorruptCurrentPointer)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn externally_hardlinked_current_pointer_is_not_trusted() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-hardlink-pointer-{}-{stamp}",
+            std::process::id()
+        ));
+        let snapshot = root.join("snapshots/old");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("manifest.json"), "{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let outside = root.with_extension("external-current");
+        fs::hard_link(root.join("current"), &outside).unwrap();
+        assert!(matches!(
+            store.current(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        fs::remove_file(outside).unwrap();
+        assert_eq!(store.current().unwrap(), Some("old".into()));
         fs::remove_dir_all(root).unwrap();
     }
 
