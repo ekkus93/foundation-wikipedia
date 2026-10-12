@@ -147,6 +147,27 @@ class ExtractTests(unittest.TestCase):
                 self.assertFalse(self.output.exists())
                 self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_foreign_namespace_page_and_identity_fields_fail_closed(self):
+        # ElementTree's {*}name wildcard matches foreign namespaces, so
+        # reject spoofed page/identity elements before record extraction.
+        cases = (
+            XML.replace(b"<page>", b'<x:page xmlns:x="urn:spoof">', 1)
+               .replace(b"</page>", b"</x:page>", 1),
+            XML.replace(b"<id>10</id>", b'<x:id xmlns:x="urn:spoof">10</x:id>', 1),
+            XML.replace(b"<title>Physics</title>",
+                        b'<x:title xmlns:x="urn:spoof">Physics</x:title>', 1),
+            XML.replace(b"<text xml:space=",
+                        b'<x:text xmlns:x="urn:spoof" xml:space=', 1)
+               .replace(b"</text>", b"</x:text>", 1),
+        )
+        for spoofed in cases:
+            with self.subTest(spoofed=spoofed[:90]):
+                self.write_xml(spoofed)
+                with self.assertRaisesRegex(DumpExtractionError, "foreign XML element namespace"):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_valid_siteinfo_sibling_remains_supported(self):
         siteinfo = b"<siteinfo><sitename>Wikipedia</sitename></siteinfo>"
         self.write_xml(XML.replace(b"<page>", siteinfo + b"<page>", 1))

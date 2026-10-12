@@ -290,14 +290,24 @@ def extract_current_dump(path, expected_sha256, project, output, *,
             with bz2.BZ2File(source, "rb") as compressed:
                 reader = _BoundedXmlReader(compressed, max_uncompressed_bytes)
                 root = None
+                root_namespace = None
                 depth = 0
                 try:
                     for event, element in ET.iterparse(reader, events=("start", "end")):
                         tag = element.tag.rsplit("}", 1)[-1]
+                        element_namespace = (
+                            element.tag.split("}", 1)[0][1:]
+                            if element.tag.startswith("{") else ""
+                        )
                         if event == "start":
                             depth += 1
                             if depth > 64:
                                 raise DumpExtractionError("XML nesting exceeds budget")
+                            if root is not None and element_namespace != root_namespace:
+                                # Wildcard child lookups otherwise accept foreign
+                                # namespace identity fields as authentic MediaWiki
+                                # elements (including foreign <page> records).
+                                raise DumpExtractionError("foreign XML element namespace")
                             if root is None:
                                 if depth != 1 or tag != "mediawiki":
                                     raise DumpExtractionError("not a MediaWiki XML export")
@@ -310,6 +320,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                     "http://www.mediawiki.org/xml/export-0.11/",
                                 ):
                                     raise DumpExtractionError("unsupported MediaWiki XML namespace")
+                                root_namespace = namespace
                                 root = element
                             elif tag == "page" and depth != 2:
                                 raise DumpExtractionError("page outside MediaWiki root")
