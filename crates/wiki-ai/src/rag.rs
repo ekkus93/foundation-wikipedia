@@ -11,6 +11,7 @@ use crate::{
 use wiki_model::{Article, ModelError};
 use wiki_search::{
     validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit, GroundedAnswer,
+    MAX_LEXICAL_QUERY_BYTES,
 };
 
 const MAX_RESPONSE_BYTES: usize = 131_072;
@@ -77,6 +78,7 @@ pub fn answer_article(
     cancellation: &CancellationToken,
 ) -> Result<GroundedAnswer, RagError> {
     if question.question.trim().is_empty()
+        || question.question.len() > MAX_LEXICAL_QUERY_BYTES
         || question.model.trim().is_empty()
         || question.passage_limit == 0
         || question.context_word_budget == 0
@@ -207,6 +209,89 @@ pub fn answer_article(
 #[cfg(test)]
 mod citation_parser_tests {
     use super::*;
+
+    #[test]
+    fn oversized_unicode_question_fails_before_index_or_provider_invocation() {
+        use crate::{Locality, ModelInfo, ProviderCapabilities};
+        use wiki_model::{ArticleKey, Revision, ARTICLE_SCHEMA_VERSION};
+
+        struct MustNotCallProvider;
+        impl LlmProvider for MustNotCallProvider {
+            fn locality(&self) -> Locality {
+                panic!("oversized query must not inspect a provider")
+            }
+            fn capabilities(&self) -> ProviderCapabilities {
+                panic!("oversized query must not inspect provider capabilities")
+            }
+            fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+                panic!("oversized query must not contact a provider")
+            }
+            fn test_connection(&self) -> Result<(), ProviderError> {
+                panic!("oversized query must not contact a provider")
+            }
+            fn stream(
+                &self,
+                _request: &GenerateRequest,
+                _cancellation: &CancellationToken,
+                _on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+            ) -> Result<(), ProviderError> {
+                panic!("oversized query must not send any source passages")
+            }
+        }
+
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
+            revision: Revision {
+                revision_id: 12,
+                timestamp: "2026-10-12T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Mathematics".into(),
+            display_title: "Mathematics".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: Vec::new(),
+            wikidata_id: None,
+            lead: Vec::new(),
+            sections: Vec::new(),
+            references: Vec::new(),
+            links: Vec::new(),
+            media: Vec::new(),
+            rendered_html: "<article/>".into(),
+            is_disambiguation: false,
+        };
+        let oversized = "🧠".repeat(MAX_LEXICAL_QUERY_BYTES / 4 + 1);
+        let forged_selected = EvidenceHit {
+            block_id: "forged-evidence".into(),
+            revision_id: 12,
+            heading_path: Vec::new(),
+            excerpt: "source data".into(),
+            score: 0,
+        };
+        let query = ArticleQuestion {
+            question: &oversized,
+            model: "local-model",
+            passage_limit: 1,
+            context_word_budget: 64,
+            selected_evidence: Some(&forged_selected),
+            max_output_tokens: 16,
+            outbound_policy: OutboundPolicy::OnDeviceOnly,
+        };
+        assert!(oversized.len() > MAX_LEXICAL_QUERY_BYTES);
+        assert_eq!(
+            answer_article(
+                &article,
+                &MustNotCallProvider,
+                &query,
+                &CancellationToken::default(),
+            ),
+            Err(RagError::InvalidQuestion)
+        );
+    }
 
     #[test]
     fn accepts_only_well_formed_citation_claims() {
