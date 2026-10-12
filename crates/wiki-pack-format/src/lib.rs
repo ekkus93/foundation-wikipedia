@@ -7,4 +7,5 @@
 pub mod container;
 pub mod manifest;
 pub mod objects;
+pub mod stage;
 pub mod trust;
