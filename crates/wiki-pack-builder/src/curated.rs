@@ -84,7 +84,14 @@ mod tests {
             assert!(topic.depth_limit <= 3);
             assert!((1..=50_000).contains(&topic.page_limit));
             let rules = topic.rules();
-            assert_eq!(rules.roots, topic.roots.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+            assert_eq!(
+                rules.roots,
+                topic
+                    .roots
+                    .iter()
+                    .map(|r| r.to_string())
+                    .collect::<Vec<_>>()
+            );
             assert!(rules.include.is_empty() && rules.exclude.is_empty());
         }
         assert_eq!(ids.len(), 3);
