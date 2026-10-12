@@ -960,3 +960,49 @@ mod tests {
             ))
         );
         assert_eq!(
+            join_enterprise_batch(vec![structured_42.clone()], vec![], vec![]),
+            Err(EnterpriseError::MissingRegular(structured_42.page.clone()))
+        );
+        assert_eq!(
+            join_enterprise_batch(vec![], vec![regular_42.clone()], vec![]),
+            Err(EnterpriseError::MissingStructured(regular_42.page.clone()))
+        );
+        assert_eq!(
+            join_enterprise_batch(
+                vec![structured_42.clone()],
+                vec![regular_42.clone()],
+                vec![structured_42.page.clone()],
+            ),
+            Err(EnterpriseError::DeletedPageConflict(
+                structured_42.page.clone()
+            ))
+        );
+        assert_eq!(
+            join_enterprise_batch(
+                vec![],
+                vec![],
+                vec![structured_42.page.clone(), structured_42.page.clone()],
+            ),
+            Err(EnterpriseError::DuplicateTombstone(
+                structured_42.page.clone()
+            ))
+        );
+    }
+
+    #[test]
+    fn identity_mismatch_and_duplicate_regular_members_fail_closed() {
+        let structured = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let mut wrong_page = parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
+        wrong_page.page.page_id += 1;
+        assert_eq!(
+            join_enterprise_article(structured, wrong_page),
+            Err(EnterpriseError::IdentityMismatch)
+        );
+
+        let duplicate_category = regular_json().replace("\"Gravitation\"}]", "\"Physics\"}]");
+        assert_eq!(
+            parse_regular_companion(&duplicate_category, "2026-10-01"),
+            Err(EnterpriseError::DuplicateCategory("Physics".into()))
+        );
+    }
+}
