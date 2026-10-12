@@ -4,6 +4,10 @@
 //! and populate available_verified only after verifying object digests.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+use wiki_pack_format::manifest::Manifest;
+use wiki_pack_format::objects::{verify_manifest_directory, ObjectVerifyError};
 
 const MAX_MEDIA_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DECLARED_MEDIA_BYTES: u64 = 1_u64 << 40;
@@ -141,4 +145,138 @@ pub fn check_media_completeness(
         unique_verified_bytes: total_bytes,
         on_demand_streams: streams,
     })
+}
+
+/// A verified-staging guard for *declared* required media. Successful results
+/// cannot certify a complete offline pack unless a separate trusted renderer
+/// has also discovered every HTML, CSS, font and math dependency.
+#[derive(Debug)]
+pub enum StagedMediaError {
+    Objects(ObjectVerifyError),
+    Media(MediaError),
+    ConflictingDigest(String),
+}
+
+/// Rehash every object from a validated provisional pack manifest, then
+/// require every declared offline visual and A/V preview to be among those
+/// verified bytes. Audio/video stream payloads are never bundled by default.
+///
+/// IMPORTANT: The manifest and resource list are caller-supplied. Their
+/// authenticity, semantic mapping to rendered article content and licensing
+/// are not established by this function. The caller must own an immutable
+/// staging tree throughout both passes.
+pub fn check_declared_staged_media(
+    manifest: &Manifest,
+    root: &Path,
+    resources: &[Resource],
+) -> Result<MediaCompleteness, StagedMediaError> {
+    verify_manifest_directory(manifest, root).map_err(StagedMediaError::Objects)?;
+    let mut verified = BTreeMap::new();
+    for object in &manifest.objects {
+        let hash = object.sha256.to_ascii_lowercase();
+        match verified.insert(hash.clone(), object.bytes) {
+            Some(previous) if previous != object.bytes => {
+                return Err(StagedMediaError::ConflictingDigest(hash));
+            }
+            _ => {}
+        }
+    }
+    check_media_completeness(resources, &verified).map_err(StagedMediaError::Media)
+}
+
+#[cfg(test)]
+mod staged_tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use wiki_pack_format::export::custom_manifest_from_tree;
+
+    fn media(id: &str, kind: ResourceKind, digest: Option<String>, bytes: Option<u64>) -> Resource {
+        Resource {
+            id: id.into(),
+            kind,
+            sha256: digest,
+            bytes,
+            preview_id: None,
+            creator: "Contributor".into(),
+            license: "CC BY-SA 4.0".into(),
+            attribution: "Diagram by Contributor".into(),
+        }
+    }
+
+    #[test]
+    fn staged_pack_requires_verified_visuals_and_offline_av_previews() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-media-gate-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("media")).unwrap();
+        let diagram = b"complete visual";
+        let preview = b"audio/video offline preview";
+        fs::write(root.join("media/plot.svg"), diagram).unwrap();
+        fs::write(root.join("media/preview.jpg"), preview).unwrap();
+        let manifest =
+            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let plot_hash = manifest
+            .objects
+            .iter()
+            .find(|item| item.path == "media/plot.svg")
+            .unwrap()
+            .sha256
+            .clone();
+        let preview_hash = manifest
+            .objects
+            .iter()
+            .find(|item| item.path == "media/preview.jpg")
+            .unwrap()
+            .sha256
+            .clone();
+        let mut resources = vec![
+            media(
+                "plot",
+                ResourceKind::Plot,
+                Some(plot_hash),
+                Some(diagram.len() as u64),
+            ),
+            media(
+                "preview",
+                ResourceKind::AudioVideoPreview,
+                Some(preview_hash),
+                Some(preview.len() as u64),
+            ),
+        ];
+        let mut stream = media("lecture", ResourceKind::AudioVideoStream, None, None);
+        stream.preview_id = Some("preview".into());
+        resources.push(stream);
+        let report = check_declared_staged_media(&manifest, &root, &resources).unwrap();
+        assert_eq!(report.required_objects, 2);
+        assert_eq!(report.on_demand_streams, 1);
+        assert_eq!(
+            report.unique_verified_bytes,
+            (diagram.len() + preview.len()) as u64
+        );
+        let mut without_preview = resources.clone();
+        without_preview.remove(1);
+        assert!(matches!(
+            check_declared_staged_media(&manifest, &root, &without_preview),
+            Err(StagedMediaError::Media(MediaError::MissingPreview(_)))
+        ));
+        let mut absent = resources.clone();
+        absent[0].sha256 = Some("0".repeat(64));
+        assert!(matches!(
+            check_declared_staged_media(&manifest, &root, &absent),
+            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(_)))
+        ));
+        fs::write(root.join("media/plot.svg"), b"complete visuAl").unwrap();
+        assert!(matches!(
+            check_declared_staged_media(&manifest, &root, &resources),
+            Err(StagedMediaError::Objects(ObjectVerifyError::HashMismatch(_)))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
 }
