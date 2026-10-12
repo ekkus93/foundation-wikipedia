@@ -14,10 +14,8 @@ fn rejects_symlinked_staging_parent_without_publishing() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wpack-stage-parent-{}-{stamp}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("wpack-stage-parent-{}-{stamp}", std::process::id()));
     let real = root.join("real");
     let parent = real.join("private");
     fs::create_dir_all(&parent).unwrap();
@@ -38,10 +36,7 @@ fn rejects_symlinked_staging_parent_without_publishing() {
         }],
     };
     let mut envelope = Vec::new();
-    write_container(&mut envelope, &manifest, |_, out| {
-        out.write_all(payload)
-    })
-    .unwrap();
+    write_container(&mut envelope, &manifest, |_, out| out.write_all(payload)).unwrap();
     let result = stage_container(
         &mut std::io::Cursor::new(envelope),
         &root.join("alias/private"),
