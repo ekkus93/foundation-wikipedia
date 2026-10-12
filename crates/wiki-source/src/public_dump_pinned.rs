@@ -22,6 +22,25 @@ pub struct PinnedInventory {
     members: Vec<DumpChecksum>,
 }
 
+impl PinnedInventory {
+    /// Declared checksum members in deterministic sorted order.
+    pub fn members(&self) -> &[DumpChecksum] {
+        &self.members
+    }
+
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    pub fn date(&self) -> &str {
+        &self.date
+    }
+
+    pub fn inventory_sha256(&self) -> &str {
+        &self.inventory_sha256
+    }
+}
+
 /// The expected digest must come from a separately authenticated source.
 /// It covers the exact raw SHA256SUMS bytes, including their line endings.
 pub fn parse_pinned_inventory(
