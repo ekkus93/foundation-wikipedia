@@ -412,26 +412,29 @@ fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
 
     // Record order and member order must not change the machine-readable
     // selection, which is suitable for an exact-receipt GUI preview.
-    let reordered = first
-        .replace(
-            r#"{"name": "Category:Math", "articles": [3, 2], "children": []},
+    let reordered = first.replace(
+        r#"{"name": "Category:Math", "articles": [3, 2], "children": []},
             {"name": "Category:Other", "articles": [7], "children": []}"#,
-            r#"{"name": "Category:Other", "articles": [7], "children": []},
+        r#"{"name": "Category:Other", "articles": [7], "children": []},
             {"name": "Category:Math", "articles": [2, 3], "children": []}"#,
-        );
+    );
     fs::write(&input, reordered).unwrap();
     let second = invoke("preview-topic", &args);
     assert!(second.status.success(), "{second:?}");
     let again: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(parsed, again);
 
-    fs::write(&input, first.replace("Category:Math", "Category:Missing")).unwrap();
+    fs::write(&input, first.replace("Category:Math\"]", "Category:Missing\"]")).unwrap();
     let invalid = invoke("preview-topic", &args);
     assert_eq!(invalid.status.code(), Some(1));
     assert!(invalid.stdout.is_empty());
     let usage = invoke(
         "preview-topic",
-        &[std::ffi::OsStr::new("--json"), input.as_os_str(), input.as_os_str()],
+        &[
+            std::ffi::OsStr::new("--json"),
+            input.as_os_str(),
+            input.as_os_str(),
+        ],
     );
     assert_eq!(usage.status.code(), Some(2));
     fs::remove_dir_all(parent).unwrap();
