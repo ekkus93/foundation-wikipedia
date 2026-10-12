@@ -595,12 +595,30 @@ mod tests {
     #[test]
     fn shard_names_are_portable_and_reject_windows_device_aliases() {
         for name in [
-            "", ".", "..", ".hidden", "article.", "CON", "con.shard",
-            "PRN.txt", "aux", "NUL.bin", "COM1", "com9.shard",
-            "LPT1.bin", "lpt9", "folder/shard", "shard\\name",
-            "a:b", "a name", "bad\u{0000}name",
+            "",
+            ".",
+            "..",
+            ".hidden",
+            "article.",
+            "CON",
+            "con.shard",
+            "PRN.txt",
+            "aux",
+            "NUL.bin",
+            "COM1",
+            "com9.shard",
+            "LPT1.bin",
+            "lpt9",
+            "folder/shard",
+            "shard\\name",
+            "a:b",
+            "a name",
+            "bad\u{0000}name",
         ] {
-            assert!(!valid_shard_name(name), "unsafe shard name accepted: {name:?}");
+            assert!(
+                !valid_shard_name(name),
+                "unsafe shard name accepted: {name:?}"
+            );
         }
         for name in ["articles-001.shard", "COM0.bin", "LPT0", "CONSOLE.bin"] {
             assert!(valid_shard_name(name), "safe shard name rejected: {name:?}");
