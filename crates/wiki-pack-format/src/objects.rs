@@ -30,6 +30,18 @@ pub fn verify_manifest_directory(
     root: &Path,
 ) -> Result<u64, ObjectVerifyError> {
     manifest.validate().map_err(ObjectVerifyError::Manifest)?;
+    // Even when the immediate root is a real directory, a symlink higher in
+    // its path may redirect object reads outside the caller-owned staging tree.
+    // This assumes no concurrent attacker can rename any ancestor.
+    for ancestor in root.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(ancestor).map_err(ObjectVerifyError::Io)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(ObjectVerifyError::UnsafePath);
+        }
+    }
     let root_meta = fs::symlink_metadata(root).map_err(ObjectVerifyError::Io)?;
     if !root_meta.is_dir() || root_meta.file_type().is_symlink() {
         return Err(ObjectVerifyError::UnsafePath);
@@ -200,6 +212,33 @@ mod tests {
             Err(ObjectVerifyError::Manifest(ManifestError::DuplicateObject))
         ));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_object_tree_with_symlinked_grandparent() {
+        use std::os::unix::fs::symlink;
+
+        let base = staging_dir();
+        let real = base.join("real");
+        let leaf = real.join("nested");
+        fs::create_dir_all(&leaf).unwrap();
+        let bytes = b"diagram bytes";
+        fs::write(leaf.join("plot.svg"), bytes).unwrap();
+        let alias = base.join("alias");
+        symlink(&real, &alias).unwrap();
+        let expected = manifest(vec![declared("plot.svg", bytes)]);
+        // The leaf is a real directory, while a higher component is a
+        // symlink. Both must be checked, not only the final root metadata.
+        assert!(matches!(
+            verify_manifest_directory(&expected, &alias.join("nested")),
+            Err(ObjectVerifyError::UnsafePath)
+        ));
+        assert_eq!(
+            verify_manifest_directory(&expected, &leaf).unwrap(),
+            bytes.len() as u64
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[cfg(unix)]
