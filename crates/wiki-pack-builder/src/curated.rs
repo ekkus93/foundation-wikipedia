@@ -84,7 +84,7 @@ mod tests {
             assert!(topic.depth_limit <= 3);
             assert!((1..=50_000).contains(&topic.page_limit));
             let rules = topic.rules();
-            assert_eq!(rules.roots, topic.roots);
+            assert_eq!(rules.roots, topic.roots.iter().map(|r| r.to_string()).collect::<Vec<_>>());
             assert!(rules.include.is_empty() && rules.exclude.is_empty());
         }
         assert_eq!(ids.len(), 3);
@@ -100,31 +100,38 @@ mod tests {
             let admin = format!("{root}/maintenance");
             let base = 10 * (offset as u64 + 1);
             let graph = BTreeMap::from([
-                (root.clone(), Category {
-                    articles: vec![base + 1, base + 2],
-                    children: vec![child.clone(), admin.clone()],
-                    administrative: false,
-                }),
-                (child, Category {
-                    articles: vec![base + 3, base + 1],
-                    children: vec![root],
-                    administrative: false,
-                }),
-                (admin, Category {
-                    articles: vec![base + 4],
-                    children: Vec::new(),
-                    administrative: true,
-                }),
+                (
+                    root.clone(),
+                    Category {
+                        articles: vec![base + 1, base + 2],
+                        children: vec![child.clone(), admin.clone()],
+                        administrative: false,
+                    },
+                ),
+                (
+                    child,
+                    Category {
+                        articles: vec![base + 3, base + 1],
+                        children: vec![root],
+                        administrative: false,
+                    },
+                ),
+                (
+                    admin,
+                    Category {
+                        articles: vec![base + 4],
+                        children: Vec::new(),
+                        administrative: true,
+                    },
+                ),
             ]);
             let redirects = BTreeMap::from([(base + 2, base + 1)]);
             let disambiguations = BTreeSet::from([base + 3]);
             let rules = topic.rules();
-            let first = resolve_with_redirects(
-                &graph, &rules, &redirects, &disambiguations,
-            ).unwrap();
-            let again = resolve_with_redirects(
-                &graph, &rules, &redirects, &disambiguations,
-            ).unwrap();
+            let first =
+                resolve_with_redirects(&graph, &rules, &redirects, &disambiguations).unwrap();
+            let again =
+                resolve_with_redirects(&graph, &rules, &redirects, &disambiguations).unwrap();
             assert_eq!(first, again);
             assert_eq!(first.page_ids, vec![base + 1, base + 3]);
             assert!(first.warnings.iter().any(|w| w.contains("administrative")));
