@@ -9,6 +9,7 @@ pub mod join;
 pub mod public_dump;
 pub mod public_dump_pinned;
 pub mod public_dump_stage;
+pub mod public_dump_strict;
 pub mod public_dump_verify;
 
 use std::collections::BTreeSet;
