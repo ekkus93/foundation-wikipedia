@@ -192,10 +192,23 @@ pub fn resolve_joined_revision_pinned(
             .ok_or(JoinedSelectionError::NotMainspace(*id))?;
         page_revisions.insert(*id, *revision);
     }
-    let mut bytes = b"foundation-wikipedia/revision-pinned-selection/v1\0".to_vec();
+    let mut bytes = b"foundation-wikipedia/revision-pinned-selection/v2\0".to_vec();
     append_text(&mut bytes, &joined.project);
     append_text(&mut bytes, &joined.generation_id);
     append_text(&mut bytes, &selection.snapshot_selection_sha256);
+    // Bind the complete supplied joined page identity map, including category
+    // source revisions, even when the selected page IDs do not change.
+    bytes.extend_from_slice(&(joined.page_revisions.len() as u64).to_be_bytes());
+    for (id, revision) in &joined.page_revisions {
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&revision.to_be_bytes());
+    }
+    // Title aliases must not be mistaken for page-ID redirects, but drift in
+    // the supplied alias inventory must still invalidate the local receipt.
+    bytes.extend_from_slice(&(joined.unresolved_redirect_titles.len() as u64).to_be_bytes());
+    for title in &joined.unresolved_redirect_titles {
+        append_text(&mut bytes, title);
+    }
     bytes.extend_from_slice(&(page_revisions.len() as u64).to_be_bytes());
     for (id, revision) in &page_revisions {
         bytes.extend_from_slice(&id.to_be_bytes());

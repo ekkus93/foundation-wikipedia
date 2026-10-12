@@ -229,3 +229,42 @@ fn pinned_selection_preserves_unresolved_aliases_and_rejects_mixed_sources() {
         ))
     ));
 }
+
+#[test]
+fn pinned_selection_changes_when_unselected_source_revision_or_alias_changes() {
+    let original = vec![
+        record(20, 14, "Category:Math", &[]),
+        record(2, 0, "Group", &["Category:Math"]),
+        record(55, 0, "Unselected", &[]),
+    ];
+    let rules = Rules {
+        roots: vec!["Category:Math".into()],
+        include: vec![],
+        exclude: vec![],
+        depth_limit: 1,
+        page_limit: 10,
+    };
+    let first = resolve_joined_revision_pinned(&original, &BTreeSet::new(), &rules).unwrap();
+    assert_eq!(first.selection.page_ids, vec![2]);
+
+    let mut category_changed = original.clone();
+    category_changed[0].structured.revision_id += 1;
+    let changed = resolve_joined_revision_pinned(&category_changed, &BTreeSet::new(), &rules)
+        .unwrap();
+    assert_eq!(first.selection.page_ids, changed.selection.page_ids);
+    assert_ne!(first.revision_selection_sha256, changed.revision_selection_sha256);
+
+    let mut other_changed = original.clone();
+    other_changed[2].structured.revision_id += 1;
+    let changed =
+        resolve_joined_revision_pinned(&other_changed, &BTreeSet::new(), &rules).unwrap();
+    assert_eq!(first.selection.page_ids, changed.selection.page_ids);
+    assert_ne!(first.revision_selection_sha256, changed.revision_selection_sha256);
+
+    let mut alias_changed = original.clone();
+    alias_changed[1].redirects.push("Previous name".into());
+    let changed =
+        resolve_joined_revision_pinned(&alias_changed, &BTreeSet::new(), &rules).unwrap();
+    assert_eq!(first.selection.page_ids, changed.selection.page_ids);
+    assert_ne!(first.revision_selection_sha256, changed.revision_selection_sha256);
+}
