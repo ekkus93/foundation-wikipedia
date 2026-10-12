@@ -133,6 +133,7 @@ pub enum EnterpriseError {
     DuplicateRedirect(String),
     DuplicateStructured(PageKey),
     DuplicateRegular(PageKey),
+    DuplicateRevision(u64),
     MissingStructured(PageKey),
     MissingRegular(PageKey),
     DeletedPageConflict(PageKey),
@@ -706,10 +707,14 @@ pub fn join_enterprise_batch(
     }
 
     let mut joined = Vec::with_capacity(structured_by_page.len());
+    let mut seen_revisions = BTreeSet::new();
     for (page, structured) in structured_by_page {
         let regular = regular_by_page
             .remove(&page)
             .ok_or_else(|| EnterpriseError::MissingRegular(page.clone()))?;
+        if !seen_revisions.insert(structured.revision_id) {
+            return Err(EnterpriseError::DuplicateRevision(structured.revision_id));
+        }
         joined.push(join_enterprise_article(structured, regular)?);
     }
     if let Some((page, _)) = regular_by_page.into_iter().next() {
@@ -865,9 +870,11 @@ mod tests {
 
         let mut structured_7 = structured_42.clone();
         structured_7.page.page_id = 7;
+        structured_7.revision_id = 100;
         structured_7.name = "Earlier page".into();
         let mut regular_7 = regular_42.clone();
         regular_7.page.page_id = 7;
+        regular_7.revision_id = 100;
         regular_7.name = "Earlier page".into();
 
         let joined = join_enterprise_batch(
@@ -882,6 +889,19 @@ mod tests {
                 .map(|article| article.structured.page.page_id)
                 .collect::<Vec<_>>(),
             vec![7, 42]
+        );
+
+        let mut duplicate_structured = structured_7.clone();
+        duplicate_structured.revision_id = structured_42.revision_id;
+        let mut duplicate_regular = regular_7.clone();
+        duplicate_regular.revision_id = regular_42.revision_id;
+        assert_eq!(
+            join_enterprise_batch(
+                vec![structured_42.clone(), duplicate_structured],
+                vec![regular_42.clone(), duplicate_regular],
+                vec![],
+            ),
+            Err(EnterpriseError::DuplicateRevision(99))
         );
 
         assert_eq!(
