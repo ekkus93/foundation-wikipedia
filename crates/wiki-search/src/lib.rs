@@ -22,6 +22,8 @@ pub struct EvidenceHit {
 #[derive(Clone, Debug)]
 pub struct ArticleLexicalIndex {
     revision_id: u64,
+    title: String,
+    aliases: Vec<String>,
     entries: Vec<EvidenceHit>,
 }
 
@@ -35,6 +37,8 @@ impl ArticleLexicalIndex {
         }
         Ok(Self {
             revision_id: article.revision.revision_id,
+            title: article.title.clone(),
+            aliases: article.aliases.clone(),
             entries,
         })
     }
@@ -115,6 +119,29 @@ pub struct CorpusHit {
     pub evidence: EvidenceHit,
 }
 
+/// Navigation-only match; never present a title/alias match as an AI citation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleHit {
+    pub article: ArticleKey,
+    pub title: String,
+    pub matched_alias: Option<String>,
+    pub score: usize,
+}
+
+fn title_match_score(name: &str, terms: &[String]) -> usize {
+    let words = tokenize(name);
+    if words.is_empty()
+        || !terms
+            .iter()
+            .all(|term| words.iter().any(|word| word.starts_with(term)))
+    {
+        return 0;
+    }
+    let exact = usize::from(words == terms) * 100;
+    let starts_with = usize::from(words.starts_with(terms)) * 20;
+    10 * terms.len() + exact + starts_with
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CorpusError {
     InvalidArticle(ModelError),
@@ -158,6 +185,52 @@ impl CorpusLexicalIndex {
                 .then_with(|| a.article.project.cmp(&b.article.project))
                 .then_with(|| a.article.page_id.cmp(&b.article.page_id))
                 .then_with(|| a.evidence.block_id.cmp(&b.evidence.block_id))
+        });
+        hits.truncate(limit.min(100));
+        hits
+    }
+
+    /// Search installed article titles and aliases for navigation.
+    /// This does not provide evidence passages for grounded AI answers.
+    pub fn search_titles(&self, query: &str, limit: usize) -> Vec<TitleHit> {
+        if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
+            return Vec::new();
+        }
+        let terms: Vec<_> = tokenize(query).into_iter().take(32).collect();
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for ((project, page_id), index) in &self.articles {
+            let mut best = title_match_score(&index.title, &terms);
+            if best > 0 {
+                best += 20; // Prefer the canonical title on an equal textual match.
+            }
+            let mut matched_alias = None;
+            for alias in &index.aliases {
+                let score = title_match_score(alias, &terms);
+                if score > best {
+                    best = score;
+                    matched_alias = Some(alias.clone());
+                }
+            }
+            if best > 0 {
+                hits.push(TitleHit {
+                    article: ArticleKey {
+                        project: project.clone(),
+                        page_id: *page_id,
+                    },
+                    title: index.title.clone(),
+                    matched_alias,
+                    score: best,
+                });
+            }
+        }
+        hits.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.article.project.cmp(&b.article.project))
+                .then_with(|| a.article.page_id.cmp(&b.article.page_id))
         });
         hits.truncate(limit.min(100));
         hits
@@ -628,6 +701,40 @@ mod tests {
         assert!(corpus.search_with_word_budget(query, 0, 100).is_empty());
         assert!(corpus
             .search_with_word_budget(&"x".repeat(MAX_LEXICAL_QUERY_BYTES + 1), 10, 100)
+            .is_empty());
+    }
+
+    #[test]
+    fn corpus_title_and_alias_search_is_navigation_not_evidence() {
+        let mut first = sample();
+        first.title = "Gravitation".into();
+        first.aliases = vec!["Universal Gravity".into(), "Énergie".into()];
+        let mut second = sample();
+        second.key.page_id = 10;
+        second.title = "Gravitation waves".into();
+        second.aliases.clear();
+        let corpus = CorpusLexicalIndex::build(&[second, first]).unwrap();
+        let matches = corpus.search_titles("gravitation", 10);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].article.page_id, 9);
+        assert_eq!(matches[0].title, "Gravitation");
+        assert_eq!(matches[0].matched_alias, None);
+        assert_eq!(matches[1].article.page_id, 10);
+
+        let via_redirect = corpus.search_titles("universal gravity", 5);
+        assert_eq!(via_redirect.len(), 1);
+        assert_eq!(via_redirect[0].article.page_id, 9);
+        assert_eq!(
+            via_redirect[0].matched_alias.as_deref(),
+            Some("Universal Gravity")
+        );
+        assert_eq!(corpus.search_titles("énergie", 5).len(), 1);
+        // A title/alias hit does not create an unsupported RAG evidence hit.
+        assert!(corpus.search("universal", 5).is_empty());
+        assert!(corpus.search_titles("nonexistent", 5).is_empty());
+        assert!(corpus.search_titles("gravitation", 0).is_empty());
+        assert!(corpus
+            .search_titles(&"x".repeat(MAX_LEXICAL_QUERY_BYTES + 1), 5)
             .is_empty());
     }
 
