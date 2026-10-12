@@ -76,7 +76,10 @@ mod tests {
         let first = graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new());
         graph.get_mut("Root").unwrap().articles = vec![2, 3, 2];
         graph.get_mut("Root").unwrap().children = vec!["Child".into(), "Child".into()];
-        assert_eq!(first, graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new()));
+        assert_eq!(
+            first,
+            graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new())
+        );
     }
 
     #[test]
@@ -90,12 +93,18 @@ mod tests {
             },
         )]);
         let first = graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new());
-        graph.insert("Other".into(), Category {
-            articles: vec![3],
-            children: vec![],
-            administrative: false,
-        });
-        assert_ne!(first, graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new()));
+        graph.insert(
+            "Other".into(),
+            Category {
+                articles: vec![3],
+                children: vec![],
+                administrative: false,
+            },
+        );
+        assert_ne!(
+            first,
+            graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new())
+        );
         assert_ne!(
             graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new()),
             graph_digest(&graph, &BTreeMap::from([(99, 2)]), &BTreeSet::new()),
