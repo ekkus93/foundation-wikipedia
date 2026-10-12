@@ -58,8 +58,7 @@ pub fn preview_pinned_selection(
             skipped_administrative_count += 1;
             continue;
         }
-        inspected_article_mentions =
-            inspected_article_mentions.saturating_add(node.articles.len());
+        inspected_article_mentions = inspected_article_mentions.saturating_add(node.articles.len());
         let fanout = CategoryFanout {
             name: name.clone(),
             article_mentions: node.articles.len(),
@@ -78,8 +77,7 @@ pub fn preview_pinned_selection(
     }
     let selected_page_count = selection.page_ids.len();
     if let Some(ref fanout) = largest_category {
-        if fanout.article_mentions >= 512
-            && fanout.article_mentions >= rules.page_limit.div_ceil(2)
+        if fanout.article_mentions >= 512 && fanout.article_mentions >= rules.page_limit.div_ceil(2)
         {
             warnings.insert(format!(
                 "Review broad category: {} has {} raw article mentions (page limit {})",

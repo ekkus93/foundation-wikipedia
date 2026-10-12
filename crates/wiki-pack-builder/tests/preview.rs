@@ -49,8 +49,8 @@ fn previews_resolved_ids_counts_warnings_and_snapshot_receipts() {
     let preview =
         preview_pinned_selection(&graph, &rules(), &redirects, &disambiguations, "enwiki-1")
             .unwrap();
-    let original = resolve_pinned(&graph, &rules(), &redirects, &disambiguations, "enwiki-1")
-        .unwrap();
+    let original =
+        resolve_pinned(&graph, &rules(), &redirects, &disambiguations, "enwiki-1").unwrap();
     assert_eq!(preview.selection, original);
     assert_eq!(preview.selection.page_ids, vec![3, 8]);
     assert_eq!(preview.selected_page_count, 2);
@@ -60,9 +60,18 @@ fn previews_resolved_ids_counts_warnings_and_snapshot_receipts() {
     assert_eq!(preview.explicit_include_ids, 1);
     assert_eq!(preview.explicit_exclude_ids, 1);
     assert_eq!(preview.largest_category.as_ref().unwrap().name, "Root");
-    assert_eq!(preview.largest_category.as_ref().unwrap().article_mentions, 3);
-    assert!(preview.warnings.iter().any(|warning| warning.contains("administrative")));
-    assert!(preview.warnings.iter().any(|warning| warning.contains("Disambiguation")));
+    assert_eq!(
+        preview.largest_category.as_ref().unwrap().article_mentions,
+        3
+    );
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("administrative")));
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Disambiguation")));
     assert_eq!(
         preview,
         preview_pinned_selection(&graph, &rules(), &redirects, &disambiguations, "enwiki-1")
@@ -94,12 +103,23 @@ fn unusually_large_selection_is_visible_before_media_download() {
         depth_limit: 0,
         page_limit: 1000,
     };
-    let preview =
-        preview_pinned_selection(&graph, &rules, &BTreeMap::new(), &BTreeSet::new(), "enwiki-1")
-            .unwrap();
+    let preview = preview_pinned_selection(
+        &graph,
+        &rules,
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+        "enwiki-1",
+    )
+    .unwrap();
     assert_eq!(preview.selected_page_count, 950);
-    assert!(preview.warnings.iter().any(|warning| warning.contains("broad category")));
-    assert!(preview.warnings.iter().any(|warning| warning.contains("near page limit")));
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("broad category")));
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("near page limit")));
 }
 
 #[test]
