@@ -22,6 +22,7 @@ pub enum ResolveError {
     BadLimit,
     Missing(String),
     InvalidPage,
+    InvalidSnapshot,
     TooManyPages,
     TooManyCategories,
     TooManyCandidates,
@@ -163,6 +164,151 @@ fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, Re
                 id = *next;
             }
             None => return Ok(id),
+        }
+    }
+}
+
+/// Snapshot-scoped deterministic topic selection receipt. A caller-provided
+/// snapshot ID is a provenance *claim*, not authenticated source evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinnedResolution {
+    pub snapshot_id: String,
+    pub definition_sha256: String,
+    pub snapshot_selection_sha256: String,
+    pub page_ids: Vec<u64>,
+    pub warnings: Vec<String>,
+}
+
+fn append_text(out: &mut Vec<u8>, value: &str) {
+    out.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    out.extend_from_slice(value.as_bytes());
+}
+
+fn append_strings(out: &mut Vec<u8>, values: &[String]) {
+    let mut canonical = values.to_vec();
+    canonical.sort();
+    canonical.dedup();
+    out.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    for value in canonical {
+        append_text(out, &value);
+    }
+}
+
+fn append_ids(out: &mut Vec<u8>, values: &[u64]) {
+    let mut canonical = values.to_vec();
+    canonical.sort_unstable();
+    canonical.dedup();
+    out.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    for value in canonical {
+        out.extend_from_slice(&value.to_be_bytes());
+    }
+}
+
+/// Produce stable hashes for a definition and its resolved page-ID selection.
+/// Root and include/exclude order is intentionally immaterial. The snapshot
+/// identity is included in the selection digest to prevent cross-snapshot
+/// reuse of a selection receipt even when the selected page IDs are equal.
+/// This does not hash or authenticate the actual category graph or its pages.
+pub fn resolve_pinned(
+    graph: &BTreeMap<String, Category>,
+    rules: &Rules,
+    redirects: &BTreeMap<u64, u64>,
+    disambiguations: &BTreeSet<u64>,
+    snapshot_id: &str,
+) -> Result<PinnedResolution, ResolveError> {
+    if snapshot_id.is_empty()
+        || snapshot_id.len() > 256
+        || !snapshot_id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+    {
+        return Err(ResolveError::InvalidSnapshot);
+    }
+    let resolved = resolve_with_redirects(graph, rules, redirects, disambiguations)?;
+    let mut definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
+    append_strings(&mut definition, &rules.roots);
+    append_ids(&mut definition, &rules.include);
+    append_ids(&mut definition, &rules.exclude);
+    definition.extend_from_slice(&(rules.depth_limit as u64).to_be_bytes());
+    definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
+    let definition_sha256 = wiki_pack_format::sha256_hex(&definition);
+
+    let mut selection = b"foundation-wikipedia/topic-selection/v1\0".to_vec();
+    append_text(&mut selection, snapshot_id);
+    append_text(&mut selection, &definition_sha256);
+    append_ids(&mut selection, &resolved.page_ids);
+    Ok(PinnedResolution {
+        snapshot_id: snapshot_id.to_owned(),
+        definition_sha256,
+        snapshot_selection_sha256: wiki_pack_format::sha256_hex(&selection),
+        page_ids: resolved.page_ids,
+        warnings: resolved.warnings,
+    })
+}
+
+#[cfg(test)]
+mod pinned_tests {
+    use super::*;
+
+    #[test]
+    fn selection_receipts_are_stable_and_bound_to_snapshot_and_rules() {
+        let graph = BTreeMap::from([
+            ("Category:Science".to_owned(), Category {
+                articles: vec![9, 2],
+                children: vec!["Category:Math".into()],
+                administrative: false,
+            }),
+            ("Category:Math".to_owned(), Category {
+                articles: vec![3, 2],
+                children: Vec::new(),
+                administrative: false,
+            }),
+        ]);
+        let mut rules = Rules {
+            roots: vec!["Category:Science".into(), "Category:Math".into()],
+            include: vec![4, 5],
+            exclude: vec![9],
+            depth_limit: 2,
+            page_limit: 100,
+        };
+        let redirects = BTreeMap::new();
+        let disambiguations = BTreeSet::new();
+        let first = resolve_pinned(
+            &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
+        ).unwrap();
+        assert_eq!(first.page_ids, vec![2, 3, 4, 5]);
+        assert_eq!(first.definition_sha256.len(), 64);
+        assert_eq!(first.snapshot_selection_sha256.len(), 64);
+        rules.roots.reverse();
+        rules.include.reverse();
+        assert_eq!(
+            first,
+            resolve_pinned(
+                &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
+            ).unwrap()
+        );
+        let other_snapshot = resolve_pinned(
+            &graph, &rules, &redirects, &disambiguations, "enwiki-20261002",
+        ).unwrap();
+        assert_eq!(first.definition_sha256, other_snapshot.definition_sha256);
+        assert_ne!(
+            first.snapshot_selection_sha256,
+            other_snapshot.snapshot_selection_sha256
+        );
+        rules.depth_limit = 0;
+        let changed_rules = resolve_pinned(
+            &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
+        ).unwrap();
+        assert_ne!(first.definition_sha256, changed_rules.definition_sha256);
+        assert_ne!(
+            first.snapshot_selection_sha256,
+            changed_rules.snapshot_selection_sha256
+        );
+        for invalid in ["", "../escape", "snapshot\nspoof", "x:y"] {
+            assert_eq!(
+                resolve_pinned(&graph, &rules, &redirects, &disambiguations, invalid),
+                Err(ResolveError::InvalidSnapshot)
+            );
         }
     }
 }

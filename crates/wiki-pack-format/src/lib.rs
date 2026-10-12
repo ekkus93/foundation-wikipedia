@@ -10,3 +10,10 @@ pub mod manifest;
 pub mod objects;
 pub mod stage;
 pub mod trust;
+
+/// SHA-256 of a domain-separated canonical byte transcript. This is a content
+/// digest only, not a publisher signature or proof of source authenticity.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
