@@ -148,5 +148,18 @@ mod tests {
                 confidence_score: None,
             });
         assert_eq!(validate_joined_evidence(&article), Ok(()));
+        let mut leaf = article.structured.sections[0].clone();
+        leaf.has_parts.clear();
+        let mut nested = leaf.clone();
+        for _ in 0..=MAX_PART_DEPTH {
+            let mut parent = leaf.clone();
+            parent.has_parts = vec![nested];
+            nested = parent;
+        }
+        article.structured.sections = vec![nested];
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::PartDepthExceeded)
+        );
     }
 }
