@@ -424,7 +424,11 @@ fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
     let again: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(parsed, again);
 
-    fs::write(&input, first.replace("Category:Math\"]", "Category:Missing\"]")).unwrap();
+    fs::write(
+        &input,
+        first.replace("Category:Math\"]", "Category:Missing\"]")),
+    )
+    .unwrap();
     let invalid = invoke("preview-topic", &args);
     assert_eq!(invalid.status.code(), Some(1));
     assert!(invalid.stdout.is_empty());
