@@ -78,6 +78,17 @@ class ExportTests(unittest.TestCase):
             self.extract()
         self.assert_no_publication()
 
+    def test_rejects_duplicate_namespace_and_title_across_shards(self):
+        # Exact namespace/title conflicts cannot both be current pages,
+        # even when their page IDs and revision IDs are distinct.
+        title_collision = xml(110).replace(b"Article 110", b"Article 10")
+        self.shards[self.second] = bz2.compress(title_collision)
+        self.write_inventory()
+        with self.assertRaisesRegex(DumpExtractionError,
+                                    "duplicate namespace/title across export pages"):
+            self.extract()
+        self.assert_no_publication()
+
     def test_mismatched_or_missing_shard_never_publishes_partial_export(self):
         (self.stage / self.second).write_bytes(b"wrong")
         with self.assertRaisesRegex(DumpExtractionError, "SHA-256 mismatch"):

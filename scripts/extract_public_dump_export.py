@@ -257,6 +257,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
         # uniqueness avoids retaining the entire set in process memory.
         with closing(sqlite3.connect(work / "seen-revisions.sqlite")) as revisions:
             revisions.execute("CREATE TABLE revisions (id INTEGER PRIMARY KEY)")
+            revisions.execute("CREATE TABLE titles (namespace INTEGER, title TEXT, PRIMARY KEY(namespace, title))")
             with joined.open("wb") as writer:
                 for index, (path, digest) in enumerate(paths):
                     part = work / f"part-{index:06d}.jsonl"
@@ -269,14 +270,24 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
                     )
                     with part.open("rb") as reader:
                         for line in reader:
-                            revision_id = json.loads(line)["revision_id"]
+                            record = json.loads(line)
                             try:
                                 revisions.execute(
-                                    "INSERT INTO revisions (id) VALUES (?)", (revision_id,),
+                                    "INSERT INTO revisions (id) VALUES (?)",
+                                    (record["revision_id"],),
                                 )
                             except sqlite3.IntegrityError as error:
                                 raise DumpExtractionError(
                                     "duplicate revision ID across export shards"
+                                ) from error
+                            try:
+                                revisions.execute(
+                                    "INSERT INTO titles (namespace, title) VALUES (?, ?)",
+                                    (record["namespace"], record["title"]),
+                                )
+                            except sqlite3.IntegrityError as error:
+                                raise DumpExtractionError(
+                                    "duplicate namespace/title across export pages"
                                 ) from error
                             if writer.tell() + len(line) > max_output_bytes:
                                 raise DumpExtractionError(
