@@ -6,6 +6,7 @@
 pub mod curated;
 pub mod enterprise_graph;
 pub mod graph_digest;
+pub mod joined_preview;
 pub mod media;
 pub mod media_inventory;
 pub mod preview;
