@@ -24,6 +24,23 @@ pub enum MediaObjectError {
     DigestMismatch,
 }
 
+/// The no-overwrite hard-link publisher temporarily holds two links until
+/// its private staging name is removed. A concurrent reader must tolerate
+/// that short publication window, but reject persistent external hard links.
+#[cfg(unix)]
+fn require_single_link(file: &File) -> Result<(), MediaObjectError> {
+    use std::os::unix::fs::MetadataExt;
+    for attempt in 0..50 {
+        if file.metadata()?.nlink() == 1 {
+            return Ok(());
+        }
+        if attempt != 49 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    Err(MediaObjectError::UnsafeObject)
+}
+
 impl From<std::io::Error> for MediaObjectError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -134,13 +151,10 @@ impl MediaObjectStore {
             // A second hard link outside the store permits another filename
             // to mutate verified bytes after publication. Reject such objects
             // rather than treating their matching digest as immutable storage.
-            if before.ino() != opened.ino()
-                || before.dev() != opened.dev()
-                || before.nlink() != 1
-                || opened.nlink() != 1
-            {
+            if before.ino() != opened.ino() || before.dev() != opened.dev() {
                 return Err(MediaObjectError::UnsafeObject);
             }
+            require_single_link(&file)?;
         }
         let mut bytes = Vec::new();
         std::io::Read::by_ref(&mut file)
@@ -152,10 +166,7 @@ impl MediaObjectStore {
         }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-            if after.nlink() != 1 {
-                return Err(MediaObjectError::UnsafeObject);
-            }
+            require_single_link(&file)?;
         }
         if format!("{:x}", Sha256::digest(&bytes)) != digest {
             return Err(MediaObjectError::DigestMismatch);
