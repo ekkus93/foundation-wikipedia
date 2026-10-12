@@ -1,7 +1,9 @@
 //! Digest-pinned public-dump inventory. A caller-supplied digest is NOT
 //! evidence of Wikimedia publisher authenticity or source completeness.
+use crate::public_dump::{
+    matches_current_export, parse_sha256sums, DumpChecksum, DumpChecksumError,
+};
 use sha2::{Digest, Sha256};
-use crate::public_dump::{parse_sha256sums, matches_current_export, DumpChecksum, DumpChecksumError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PinnedInventoryError {
@@ -28,9 +30,7 @@ pub fn parse_pinned_inventory(
     date: &str,
     expected_sha256: &str,
 ) -> Result<PinnedInventory, PinnedInventoryError> {
-    if expected_sha256.len() != 64
-        || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-    {
+    if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(PinnedInventoryError::InvalidDigest);
     }
     let text = std::str::from_utf8(raw).map_err(|_| PinnedInventoryError::InvalidUtf8)?;
@@ -58,7 +58,8 @@ mod tests {
     fn binds_exact_publication_bytes_and_generation() {
         let raw = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
         let expected = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        let valid = parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &expected).unwrap();
+        let valid =
+            parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &expected).unwrap();
         assert_eq!(valid.members.len(), 1);
         assert_eq!(valid.inventory_sha256, expected);
         assert_eq!(
