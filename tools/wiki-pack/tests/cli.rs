@@ -338,10 +338,21 @@ fn cli_preview_rejects_duplicate_categories_and_missing_roots() {
     assert!(String::from_utf8(duplicate.stderr)
         .unwrap()
         .contains("duplicate category name"));
-    fs::write(&input, base.replace("Category:Math\", \"articles\": [3]", "Category:Other\", \"articles\": [3]")).unwrap();
+    fs::write(
+        &input,
+        base.replace(
+            "Category:Math\", \"articles\": [3]",
+            "Category:Other\", \"articles\": [3]",
+        ),
+    )
+    .unwrap();
     let missing = invoke("preview-topic", &[input.as_os_str()]);
     assert_eq!(missing.status.code(), Some(0));
-    fs::write(&input, base.replace("Category:Math\"]", "Category:Missing\"]")).unwrap();
+    fs::write(
+        &input,
+        base.replace("Category:Math\"]", "Category:Missing\"]"),
+    )
+    .unwrap();
     let invalid = invoke("preview-topic", &[input.as_os_str()]);
     assert_eq!(invalid.status.code(), Some(1));
     assert!(invalid.stdout.is_empty());
@@ -350,4 +361,3 @@ fn cli_preview_rejects_duplicate_categories_and_missing_roots() {
         .contains("topic preview rejected"));
     fs::remove_dir_all(parent).unwrap();
 }
-
