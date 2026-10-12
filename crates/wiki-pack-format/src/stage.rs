@@ -135,7 +135,9 @@ mod tests {
             pack_id: "science".into(),
             project: "enwiki".into(),
             snapshot: "20261001".into(),
-            origin: Origin::Custom { definition_id: "fixture".into() },
+            origin: Origin::Custom {
+                definition_id: "fixture".into(),
+            },
             objects: vec![Object {
                 path: "articles/1.cbor".into(),
                 sha256: format!("{:x}", Sha256::digest(bytes)),
