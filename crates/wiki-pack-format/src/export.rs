@@ -13,7 +13,7 @@ use crate::objects::{verify_manifest_directory, ObjectVerifyError};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug)]
 pub enum ExportError {
@@ -207,6 +207,7 @@ pub fn write_custom_tree<W: Write>(
 mod tests {
     use super::*;
     use crate::container::verify_container;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn root() -> PathBuf {

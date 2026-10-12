@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wiki_pack_builder::wiki_pack_format::container::verify_container;
-use wiki_pack_builder::wiki_pack_format::export::{
-    custom_manifest_from_tree, write_custom_tree,
-};
+use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::Origin;
@@ -21,7 +19,9 @@ fn usage() {
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack --help");
-    println!("verify/inspect check every object; export-custom creates an unsigned custom envelope.");
+    println!(
+        "verify/inspect check every object; export-custom creates an unsigned custom envelope."
+    );
     println!("None of these operations installs a pack.");
     println!("Publisher signatures and offline media completeness are NOT verified.");
 }
@@ -66,14 +66,8 @@ fn export_custom_tree(
     definition_id: &str,
     destination: PathBuf,
 ) -> Result<(), String> {
-    let manifest = custom_manifest_from_tree(
-        &source,
-        pack_id,
-        project,
-        snapshot,
-        definition_id,
-    )
-    .map_err(|error| format!("invalid source object tree: {error:?}"))?;
+    let manifest = custom_manifest_from_tree(&source, pack_id, project, snapshot, definition_id)
+        .map_err(|error| format!("invalid source object tree: {error:?}"))?;
     let parent = destination
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
