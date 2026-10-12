@@ -253,16 +253,22 @@ mod pinned_tests {
     #[test]
     fn selection_receipts_are_stable_and_bound_to_snapshot_and_rules() {
         let graph = BTreeMap::from([
-            ("Category:Science".to_owned(), Category {
-                articles: vec![9, 2],
-                children: vec!["Category:Math".into()],
-                administrative: false,
-            }),
-            ("Category:Math".to_owned(), Category {
-                articles: vec![3, 2],
-                children: Vec::new(),
-                administrative: false,
-            }),
+            (
+                "Category:Science".to_owned(),
+                Category {
+                    articles: vec![9, 2],
+                    children: vec!["Category:Math".into()],
+                    administrative: false,
+                },
+            ),
+            (
+                "Category:Math".to_owned(),
+                Category {
+                    articles: vec![3, 2],
+                    children: Vec::new(),
+                    administrative: false,
+                },
+            ),
         ]);
         let mut rules = Rules {
             roots: vec!["Category:Science".into(), "Category:Math".into()],
@@ -274,8 +280,13 @@ mod pinned_tests {
         let redirects = BTreeMap::new();
         let disambiguations = BTreeSet::new();
         let first = resolve_pinned(
-            &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
-        ).unwrap();
+            &graph,
+            &rules,
+            &redirects,
+            &disambiguations,
+            "enwiki-20261001",
+        )
+        .unwrap();
         assert_eq!(first.page_ids, vec![2, 3, 4, 5]);
         assert_eq!(first.definition_sha256.len(), 64);
         assert_eq!(first.snapshot_selection_sha256.len(), 64);
@@ -284,12 +295,22 @@ mod pinned_tests {
         assert_eq!(
             first,
             resolve_pinned(
-                &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
-            ).unwrap()
+                &graph,
+                &rules,
+                &redirects,
+                &disambiguations,
+                "enwiki-20261001",
+            )
+            .unwrap()
         );
         let other_snapshot = resolve_pinned(
-            &graph, &rules, &redirects, &disambiguations, "enwiki-20261002",
-        ).unwrap();
+            &graph,
+            &rules,
+            &redirects,
+            &disambiguations,
+            "enwiki-20261002",
+        )
+        .unwrap();
         assert_eq!(first.definition_sha256, other_snapshot.definition_sha256);
         assert_ne!(
             first.snapshot_selection_sha256,
@@ -297,8 +318,13 @@ mod pinned_tests {
         );
         rules.depth_limit = 0;
         let changed_rules = resolve_pinned(
-            &graph, &rules, &redirects, &disambiguations, "enwiki-20261001",
-        ).unwrap();
+            &graph,
+            &rules,
+            &redirects,
+            &disambiguations,
+            "enwiki-20261001",
+        )
+        .unwrap();
         assert_ne!(first.definition_sha256, changed_rules.definition_sha256);
         assert_ne!(
             first.snapshot_selection_sha256,
