@@ -16,10 +16,10 @@ pub enum PinnedInventoryError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PinnedInventory {
-    pub project: String,
-    pub date: String,
-    pub inventory_sha256: String,
-    pub members: Vec<DumpChecksum>,
+    project: String,
+    date: String,
+    inventory_sha256: String,
+    members: Vec<DumpChecksum>,
 }
 
 /// The expected digest must come from a separately authenticated source.
