@@ -314,6 +314,65 @@ pub fn validate_claimed_citations(
     Ok(validated)
 }
 
+/// Scope a corpus citation to its exact project/page and revision-bound block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CorpusCitationError {
+    InvalidRetrievedEvidence(ArticleKey, String),
+    DuplicateRetrievedEvidence(ArticleKey, String),
+    UnretrievedCitation(ArticleKey, String),
+    DuplicateCitation(ArticleKey, String),
+}
+
+/// Validate only explicitly supplied multi-article evidence; no citation can
+/// borrow authority from another page or an indexed-but-unretrieved passage.
+/// A caller must separately obtain explicit permission for cross-article scope.
+pub fn validate_corpus_citations(
+    index: &CorpusLexicalIndex,
+    retrieved: &[CorpusHit],
+    claimed: &[(ArticleKey, String)],
+) -> Result<Vec<CorpusHit>, CorpusCitationError> {
+    let mut supplied = BTreeMap::new();
+    for hit in retrieved {
+        let valid = index
+            .articles
+            .get(&(hit.article.project.clone(), hit.article.page_id))
+            .is_some_and(|article| article.contains_evidence(&hit.evidence));
+        if !valid {
+            return Err(CorpusCitationError::InvalidRetrievedEvidence(
+                hit.article.clone(),
+                hit.evidence.block_id.clone(),
+            ));
+        }
+        let key = (
+            hit.article.project.clone(),
+            hit.article.page_id,
+            hit.evidence.block_id.clone(),
+        );
+        if supplied.insert(key, hit).is_some() {
+            return Err(CorpusCitationError::DuplicateRetrievedEvidence(
+                hit.article.clone(),
+                hit.evidence.block_id.clone(),
+            ));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::with_capacity(claimed.len());
+    for (article, block_id) in claimed {
+        let key = (article.project.clone(), article.page_id, block_id.clone());
+        if !seen.insert(key.clone()) {
+            return Err(CorpusCitationError::DuplicateCitation(
+                article.clone(),
+                block_id.clone(),
+            ));
+        }
+        let hit = supplied.get(&key).ok_or_else(|| {
+            CorpusCitationError::UnretrievedCitation(article.clone(), block_id.clone())
+        })?;
+        result.push((**hit).clone());
+    }
+    Ok(result)
+}
+
 /// Structurally grounded answer after checking its exact supplied citations.
 /// This enforces provenance, not factual entailment of the generated text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -739,6 +798,66 @@ mod tests {
         assert!(corpus
             .search_titles(&"x".repeat(MAX_LEXICAL_QUERY_BYTES + 1), 5)
             .is_empty());
+    }
+
+    #[test]
+    fn corpus_citations_require_exact_supplied_article_evidence() {
+        let a = sample();
+        let mut b = sample();
+        b.key.page_id = 10;
+        b.revision.revision_id = 18;
+        let index = CorpusLexicalIndex::build(&[a, b.clone()]).unwrap();
+        let retrieved = index.search("physics", 10);
+        assert_eq!(retrieved.len(), 2);
+        let claim = (
+            retrieved[0].article.clone(),
+            retrieved[0].evidence.block_id.clone(),
+        );
+        let valid = validate_corpus_citations(&index, &retrieved[..1], &[claim.clone()])
+            .unwrap();
+        assert_eq!(valid, retrieved[..1]);
+        assert_eq!(
+            validate_corpus_citations(&index, &retrieved[..1], &[
+                (retrieved[1].article.clone(), retrieved[1].evidence.block_id.clone())
+            ]),
+            Err(CorpusCitationError::UnretrievedCitation(
+                retrieved[1].article.clone(),
+                retrieved[1].evidence.block_id.clone(),
+            ))
+        );
+        assert_eq!(
+            validate_corpus_citations(&index, &retrieved[..1], &[claim.clone(), claim.clone()]),
+            Err(CorpusCitationError::DuplicateCitation(claim.0, claim.1))
+        );
+        assert_eq!(
+            validate_corpus_citations(&index, &[retrieved[0].clone(), retrieved[0].clone()], &[]),
+            Err(CorpusCitationError::DuplicateRetrievedEvidence(
+                retrieved[0].article.clone(),
+                retrieved[0].evidence.block_id.clone(),
+            ))
+        );
+        let mut altered = retrieved[0].clone();
+        altered.evidence.excerpt.push_str(" spoofed");
+        assert_eq!(
+            validate_corpus_citations(&index, &[altered], &[]),
+            Err(CorpusCitationError::InvalidRetrievedEvidence(
+                retrieved[0].article.clone(),
+                retrieved[0].evidence.block_id.clone(),
+            ))
+        );
+        b.revision.revision_id += 1;
+        let fresh = CorpusLexicalIndex::build(&[sample(), b]).unwrap();
+        let stale = retrieved
+            .iter()
+            .find(|hit| hit.article.page_id == 10)
+            .unwrap();
+        assert_eq!(
+            validate_corpus_citations(&fresh, &[stale.clone()], &[]),
+            Err(CorpusCitationError::InvalidRetrievedEvidence(
+                stale.article.clone(),
+                stale.evidence.block_id.clone(),
+            ))
+        );
     }
 
     #[test]
