@@ -237,8 +237,8 @@ mod tests {
 
     #[test]
     fn joins_out_of_order_crlf_and_no_final_newline() {
-        let s = format!("{}\r\n{}", structured(2, 17), structured(1, 17));
-        let r = format!("{}\n{}\n", regular(1, 17), regular(2, 17));
+        let s = format!("{}\r\n{}", structured(2, 18), structured(1, 17));
+        let r = format!("{}\n{}\n", regular(1, 17), regular(2, 18));
         let joined =
             join_enterprise_ndjson(Cursor::new(s), Cursor::new(r), "20261010", vec![]).unwrap();
         assert_eq!(
