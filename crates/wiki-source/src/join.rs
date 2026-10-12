@@ -31,6 +31,7 @@ pub enum JoinError {
     InvalidIdentity,
     EmptyPayload,
     Duplicate(PageKey),
+    DuplicateRevision(u64),
     RevisionMismatch(PageKey),
     GenerationMismatch(PageKey),
     MixedProject(PageKey),
@@ -89,6 +90,7 @@ pub fn join_pages(
     let mut joined = Vec::new();
     let mut batch_generation: Option<String> = None;
     let mut batch_project: Option<String> = None;
+    let mut seen_revisions = BTreeSet::new();
     for (key, source) in s {
         if batch_project
             .as_deref()
@@ -105,6 +107,9 @@ pub fn join_pages(
             return Err(JoinError::GenerationMismatch(key));
         }
         batch_generation = Some(source.generation_id.clone());
+        if !seen_revisions.insert(source.revision_id) {
+            return Err(JoinError::DuplicateRevision(source.revision_id));
+        }
         let html = r
             .remove(&key)
             .ok_or_else(|| JoinError::MissingComponent(key.clone()))?;
@@ -250,7 +255,7 @@ mod tests {
                 project: "enwiki".into(),
                 page_id,
             },
-            revision_id: 17,
+            revision_id: 17 + page_id,
             generation_id: "20261009".into(),
             payload: payload.into(),
         }
@@ -270,6 +275,25 @@ mod tests {
         );
         assert_eq!(result[0].rendered_html, "h1");
         assert!(result[1].categories.is_empty());
+    }
+
+    #[test]
+    fn rejects_one_revision_identity_on_two_distinct_pages() {
+        let first = part(1, "s1");
+        let mut second = part(2, "s2");
+        second.revision_id = first.revision_id;
+        let mut html_second = second.clone();
+        html_second.payload = "h2".into();
+        let mut cats_second = second.clone();
+        cats_second.payload = "c2".into();
+        assert_eq!(
+            join_pages(
+                vec![first.clone(), second],
+                vec![part(1, "h1"), html_second],
+                vec![part(1, "c1"), cats_second]
+            ),
+            Err(JoinError::DuplicateRevision(first.revision_id))
+        );
     }
 
     #[test]
