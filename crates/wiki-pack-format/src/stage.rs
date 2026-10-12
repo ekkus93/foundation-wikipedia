@@ -149,7 +149,8 @@ mod tests {
         };
         let mut envelope = Vec::new();
         write_container(&mut envelope, &manifest, |_, output| output.write_all(bytes)).unwrap();
-        let (read, path) = stage_container(&mut Cursor::new(&envelope), &root, "candidate").unwrap();
+        let (read, path) =
+            stage_container(&mut Cursor::new(&envelope), &root, "candidate").unwrap();
         assert_eq!(read, manifest);
         assert_eq!(fs::read(path.join("articles/1.cbor")).unwrap(), bytes);
         assert!(stage_container(&mut Cursor::new(&envelope), &root, "candidate").is_err());
