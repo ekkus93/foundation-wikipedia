@@ -267,7 +267,10 @@ mod tests {
     fn roundtrip_is_canonical_and_stream_verified() {
         let manifest = sample();
         let bytes = envelope(&manifest);
-        assert_eq!(verify_container(&mut bytes.as_slice()).unwrap().pack_id, "physics");
+        assert_eq!(
+            verify_container(&mut bytes.as_slice()).unwrap().pack_id,
+            "physics"
+        );
         let mut reordered = manifest.clone();
         reordered.objects.reverse();
         reordered.objects[0].sha256.make_ascii_uppercase();
