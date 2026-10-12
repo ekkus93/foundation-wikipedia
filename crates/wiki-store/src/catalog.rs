@@ -113,6 +113,17 @@ fn as_u64(value: i64) -> Result<u64, CatalogError> {
     u64::try_from(value).map_err(|_| CatalogError::InvalidCatalogEntry)
 }
 
+fn validate_snapshot_root(root: &Path) -> Result<(), CatalogError> {
+    // A caller-owned immutable snapshot root must be an actual directory,
+    // not a symlink to a different tree. This is not a defense against
+    // untrusted processes concurrently replacing parent path components.
+    let meta = fs::symlink_metadata(root)?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err(CatalogError::InvalidFrame);
+    }
+    Ok(())
+}
+
 fn read_verified_frame(
     root: &Path,
     shard_name: &str,
@@ -123,6 +134,7 @@ fn read_verified_frame(
     if !valid_shard_name(shard_name) {
         return Err(CatalogError::UnsafeShardName);
     }
+    validate_snapshot_root(root)?;
     if !(40..=MAX_FRAME_BYTES).contains(&frame_bytes) {
         return Err(CatalogError::InvalidFrame);
     }
@@ -136,7 +148,7 @@ fn read_verified_frame(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if prior.ino() != opened.ino() || prior.dev() != opened.dev() {
+        if prior.ino() != opened.ino() || prior.dev() != opened.dev() || opened.nlink() != 1 {
             return Err(CatalogError::InvalidFrame);
         }
     }
@@ -162,6 +174,7 @@ fn read_verified_frame(
 }
 
 fn verify_shard_length(root: &Path, name: &str, expected: u64) -> Result<(), CatalogError> {
+    validate_snapshot_root(root)?;
     let metadata = fs::symlink_metadata(root.join(name))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected {
         return Err(CatalogError::InvalidFrame);
@@ -623,6 +636,46 @@ mod tests {
         for name in ["articles-001.shard", "COM0.bin", "LPT0", "CONSOLE.bin"] {
             assert!(valid_shard_name(name), "safe shard name rejected: {name:?}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_catalog_rejects_symlinked_root_and_hardlinked_frames() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        let snapshot = root.join("snapshot");
+        fs::create_dir(&snapshot).unwrap();
+        let mut frame = Vec::new();
+        append_record_frame(&mut frame, &article(42, "Earth")).unwrap();
+        fs::write(snapshot.join("articles-001.shard"), &frame).unwrap();
+
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        let key = catalog
+            .insert_verified(&snapshot, "articles-001.shard", 0, frame.len() as u64)
+            .unwrap();
+        assert!(catalog.read_record(&snapshot, &key).unwrap().is_some());
+
+        let alias = root.join("symlinked-snapshot");
+        symlink(&snapshot, &alias).unwrap();
+        assert!(matches!(
+            catalog.read_record(&alias, &key),
+            Err(CatalogError::InvalidFrame)
+        ));
+        assert!(matches!(
+            catalog.insert_verified(&alias, "articles-001.shard", 0, frame.len() as u64),
+            Err(CatalogError::InvalidFrame)
+        ));
+
+        let hardlink = root.join("shared-shard");
+        fs::hard_link(snapshot.join("articles-001.shard"), &hardlink).unwrap();
+        assert!(matches!(
+            catalog.read_record(&snapshot, &key),
+            Err(CatalogError::InvalidFrame)
+        ));
+        fs::remove_file(hardlink).unwrap();
+        assert!(catalog.read_record(&snapshot, &key).unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
