@@ -5,6 +5,7 @@
 //! yet implemented.
 
 pub mod container;
+pub mod export;
 pub mod manifest;
 pub mod objects;
 pub mod stage;
