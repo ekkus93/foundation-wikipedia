@@ -40,9 +40,13 @@ pub fn preview_joined_selection(
     rules: &Rules,
     redirect_identities: &[PageRedirectIdentity],
 ) -> Result<JoinedSelectionPreview, JoinedPreviewError> {
-    let revision_pinned =
-        resolve_joined_revision_pinned_with_redirects(records, administrative, rules, redirect_identities)
-            .map_err(JoinedPreviewError::Joined)?;
+    let revision_pinned = resolve_joined_revision_pinned_with_redirects(
+        records,
+        administrative,
+        rules,
+        redirect_identities,
+    )
+    .map_err(JoinedPreviewError::Joined)?;
     let joined = graph_from_joined(records, administrative)
         .map_err(|error| JoinedPreviewError::Joined(JoinedSelectionError::Graph(error)))?;
     // Duplicate and conflicting redirect identities were rejected by the
