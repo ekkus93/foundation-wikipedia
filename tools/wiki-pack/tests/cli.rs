@@ -350,7 +350,11 @@ fn cli_preview_rejects_duplicate_categories_and_missing_roots() {
     assert_eq!(missing.status.code(), Some(0));
     fs::write(
         &input,
-        base.replace("Category:Math\"]", "Category:Missing\"]"),
+        base.replace(
+            "Category:Math\", \"articles\": [3]",
+            "Category:Other\", \"articles\": [3]",
+        )
+        .replace("Category:Math\"]", "Category:Missing\"]"),
     )
     .unwrap();
     let invalid = invoke("preview-topic", &[input.as_os_str()]);
