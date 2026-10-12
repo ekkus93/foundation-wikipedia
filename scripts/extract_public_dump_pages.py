@@ -291,6 +291,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     temporary = None
     count = 0
     seen = set()
+    seen_revisions = set()
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
                                          prefix=".dump-pages.", suffix=".tmp",
@@ -353,7 +354,10 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                 raise DumpExtractionError("page ID outside declared shard partition")
                             if record["page_id"] in seen:
                                 raise DumpExtractionError("duplicate page ID in shard")
+                            if record["revision_id"] in seen_revisions:
+                                raise DumpExtractionError("duplicate revision ID in shard")
                             seen.add(record["page_id"])
+                            seen_revisions.add(record["revision_id"])
                             count += 1
                             if count > max_pages:
                                 raise DumpExtractionError("page count exceeds budget")

@@ -353,6 +353,17 @@ class ExtractTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpExtractionError, "one revision"):
             self.extract()
 
+    def test_rejects_reused_revision_id_across_distinct_page_ids(self):
+        # A single Wikimedia revision belongs to exactly one page. An
+        # otherwise valid shard must not publish conflicting provenance.
+        self.write_xml(XML.replace(
+            b"<revision><id>60</id>", b"<revision><id>50</id>", 1,
+        ))
+        with self.assertRaisesRegex(DumpExtractionError, "duplicate revision ID"):
+            self.extract()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_bounded_decompression_and_page_text(self):
         with self.assertRaisesRegex(DumpExtractionError, "decompressed XML exceeds budget"):
             self.extract(max_uncompressed_bytes=64)
