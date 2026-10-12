@@ -210,10 +210,8 @@ mod staged_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-media-gate-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-media-gate-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("media")).unwrap();
         let diagram = b"complete visual";
@@ -270,12 +268,16 @@ mod staged_tests {
         absent[0].sha256 = Some("0".repeat(64));
         assert!(matches!(
             check_declared_staged_media(&manifest, &root, &absent),
-            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(_)))
+            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(
+                _
+            )))
         ));
         fs::write(root.join("media/plot.svg"), b"complete visuAl").unwrap();
         assert!(matches!(
             check_declared_staged_media(&manifest, &root, &resources),
-            Err(StagedMediaError::Objects(ObjectVerifyError::HashMismatch(_)))
+            Err(StagedMediaError::Objects(ObjectVerifyError::HashMismatch(
+                _
+            )))
         ));
         fs::remove_dir_all(root).unwrap();
     }
