@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wiki_source::enterprise::JoinedEnterpriseArticle;
 
-use crate::selection::Category;
+use crate::selection::{resolve_pinned, Category, PinnedResolution, ResolveError, Rules};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphBuildError {
@@ -118,5 +118,95 @@ pub fn graph_from_joined(
         graph,
         page_revisions,
         unresolved_redirect_titles,
+    })
+}
+
+/// The caller-supplied joined batch is not evidence of an authenticated or
+/// complete Wikimedia source snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JoinedSelectionError {
+    Graph(GraphBuildError),
+    Resolution(ResolveError),
+    NotMainspace(u64),
+}
+
+/// Deterministic selection bound to exact selected article revisions, not just
+/// the page-ID list. Unresolved redirect names are intentionally not IDs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevisionPinnedSelection {
+    pub project: String,
+    pub generation_id: String,
+    pub selection: PinnedResolution,
+    pub page_revisions: BTreeMap<u64, u64>,
+    pub revision_selection_sha256: String,
+    pub unresolved_redirect_titles: BTreeSet<String>,
+}
+
+fn append_text(out: &mut Vec<u8>, value: &str) {
+    out.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    out.extend_from_slice(value.as_bytes());
+}
+
+/// Resolve against an already revision-joined batch, refusing explicit and
+/// category-derived IDs which cannot be found as real mainspace article
+/// records in the supplied batch. Title aliases await an authenticated
+/// page-ID redirect join instead of being guessed into redirect identities.
+///
+/// The returned digest detects supplied-input drift but does NOT authenticate
+/// a Wikimedia publication or prove full snapshot coverage.
+pub fn resolve_joined_revision_pinned(
+    records: &[JoinedEnterpriseArticle],
+    administrative: &BTreeSet<String>,
+    rules: &Rules,
+) -> Result<RevisionPinnedSelection, JoinedSelectionError> {
+    let joined = graph_from_joined(records, administrative).map_err(JoinedSelectionError::Graph)?;
+    let mainspace: BTreeMap<u64, u64> = records
+        .iter()
+        .filter(|record| record.structured.namespace == 0)
+        .map(|record| {
+            (
+                record.structured.page.page_id,
+                record.structured.revision_id,
+            )
+        })
+        .collect();
+    for id in rules.include.iter().chain(&rules.exclude) {
+        if !mainspace.contains_key(id) {
+            return Err(JoinedSelectionError::NotMainspace(*id));
+        }
+    }
+    let snapshot_id = format!("{}-{}", joined.project, joined.generation_id);
+    let selection = resolve_pinned(
+        &joined.graph,
+        rules,
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+        &snapshot_id,
+    )
+    .map_err(JoinedSelectionError::Resolution)?;
+
+    let mut page_revisions = BTreeMap::new();
+    for id in &selection.page_ids {
+        let revision = mainspace
+            .get(id)
+            .ok_or(JoinedSelectionError::NotMainspace(*id))?;
+        page_revisions.insert(*id, *revision);
+    }
+    let mut bytes = b"foundation-wikipedia/revision-pinned-selection/v1\0".to_vec();
+    append_text(&mut bytes, &joined.project);
+    append_text(&mut bytes, &joined.generation_id);
+    append_text(&mut bytes, &selection.snapshot_selection_sha256);
+    bytes.extend_from_slice(&(page_revisions.len() as u64).to_be_bytes());
+    for (id, revision) in &page_revisions {
+        bytes.extend_from_slice(&id.to_be_bytes());
+        bytes.extend_from_slice(&revision.to_be_bytes());
+    }
+    Ok(RevisionPinnedSelection {
+        project: joined.project,
+        generation_id: joined.generation_id,
+        selection,
+        page_revisions,
+        revision_selection_sha256: wiki_pack_format::sha256_hex(&bytes),
+        unresolved_redirect_titles: joined.unresolved_redirect_titles,
     })
 }
