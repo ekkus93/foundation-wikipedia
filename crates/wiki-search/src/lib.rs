@@ -813,13 +813,17 @@ mod tests {
             retrieved[0].article.clone(),
             retrieved[0].evidence.block_id.clone(),
         );
-        let valid = validate_corpus_citations(&index, &retrieved[..1], &[claim.clone()])
-            .unwrap();
+        let valid = validate_corpus_citations(&index, &retrieved[..1], &[claim.clone()]).unwrap();
         assert_eq!(valid, retrieved[..1]);
         assert_eq!(
-            validate_corpus_citations(&index, &retrieved[..1], &[
-                (retrieved[1].article.clone(), retrieved[1].evidence.block_id.clone())
-            ]),
+            validate_corpus_citations(
+                &index,
+                &retrieved[..1],
+                &[(
+                    retrieved[1].article.clone(),
+                    retrieved[1].evidence.block_id.clone()
+                )]
+            ),
             Err(CorpusCitationError::UnretrievedCitation(
                 retrieved[1].article.clone(),
                 retrieved[1].evidence.block_id.clone(),
