@@ -128,6 +128,27 @@ pub enum JoinedSelectionError {
     Graph(GraphBuildError),
     Resolution(ResolveError),
     NotMainspace(u64),
+    Redirect(RedirectBuildError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageRedirectIdentity {
+    pub project: String,
+    pub generation_id: String,
+    pub from_page_id: u64,
+    pub to_page_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RedirectBuildError {
+    InvalidId,
+    MixedSource,
+    DuplicateSource(u64),
+    ConflictsWithJoinedPage(u64),
+    MissingMainspaceTarget(u64),
+    Cycle(u64),
+    TooDeep,
+    TooMany,
 }
 
 /// Deterministic selection bound to exact selected article revisions, not just
@@ -159,6 +180,17 @@ pub fn resolve_joined_revision_pinned(
     administrative: &BTreeSet<String>,
     rules: &Rules,
 ) -> Result<RevisionPinnedSelection, JoinedSelectionError> {
+    resolve_joined_revision_pinned_with_redirects(records, administrative, rules, &[])
+}
+
+/// Resolve redirects only from caller-supplied page-ID identities matching the
+/// joined source generation. The caller must separately authenticate provenance.
+pub fn resolve_joined_revision_pinned_with_redirects(
+    records: &[JoinedEnterpriseArticle],
+    administrative: &BTreeSet<String>,
+    rules: &Rules,
+    redirect_identities: &[PageRedirectIdentity],
+) -> Result<RevisionPinnedSelection, JoinedSelectionError> {
     let joined = graph_from_joined(records, administrative).map_err(JoinedSelectionError::Graph)?;
     let mainspace: BTreeMap<u64, u64> = records
         .iter()
@@ -170,8 +202,10 @@ pub fn resolve_joined_revision_pinned(
             )
         })
         .collect();
+    let redirects = validate_redirect_identities(&joined, &mainspace, redirect_identities)
+        .map_err(JoinedSelectionError::Redirect)?;
     for id in rules.include.iter().chain(&rules.exclude) {
-        if !mainspace.contains_key(id) {
+        if !mainspace.contains_key(id) && !redirects.contains_key(id) {
             return Err(JoinedSelectionError::NotMainspace(*id));
         }
     }
@@ -179,7 +213,7 @@ pub fn resolve_joined_revision_pinned(
     let selection = resolve_pinned(
         &joined.graph,
         rules,
-        &BTreeMap::new(),
+        &redirects,
         &BTreeSet::new(),
         &snapshot_id,
     )
@@ -222,4 +256,51 @@ pub fn resolve_joined_revision_pinned(
         revision_selection_sha256: wiki_pack_format::sha256_hex(&bytes),
         unresolved_redirect_titles: joined.unresolved_redirect_titles,
     })
+}
+
+const MAX_REDIRECT_IDENTITIES: usize = 1_000_000;
+
+/// Validate all redirects, not only the ones reached by this topic.
+/// Unresolved redirect sources may be absent from the joined article records,
+/// but every final target must be a real joined namespace-0 article.
+fn validate_redirect_identities(
+    joined: &JoinedCategoryGraph,
+    mainspace: &BTreeMap<u64, u64>,
+    identities: &[PageRedirectIdentity],
+) -> Result<BTreeMap<u64, u64>, RedirectBuildError> {
+    if identities.len() > MAX_REDIRECT_IDENTITIES {
+        return Err(RedirectBuildError::TooMany);
+    }
+    let mut redirects = BTreeMap::new();
+    for identity in identities {
+        if identity.project != joined.project || identity.generation_id != joined.generation_id {
+            return Err(RedirectBuildError::MixedSource);
+        }
+        if identity.from_page_id == 0 || identity.to_page_id == 0 {
+            return Err(RedirectBuildError::InvalidId);
+        }
+        if joined.page_revisions.contains_key(&identity.from_page_id) {
+            return Err(RedirectBuildError::ConflictsWithJoinedPage(identity.from_page_id));
+        }
+        if redirects.insert(identity.from_page_id, identity.to_page_id).is_some() {
+            return Err(RedirectBuildError::DuplicateSource(identity.from_page_id));
+        }
+    }
+    for &start in redirects.keys() {
+        let mut seen = BTreeSet::new();
+        let mut current = start;
+        while let Some(&next) = redirects.get(&current) {
+            if !seen.insert(current) {
+                return Err(RedirectBuildError::Cycle(current));
+            }
+            if seen.len() > 4096 {
+                return Err(RedirectBuildError::TooDeep);
+            }
+            current = next;
+        }
+        if !mainspace.contains_key(&current) {
+            return Err(RedirectBuildError::MissingMainspaceTarget(current));
+        }
+    }
+    Ok(redirects)
 }
