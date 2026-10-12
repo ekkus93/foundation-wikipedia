@@ -50,6 +50,40 @@ pub fn parse_pinned_inventory(
     })
 }
 
+
+/// Stage only a member declared by the digest-pinned inventory. This does
+/// not independently authenticate the caller's expected inventory digest.
+pub fn stage_pinned_member<R: std::io::Read>(
+    root: &std::path::Path,
+    inventory: &PinnedInventory,
+    member_index: usize,
+    source: &mut R,
+    max_bytes: u64,
+) -> Result<u64, crate::public_dump_stage::StageWriteError> {
+    let member = inventory
+        .members
+        .get(member_index)
+        .ok_or(crate::public_dump_stage::StageWriteError::InvalidMember)?;
+    crate::public_dump_stage::stage_verified_member(root, member, source, max_bytes)
+}
+
+/// Verify every declared member before an importer reads the staging tree.
+/// The caller must keep the staging directory private against concurrent
+/// untrusted filesystem mutation (path preflight is not race protection).
+pub fn verify_pinned_staged_export(
+    root: &std::path::Path,
+    inventory: &PinnedInventory,
+    max_member_bytes: u64,
+) -> Result<u64, crate::public_dump_stage::StagedDumpError> {
+    crate::public_dump_stage::verify_staged_export(
+        root,
+        &inventory.members,
+        &inventory.project,
+        &inventory.date,
+        max_member_bytes,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,4 +113,45 @@ mod tests {
             Err(PinnedInventoryError::InvalidUtf8)
         );
     }
+
+    #[test]
+    fn pinned_staging_rejects_undeclared_members_and_corrupt_bytes() {
+        use std::io::Cursor;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("wiki-pinned-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let filename = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let bytes = b"fixture shard";
+        let raw = format!("{:x}  {filename}\\n", Sha256::digest(bytes));
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let inventory =
+            parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+
+        assert!(matches!(
+            stage_pinned_member(&root, &inventory, 1, &mut Cursor::new(bytes), 1024),
+            Err(crate::public_dump_stage::StageWriteError::InvalidMember)
+        ));
+        assert!(matches!(
+            stage_pinned_member(&root, &inventory, 0, &mut Cursor::new(b"bad"), 1024),
+            Err(crate::public_dump_stage::StageWriteError::DigestMismatch)
+        ));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        assert_eq!(
+            stage_pinned_member(&root, &inventory, 0, &mut Cursor::new(bytes), 1024).unwrap(),
+            bytes.len() as u64
+        );
+        assert_eq!(
+            verify_pinned_staged_export(&root, &inventory, 1024).unwrap(),
+            bytes.len() as u64
+        );
+        std::fs::write(root.join(filename), b"tampered").unwrap();
+        assert!(matches!(
+            verify_pinned_staged_export(&root, &inventory, 1024),
+            Err(crate::public_dump_stage::StagedDumpError::Member(_))
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
 }
