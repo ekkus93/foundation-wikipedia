@@ -28,6 +28,7 @@ pub enum ResolveError {
     TooManyCandidates,
     RedirectCycle(u64),
     RedirectTooDeep,
+    TooManyRedirects,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,6 +148,51 @@ pub fn resolve_with_redirects(
     })
 }
 
+/// Validate the entire supplied redirect identity map before fingerprinting it.
+/// Memoized suffix depths keep shared chains linear in their total edges.
+/// This checks internal consistency, not Wikimedia publisher authenticity.
+fn validate_pinned_redirect_map(redirects: &BTreeMap<u64, u64>) -> Result<(), ResolveError> {
+    if redirects.len() > 1_000_000 {
+        return Err(ResolveError::TooManyRedirects);
+    }
+    let mut suffix_depths: BTreeMap<u64, usize> = BTreeMap::new();
+    for &start in redirects.keys() {
+        if suffix_depths.contains_key(&start) {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        let mut path = Vec::new();
+        let mut current = start;
+        let mut depth = loop {
+            if current == 0 {
+                return Err(ResolveError::InvalidPage);
+            }
+            if let Some(&cached) = suffix_depths.get(&current) {
+                break cached;
+            }
+            let Some(&next) = redirects.get(&current) else {
+                break 0usize;
+            };
+            if !seen.insert(current) {
+                return Err(ResolveError::RedirectCycle(current));
+            }
+            path.push(current);
+            if path.len() > 4096 {
+                return Err(ResolveError::RedirectTooDeep);
+            }
+            current = next;
+        };
+        if path.len().saturating_add(depth) > 4096 {
+            return Err(ResolveError::RedirectTooDeep);
+        }
+        for source in path.into_iter().rev() {
+            depth += 1;
+            suffix_depths.insert(source, depth);
+        }
+    }
+    Ok(())
+}
+
 fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, ResolveError> {
     let mut visited = BTreeSet::new();
     loop {
@@ -236,6 +282,7 @@ pub fn resolve_pinned(
     {
         return Err(ResolveError::InvalidPage);
     }
+    validate_pinned_redirect_map(redirects)?;
     let resolved = resolve_with_redirects(graph, rules, redirects, disambiguations)?;
     let mut definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
     append_strings(&mut definition, &rules.roots);
@@ -353,6 +400,37 @@ mod pinned_tests {
             );
         }
     }
+    #[test]
+    fn pinned_receipts_reject_unselected_redirect_cycles_and_overlong_chains() {
+        let graph = BTreeMap::from([(
+            "Category:Selected".to_owned(),
+            Category {
+                articles: vec![2],
+                children: vec![],
+                administrative: false,
+            },
+        )]);
+        let rules = Rules {
+            roots: vec!["Category:Selected".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 10,
+        };
+        let check = |redirects: &BTreeMap<u64, u64>| {
+            resolve_pinned(&graph, &rules, redirects, &BTreeSet::new(), "enwiki-20261001")
+        };
+        let cycle = BTreeMap::from([(100, 101), (101, 100)]);
+        assert_eq!(check(&cycle), Err(ResolveError::RedirectCycle(100)));
+        let valid: BTreeMap<_, _> = (10_000..14_096)
+            .map(|id| (id, if id == 14_095 { 2 } else { id + 1 }))
+            .collect();
+        assert_eq!(check(&valid).unwrap().page_ids, vec![2]);
+        let mut too_long = valid;
+        too_long.insert(9_999, 10_000);
+        assert_eq!(check(&too_long), Err(ResolveError::RedirectTooDeep));
+    }
+
     #[test]
     fn pinned_receipts_reject_invalid_unselected_source_identities() {
         let rules = Rules {
