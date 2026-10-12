@@ -10,3 +10,4 @@ workspace = true
 
 [dependencies]
 wiki-pack-builder = { path = "../../crates/wiki-pack-builder" }
+wiki-pack-format = { path = "../../crates/wiki-pack-format" }
