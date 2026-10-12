@@ -57,6 +57,7 @@ fn previews_resolved_ids_counts_warnings_and_snapshot_receipts() {
     assert_eq!(preview.visited_category_count, 3);
     assert_eq!(preview.skipped_administrative_count, 1);
     assert_eq!(preview.inspected_article_mentions, 5);
+    assert_eq!(preview.inspected_child_category_mentions, 3);
     assert_eq!(preview.explicit_include_ids, 1);
     assert_eq!(preview.explicit_exclude_ids, 1);
     assert_eq!(preview.largest_category.as_ref().unwrap().name, "Root");
@@ -148,4 +149,42 @@ fn preview_fails_closed_when_selection_is_invalid() {
         ),
         Err(ResolveError::TooManyPages)
     );
+}
+
+#[test]
+fn child_category_fanout_is_warned_before_expensive_traversal() {
+    let children: Vec<_> = (0..200).map(|index| format!("Child-{index}")).collect();
+    let mut graph = BTreeMap::from([(
+        "Root".into(),
+        Category {
+            articles: vec![],
+            children: children.clone(),
+            administrative: false,
+        },
+    )]);
+    for child in children {
+        graph.insert(child, Category::default());
+    }
+    let rules = Rules {
+        roots: vec!["Root".into()],
+        include: vec![],
+        exclude: vec![],
+        depth_limit: 1,
+        page_limit: 100,
+    };
+    let preview = preview_pinned_selection(
+        &graph,
+        &rules,
+        &BTreeMap::new(),
+        &BTreeSet::new(),
+        "enwiki-1",
+    )
+    .unwrap();
+    assert_eq!(preview.selected_page_count, 0);
+    assert_eq!(preview.visited_category_count, 201);
+    assert_eq!(preview.inspected_child_category_mentions, 200);
+    assert!(preview
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("broad subcategory expansion")));
 }

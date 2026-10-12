@@ -21,6 +21,8 @@ pub struct SelectionPreview {
     pub visited_category_count: usize,
     pub skipped_administrative_count: usize,
     pub inspected_article_mentions: usize,
+    /// Raw child-category edges eligible for traversal, including duplicates.
+    pub inspected_child_category_mentions: usize,
     pub explicit_include_ids: usize,
     pub explicit_exclude_ids: usize,
     pub largest_category: Option<CategoryFanout>,
@@ -42,6 +44,7 @@ pub fn preview_pinned_selection(
     let mut queue: VecDeque<_> = rules.roots.iter().map(|name| (name.clone(), 0)).collect();
     let mut skipped_administrative_count = 0usize;
     let mut inspected_article_mentions = 0usize;
+    let mut inspected_child_category_mentions = 0usize;
     let mut largest_category: Option<CategoryFanout> = None;
     let mut warnings: BTreeSet<String> = selection.warnings.iter().cloned().collect();
 
@@ -72,6 +75,14 @@ pub fn preview_pinned_selection(
             largest_category = Some(fanout);
         }
         if depth < rules.depth_limit {
+            inspected_child_category_mentions =
+                inspected_child_category_mentions.saturating_add(node.children.len());
+            if node.children.len() >= 128 {
+                warnings.insert(format!(
+                    "Review broad subcategory expansion: {name} has {} child-category mentions",
+                    node.children.len()
+                ));
+            }
             queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
         }
     }
@@ -99,6 +110,7 @@ pub fn preview_pinned_selection(
         visited_category_count: visited.len(),
         skipped_administrative_count,
         inspected_article_mentions,
+        inspected_child_category_mentions,
         explicit_include_ids: rules.include.iter().copied().collect::<BTreeSet<_>>().len(),
         explicit_exclude_ids: rules.exclude.iter().copied().collect::<BTreeSet<_>>().len(),
         largest_category,
