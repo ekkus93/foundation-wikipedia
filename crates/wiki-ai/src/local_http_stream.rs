@@ -153,12 +153,7 @@ fn read_body<R: Read>(
     let mut buffer = [0u8; 8192];
     while remaining > 0 {
         let capacity = remaining.min(buffer.len());
-        let n = checked_read(
-            reader,
-            &mut buffer[..capacity],
-            cancellation,
-            deadline,
-        )?;
+        let n = checked_read(reader, &mut buffer[..capacity], cancellation, deadline)?;
         if n == 0 {
             return Err(ProviderError::InvalidResponse);
         }
