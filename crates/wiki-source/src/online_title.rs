@@ -215,6 +215,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unrepresented_interwiki_and_fragment_redirects() {
+        for body in [
+            r#"{"query":{"redirects":[{"from":"A","to":"B","tofragment":"History"}],"pages":[{"pageid":42,"ns":0,"title":"B"}]}}"#,
+            r#"{"query":{"redirects":[{"from":"A","to":"B","tointerwiki":"dewiki"}],"pages":[{"pageid":42,"ns":0,"title":"B"}]}}"#,
+            r#"{"query":{"interwiki":[{"title":"A","url":"https://de.wikipedia.org/wiki/A"}],"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#,
+            r#"{"query":{"interwiki":{},"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#,
+        ] {
+            assert_eq!(
+                parse_title_resolution(body, "enwiki", "A"),
+                Err(TitleResolutionError::RedirectChain),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_unsafe_identifiers_and_unbounded_responses() {
         assert_eq!(
             parse_title_resolution(r#"{"error":{"code":"badtitle"}}"#, "enwiki", "A"),
