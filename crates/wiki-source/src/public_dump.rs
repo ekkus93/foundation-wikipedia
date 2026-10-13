@@ -95,6 +95,21 @@ fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
     (start > 0 && end >= start).then_some((start, end))
 }
 
+fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
+    let suffix = name.strip_prefix(prefix)?;
+    let (number, range) = suffix.split_once(".xml-p")?;
+    if number.is_empty()
+        || number.starts_with('0')
+        || !number.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let (first, last) = range.strip_suffix(".bz2")?.split_once('p')?;
+    let start = first.parse::<u64>().ok()?;
+    let end = last.parse::<u64>().ok()?;
+    (start > 0 && end >= start).then_some((start, end))
+}
+
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
     let d = date.as_bytes();
@@ -116,6 +131,8 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
         return false;
     }
     let prefix = format!("{wiki}-{date}-p");
+    let legacy_prefix = format!("{wiki}-{}-pages-meta-current", date.replace('-', ""));
+    let mut format_kind = None;
     let mut names = BTreeSet::new();
     let mut partitions = Vec::with_capacity(members.len());
     for item in members {
@@ -127,9 +144,17 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
         {
             return false;
         }
-        let Some(partition) = page_partition(name, &prefix) else {
+        let (partition, kind) = if let Some(range) = page_partition(name, &prefix) {
+            (range, 0)
+        } else if let Some(range) = legacy_page_partition(name, &legacy_prefix) {
+            (range, 1)
+        } else {
             return false;
         };
+        if format_kind.is_some_and(|previous| previous != kind) {
+            return false;
+        }
+        format_kind = Some(kind);
         partitions.push(partition);
     }
     // The inventory is untrusted input: the same page-ID range must not
@@ -219,6 +244,26 @@ mod tests {
                 !matches_current_export(&overlap, "enwiki", "2026-10-01"),
                 "accepted overlapping or repeated partition {other}"
             );
+        }
+    }
+
+    #[test]
+    fn legacy_public_current_dump_members_are_supported_without_format_mixing() {
+        let first = "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2";
+        let second = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2";
+        let legacy = parse_sha256sums(&format!("{}\\n{}", line(first), line(second))).unwrap();
+        assert!(matches_current_export(&legacy, "enwiki", "2026-10-01"));
+        let current = "enwiki-2026-10-01-p201p300.xml.bz2";
+        let mixed = parse_sha256sums(&format!("{}\\n{}", line(first), line(current))).unwrap();
+        assert!(!matches_current_export(&mixed, "enwiki", "2026-10-01"));
+        for invalid in [
+            "enwiki-20261001-pages-meta-current0.xml-p1p100.bz2",
+            "enwiki-20261001-pages-meta-current01.xml-p1p100.bz2",
+            "enwiki-20260901-pages-meta-current1.xml-p1p100.bz2",
+            "enwiki-20261001-pages-meta-history1.xml-p1p100.bz2",
+        ] {
+            let items = parse_sha256sums(&line(invalid)).unwrap();
+            assert!(!matches_current_export(&items, "enwiki", "2026-10-01"));
         }
     }
 
