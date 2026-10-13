@@ -20,6 +20,12 @@ fn check_parts(
     depth: usize,
     count: &mut usize,
 ) -> Result<(), IntegrityError> {
+    // A leaf at the maximum supported depth has an empty child slice at
+    // depth + 1. Match the parser's limit: only actual parts count toward
+    // nesting depth, not the empty child list after a leaf.
+    if parts.is_empty() {
+        return Ok(());
+    }
     if depth > MAX_PART_DEPTH {
         return Err(IntegrityError::PartDepthExceeded);
     }
@@ -165,12 +171,16 @@ mod tests {
         let mut leaf = article.structured.sections[0].clone();
         leaf.has_parts.clear();
         let mut nested = leaf.clone();
-        for _ in 0..=MAX_PART_DEPTH {
+        for _ in 0..MAX_PART_DEPTH {
             let mut parent = leaf.clone();
             parent.has_parts = vec![nested];
             nested = parent;
         }
-        article.structured.sections = vec![nested];
+        article.structured.sections = vec![nested.clone()];
+        assert_eq!(validate_joined_evidence(&article), Ok(()));
+        let mut beyond_limit = leaf;
+        beyond_limit.has_parts = vec![nested];
+        article.structured.sections = vec![beyond_limit];
         assert_eq!(
             validate_joined_evidence(&article),
             Err(IntegrityError::PartDepthExceeded)
