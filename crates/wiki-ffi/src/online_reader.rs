@@ -6,7 +6,7 @@ use wiki_model::ArticleKey;
 use wiki_source::online_fetch::{
     fetch_article, fetch_title, FetchFailure, FetchOutcome, MediaWikiTransport,
 };
-use wiki_source::online_selection::{ArticleVersion, NetworkState};
+use wiki_source::online_selection::{ArticleLocation, ArticleVersion, NetworkState};
 use wiki_store::online_cache::{CachedHtml, HtmlCacheError, RevisionHtmlCache};
 
 #[derive(Debug)]
@@ -33,6 +33,26 @@ fn persist<E>(
             .map_err(CachedFetchError::Cache)?;
     }
     Ok(())
+}
+
+/// Return the newest verified HTML cache candidate for display selection.
+/// The stored HTML alone never proves that images, math, and other required
+/// visual objects exist locally; only an independent completeness verifier
+/// may authorize a true offline/saved article version.
+pub fn latest_temporary_version(
+    cache: &RevisionHtmlCache,
+    key: &ArticleKey,
+) -> Result<Option<ArticleVersion>, HtmlCacheError> {
+    Ok(cache
+        .list_cached_revisions(key)?
+        .into_iter()
+        .next()
+        .map(|article| ArticleVersion {
+            key: article.key,
+            revision_id: article.revision_id,
+            location: ArticleLocation::TemporaryCache,
+            local_complete: false,
+        }))
 }
 
 /// Only a successful exact-oldid render may populate temporary storage.
@@ -249,5 +269,33 @@ mod tests {
         ));
         assert_eq!(client.calls, 3);
         assert_eq!(cache.get(&key(), 333).unwrap().unwrap().title, "Physics");
+    }
+    #[test]
+    fn cached_html_candidate_cannot_claim_offline_completeness() {
+        use wiki_source::online_selection::{choose_article, ReaderSelection};
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        assert!(latest_temporary_version(&cache, &key()).unwrap().is_none());
+        fetch_page_cached(
+            &mut good(),
+            &mut cache,
+            &key(),
+            NetworkState::Online,
+            &[],
+            100,
+        )
+        .unwrap();
+        let cached = latest_temporary_version(&cache, &key()).unwrap().unwrap();
+        assert_eq!(cached.key, key());
+        assert_eq!(cached.revision_id, 333);
+        assert_eq!(cached.location, ArticleLocation::TemporaryCache);
+        assert!(!cached.local_complete);
+        assert_eq!(
+            choose_article(&key(), NetworkState::Offline, &[cached.clone()]),
+            Ok(ReaderSelection::MissingOffline)
+        );
+        assert_eq!(
+            choose_article(&key(), NetworkState::Online, &[cached]),
+            Ok(ReaderSelection::FetchCurrent { fallback: None })
+        );
     }
 }
