@@ -11,6 +11,7 @@ pub enum IntegrityError {
     UnknownTableReference(String),
     DuplicateReference(String),
     DuplicateTable(String),
+    InvalidIdentifier(&'static str),
     PartDepthExceeded,
     PartCountExceeded,
 }
