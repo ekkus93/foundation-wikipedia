@@ -1234,3 +1234,15 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** `wiki-ai::local_http::discover_models` now uses a bounded, incremental HTTP response reader with a three-second overall response-read deadline, 250 ms socket read polling and a 1 MiB aggregate byte limit. This closes an availability hole where an opt-in local/LAN peer could keep discovery open indefinitely by sending a small amount of data just before every per-read timeout. The connect/write timeouts, pinned validated socket, no DNS/proxy/redirect policy and explicit HTTPS refusal remain unchanged. Synthetic reader regressions cover already-expired deadline, oversized response and normal read.
 - **Exact-head qualification:** Implementation `22eefa4bb555b9f450e846e1ce3d289ea28e5955` failed formatting only ([Rust CI 38371141985](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38371141985)); formatted code `99c7f255ac24f2b9ffa543889ffbdb97cd1a5602` passed [Rust workspace CI 38371244763](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38371244763), [Platform shells CI 38371244750](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38371244750), and [Android Rust ABI CI 38371244838](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38371244838).
 - **Remaining:** Live Ollama/llama-server inference, authenticated HTTPS, persistent provider configuration, grounded-response and desktop/Android acceptance are outstanding. **AI-002 remains unchecked.**
+
+### 2026-10-13 — STATE-001 atomic private reading data deletion (partial)
+
+- **Implementation:** A transaction deletes bookmarks, revision-scoped reading positions, opt-in visit history, and all article chat threads/messages together, without deleting pack ownership, builder jobs, or ordinary settings. Synthetic regression tests verify deletion, cascade, idempotency and preserved unrelated state.
+- **Qualified exact code:** a7f006a6eb2e4835c0c2176f0d11a8e44d240478 passed Rust workspace CI 38371692853, Platform shells CI 38371692792 and Android Rust ABI CI 38371692790. Android record codec probe 38371692665 remained in progress when last checked.
+- **Remaining:** UI deletion confirmation, logs/caches privacy inspection, backup/migration, real device lifecycle acceptance. STATE-001 remains unchecked.
+
+### 2026-10-13 — STATE-001 restart-discoverable builder jobs (partial)
+
+- **Implementation:** Bounded, deterministic enumeration of persisted builder-job ID/status rows; invalid or corrupted stored status fails closed. Synthetic tests verify ordering, row limit, and invalid persisted states.
+- **Qualified exact code:** 64c10d8134360a8bc6b02a87179686f3cf2ecbe3 passed Rust workspace CI 38372468828, Platform shells CI 38372468611 and Android Rust ABI CI 38372468582. Android record codec probe 38372468581 remained in progress when last checked.
+- **Remaining:** Actual worker and restart recovery, progress/cancellation, pack pipeline qualification, GUI/CLI/device acceptance. STATE-001 and PACK-006 remain unchecked.
