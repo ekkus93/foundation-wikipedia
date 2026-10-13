@@ -94,6 +94,7 @@ pub fn parse_title_resolution(
         .get("ns")
         .and_then(Value::as_i64)
         .and_then(|number| i32::try_from(number).ok())
+        .filter(|namespace| *namespace == 0)
         .ok_or(TitleResolutionError::InvalidIdentity)?;
     let canonical_title = page
         .get("title")
