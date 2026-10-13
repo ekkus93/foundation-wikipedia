@@ -268,6 +268,32 @@ impl RevisionHtmlCache {
         Ok(Some(article))
     }
 
+    /// Enumerate verified temporary copies, newest fetch first.
+    /// This is not evidence of current upstream content or offline media.
+    pub fn list_cached_revisions(
+        &self,
+        key: &ArticleKey,
+    ) -> Result<Vec<CachedHtml>, HtmlCacheError> {
+        let (page_id, _) = validate_key(key, 1)?;
+        let mut statement = self.conn.prepare(
+            "SELECT revision_id FROM cached_html
+             WHERE project=?1 AND page_id=?2
+             ORDER BY fetched_at DESC, revision_id DESC",
+        )?;
+        let ids = statement
+            .query_map(params![key.project, page_id], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let revision_id = u64::try_from(id).map_err(|_| HtmlCacheError::InvalidIdentity)?;
+            let item = self
+                .get(key, revision_id)?
+                .ok_or(HtmlCacheError::InvalidContent)?;
+            results.push(item);
+        }
+        Ok(results)
+    }
+
     /// Evict every temporary HTML entry without touching immutable packs,
     /// explicitly saved offline content, or the separate user-state store.
     /// Returns the number of cache rows removed.
