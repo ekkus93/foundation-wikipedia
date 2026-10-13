@@ -39,10 +39,7 @@ const MAX_IDS: usize = 100_000_000;
 const MAX_EXAMPLES: usize = 12;
 
 fn validate(census: PageCensus<'_>) -> Result<(), PageCoverageError> {
-    if census.project.is_empty()
-        || census.generation.is_empty()
-        || census.page_ids.is_empty()
-    {
+    if census.project.is_empty() || census.generation.is_empty() || census.page_ids.is_empty() {
         return Err(PageCoverageError::InvalidCensus);
     }
     if census.page_ids.len() > MAX_IDS {
@@ -149,10 +146,8 @@ mod tests {
 
     #[test]
     fn checksum_valid_but_missing_pages_fails_closed() {
-        let result = audit_page_coverage(
-            census(&[100, 101, 102, 103, 104]),
-            census(&[100, 102, 104]),
-        );
+        let result =
+            audit_page_coverage(census(&[100, 101, 102, 103, 104]), census(&[100, 102, 104]));
         assert_eq!(
             result,
             Err(PageCoverageError::MissingOrUnexpected(PageCoverageDelta {
@@ -184,11 +179,23 @@ mod tests {
     fn rejects_noncomparable_empty_duplicate_unsorted_or_zero_id_inputs() {
         let ids = [1, 2, 3];
         assert_eq!(
-            audit_page_coverage(census(&ids), PageCensus { namespace: 1, ..census(&ids) }),
+            audit_page_coverage(
+                census(&ids),
+                PageCensus {
+                    namespace: 1,
+                    ..census(&ids)
+                }
+            ),
             Err(PageCoverageError::IncompatibleCensus)
         );
         assert_eq!(
-            audit_page_coverage(census(&ids), PageCensus { generation: "2026-08-01", ..census(&ids) }),
+            audit_page_coverage(
+                census(&ids),
+                PageCensus {
+                    generation: "2026-08-01",
+                    ..census(&ids)
+                }
+            ),
             Err(PageCoverageError::IncompatibleCensus)
         );
         assert_eq!(
