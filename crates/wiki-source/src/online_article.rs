@@ -78,15 +78,14 @@ fn valid_utc_timestamp(stamp: &str) -> bool {
         || b[13] != b':'
         || b[16] != b':'
         || b[19] != b'Z'
-        || !b.iter().enumerate().all(|(i, c)| {
-            matches!(i, 4 | 7 | 10 | 13 | 16 | 19) || c.is_ascii_digit()
-        })
+        || !b
+            .iter()
+            .enumerate()
+            .all(|(i, c)| matches!(i, 4 | 7 | 10 | 13 | 16 | 19) || c.is_ascii_digit())
     {
         return false;
     }
-    let number = |start: usize, end: usize| {
-        stamp[start..end].parse::<u32>().unwrap_or(0)
-    };
+    let number = |start: usize, end: usize| stamp[start..end].parse::<u32>().unwrap_or(0);
     (1..=12).contains(&number(5, 7))
         && (1..=31).contains(&number(8, 10))
         && number(11, 13) <= 23
@@ -192,7 +191,9 @@ pub fn parse_rendered_revision(
         return Err(OnlineArticleError::InvalidIdentity);
     }
     let value = parse_response(body, MAX_RENDERED_BYTES)?;
-    let parsed = value.get("parse").ok_or(OnlineArticleError::InvalidResponse)?;
+    let parsed = value
+        .get("parse")
+        .ok_or(OnlineArticleError::InvalidResponse)?;
     if parsed.get("pageid").and_then(Value::as_u64) != Some(pinned.key.page_id)
         || parsed.get("revid").and_then(Value::as_u64) != Some(pinned.revision_id)
         || parsed.get("title").and_then(Value::as_str) != Some(pinned.title.as_str())
@@ -258,14 +259,41 @@ mod tests {
     #[test]
     fn rejects_missing_redirect_multiple_revisions_and_noncanonical_metadata() {
         for (body, expected) in [
-            (META.replace(r#""pageid":42"#, r#""pageid":0"#), OnlineArticleError::InvalidIdentity),
-            (META.replace(r#""ns":0"#, r#""ns":2147483648"#), OnlineArticleError::InvalidIdentity),
-            (META.replace(r#""revid":300"#, r#""revid":0"#), OnlineArticleError::InvalidIdentity),
-            (META.replace("2026-10-13T10:45:00Z", "not-a-date"), OnlineArticleError::InvalidIdentity),
-            (META.replace(r#""title":"Énergie""#, r#""title":"Bad\nTitle""#), OnlineArticleError::InvalidIdentity),
-            (META.replace(r#""revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]"#, r#""revisions":[]"#), OnlineArticleError::InvalidResponse),
-            (META.replace(r#""pageid":42"#, r#""missing":true,"pageid":42"#), OnlineArticleError::MissingPage),
-            (META.replace(r#""pageid":42"#, r#""redirect":true,"pageid":42"#), OnlineArticleError::RedirectNeedsResolution),
+            (
+                META.replace(r#""pageid":42"#, r#""pageid":0"#),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
+                META.replace(r#""ns":0"#, r#""ns":2147483648"#),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
+                META.replace(r#""revid":300"#, r#""revid":0"#),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
+                META.replace("2026-10-13T10:45:00Z", "not-a-date"),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
+                META.replace(r#""title":"Énergie""#, r#""title":"Bad\nTitle""#),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
+                META.replace(
+                    r#""revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]"#,
+                    r#""revisions":[]"#,
+                ),
+                OnlineArticleError::InvalidResponse,
+            ),
+            (
+                META.replace(r#""pageid":42"#, r#""missing":true,"pageid":42"#),
+                OnlineArticleError::MissingPage,
+            ),
+            (
+                META.replace(r#""pageid":42"#, r#""redirect":true,"pageid":42"#),
+                OnlineArticleError::RedirectNeedsResolution,
+            ),
         ] {
             assert_eq!(parse_current_revision(&body, "frwiki", 42), Err(expected));
         }
@@ -287,7 +315,10 @@ mod tests {
     fn malformed_rendering_and_unpinned_output_fail_closed() {
         let revision = parse_current_revision(META, "frwiki", 42).unwrap();
         assert_eq!(
-            parse_rendered_revision(r#"{"parse":{"pageid":42,"revid":300,"title":"Énergie","text":"<script>bad()</script>"}}"#, &revision),
+            parse_rendered_revision(
+                r#"{"parse":{"pageid":42,"revid":300,"title":"Énergie","text":"<script>bad()</script>"}}"#,
+                &revision
+            ),
             Err(OnlineArticleError::UnsafeHtml)
         );
         assert_eq!(
@@ -295,7 +326,10 @@ mod tests {
             Err(OnlineArticleError::ApiError)
         );
         assert_eq!(
-            parse_rendered_revision(r#"{"parse":{"pageid":42,"title":"Énergie","text":"<p>hello</p>"}}"#, &revision),
+            parse_rendered_revision(
+                r#"{"parse":{"pageid":42,"title":"Énergie","text":"<p>hello</p>"}}"#,
+                &revision
+            ),
             Err(OnlineArticleError::RevisionMismatch)
         );
     }
