@@ -872,6 +872,29 @@ mod tests {
     }
 
     #[test]
+    fn parsed_evidence_identifiers_reject_controls_and_excessive_lengths() {
+        let fields = [
+            "/sections/0/has_parts/0/citations/0/identifier",
+            "/sections/0/table_references/0/identifier",
+            "/references/0/identifier",
+            "/tables/0/identifier",
+        ];
+        for pointer in fields {
+            let mut record: Value = serde_json::from_str(&structured_json()).unwrap();
+            *record.pointer_mut(pointer).unwrap() = Value::String("bad".to_owned() + &char::from(10).to_string());
+            assert_eq!(
+                parse_structured_article(&record.to_string(), "2026-10-01"),
+                Err(EnterpriseError::InvalidField("identifier"))
+            );
+            *record.pointer_mut(pointer).unwrap() = Value::String("x".repeat(4097));
+            assert_eq!(
+                parse_structured_article(&record.to_string(), "2026-10-01"),
+                Err(EnterpriseError::InvalidField("identifier"))
+            );
+        }
+    }
+
+    #[test]
     fn batch_join_is_stable_and_rejects_duplicate_missing_and_deleted_pages() {
         let structured_42 = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
         let regular_42 = parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
