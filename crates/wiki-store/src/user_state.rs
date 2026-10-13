@@ -44,7 +44,6 @@ pub struct BuilderJob {
     pub status: String,
 }
 
-
 fn valid_pack_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
@@ -516,9 +515,9 @@ impl UserState {
         if limit > 1000 {
             return Err(UserStateError::InvalidValue);
         }
-        let mut statement = self.conn.prepare(
-            "SELECT job_id,status FROM builder_jobs ORDER BY job_id ASC LIMIT ?1",
-        )?;
+        let mut statement = self
+            .conn
+            .prepare("SELECT job_id,status FROM builder_jobs ORDER BY job_id ASC LIMIT ?1")?;
         let rows = statement.query_map(params![limit as i64], |row| {
             Ok(BuilderJob {
                 id: row.get(0)?,
