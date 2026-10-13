@@ -18,7 +18,10 @@ fn official_search_returns_mainspace_navigation_identities() {
     let SearchOutcome::Results(hits) = response else {
         panic!("explicit online search must not report an offline index state");
     };
-    assert!(!hits.is_empty(), "expected nonempty Wikipedia search results");
+    assert!(
+        !hits.is_empty(),
+        "expected nonempty Wikipedia search results"
+    );
     for hit in hits {
         assert_eq!(hit.key.project, "enwiki");
         assert!(hit.key.page_id > 0);
