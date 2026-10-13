@@ -10,7 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use wiki_model::ArticleKey;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const MAX_HTML_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CACHE_BYTES: i64 = 64 * 1024 * 1024;
 const MAX_CACHE_ROWS: i64 = 128;
@@ -66,6 +66,27 @@ fn digest(html: &str) -> String {
     format!("{:x}", Sha256::digest(html.as_bytes()))
 }
 
+/// Bind all persisted metadata and HTML to the revision identity. Length
+/// prefixes prevent ambiguous concatenations of attacker-controlled strings.
+fn record_digest(article: &CachedHtml) -> String {
+    let mut hash = Sha256::new();
+    let page_id = article.key.page_id.to_be_bytes();
+    let revision_id = article.revision_id.to_be_bytes();
+    let fetched_at = article.fetched_at.to_be_bytes();
+    for field in [
+        article.key.project.as_bytes(),
+        page_id.as_slice(),
+        revision_id.as_slice(),
+        article.title.as_bytes(),
+        article.html.as_bytes(),
+        fetched_at.as_slice(),
+    ] {
+        hash.update((field.len() as u64).to_be_bytes());
+        hash.update(field);
+    }
+    format!("{:x}", hash.finalize())
+}
+
 impl RevisionHtmlCache {
     pub fn open(path: &Path) -> Result<Self, HtmlCacheError> {
         Self::initialize(Connection::open(path)?)
@@ -80,8 +101,14 @@ impl RevisionHtmlCache {
         if !(0..=SCHEMA_VERSION).contains(&version) {
             return Err(HtmlCacheError::UnsupportedSchema(version));
         }
-        if version == 0 {
+        if version < SCHEMA_VERSION {
             let tx = conn.transaction()?;
+            if version == 1 {
+                // This is a disposable *temporary* cache, not saved articles.
+                // V1 did not authenticate title/identity/fetch timestamp.
+                // Never bless legacy metadata by rehashing it in place.
+                tx.execute_batch("DROP TABLE cached_html;")?;
+            }
             tx.execute_batch(
                 "CREATE TABLE cached_html (
                     project TEXT NOT NULL,
@@ -90,6 +117,7 @@ impl RevisionHtmlCache {
                     title TEXT NOT NULL,
                     html TEXT NOT NULL,
                     sha256 TEXT NOT NULL,
+                    record_sha256 TEXT NOT NULL,
                     fetched_at INTEGER NOT NULL CHECK(fetched_at > 0),
                     PRIMARY KEY(project, page_id, revision_id)
                  );
@@ -115,28 +143,41 @@ impl RevisionHtmlCache {
         let tx = self.conn.transaction()?;
         // A revision key must never be silently rebound to different content.
         // An explicit remove is required before a replacement is accepted.
-        let existing: Option<(String, String, String)> = tx
+        let existing: Option<(String, String, String, String, i64)> = tx
             .query_row(
-                "SELECT title, html, sha256 FROM cached_html
+                "SELECT title, html, sha256, record_sha256, fetched_at
+                 FROM cached_html
                  WHERE project=?1 AND page_id=?2 AND revision_id=?3",
                 params![article.key.project, page_id, revision_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?;
-        if let Some((title, html, sha256)) = existing {
-            if digest(&html) != sha256 {
+        let mut stored = article.clone();
+        if let Some((title, html, sha256, record_sha256, fetched_at)) = existing {
+            let previous = CachedHtml {
+                key: article.key.clone(),
+                revision_id: article.revision_id,
+                title,
+                html,
+                fetched_at,
+            };
+            if digest(&previous.html) != sha256
+                || record_digest(&previous) != record_sha256
+            {
                 return Err(HtmlCacheError::DigestMismatch);
             }
-            if title != article.title || html != article.html {
+            if previous.title != article.title || previous.html != article.html {
                 return Err(HtmlCacheError::RevisionConflict);
             }
+            stored.fetched_at = stored.fetched_at.max(previous.fetched_at);
         }
         tx.execute(
             "INSERT INTO cached_html
-                (project, page_id, revision_id, title, html, sha256, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                (project, page_id, revision_id, title, html, sha256, record_sha256, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(project, page_id, revision_id) DO UPDATE SET
-                fetched_at=MAX(cached_html.fetched_at, excluded.fetched_at)",
+                fetched_at=excluded.fetched_at,
+                record_sha256=excluded.record_sha256",
             params![
                 article.key.project,
                 page_id,
@@ -144,7 +185,8 @@ impl RevisionHtmlCache {
                 article.title,
                 article.html,
                 digest(&article.html),
-                article.fetched_at
+                record_digest(&stored),
+                stored.fetched_at
             ],
         )?;
         // Bound both row count and aggregate stored HTML bytes. Eviction
@@ -179,16 +221,17 @@ impl RevisionHtmlCache {
         revision_id: u64,
     ) -> Result<Option<CachedHtml>, HtmlCacheError> {
         let (page_id, revision) = validate_key(key, revision_id)?;
-        let row: Option<(String, String, String, i64)> = self
+        let row: Option<(String, String, String, String, i64)> = self
             .conn
             .query_row(
-                "SELECT title, html, sha256, fetched_at FROM cached_html
+                "SELECT title, html, sha256, record_sha256, fetched_at
+                 FROM cached_html
                  WHERE project=?1 AND page_id=?2 AND revision_id=?3",
                 params![key.project, page_id, revision],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?;
-        let Some((title, html, sha256, fetched_at)) = row else {
+        let Some((title, html, sha256, record_sha256, fetched_at)) = row else {
             return Ok(None);
         };
         if !valid_title(&title)
@@ -198,16 +241,17 @@ impl RevisionHtmlCache {
         {
             return Err(HtmlCacheError::InvalidContent);
         }
-        if digest(&html) != sha256 {
-            return Err(HtmlCacheError::DigestMismatch);
-        }
-        Ok(Some(CachedHtml {
+        let article = CachedHtml {
             key: key.clone(),
             revision_id,
             title,
             html,
             fetched_at,
-        }))
+        };
+        if digest(&article.html) != sha256 || record_digest(&article) != record_sha256 {
+            return Err(HtmlCacheError::DigestMismatch);
+        }
+        Ok(Some(article))
     }
 
     /// Evict every temporary HTML entry without touching immutable packs,
@@ -362,6 +406,65 @@ mod tests {
             cache.get(&first.key, first.revision_id).unwrap(),
             Some(first)
         );
+    }
+
+    #[test]
+    fn detects_title_timestamp_and_identity_tampering() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let original = article(123);
+        for (column, value) in [
+            ("title", "'Forged title'"),
+            ("fetched_at", "999999"),
+            ("revision_id", "124"),
+            ("page_id", "43"),
+            ("project", "'frwiki'"),
+        ] {
+            cache.clear().unwrap();
+            cache.put(&original).unwrap();
+            cache
+                .conn
+                .execute(&format!("UPDATE cached_html SET {column}={value}"), [])
+                .unwrap();
+            let mut requested = original.clone();
+            if column == "revision_id" {
+                requested.revision_id = 124;
+            } else if column == "page_id" {
+                requested.key.page_id = 43;
+            } else if column == "project" {
+                requested.key.project = "frwiki".into();
+            }
+            assert!(matches!(
+                cache.get(&requested.key, requested.revision_id),
+                Err(HtmlCacheError::DigestMismatch)
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_v1_cache_is_discarded_not_trusted_as_new_metadata() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE cached_html (
+                project TEXT NOT NULL, page_id INTEGER NOT NULL,
+                revision_id INTEGER NOT NULL, title TEXT NOT NULL,
+                html TEXT NOT NULL, sha256 TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL,
+                PRIMARY KEY(project, page_id, revision_id)
+             );
+             CREATE INDEX cached_html_age ON cached_html(fetched_at);
+             INSERT INTO cached_html VALUES (
+                'enwiki', 42, 123, 'Forged title', '<p>Physics</p>', 'legacy', 100
+             );
+             PRAGMA user_version=1;",
+        )
+        .unwrap();
+        let cache = RevisionHtmlCache::initialize(conn).unwrap();
+        assert_eq!(cache.get(&article(123).key, 123).unwrap(), None);
+        let version: i64 = cache
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
