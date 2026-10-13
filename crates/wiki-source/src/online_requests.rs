@@ -62,6 +62,24 @@ impl WikipediaRequests {
         &self.project
     }
 
+    /// Validate a request or proposed redirect target against this exact
+    /// Wikipedia project's HTTPS Action API origin and path. This is a
+    /// defense-in-depth preflight, NOT TLS authentication or redirect handling.
+    /// Concrete clients must still disable redirects and validate certificates.
+    pub fn accepts_transport_url(&self, candidate: &str) -> bool {
+        let Ok(url) = Url::parse(candidate) else {
+            return false;
+        };
+        let expected = Url::parse(&self.api_url).expect("validated Wikipedia endpoint");
+        url.scheme() == "https"
+            && url.host_str() == expected.host_str()
+            && url.path() == expected.path()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+            && url.query().is_some()
+    }
+
     fn request(&self, parameters: &[(&str, String)]) -> String {
         // The base URL is built from a validated Wikipedia language label.
         let mut url = Url::parse(&self.api_url).expect("validated Wikipedia endpoint");
@@ -276,4 +294,30 @@ mod tests {
             Err(OnlineRequestError::InvalidRevisionId)
         );
     }
+
+    #[test]
+    fn transport_url_policy_rejects_origin_path_and_credential_substitution() {
+        let api = WikipediaRequests::new("enwiki").unwrap();
+        let valid = api.current_revision(42).unwrap();
+        assert!(api.accepts_transport_url(&valid));
+        assert!(api.accepts_transport_url(&api.search("Physics", 3).unwrap()));
+        for unsafe_url in [
+            "http://en.wikipedia.org/w/api.php?action=query",
+            "https://en.wikipedia.org.evil.example/w/api.php?action=query",
+            "https://de.wikipedia.org/w/api.php?action=query",
+            "https://en.wikipedia.org:444/w/api.php?action=query",
+            "https://user:pass@en.wikipedia.org/w/api.php?action=query",
+            "https://en.wikipedia.org/wiki/Physics?action=query",
+            "https://en.wikipedia.org/w/api.php?action=query#fragment",
+            "https://en.wikipedia.org/w/api.php",
+            "file:///w/api.php",
+            "not-a-url",
+        ] {
+            assert!(
+                !api.accepts_transport_url(unsafe_url),
+                "unsafe candidate accepted: {unsafe_url}"
+            );
+        }
+    }
+
 }
