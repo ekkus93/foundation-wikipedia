@@ -194,7 +194,11 @@ mod tests {
         let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let url = "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS";
         let valid = parse_origin_checked_pinned_inventory(
-            raw.as_bytes(), "enwiki", "2026-10-01", url, &digest,
+            raw.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            url,
+            &digest,
         )
         .unwrap();
         assert_eq!(valid.members().len(), 1);
@@ -207,14 +211,22 @@ mod tests {
         ] {
             assert_eq!(
                 parse_origin_checked_pinned_inventory(
-                    raw.as_bytes(), "enwiki", "2026-10-01", &wrong_url, &digest,
+                    raw.as_bytes(),
+                    "enwiki",
+                    "2026-10-01",
+                    &wrong_url,
+                    &digest,
                 ),
                 Err(PinnedInventoryError::WrongOrigin),
             );
         }
         assert_eq!(
             parse_origin_checked_pinned_inventory(
-                raw.as_bytes(), "enwiki", "2026-10-01", url, &"0".repeat(64),
+                raw.as_bytes(),
+                "enwiki",
+                "2026-10-01",
+                url,
+                &"0".repeat(64),
             ),
             Err(PinnedInventoryError::DigestMismatch),
         );

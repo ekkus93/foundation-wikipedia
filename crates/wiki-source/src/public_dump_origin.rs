@@ -37,7 +37,15 @@ mod tests {
         assert!(!is_official_checksum_url(url, "enwiki", "2026-10-02"));
         assert!(!is_official_checksum_url(url, "enwiki", "2026-13-01"));
         assert!(!is_official_checksum_url(url, "Enwiki", "2026-10-01"));
-        assert!(!is_official_checksum_url(&url.replace("https:", "http:"), "enwiki", "2026-10-01"));
-        assert!(!is_official_checksum_url(&format!("{url}?download=1"), "enwiki", "2026-10-01"));
+        assert!(!is_official_checksum_url(
+            &url.replace("https:", "http:"),
+            "enwiki",
+            "2026-10-01"
+        ));
+        assert!(!is_official_checksum_url(
+            &format!("{url}?download=1"),
+            "enwiki",
+            "2026-10-01"
+        ));
     }
 }
