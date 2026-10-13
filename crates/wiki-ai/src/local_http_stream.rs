@@ -80,6 +80,17 @@ pub fn stream_chat(
     let mut reader = BufReader::new(socket);
     let mode = read_headers(&mut reader, cancellation, deadline)?;
     let mut decoder = OpenAiStreamDecoder::new();
+    let mut pending_completion = None;
+    let mut relay = |event: StreamEvent| {
+        if matches!(event, StreamEvent::Completed { .. }) {
+            if pending_completion.replace(event).is_some() {
+                return Err(ProviderError::InvalidResponse);
+            }
+            Ok(())
+        } else {
+            on_event(event)
+        }
+    };
     let mut total = 0usize;
     match mode {
         BodyMode::Chunked => loop {
@@ -103,7 +114,7 @@ pub fn stream_chat(
                 &mut decoder,
                 cancellation,
                 deadline,
-                on_event,
+                &mut relay,
             )?;
             total += size;
             if !read_line(&mut reader, 2, cancellation, deadline)?.is_empty() {
@@ -117,7 +128,7 @@ pub fn stream_chat(
                 &mut decoder,
                 cancellation,
                 deadline,
-                on_event,
+                &mut relay,
             )?;
         }
         BodyMode::UntilClose => {
@@ -131,14 +142,24 @@ pub fn stream_chat(
                     .checked_add(n)
                     .filter(|n| *n <= MAX_BODY)
                     .ok_or(ProviderError::InvalidResponse)?;
-                feed(&mut decoder, &buffer[..n], cancellation, on_event)?;
+                feed(&mut decoder, &buffer[..n], cancellation, &mut relay)?;
             }
         }
     }
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    decoder.finish()
+    drop(relay);
+    decoder.finish()?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
+    on_event(pending_completion.ok_or(ProviderError::InvalidResponse)?)?;
+    if cancellation.is_cancelled() {
+        Err(ProviderError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn read_body<R: Read>(
