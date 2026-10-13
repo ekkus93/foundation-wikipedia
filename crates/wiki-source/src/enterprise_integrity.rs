@@ -72,6 +72,9 @@ fn check_parts(
 pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(), IntegrityError> {
     let mut references = BTreeSet::new();
     for reference in &article.structured.references {
+        if !valid_identifier(&reference.identifier) {
+            return Err(IntegrityError::InvalidIdentifier("reference"));
+        }
         if !references.insert(reference.identifier.as_str()) {
             return Err(IntegrityError::DuplicateReference(
                 reference.identifier.clone(),
@@ -80,6 +83,9 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
     }
     let mut tables = BTreeSet::new();
     for table in &article.structured.tables {
+        if !valid_identifier(&table.identifier) {
+            return Err(IntegrityError::InvalidIdentifier("table"));
+        }
         if !tables.insert(table.identifier.as_str()) {
             return Err(IntegrityError::DuplicateTable(table.identifier.clone()));
         }
