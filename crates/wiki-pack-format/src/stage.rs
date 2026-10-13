@@ -122,3 +122,77 @@ pub fn stage_container<R: Read + Seek>(
     File::open(parent)?.sync_all()?;
     Ok((manifest, root))
 }
+
+/// Stage verified bytes and derive a conservative trust label from the same
+/// successful verification. An unsigned official-origin claim stays unverified.
+/// This does not activate or authorize installation of a staged pack.
+pub fn stage_container_with_trust<R: Read + Seek>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+) -> Result<(Manifest, PathBuf, crate::trust::TrustStatus), ContainerError> {
+    let (manifest, root) = stage_container(input, parent, name)?;
+    let status = crate::trust::classify(&manifest, crate::trust::IntegrityState::Passed);
+    Ok((manifest, root, status))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{Object, Origin, FORMAT_VERSION};
+    use crate::trust::TrustStatus;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn staged_custom_integrity_does_not_imply_official_publisher_trust() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-trust-stage-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let payload = b"verified article";
+        let mut manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "physics".into(),
+            project: "enwiki".into(),
+            snapshot: "20261013".into(),
+            origin: Origin::Custom {
+                definition_id: "physics".into(),
+            },
+            objects: vec![Object {
+                path: "articles/42.cbor".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        for (name, expected) in [
+            ("custom", TrustStatus::CustomIntegrityVerified),
+            ("claimed-official", TrustStatus::NotYetChecked),
+        ] {
+            if name == "claimed-official" {
+                manifest.origin = Origin::Official {
+                    publisher: "unverified".into(),
+                };
+            }
+            let mut encoded = Vec::new();
+            crate::container::write_container(&mut encoded, &manifest, |_, out| {
+                out.write_all(payload)
+            })
+            .unwrap();
+            let (staged, root, status) = stage_container_with_trust(
+                &mut std::io::Cursor::new(encoded),
+                &parent,
+                name,
+            )
+            .unwrap();
+            assert_eq!(staged, manifest);
+            assert_eq!(status, expected);
+            assert_eq!(fs::read(root.join("articles/42.cbor")).unwrap(), payload);
+        }
+        fs::remove_dir_all(parent).unwrap();
+    }
+}
