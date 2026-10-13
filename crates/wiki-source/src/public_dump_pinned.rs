@@ -135,9 +135,9 @@ mod tests {
     #[test]
     fn pinned_inventory_accepts_numbered_public_current_shards() {
         let raw = format!(
-            "{}\\n{}",
-            format!("{}  enwiki-20261001-pages-meta-current1.xml-p1p100.bz2", "a".repeat(64)),
-            format!("{}  enwiki-20261001-pages-meta-current2.xml-p101p200.bz2", "b".repeat(64)),
+            "{}  enwiki-20261001-pages-meta-current1.xml-p1p100.bz2\n{}  enwiki-20261001-pages-meta-current2.xml-p101p200.bz2\n",
+            "a".repeat(64),
+            "b".repeat(64),
         );
         let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let inventory =
