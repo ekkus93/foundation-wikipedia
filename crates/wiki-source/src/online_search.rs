@@ -249,13 +249,7 @@ mod tests {
         );
         assert!(client.requests.is_empty());
         assert_eq!(
-            fetch_search(
-                &mut client,
-                "enwiki",
-                "bad\nquery",
-                1,
-                NetworkState::Online
-            ),
+            fetch_search(&mut client, "enwiki", "bad\nquery", 1, NetworkState::Online),
             Err(SearchFetchError::Request(OnlineRequestError::InvalidSearch))
         );
         assert!(client.requests.is_empty());
