@@ -22,6 +22,7 @@ pub enum HtmlCacheError {
     InvalidIdentity,
     InvalidContent,
     DigestMismatch,
+    RevisionConflict,
 }
 
 impl From<rusqlite::Error> for HtmlCacheError {
@@ -112,13 +113,30 @@ impl RevisionHtmlCache {
             return Err(HtmlCacheError::InvalidContent);
         }
         let tx = self.conn.transaction()?;
+        // A revision key must never be silently rebound to different content.
+        // An explicit remove is required before a replacement is accepted.
+        let existing: Option<(String, String, String)> = tx
+            .query_row(
+                "SELECT title, html, sha256 FROM cached_html
+                 WHERE project=?1 AND page_id=?2 AND revision_id=?3",
+                params![article.key.project, page_id, revision_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        if let Some((title, html, sha256)) = existing {
+            if digest(&html) != sha256 {
+                return Err(HtmlCacheError::DigestMismatch);
+            }
+            if title != article.title || html != article.html {
+                return Err(HtmlCacheError::RevisionConflict);
+            }
+        }
         tx.execute(
             "INSERT INTO cached_html
                 (project, page_id, revision_id, title, html, sha256, fetched_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(project, page_id, revision_id) DO UPDATE SET
-                title=excluded.title, html=excluded.html,
-                sha256=excluded.sha256, fetched_at=excluded.fetched_at",
+                fetched_at=MAX(cached_html.fetched_at, excluded.fetched_at)",
             params![
                 article.key.project,
                 page_id,
@@ -253,6 +271,62 @@ mod tests {
             .unwrap();
         assert!(matches!(
             cache.get(&bad.key, 123),
+            Err(HtmlCacheError::DigestMismatch)
+        ));
+    }
+
+    #[test]
+    fn same_revision_is_immutable_but_identical_refresh_is_idempotent() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let original = article(123);
+        cache.put(&original).unwrap();
+
+        let mut refreshed = original.clone();
+        refreshed.fetched_at = 200;
+        cache.put(&refreshed).unwrap();
+        assert_eq!(cache.get(&original.key, 123).unwrap(), Some(refreshed));
+
+        let mut older = original.clone();
+        older.fetched_at = 50;
+        cache.put(&older).unwrap();
+        assert_eq!(cache.get(&original.key, 123).unwrap().unwrap().fetched_at, 200);
+
+        let mut different_html = original.clone();
+        different_html.html = "<p>Unrelated content</p>".into();
+        assert!(matches!(
+            cache.put(&different_html),
+            Err(HtmlCacheError::RevisionConflict)
+        ));
+        let mut different_title = original.clone();
+        different_title.title = "Unrelated title".into();
+        assert!(matches!(
+            cache.put(&different_title),
+            Err(HtmlCacheError::RevisionConflict)
+        ));
+        assert_eq!(cache.get(&original.key, 123).unwrap().unwrap().html, original.html);
+
+        // A new revision may legitimately carry different HTML.
+        let mut next_revision = different_html;
+        next_revision.revision_id = 124;
+        cache.put(&next_revision).unwrap();
+        assert_eq!(cache.get(&original.key, 124).unwrap(), Some(next_revision));
+    }
+
+    #[test]
+    fn corrupt_existing_revision_cannot_be_overwritten_by_put() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let original = article(123);
+        cache.put(&original).unwrap();
+        cache
+            .conn
+            .execute("UPDATE cached_html SET html='<p>corrupted</p>'", [])
+            .unwrap();
+        assert!(matches!(
+            cache.put(&original),
+            Err(HtmlCacheError::DigestMismatch)
+        ));
+        assert!(matches!(
+            cache.get(&original.key, 123),
             Err(HtmlCacheError::DigestMismatch)
         ));
     }
