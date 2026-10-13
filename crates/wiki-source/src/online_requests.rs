@@ -187,9 +187,17 @@ mod tests {
     #[test]
     fn rejects_unsafe_projects_queries_and_numeric_identities() {
         for project in [
-            "", "wiki", "ENwiki", "en.wikipedia.orgwiki", "en_wiki",
-            "en--wiki", "-enwiki", "en-wiki", "enwiki\n",
-            "enwiki.example", "enwikidata",
+            "",
+            "wiki",
+            "ENwiki",
+            "en.wikipedia.orgwiki",
+            "en_wiki",
+            "en--wiki",
+            "-enwiki",
+            "en-wiki",
+            "enwiki\n",
+            "enwiki.example",
+            "enwikidata",
         ] {
             assert_eq!(
                 WikipediaRequests::new(project),
@@ -199,15 +207,27 @@ mod tests {
         }
         let api = WikipediaRequests::new("enwiki").unwrap();
         for search in ["", "  ", " A", "A ", "A\nB", "A\0B"] {
-            assert_eq!(api.search(search, 1), Err(OnlineRequestError::InvalidSearch));
+            assert_eq!(
+                api.search(search, 1),
+                Err(OnlineRequestError::InvalidSearch)
+            );
         }
         assert_eq!(
             api.search(&"x".repeat(MAX_QUERY_BYTES + 1), 1),
             Err(OnlineRequestError::InvalidSearch)
         );
-        assert_eq!(api.search("Physics", 0), Err(OnlineRequestError::InvalidLimit));
-        assert_eq!(api.search("Physics", 101), Err(OnlineRequestError::InvalidLimit));
-        assert_eq!(api.current_revision(0), Err(OnlineRequestError::InvalidPageId));
+        assert_eq!(
+            api.search("Physics", 0),
+            Err(OnlineRequestError::InvalidLimit)
+        );
+        assert_eq!(
+            api.search("Physics", 101),
+            Err(OnlineRequestError::InvalidLimit)
+        );
+        assert_eq!(
+            api.current_revision(0),
+            Err(OnlineRequestError::InvalidPageId)
+        );
         assert_eq!(
             api.current_revision(i64::MAX as u64 + 1),
             Err(OnlineRequestError::InvalidPageId)
