@@ -14,6 +14,9 @@ use crate::online_requests::{OnlineRequestError, WikipediaRequests};
 use crate::online_selection::{
     choose_article, ArticleVersion, NetworkState, ReaderSelection, SelectionError,
 };
+use crate::online_title::{
+    parse_title_resolution, ResolvedTitle, TitleResolutionError,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpenArticle {
@@ -31,6 +34,16 @@ pub enum OpenArticle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenTitle {
+    /// A title alone is not sufficient to identify a persisted offline article.
+    /// Caller may search a trusted local title index without any network access.
+    MissingOffline,
+    /// On an explicitly online path, resolve title/redirects before fetching
+    /// the current page ID; the URL is not an authenticated network response.
+    Resolve { title_url: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderRequest {
     pub pinned: OnlineRevision,
     pub rendered_url: String,
@@ -41,6 +54,7 @@ pub enum OnlineFlowError {
     Selection(SelectionError),
     Request(OnlineRequestError),
     Article(OnlineArticleError),
+    Title(TitleResolutionError),
 }
 
 /// Never create an online URL if the network is disabled. For an online fetch,
@@ -68,6 +82,33 @@ pub fn begin_open(
             })
         }
     }
+}
+
+/// Request authoritative title resolution on an explicitly online path only.
+/// This never treats an input title as a stable page/revision identifier.
+pub fn begin_title_open(
+    project: &str,
+    title: &str,
+    network: NetworkState,
+) -> Result<OpenTitle, OnlineFlowError> {
+    let api = WikipediaRequests::new(project).map_err(OnlineFlowError::Request)?;
+    // Validate even if offline so bad titles are not passed on to local callers.
+    let title_url = api.resolve_title(title).map_err(OnlineFlowError::Request)?;
+    match network {
+        NetworkState::Online => Ok(OpenTitle::Resolve { title_url }),
+        NetworkState::Offline => Ok(OpenTitle::MissingOffline),
+    }
+}
+
+/// Interpret a trusted-transport title-resolution response as a stable page
+/// identity. Caller can then call begin_open on the resolved page ID.
+pub fn finish_title_resolution(
+    project: &str,
+    requested_title: &str,
+    response_json: &str,
+) -> Result<ResolvedTitle, OnlineFlowError> {
+    parse_title_resolution(response_json, project, requested_title)
+        .map_err(OnlineFlowError::Title)
 }
 
 /// Decode a fresh metadata response and request HTML ONLY for its exact oldid.
@@ -177,6 +218,58 @@ mod tests {
             panic!("online metadata must not be guessed from a saved revision");
         };
         assert_eq!(fallback, Some(saved));
+    }
+
+    #[test]
+    fn title_navigation_resolves_redirect_to_stable_page_before_fetch() {
+        let begin = begin_title_open("enwiki", "physics_intro", NetworkState::Online).unwrap();
+        let OpenTitle::Resolve { title_url } = begin else {
+            panic!("online title lookup must resolve canonical page ID first");
+        };
+        let request = Url::parse(&title_url).unwrap();
+        assert_eq!(request.host_str(), Some("en.wikipedia.org"));
+        assert!(request
+            .query_pairs()
+            .any(|(key, value)| key == "titles" && value == "physics_intro"));
+        let response = r#"{"query":{"normalized":[{"from":"physics_intro","to":"Physics intro"}],"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        let resolved = finish_title_resolution("enwiki", "physics_intro", response).unwrap();
+        assert_eq!(resolved.key, key());
+        assert_eq!(resolved.canonical_title, "Physics");
+        assert_eq!(resolved.edges.len(), 2);
+        let page = begin_open(&resolved.key, NetworkState::Online, &[]).unwrap();
+        let OpenArticle::FetchCurrent { metadata_url, .. } = page else {
+            panic!("resolved title must still require current revision fetch");
+        };
+        assert!(Url::parse(&metadata_url)
+            .unwrap()
+            .query_pairs()
+            .any(|(key, value)| key == "pageids" && value == "42"));
+    }
+
+    #[test]
+    fn offline_title_navigation_never_attempts_url_fetch_and_rejects_bad_titles() {
+        assert_eq!(
+            begin_title_open("enwiki", "Physics", NetworkState::Offline),
+            Ok(OpenTitle::MissingOffline)
+        );
+        assert_eq!(
+            begin_title_open("enwiki", " A", NetworkState::Offline),
+            Err(OnlineFlowError::Request(OnlineRequestError::InvalidTitle))
+        );
+        assert_eq!(
+            begin_title_open("xx.invalid", "Physics", NetworkState::Offline),
+            Err(OnlineFlowError::Request(OnlineRequestError::InvalidProject))
+        );
+        let wrong = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Other"}]}}"#;
+        assert_eq!(
+            finish_title_resolution("enwiki", "Physics", wrong),
+            Err(OnlineFlowError::Title(TitleResolutionError::RedirectChain))
+        );
+        let api_error = r#"{"error":{"code":"invalidtitle"}}"#;
+        assert_eq!(
+            finish_title_resolution("enwiki", "Physics", api_error),
+            Err(OnlineFlowError::Title(TitleResolutionError::ApiError))
+        );
     }
 
     #[test]
