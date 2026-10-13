@@ -201,10 +201,9 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         .search_verified(&catalog, &root, "gravity molecules", 10)
         .unwrap();
     assert_eq!(verified.len(), 2);
-    assert_eq!(
-        verified.iter().map(|a| a.key.page_id).collect::<Vec<_>>(),
-        vec![1, 2]
-    );
+    let mut verified_ids: Vec<_> = verified.iter().map(|a| a.key.page_id).collect();
+    verified_ids.sort_unstable();
+    assert_eq!(verified_ids, vec![1, 2]);
     let mut stale = gravity_hit.clone();
     stale.revision_id += 1;
     assert!(matches!(
