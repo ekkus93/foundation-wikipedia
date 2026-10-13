@@ -85,21 +85,25 @@ pub fn audit_page_coverage(
     while a < expected.page_ids.len() && b < observed.page_ids.len() {
         let wanted = expected.page_ids[a];
         let found = observed.page_ids[b];
-        if wanted < found {
-            delta.missing_count += 1;
-            if delta.missing_examples.len() < MAX_EXAMPLES {
-                delta.missing_examples.push(wanted);
+        match wanted.cmp(&found) {
+            std::cmp::Ordering::Less => {
+                delta.missing_count += 1;
+                if delta.missing_examples.len() < MAX_EXAMPLES {
+                    delta.missing_examples.push(wanted);
+                }
+                a += 1;
             }
-            a += 1;
-        } else if wanted > found {
-            delta.unexpected_count += 1;
-            if delta.unexpected_examples.len() < MAX_EXAMPLES {
-                delta.unexpected_examples.push(found);
+            std::cmp::Ordering::Greater => {
+                delta.unexpected_count += 1;
+                if delta.unexpected_examples.len() < MAX_EXAMPLES {
+                    delta.unexpected_examples.push(found);
+                }
+                b += 1;
             }
-            b += 1;
-        } else {
-            a += 1;
-            b += 1;
+            std::cmp::Ordering::Equal => {
+                a += 1;
+                b += 1;
+            }
         }
     }
     while a < expected.page_ids.len() {
@@ -127,7 +131,7 @@ pub fn audit_page_coverage(
 mod tests {
     use super::*;
 
-    fn census<'a>(ids: &'a [u64]) -> PageCensus<'a> {
+    fn census(ids: &[u64]) -> PageCensus<'_> {
         PageCensus {
             project: "enwiki",
             generation: "2026-07-01",
