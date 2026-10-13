@@ -236,6 +236,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_article_namespace() {
+        let body = r#"{"query":{"pages":[{"pageid":42,"ns":1,"title":"Talk:A"}]}}"#;
+        assert_eq!(
+            parse_title_resolution(body, "enwiki", "Talk:A"),
+            Err(TitleResolutionError::InvalidIdentity)
+        );
+    }
+
+    #[test]
     fn rejects_explicitly_incomplete_title_batches() {
         let response =
             r#"{"batchcomplete":false,"query":{"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#;
