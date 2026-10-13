@@ -17,3 +17,4 @@ pub mod media_manifest_install;
 pub mod offline_reader;
 pub mod search_index;
 pub mod user_state;
+pub mod online_cache;
