@@ -18,7 +18,7 @@ from urllib.request import Request, build_opener
 from discover_public_current_export import NoRedirect, official_url
 from extract_public_dump_export import (DumpExtractionError, MAX_INVENTORY_BYTES,
                                         _inventory)
-from extract_public_dump_pages import _verified_source
+from extract_public_dump_pages import _source_identity, _verified_source
 
 CHUNK = 1024 * 1024
 CONTENT_RANGE = re.compile(r"bytes ([0-9]+)-([0-9]+)/([0-9]+)")
@@ -202,7 +202,8 @@ def stage_official_verified_members(inventory, project, date, staging_dir,
                 or not 0 < before.st_size <= MAX_INVENTORY_BYTES):
             raise DumpExtractionError("unsafe official inventory file")
         local = source.read(MAX_INVENTORY_BYTES + 1)
-        if os.fstat(source.fileno()) != before or len(local) != before.st_size:
+        if (_source_identity(os.fstat(source.fileno())) != _source_identity(before)
+                or len(local) != before.st_size):
             raise DumpExtractionError("official inventory changed during verification")
 
     opener = opener if opener is not None else build_opener(NoRedirect())

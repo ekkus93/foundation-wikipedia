@@ -2,11 +2,14 @@
 import bz2
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from extract_public_dump_export import extract_current_export, DumpExtractionError
+from extract_public_dump_export import (DumpExtractionError, _inventory,
+                                        extract_current_export)
 
 
 def xml(page_id):
@@ -56,6 +59,34 @@ class ExportTests(unittest.TestCase):
     def assert_no_publication(self):
         self.assertFalse(self.output.exists())
         self.assertFalse(list(self.root.glob(".dump-export.*")))
+
+    def test_checksum_inventory_access_time_update_is_not_a_mutation(self):
+        # Some CI filesystems update atime on the first read. A read must not
+        # invalidate an otherwise unchanged checksum-pinned inventory.
+        original_fstat = os.fstat
+        calls = 0
+
+        def access_time_update(fd):
+            nonlocal calls
+            metadata = original_fstat(fd)
+            calls += 1
+            if calls == 2:
+                class Accessed:
+                    pass
+
+                updated = Accessed()
+                for field in ("st_mode", "st_nlink", "st_size", "st_dev",
+                              "st_ino", "st_mtime_ns", "st_ctime_ns"):
+                    setattr(updated, field, getattr(metadata, field))
+                updated.st_atime = metadata.st_atime + 1
+                return updated
+            return metadata
+
+        with patch("extract_public_dump_export.os.fstat",
+                   side_effect=access_time_update):
+            records = _inventory(self.inventory, "enwiki", "2026-10-01")
+        self.assertEqual(len(records), 2)
+        self.assertEqual(calls, 2)
 
     def test_two_shards_publish_one_ordered_revision_scoped_file(self):
         self.assertEqual(self.extract(), 2)

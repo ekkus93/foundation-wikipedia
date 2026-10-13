@@ -18,7 +18,8 @@ import stat
 import sqlite3
 import tempfile
 
-from extract_public_dump_pages import DumpExtractionError, _verified_source, extract_current_dump
+from extract_public_dump_pages import (DumpExtractionError, _source_identity,
+                                       _verified_source, extract_current_dump)
 
 MAX_INVENTORY_BYTES = 32 * 1024 * 1024
 MAX_MEMBERS = 100_000
@@ -60,7 +61,10 @@ def _inventory(path, project, date):
                 or not 0 < meta.st_size <= MAX_INVENTORY_BYTES):
             raise DumpExtractionError("unsafe or oversized checksum inventory")
         text = reader.read(MAX_INVENTORY_BYTES + 1)
-        if os.fstat(reader.fileno()) != meta:
+        # Reading can update atime on some filesystems. Compare stable inode
+        # identity and mutation metadata, not access time.
+        if (_source_identity(os.fstat(reader.fileno())) != _source_identity(meta)
+                or len(text) != meta.st_size):
             raise DumpExtractionError("checksum inventory changed during read")
     if not text or len(text) > MAX_INVENTORY_BYTES:
         raise DumpExtractionError("empty or oversized checksum inventory")
