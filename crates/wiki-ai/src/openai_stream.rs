@@ -243,7 +243,10 @@ mod tests {
             );
         }
         let mut parser = OpenAiStreamDecoder::new();
-        assert_eq!(parser.push(FIRST.as_bytes()).unwrap(), vec![StreamEvent::TextDelta("Hello".into())]);
+        assert_eq!(
+            parser.push(FIRST.as_bytes()).unwrap(),
+            vec![StreamEvent::TextDelta("Hello".into())]
+        );
     }
 
     #[test]
