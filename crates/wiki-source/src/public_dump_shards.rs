@@ -44,7 +44,9 @@ pub fn audit_export_shards(
             shard.page_ids,
         )
         .map_err(|error| ExportShardError::InvalidShard { index, error })?;
-        total = total.checked_add(count).ok_or(ExportShardError::TooManyPages)?;
+        total = total
+            .checked_add(count)
+            .ok_or(ExportShardError::TooManyPages)?;
         if total > 100_000_000 {
             return Err(ExportShardError::TooManyPages);
         }
@@ -71,20 +73,32 @@ mod tests {
         let first = inventory.members()[0].relative_path.as_str();
         let second = inventory.members()[1].relative_path.as_str();
         let valid = [
-            ObservedShard { relative_path: first, page_ids: &[101, 200] },
-            ObservedShard { relative_path: second, page_ids: &[1, 50, 100] },
+            ObservedShard {
+                relative_path: first,
+                page_ids: &[101, 200],
+            },
+            ObservedShard {
+                relative_path: second,
+                page_ids: &[1, 50, 100],
+            },
         ];
         assert_eq!(audit_export_shards(&inventory, &valid), Ok(5));
         assert_eq!(
             audit_export_shards(&inventory, &valid[..1]),
-            Err(ExportShardError::CountMismatch { expected: 2, observed: 1 })
+            Err(ExportShardError::CountMismatch {
+                expected: 2,
+                observed: 1
+            })
         );
         assert_eq!(
             audit_export_shards(&inventory, &[valid[1], valid[0]]),
             Err(ExportShardError::MemberMismatch { index: 0 })
         );
         let invalid = [
-            ObservedShard { relative_path: first, page_ids: &[101, 201] },
+            ObservedShard {
+                relative_path: first,
+                page_ids: &[101, 201],
+            },
             valid[1],
         ];
         assert_eq!(
