@@ -489,15 +489,72 @@ impl OfflineSearchIndex {
         let mut hits = Vec::new();
         for row in rows {
             let (project, page, revision, title) = row?;
+            let key = ArticleKey {
+                project,
+                page_id: u64::try_from(page).map_err(|_| SearchError::InvalidIdentity)?,
+            };
+            key.validate().map_err(|_| SearchError::InvalidIdentity)?;
+            let revision_id = u64::try_from(revision).map_err(|_| SearchError::InvalidIdentity)?;
+            if revision_id == 0 {
+                return Err(SearchError::InvalidIdentity);
+            }
             hits.push(SearchHit {
-                key: ArticleKey {
-                    project,
-                    page_id: u64::try_from(page).map_err(|_| SearchError::InvalidIdentity)?,
-                },
-                revision_id: u64::try_from(revision).map_err(|_| SearchError::InvalidIdentity)?,
+                key,
+                revision_id,
                 title,
             });
         }
         Ok(hits)
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_corrupted_fts_page_revision_and_project_identities() {
+        let index = OfflineSearchIndex::in_memory().unwrap();
+        for (project, page, revision) in [
+            ("enwiki", 0, 123),
+            ("enwiki", 42, 0),
+            ("ENWIKI", 42, 123),
+            ("bad/project", 42, 123),
+            ("enwiki", -1, 123),
+            ("enwiki", 42, -1),
+        ] {
+            index
+                .conn
+                .execute("DELETE FROM offline_article_fts", [])
+                .unwrap();
+            index
+                .conn
+                .execute(
+                    "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                     VALUES (?1,?2,?3,?4,?5)",
+                    params![project, page, revision, "Needle", "needle"],
+                )
+                .unwrap();
+            assert!(matches!(
+                index.search("needle", 10),
+                Err(SearchError::InvalidIdentity)
+            ));
+        }
+        index
+            .conn
+            .execute("DELETE FROM offline_article_fts", [])
+            .unwrap();
+        index
+            .conn
+            .execute(
+                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                 VALUES (?1,?2,?3,?4,?5)",
+                params!["enwiki", 42, 123, "Needle", "needle"],
+            )
+            .unwrap();
+        let results = index.search("needle", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key.page_id, 42);
+        assert_eq!(results[0].revision_id, 123);
     }
 }
