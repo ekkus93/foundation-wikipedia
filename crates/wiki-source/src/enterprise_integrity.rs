@@ -17,7 +17,10 @@ pub enum IntegrityError {
 }
 
 fn valid_identifier(value: &str) -> bool {
-    !value.trim().is_empty() && value == value.trim()
+    !value.trim().is_empty()
+        && value == value.trim()
+        && value.len() <= 4096
+        && !value.chars().any(char::is_control)
 }
 
 fn check_parts(
@@ -118,6 +121,9 @@ mod tests {
         assert!(!valid_identifier(" "));
         assert!(!valid_identifier(" cite1"));
         assert!(valid_identifier("cite1"));
+        assert!(valid_identifier("référence-1"));
+        assert!(!valid_identifier("bad\nanchor"));
+        assert!(!valid_identifier(&"x".repeat(4097)));
         let mut article = JoinedEnterpriseArticle {
             structured: crate::enterprise::StructuredArticle {
                 page: crate::join::PageKey {
