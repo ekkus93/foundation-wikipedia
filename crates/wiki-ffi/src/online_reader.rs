@@ -35,7 +35,9 @@ fn persist<E>(
     Ok(())
 }
 
-/// Return the newest verified HTML cache candidate for display selection.
+/// Return the highest verified revision ID, not the most recently fetched
+/// temporary HTML entry. A later refresh of an older revision must not make
+/// the reader advertise that revision as its newest cached candidate.
 /// The stored HTML alone never proves that images, math, and other required
 /// visual objects exist locally; only an independent completeness verifier
 /// may authorize a true offline/saved article version.
@@ -46,7 +48,7 @@ pub fn latest_temporary_version(
     Ok(cache
         .list_cached_revisions(key)?
         .into_iter()
-        .next()
+        .max_by_key(|article| article.revision_id)
         .map(|article| ArticleVersion {
             key: article.key,
             revision_id: article.revision_id,
@@ -270,6 +272,45 @@ mod tests {
         assert_eq!(client.calls, 3);
         assert_eq!(cache.get(&key(), 333).unwrap().unwrap().title, "Physics");
     }
+    #[test]
+    fn newest_cached_revision_does_not_regress_after_older_refresh() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let older = CachedHtml {
+            key: key(),
+            revision_id: 300,
+            title: "Physics".into(),
+            html: "<p>Old revision</p>".into(),
+            fetched_at: 900,
+        };
+        let newer = CachedHtml {
+            key: key(),
+            revision_id: 333,
+            title: "Physics".into(),
+            html: "<p>New revision</p>".into(),
+            fetched_at: 100,
+        };
+        cache.put(&newer).unwrap();
+        cache.put(&older).unwrap();
+        // Cache enumeration is deliberately fetch-time ordered, whereas
+        // "latest revision" must use the upstream revision identity.
+        assert_eq!(
+            cache.list_cached_revisions(&key()).unwrap()[0].revision_id,
+            300
+        );
+        let chosen = latest_temporary_version(&cache, &key()).unwrap().unwrap();
+        assert_eq!(chosen.revision_id, 333);
+        assert_eq!(chosen.location, ArticleLocation::TemporaryCache);
+        assert!(!chosen.local_complete);
+        cache.remove(&key(), 333).unwrap();
+        assert_eq!(
+            latest_temporary_version(&cache, &key())
+                .unwrap()
+                .unwrap()
+                .revision_id,
+            300
+        );
+    }
+
     #[test]
     fn cached_html_candidate_cannot_claim_offline_completeness() {
         use wiki_source::online_selection::{choose_article, ReaderSelection};
