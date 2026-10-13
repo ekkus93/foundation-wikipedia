@@ -46,7 +46,7 @@ def _safe_member_path(path):
 def _inventory(path, project, date):
     if not re.fullmatch(r"[a-z0-9_]{1,64}", project):
         raise DumpExtractionError("invalid export project")
-    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-01", date):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", date):
         raise DumpExtractionError("invalid export date")
     try:
         datetime.strptime(date, "%Y-%m-%d")

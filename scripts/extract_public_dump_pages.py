@@ -275,15 +275,23 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     # pages-meta-currentN.xml-pSTARTpEND.bz2. The older form remains
     # supported solely for existing synthetic fixture compatibility.
     partition = re.fullmatch(
-        r"([a-z0-9_]+)-[0-9]{8}-pages-meta-current[1-9][0-9]*"
+        r"([a-z0-9_]+)-([0-9]{8})-pages-meta-current[1-9][0-9]*"
         r"\.xml-p([0-9]+)p([0-9]+)\.bz2", path.name,
     ) or re.fullmatch(
-        r"([a-z0-9_]+)-[0-9]{4}-[0-9]{2}-01-p([0-9]+)p([0-9]+)\.xml\.bz2",
+        r"([a-z0-9_]+)-([0-9]{4}-[0-9]{2}-[0-9]{2})-p([0-9]+)p([0-9]+)\.xml\.bz2",
         path.name,
     )
     if partition is None or partition.group(1) != project:
         raise DumpExtractionError("unexpected current-export member identity")
-    first_id, last_id = int(partition.group(2)), int(partition.group(3))
+    date_token = partition.group(2)
+    date_format = "%Y-%m-%d" if "-" in date_token else "%Y%m%d"
+    try:
+        parsed_date = datetime.strptime(date_token, date_format)
+        if parsed_date.strftime(date_format) != date_token:
+            raise ValueError("noncanonical date")
+    except ValueError:
+        raise DumpExtractionError("invalid current-export member date") from None
+    first_id, last_id = int(partition.group(3)), int(partition.group(4))
     if not 0 < first_id <= last_id:
         raise DumpExtractionError("invalid page-ID partition")
     source, original_metadata = _verified_source(path, expected_sha256,

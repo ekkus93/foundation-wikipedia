@@ -223,6 +223,30 @@ class ExportTests(unittest.TestCase):
         self.assertEqual([entry["source_text"] for entry in entries],
                          ["Wiki 10", "Wiki 110"])
 
+    def test_non_month_start_public_dump_export_dates(self):
+        date = "2026-10-12"
+        self.shards = {
+            f"enwiki-{date}-p1p100.xml.bz2": bz2.compress(xml(10)),
+            f"enwiki-{date}-p101p200.xml.bz2": bz2.compress(xml(110)),
+        }
+        self.write_inventory()
+        self.assertEqual(extract_current_export(
+            self.stage, self.inventory, "enwiki", date, self.output,
+        ), 2)
+        self.assertEqual(len(self.output.read_text().splitlines()), 2)
+
+    def test_invalid_calendar_date_rejected_before_publication(self):
+        date = "2026-02-30"
+        self.shards = {
+            f"enwiki-{date}-p1p100.xml.bz2": bz2.compress(xml(10)),
+        }
+        self.write_inventory()
+        with self.assertRaisesRegex(DumpExtractionError, "invalid export date"):
+            extract_current_export(
+                self.stage, self.inventory, "enwiki", date, self.output,
+            )
+        self.assert_no_publication()
+
     def test_rejects_missing_or_duplicate_numbered_legacy_shards(self):
         first = "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2"
         for second in (
