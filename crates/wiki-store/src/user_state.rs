@@ -31,6 +31,13 @@ pub struct HistoryEntry {
     pub visited_at: i64,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ChatMessage {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -280,6 +287,111 @@ impl UserState {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
 
+    /// A chat belongs to one exact article revision; callers must never
+    /// silently reuse its messages for a newer revision.
+    pub fn create_chat_thread(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+    ) -> Result<i64, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        self.conn.execute(
+            "INSERT INTO chat_threads (project,page_id,revision_id) VALUES (?1,?2,?3)",
+            params![key.project, page, revision],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    fn check_chat_thread(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+    ) -> Result<(), UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if thread_id <= 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let exists: i64 = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM chat_threads
+             WHERE id=?1 AND project=?2 AND page_id=?3 AND revision_id=?4)",
+            params![thread_id, key.project, page, revision],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(())
+    }
+
+    /// Only human and assistant turns are persisted; provider instructions,
+    /// API keys and raw system prompts must not be stored as chat messages.
+    pub fn append_chat_message(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        role: &str,
+        content: &str,
+    ) -> Result<i64, UserStateError> {
+        if !matches!(role, "user" | "assistant")
+            || content.is_empty()
+            || content.len() > 65536
+            || content.contains('\0')
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        self.check_chat_thread(key, revision_id, thread_id)?;
+        self.conn.execute(
+            "INSERT INTO chat_messages (thread_id,role,content) VALUES (?1,?2,?3)",
+            params![thread_id, role, content],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn chat_messages(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        limit: usize,
+    ) -> Result<Vec<ChatMessage>, UserStateError> {
+        if limit > 1000 {
+            return Err(UserStateError::InvalidValue);
+        }
+        self.check_chat_thread(key, revision_id, thread_id)?;
+        let mut statement = self.conn.prepare(
+            "SELECT id,role,content FROM chat_messages
+             WHERE thread_id=?1 ORDER BY id ASC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![thread_id, limit as i64], |row| {
+            Ok(ChatMessage {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: row.get(2)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Deletion cascades to every message of this exact article-scoped thread.
+    pub fn delete_chat_thread(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if thread_id <= 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "DELETE FROM chat_threads WHERE id=?1 AND project=?2
+             AND page_id=?3 AND revision_id=?4",
+            params![thread_id, key.project, page, revision],
+        )? != 0)
+    }
+
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
         if key.is_empty()
@@ -409,6 +521,51 @@ mod tests {
         assert_eq!(user.clear_history().unwrap(), 2);
         assert_eq!(user.clear_history().unwrap(), 0);
         assert!(user.recent_history(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn chat_threads_are_revision_scoped_bounded_and_cascade_deleted() {
+        let user = UserState::in_memory().unwrap();
+        let thread = user.create_chat_thread(&key(), 123).unwrap();
+        let first = user
+            .append_chat_message(&key(), 123, thread, "user", "What is this?")
+            .unwrap();
+        let second = user
+            .append_chat_message(&key(), 123, thread, "assistant", "A test.")
+            .unwrap();
+        assert!(second > first);
+        let messages = user.chat_messages(&key(), 123, thread, 10).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].content, "A test.");
+        assert_eq!(user.chat_messages(&key(), 123, thread, 1).unwrap().len(), 1);
+        assert!(matches!(
+            user.chat_messages(&key(), 124, thread, 10),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.append_chat_message(&key(), 124, thread, "user", "wrong revision"),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.append_chat_message(&key(), 123, thread, "system", "secret"),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.append_chat_message(&key(), 123, thread, "user", &"x".repeat(65537)),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 1001),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(!user.delete_chat_thread(&key(), 124, thread).unwrap());
+        assert!(user.delete_chat_thread(&key(), 123, thread).unwrap());
+        assert!(!user.delete_chat_thread(&key(), 123, thread).unwrap());
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 10),
+            Err(UserStateError::InvalidValue)
+        ));
     }
 
     #[test]
