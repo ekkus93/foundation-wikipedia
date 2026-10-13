@@ -98,7 +98,7 @@ impl MediaWikiTransport for CurlTransport {
                 "--output",
                 "-",
                 "--write-out",
-                "%{stderr}FW_HTTP_CODE:%{http_code}\\n",
+                "%{stderr}\\nFW_HTTP_CODE:%{http_code}\\n",
                 "--",
                 url,
             ])
