@@ -213,9 +213,8 @@ mod tests {
         assert_eq!(client.get(&url, 1024).unwrap(), br#"{"query":{}}"#);
         fs::remove_file(path).unwrap();
 
-        let (mut client, path) = fake_curl(
-            "printf 'redirect body'\nprintf 'FW_HTTP_CODE:302\\n' >&2",
-        );
+        let (mut client, path) =
+            fake_curl("printf 'redirect body'\nprintf 'FW_HTTP_CODE:302\\n' >&2");
         assert_eq!(
             client.get(&url, 1024),
             Err(CurlTransportError::HttpStatus(302))
@@ -229,9 +228,7 @@ mod tests {
             .unwrap()
             .rendered_revision(333)
             .unwrap();
-        let (mut client, path) = fake_curl(
-            "printf '123456789'\nprintf 'FW_HTTP_CODE:200\\n' >&2",
-        );
+        let (mut client, path) = fake_curl("printf '123456789'\nprintf 'FW_HTTP_CODE:200\\n' >&2");
         assert_eq!(
             client.get(&url, 8),
             Err(CurlTransportError::ResponseTooLarge)
