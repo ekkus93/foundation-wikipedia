@@ -16,3 +16,4 @@ pub mod media_inventory;
 pub mod media_manifest_install;
 pub mod offline_reader;
 pub mod search_index;
+pub mod user_state;
