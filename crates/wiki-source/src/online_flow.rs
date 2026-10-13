@@ -119,7 +119,9 @@ pub fn plan_render(
     let pinned = parse_current_revision(metadata_json, &requested.project, requested.page_id)
         .map_err(OnlineFlowError::Article)?;
     if pinned.namespace != 0 {
-        return Err(OnlineFlowError::Article(OnlineArticleError::InvalidIdentity));
+        return Err(OnlineFlowError::Article(
+            OnlineArticleError::InvalidIdentity,
+        ));
     }
     let rendered_url = api
         .rendered_revision(pinned.revision_id)
@@ -277,7 +279,9 @@ mod tests {
         let non_article = META.replace(r#""ns":0"#, r#""ns":1"#);
         assert_eq!(
             plan_render(&key(), &non_article),
-            Err(OnlineFlowError::Article(OnlineArticleError::InvalidIdentity))
+            Err(OnlineFlowError::Article(
+                OnlineArticleError::InvalidIdentity
+            ))
         );
         let foreign = META.replace(r#""pageid":42"#, r#""pageid":43"#);
         assert_eq!(
