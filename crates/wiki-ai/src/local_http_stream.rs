@@ -152,9 +152,10 @@ fn read_body<R: Read>(
     let mut remaining = size;
     let mut buffer = [0u8; 8192];
     while remaining > 0 {
+        let capacity = remaining.min(buffer.len());
         let n = checked_read(
             reader,
-            &mut buffer[..remaining.min(buffer.len())],
+            &mut buffer[..capacity],
             cancellation,
             deadline,
         )?;
