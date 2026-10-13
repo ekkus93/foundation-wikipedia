@@ -242,6 +242,36 @@ mod tests {
     }
 
     #[test]
+    fn drains_large_stderr_and_preserves_final_http_status() {
+        let url = WikipediaRequests::new("enwiki")
+            .unwrap()
+            .current_revision(42)
+            .unwrap();
+        // More than any normal OS stderr pipe and our retained 64-KiB tail.
+        // Only shell built-ins are used, so this is deterministic on Unix CI.
+        let noise = r#"i=0
+while [ "$i" -lt 3000 ]; do
+    printf 'verbose diagnostic filler 0123456789abcdefghijklmnopqrstuvwxyz\n' >&2
+    i=$((i + 1))
+done
+"#;
+        let (mut client, path) = fake_curl(&format!(
+            "{noise}\nprintf 'FW_HTTP_CODE:200\\n' >&2\nprintf 'ok'"
+        ));
+        assert_eq!(client.get(&url, 128).unwrap(), b"ok");
+        fs::remove_file(path).unwrap();
+
+        let (mut client, path) = fake_curl(&format!(
+            "{noise}\nprintf 'FW_HTTP_CODE:503\\n' >&2\nprintf 'unavailable'"
+        ));
+        assert_eq!(
+            client.get(&url, 128),
+            Err(CurlTransportError::HttpStatus(503))
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn caps_streamed_body_without_trusting_content_length() {
         let url = WikipediaRequests::new("enwiki")
             .unwrap()
