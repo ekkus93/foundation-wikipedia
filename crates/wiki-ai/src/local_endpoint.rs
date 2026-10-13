@@ -4,7 +4,7 @@
 //! public service or change addresses between validation and connection.
 //! The transport must additionally pin the validated destination address
 //! when it is implemented. This module does not open network connections.
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use crate::Locality;
 
@@ -21,6 +21,7 @@ pub enum EndpointError {
 pub struct LocalEndpoint {
     base_url: String,
     locality: Locality,
+    connect_addr: SocketAddr,
 }
 
 impl LocalEndpoint {
@@ -64,27 +65,37 @@ impl LocalEndpoint {
                 None => (authority, None),
             }
         };
-        if let Some(port) = port {
-            if port.is_empty()
-                || !port.bytes().all(|b| b.is_ascii_digit())
-                || port.parse::<u16>().ok().filter(|p| *p != 0).is_none()
-            {
-                return Err(EndpointError::InvalidPort);
+        let port = match port {
+            Some(port) => {
+                if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+                    return Err(EndpointError::InvalidPort);
+                }
+                port.parse::<u16>()
+                    .ok()
+                    .filter(|p| *p != 0)
+                    .ok_or(EndpointError::InvalidPort)?
             }
-        }
-        let locality = if host.eq_ignore_ascii_case("localhost") {
-            Locality::Localhost
+            None if scheme == "https" => 443,
+            None => 80,
+        };
+        let (locality, ip) = if host.eq_ignore_ascii_case("localhost") {
+            // Never resolve the hostname through DNS: pin localhost to IPv4 loopback.
+            (Locality::Localhost, IpAddr::V4(Ipv4Addr::LOCALHOST))
         } else {
             let address = host
                 .parse::<IpAddr>()
                 .map_err(|_| EndpointError::UnapprovedHost)?;
-            match address {
+            if authority.starts_with('[') && !matches!(address, IpAddr::V6(_)) {
+                return Err(EndpointError::InvalidUrl);
+            }
+            let locality = match address {
                 IpAddr::V4(ip) if ip.is_loopback() => Locality::Localhost,
                 IpAddr::V6(ip) if ip == Ipv6Addr::LOCALHOST => Locality::Localhost,
                 IpAddr::V4(ip) if private_ipv4(ip) => Locality::LocalNetwork,
                 IpAddr::V6(ip) if unique_local_ipv6(ip) => Locality::LocalNetwork,
                 _ => return Err(EndpointError::UnapprovedHost),
-            }
+            };
+            (locality, address)
         };
         // Brackets are mandatory for IPv6 URLs, even without a port.
         if host.contains(':') && !authority.starts_with('[') {
@@ -93,6 +104,7 @@ impl LocalEndpoint {
         Ok(Self {
             base_url: input.to_owned(),
             locality,
+            connect_addr: SocketAddr::new(ip, port),
         })
     }
 
@@ -102,6 +114,13 @@ impl LocalEndpoint {
 
     pub fn locality(&self) -> Locality {
         self.locality
+    }
+
+    /// Policy-approved socket destination. Adapters must connect to this exact
+    /// address rather than resolving the hostname again or following redirects.
+    /// Preserve original authority for HTTP Host and TLS identity checks.
+    pub fn connect_addr(&self) -> SocketAddr {
+        self.connect_addr
     }
 }
 
@@ -145,6 +164,21 @@ mod tests {
     }
 
     #[test]
+    fn pins_network_destination_without_dns_or_port_ambiguity() {
+        for (url, expected) in [
+            ("http://localhost", "127.0.0.1:80"),
+            ("https://LOCALHOST/v1", "127.0.0.1:443"),
+            ("http://127.2.3.4:11434/v1", "127.2.3.4:11434"),
+            ("http://192.168.0.5:8080", "192.168.0.5:8080"),
+            ("http://[::1]:11434", "[::1]:11434"),
+            ("https://[fd00::42]/v1", "[fd00::42]:443"),
+        ] {
+            let endpoint = LocalEndpoint::parse(url).unwrap();
+            assert_eq!(endpoint.connect_addr(), expected.parse().unwrap(), "{url}");
+        }
+    }
+
+    #[test]
     fn rejects_public_dns_metadata_and_unspecified_addresses() {
         for url in [
             "https://api.openai.com/v1",
@@ -176,6 +210,7 @@ mod tests {
             "http://localhost:11434/%2e%2e",
             "http://[::1",
             "http://[::1]junk",
+            "http://[127.0.0.1]:8080",
             "http://127.0.0.1:11434:443",
             "http://localhost:0",
             "http://localhost:65536",
