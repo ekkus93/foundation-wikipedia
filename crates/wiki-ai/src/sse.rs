@@ -25,6 +25,7 @@ pub struct SseEvent {
 pub struct SseDecoder {
     pending_line: Vec<u8>,
     data: String,
+    has_data: bool,
     event_type: Option<String>,
     saw_cr: bool,
 }
@@ -64,7 +65,7 @@ impl SseDecoder {
 
     /// A provider must not treat a truncated final frame as a complete answer.
     pub fn finish(&self) -> Result<(), SseError> {
-        if self.pending_line.is_empty() && self.data.is_empty() && self.event_type.is_none() {
+        if self.pending_line.is_empty() && !self.has_data && self.event_type.is_none() {
             Ok(())
         } else {
             Err(SseError::IncompleteFrame)
@@ -74,11 +75,12 @@ impl SseDecoder {
     fn accept_line(&mut self, events: &mut Vec<SseEvent>) -> Result<(), SseError> {
         let line = std::str::from_utf8(&self.pending_line).map_err(|_| SseError::InvalidUtf8)?;
         if line.is_empty() {
-            if !self.data.is_empty() {
+            if self.has_data {
                 events.push(SseEvent {
                     event_type: self.event_type.take(),
                     data: std::mem::take(&mut self.data),
                 });
+                self.has_data = false;
             }
             self.event_type = None;
         } else if !line.starts_with(':') {
@@ -86,14 +88,15 @@ impl SseDecoder {
             let value = value.strip_prefix(' ').unwrap_or(value);
             match field {
                 "data" => {
-                    let additional = value.len() + usize::from(!self.data.is_empty());
+                    let additional = value.len() + usize::from(self.has_data);
                     if self.data.len().saturating_add(additional) > MAX_SSE_EVENT_BYTES {
                         return Err(SseError::EventTooLarge);
                     }
-                    if !self.data.is_empty() {
+                    if self.has_data {
                         self.data.push('\n');
                     }
                     self.data.push_str(value);
+                    self.has_data = true;
                 }
                 "event" => {
                     if value.len() > MAX_SSE_LINE_BYTES {
@@ -140,6 +143,54 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].data, "one");
         assert_eq!(events[1].data, "[DONE]");
+        assert_eq!(decoder.finish(), Ok(()));
+    }
+
+    #[test]
+    fn preserves_empty_data_fields_and_multiline_boundaries() {
+        let mut decoder = SseDecoder::new();
+        let events = decoder
+            .push(b"data:\n\ndata: first\ndata:\ndata: last\n\ndata:\ndata: tail\n\n")
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![
+                SseEvent {
+                    event_type: None,
+                    data: String::new(),
+                },
+                SseEvent {
+                    event_type: None,
+                    data: "first\n\nlast".into(),
+                },
+                SseEvent {
+                    event_type: None,
+                    data: "\ntail".into(),
+                },
+            ]
+        );
+        assert_eq!(decoder.finish(), Ok(()));
+    }
+
+    #[test]
+    fn empty_data_is_a_real_incomplete_event_until_delimited() {
+        let mut decoder = SseDecoder::new();
+        decoder.push(b"event: message\ndata: \n").unwrap();
+        assert_eq!(decoder.finish(), Err(SseError::IncompleteFrame));
+        assert_eq!(
+            decoder.push(b"\n").unwrap(),
+            vec![SseEvent {
+                event_type: Some("message".into()),
+                data: String::new(),
+            }]
+        );
+        assert_eq!(decoder.finish(), Ok(()));
+    }
+
+    #[test]
+    fn event_without_data_does_not_dispatch() {
+        let mut decoder = SseDecoder::new();
+        assert!(decoder.push(b"event: ignored\n\n").unwrap().is_empty());
         assert_eq!(decoder.finish(), Ok(()));
     }
 
