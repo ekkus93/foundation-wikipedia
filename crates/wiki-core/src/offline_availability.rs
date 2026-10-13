@@ -82,7 +82,10 @@ mod tests {
         assert!(!cached.may_delete_unowned_saved_object());
 
         let absent = ArticleCopies::default();
-        assert_eq!(absent.availability(false), ArticleAvailability::MissingOffline);
+        assert_eq!(
+            absent.availability(false),
+            ArticleAvailability::MissingOffline
+        );
         assert_eq!(
             absent.availability(true),
             ArticleAvailability::RequiresOnlineFetch
