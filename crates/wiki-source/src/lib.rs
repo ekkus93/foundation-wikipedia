@@ -6,12 +6,12 @@ pub mod enterprise_integrity;
 pub mod enterprise_ndjson;
 pub mod enterprise_verified;
 pub mod join;
+pub mod online_search;
 pub mod public_dump;
 pub mod public_dump_pinned;
 pub mod public_dump_stage;
 pub mod public_dump_strict;
 pub mod public_dump_verify;
-pub mod online_search;
 
 use std::collections::BTreeSet;
 
