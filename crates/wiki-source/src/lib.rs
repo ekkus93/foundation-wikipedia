@@ -7,6 +7,7 @@ pub mod enterprise_ndjson;
 pub mod enterprise_verified;
 pub mod join;
 pub mod online_article;
+pub mod online_flow;
 pub mod online_requests;
 pub mod online_search;
 pub mod online_selection;
