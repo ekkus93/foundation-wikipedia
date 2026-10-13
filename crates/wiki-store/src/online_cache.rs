@@ -210,6 +210,13 @@ impl RevisionHtmlCache {
         }))
     }
 
+    /// Evict every temporary HTML entry without touching immutable packs,
+    /// explicitly saved offline content, or the separate user-state store.
+    /// Returns the number of cache rows removed.
+    pub fn clear(&mut self) -> Result<usize, HtmlCacheError> {
+        Ok(self.conn.execute("DELETE FROM cached_html", [])?)
+    }
+
     pub fn remove(&mut self, key: &ArticleKey, revision_id: u64) -> Result<(), HtmlCacheError> {
         let (page_id, revision_id) = validate_key(key, revision_id)?;
         self.conn.execute(
@@ -335,6 +342,23 @@ mod tests {
             cache.get(&original.key, 123),
             Err(HtmlCacheError::DigestMismatch)
         ));
+    }
+
+    #[test]
+    fn clearing_temporary_cache_is_explicit_and_scoped() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let first = article(123);
+        let mut second = article(124);
+        second.key.project = "frwiki".into();
+        cache.put(&first).unwrap();
+        cache.put(&second).unwrap();
+
+        assert_eq!(cache.clear().unwrap(), 2);
+        assert_eq!(cache.get(&first.key, first.revision_id).unwrap(), None);
+        assert_eq!(cache.get(&second.key, second.revision_id).unwrap(), None);
+        assert_eq!(cache.clear().unwrap(), 0);
+        cache.put(&first).unwrap();
+        assert_eq!(cache.get(&first.key, first.revision_id).unwrap(), Some(first));
     }
 
     #[test]
