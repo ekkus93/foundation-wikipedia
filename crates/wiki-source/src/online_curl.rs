@@ -166,13 +166,16 @@ mod tests {
 
     fn fake_curl(script: &str) -> (CurlTransport, std::path::PathBuf) {
         let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "foundation-wiki-curl-{}-{id}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("foundation-wiki-curl-{}-{id}", std::process::id()));
         fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        (CurlTransport { executable: path.clone() }, path)
+        (
+            CurlTransport {
+                executable: path.clone(),
+            },
+            path,
+        )
     }
 
     #[test]
@@ -195,10 +198,7 @@ mod tests {
             .unwrap()
             .search("Physics", 2)
             .unwrap();
-        assert_eq!(
-            client.get(&valid, 0),
-            Err(CurlTransportError::InvalidLimit)
-        );
+        assert_eq!(client.get(&valid, 0), Err(CurlTransportError::InvalidLimit));
         fs::remove_file(path).unwrap();
     }
 
@@ -208,9 +208,8 @@ mod tests {
             .unwrap()
             .current_revision(42)
             .unwrap();
-        let (mut client, path) = fake_curl(
-            "printf '{\"query\":{}}'\nprintf 'FW_HTTP_CODE:200\\n' >&2",
-        );
+        let (mut client, path) =
+            fake_curl("printf '{\"query\":{}}'\nprintf 'FW_HTTP_CODE:200\\n' >&2");
         assert_eq!(client.get(&url, 1024).unwrap(), br#"{"query":{}}"#);
         fs::remove_file(path).unwrap();
 
