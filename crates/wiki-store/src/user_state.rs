@@ -23,6 +23,14 @@ pub struct UserState {
     conn: Connection,
 }
 
+/// A visit to an exact article revision, recorded only after explicit history opt-in.
+#[derive(Debug)]
+pub struct HistoryEntry {
+    pub key: ArticleKey,
+    pub revision_id: u64,
+    pub visited_at: i64,
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -201,6 +209,77 @@ impl UserState {
         )? != 0)
     }
 
+    /// History recording is opt-in; missing or disabled preference means no writes.
+    pub fn history_enabled(&self) -> Result<bool, UserStateError> {
+        Ok(self.setting("history.enabled")?.as_deref() == Some("true"))
+    }
+
+    pub fn set_history_enabled(&self, enabled: bool) -> Result<(), UserStateError> {
+        self.set_setting("history.enabled", if enabled { "true" } else { "false" })
+    }
+
+    /// Returns false when history is disabled, without creating a visit record.
+    pub fn record_visit(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        visited_at: i64,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if visited_at <= 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        if !self.history_enabled()? {
+            return Ok(false);
+        }
+        self.conn.execute(
+            "INSERT INTO history (project,page_id,revision_id,visited_at)
+             VALUES (?1,?2,?3,?4)",
+            params![key.project, page, revision, visited_at],
+        )?;
+        Ok(true)
+    }
+
+    /// Bounded, newest-first history; invalid persisted identifiers fail closed.
+    pub fn recent_history(&self, limit: usize) -> Result<Vec<HistoryEntry>, UserStateError> {
+        if limit > 1000 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT project,page_id,revision_id,visited_at FROM history
+             ORDER BY visited_at DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (project, page, revision, visited_at) = row?;
+            let page_id = u64::try_from(page).map_err(|_| UserStateError::InvalidValue)?;
+            let revision_id = u64::try_from(revision).map_err(|_| UserStateError::InvalidValue)?;
+            let key = ArticleKey { project, page_id };
+            Self::ids(&key, revision_id)?;
+            if visited_at <= 0 {
+                return Err(UserStateError::InvalidValue);
+            }
+            entries.push(HistoryEntry {
+                key,
+                revision_id,
+                visited_at,
+            });
+        }
+        Ok(entries)
+    }
+
+    pub fn clear_history(&self) -> Result<usize, UserStateError> {
+        Ok(self.conn.execute("DELETE FROM history", [])?)
+    }
+
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
         if key.is_empty()
@@ -298,6 +377,38 @@ mod tests {
         assert!(user.remove_bookmark(&key()).unwrap());
         assert!(!user.remove_bookmark(&key()).unwrap());
         assert_eq!(user.bookmark(&key()).unwrap(), None);
+    }
+
+    #[test]
+    fn history_is_opt_in_bounded_and_deletable() {
+        let user = UserState::in_memory().unwrap();
+        assert!(!user.history_enabled().unwrap());
+        assert!(!user.record_visit(&key(), 100, 1234).unwrap());
+        assert!(user.recent_history(10).unwrap().is_empty());
+
+        user.set_history_enabled(true).unwrap();
+        assert!(user.record_visit(&key(), 100, 1234).unwrap());
+        assert!(user.record_visit(&key(), 101, 1235).unwrap());
+        let visits = user.recent_history(1).unwrap();
+        assert_eq!(visits.len(), 1);
+        assert_eq!(visits[0].key.page_id, 42);
+        assert_eq!(visits[0].revision_id, 101);
+        assert_eq!(visits[0].visited_at, 1235);
+        assert!(matches!(
+            user.record_visit(&key(), 101, 0),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.recent_history(1001),
+            Err(UserStateError::InvalidValue)
+        ));
+
+        user.set_history_enabled(false).unwrap();
+        assert!(!user.record_visit(&key(), 102, 1236).unwrap());
+        assert_eq!(user.recent_history(10).unwrap().len(), 2);
+        assert_eq!(user.clear_history().unwrap(), 2);
+        assert_eq!(user.clear_history().unwrap(), 0);
+        assert!(user.recent_history(10).unwrap().is_empty());
     }
 
     #[test]
