@@ -263,8 +263,16 @@ mod tests {
         assert!(matches_current_export(&legacy, "enwiki", "2026-10-01"));
         // A partial numbered inventory must not look like a complete export.
         for invalid in [
-            format!("{}\n{}", line(first), line("enwiki-20261001-pages-meta-current3.xml-p101p200.bz2")),
-            format!("{}\n{}", line(first), line("enwiki-20261001-pages-meta-current1.xml-p101p200.bz2")),
+            format!(
+                "{}\n{}",
+                line(first),
+                line("enwiki-20261001-pages-meta-current3.xml-p101p200.bz2")
+            ),
+            format!(
+                "{}\n{}",
+                line(first),
+                line("enwiki-20261001-pages-meta-current1.xml-p101p200.bz2")
+            ),
             line(second),
         ] {
             let items = parse_sha256sums(&invalid).unwrap();
