@@ -850,6 +850,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_enterprise_generation() {
+        assert_eq!(
+            parse_structured_article(&structured_json(), &"a".repeat(256)),
+            Err(EnterpriseError::InvalidGeneration)
+        );
+    }
+
+    #[test]
     fn unknown_beta_part_shapes_fail_closed() {
         let input =
             structured_json().replace("\"type\":\"paragraph\"", "\"type\":\"new_beta_shape\"");
