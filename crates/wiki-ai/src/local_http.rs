@@ -40,8 +40,8 @@ impl LlmProvider for LocalOpenAiProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             discover_models: true,
-            streaming: false,
-            cancellable: false,
+            streaming: self.endpoint.base_url().starts_with("http://"),
+            cancellable: self.endpoint.base_url().starts_with("http://"),
         }
     }
 
@@ -55,11 +55,11 @@ impl LlmProvider for LocalOpenAiProvider {
 
     fn stream(
         &self,
-        _request: &GenerateRequest,
-        _cancellation: &CancellationToken,
-        _on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+        request: &GenerateRequest,
+        cancellation: &CancellationToken,
+        on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
     ) -> Result<(), ProviderError> {
-        Err(ProviderError::Unsupported)
+        crate::local_http_stream::stream_chat(&self.endpoint, request, cancellation, on_event)
     }
 }
 

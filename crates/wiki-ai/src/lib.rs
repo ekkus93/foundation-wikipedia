@@ -6,6 +6,7 @@
 
 pub mod local_endpoint;
 pub mod local_http;
+pub mod local_http_stream;
 pub mod openai_stream;
 pub mod rag;
 pub mod sse;
