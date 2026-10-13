@@ -86,8 +86,19 @@ fn valid_utc_timestamp(stamp: &str) -> bool {
         return false;
     }
     let number = |start: usize, end: usize| stamp[start..end].parse::<u32>().unwrap_or(0);
-    (1..=12).contains(&number(5, 7))
-        && (1..=31).contains(&number(8, 10))
+    let year = number(0, 4);
+    let month = number(5, 7);
+    let day = number(8, 10);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    year > 0
+        && (1..=days).contains(&day)
         && number(11, 13) <= 23
         && number(14, 16) <= 59
         && number(17, 19) <= 59
@@ -221,6 +232,34 @@ mod tests {
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Énergie","revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
     const RENDER: &str = r#"{"parse":{"title":"Énergie","pageid":42,"revid":300,"text":"<p onclick=\"bad()\">Hello</p><script>bad()</script><a href=\"javascript:bad()\">bad link</a>"}}"#;
+
+    #[test]
+    fn revision_timestamp_rejects_impossible_calendar_dates() {
+        for bad in [
+            "0000-01-01T00:00:00Z",
+            "2026-02-29T10:45:00Z",
+            "2026-04-31T10:45:00Z",
+            "1900-02-29T10:45:00Z",
+            "2026-00-01T10:45:00Z",
+            "2026-01-00T10:45:00Z",
+            "2026-01-01T24:00:00Z",
+        ] {
+            let payload = META.replace("2026-10-13T10:45:00Z", bad);
+            assert_eq!(
+                parse_current_revision(&payload, "frwiki", 42),
+                Err(OnlineArticleError::InvalidIdentity),
+                "{bad}"
+            );
+        }
+        for valid in [
+            "2024-02-29T23:59:59Z",
+            "2000-02-29T00:00:00Z",
+            "2026-04-30T10:45:00Z",
+        ] {
+            let payload = META.replace("2026-10-13T10:45:00Z", valid);
+            assert!(parse_current_revision(&payload, "frwiki", 42).is_ok(), "{valid}");
+        }
+    }
 
     #[test]
     fn exact_revision_join_sanitizes_untrusted_html() {
