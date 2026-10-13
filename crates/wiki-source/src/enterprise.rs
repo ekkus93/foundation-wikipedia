@@ -225,7 +225,11 @@ fn identity(
     map: &Map<String, Value>,
     generation_id: &str,
 ) -> Result<(PageKey, u64, i32, String, String), EnterpriseError> {
-    if generation_id.trim().is_empty() || generation_id != generation_id.trim() {
+    if generation_id.trim().is_empty()
+        || generation_id != generation_id.trim()
+        || generation_id.len() > 255
+        || generation_id.chars().any(char::is_control)
+    {
         return Err(EnterpriseError::InvalidGeneration);
     }
     let page_id = required_u64(map, "identifier")?;
@@ -238,6 +242,7 @@ fn identity(
         .ok_or(EnterpriseError::InvalidField("is_part_of.identifier"))?
         .to_owned();
     if project.is_empty()
+        || project.len() > 255
         || !project
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
@@ -665,6 +670,7 @@ pub fn join_enterprise_article(
 fn valid_page_key(page: &PageKey) -> bool {
     page.page_id != 0
         && !page.project.is_empty()
+        && page.project.len() <= 255
         && page
             .project
             .bytes()
