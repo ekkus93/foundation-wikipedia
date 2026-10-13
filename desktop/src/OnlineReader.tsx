@@ -56,6 +56,7 @@ export default function OnlineReader() {
     if (busy) return;
     setBusy(true);
     setNotice(null);
+    setArticle(null);
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
         "open_wikipedia_title",
@@ -98,7 +99,18 @@ export default function OnlineReader() {
           <button type="submit" disabled={busy || !query.trim()}>Search</button>
         </div>
       </form>
-      <label><input type="checkbox" checked={offline} onChange={(event) => setOffline(event.target.checked)} /> Work offline (no network requests)</label>
+      <label><input type="checkbox" checked={offline} disabled={busy} onChange={(event) => {
+        const nowOffline = event.target.checked;
+        setOffline(nowOffline);
+        if (nowOffline) {
+          // Never present previously fetched online HTML or search as installed content.
+          setArticle(null);
+          setHits([]);
+          setNotice("Offline mode enabled. No article is installed in this preview.");
+        } else {
+          setNotice(null);
+        }
+      }} /> Work offline (no network requests)</label>
       <p className="preview-warning">
         {offline || !navigator.onLine ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;
