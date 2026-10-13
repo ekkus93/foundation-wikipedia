@@ -98,10 +98,7 @@ fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
 fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
     let suffix = name.strip_prefix(prefix)?;
     let (number, range) = suffix.split_once(".xml-p")?;
-    if number.is_empty()
-        || number.starts_with('0')
-        || !number.bytes().all(|b| b.is_ascii_digit())
-    {
+    if number.is_empty() || number.starts_with('0') || !number.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     let (first, last) = range.strip_suffix(".bz2")?.split_once('p')?;
