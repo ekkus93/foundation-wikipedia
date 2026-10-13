@@ -82,12 +82,14 @@ pub fn parse_search_results(
             .get("ns")
             .and_then(Value::as_i64)
             .and_then(|value| i32::try_from(value).ok())
+            .filter(|namespace| *namespace == 0)
             .ok_or(OnlineSearchError::InvalidIdentity)?;
         let title = result
             .get("title")
             .and_then(Value::as_str)
             .filter(|title| {
                 !title.trim().is_empty()
+                    && title == title.trim()
                     && title.len() <= MAX_TITLE_BYTES
                     && !title.chars().any(char::is_control)
             })
@@ -186,6 +188,8 @@ mod tests {
             r#"{"query":{"search":[{"pageid":1,"ns":2147483648,"title":"A"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":" "} ]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"A\nB"}]}}"#,
+            r#"{"query":{"search":[{"pageid":1,"ns":1,"title":"Talk:Physics"}]}}"#,
+            r#"{"query":{"search":[{"pageid":1,"ns":0,"title":" Physics "}]}}"#,
         ] {
             assert_eq!(
                 parse_search_results(bad, "enwiki", 0),
