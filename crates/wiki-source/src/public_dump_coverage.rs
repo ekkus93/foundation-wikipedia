@@ -127,7 +127,6 @@ pub fn audit_page_coverage(
     }
 }
 
-
 /// One shard's page IDs must be sorted and within its checksum-declared
 /// inclusive range. A range match does not establish page completeness.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -321,5 +320,4 @@ mod tests {
             Err(ShardPageError::OutsideDeclaredRange { .. })
         ));
     }
-
 }
