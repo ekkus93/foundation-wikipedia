@@ -5,6 +5,7 @@
 //! or activate a canonical snapshot. The staging tree must not be concurrently
 //! writable by an untrusted process (path checks alone cannot defeat TOCTOU).
 
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -41,9 +42,62 @@ pub enum StagedDumpError {
     Member(DumpVerifyError),
 }
 
+fn verify_exact_tree(root: &Path, members: &[DumpChecksum]) -> Result<(), StagedDumpError> {
+    let mut files = BTreeSet::new();
+    let mut directories = BTreeSet::new();
+    for member in members {
+        let path = PathBuf::from(&member.relative_path);
+        for parent in path.ancestors().skip(1) {
+            if !parent.as_os_str().is_empty() {
+                directories.insert(parent.to_path_buf());
+            }
+        }
+        files.insert(path);
+    }
+    let inventory = fs::symlink_metadata(root.join("SHA256SUMS")).is_ok();
+    let receipt = fs::symlink_metadata(root.join("PUBLICATION.json")).is_ok();
+    if inventory != receipt {
+        return Err(StagedDumpError::UnsafeStagingPath);
+    }
+    if inventory {
+        files.insert(PathBuf::from("SHA256SUMS"));
+        files.insert(PathBuf::from("PUBLICATION.json"));
+    }
+    let mut pending = vec![(root.to_path_buf(), PathBuf::new())];
+    while let Some((directory, prefix)) = pending.pop() {
+        for entry in fs::read_dir(directory).map_err(StagedDumpError::Io)? {
+            let entry = entry.map_err(StagedDumpError::Io)?;
+            let relative = prefix.join(entry.file_name());
+            let metadata = fs::symlink_metadata(entry.path()).map_err(StagedDumpError::Io)?;
+            if metadata.file_type().is_file() {
+                if !files.remove(&relative) {
+                    return Err(StagedDumpError::UnsafeStagingPath);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if metadata.nlink() != 1 {
+                        return Err(StagedDumpError::UnsafeStagingPath);
+                    }
+                }
+            } else if metadata.file_type().is_dir() {
+                if !directories.contains(&relative) {
+                    return Err(StagedDumpError::UnsafeStagingPath);
+                }
+                pending.push((entry.path(), relative));
+            } else {
+                return Err(StagedDumpError::UnsafeStagingPath);
+            }
+        }
+    }
+    if !files.is_empty() {
+        return Err(StagedDumpError::UnsafeStagingPath);
+    }
+    Ok(())
+}
+
 /// Hash every listed export member before an importer may consume the staging
-/// tree. Reject symlink components and non-regular objects. Unlisted files are
-/// ignored, not considered part of the verified export.
+/// tree. Reject symlink components, non-regular objects and unlisted entries.
 pub fn verify_staged_export(
     root: &Path,
     members: &[DumpChecksum],
@@ -96,6 +150,7 @@ pub fn verify_staged_export(
             return Err(StagedDumpError::TooLarge);
         }
     }
+    verify_exact_tree(root, members)?;
     Ok(total)
 }
 
