@@ -50,6 +50,17 @@ pub fn classify(manifest: &Manifest, integrity: IntegrityState) -> TrustStatus {
     }
 }
 
+/// Verify every object byte before reporting a custom pack as integrity-checked.
+/// An unsigned official-origin claim remains unverified even after this succeeds.
+/// This is read-only; installation requires separate staging and policy checks.
+pub fn verify_and_classify<R: std::io::Read>(
+    input: &mut R,
+) -> Result<(Manifest, TrustStatus), crate::container::ContainerError> {
+    let manifest = crate::container::verify_container(input)?;
+    let status = classify(&manifest, IntegrityState::Passed);
+    Ok((manifest, status))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +79,41 @@ mod tests {
                 bytes: 1024,
             }],
         }
+    }
+
+    #[test]
+    fn streamed_integrity_is_required_before_custom_trust_label() {
+        use std::io::Write;
+        let payload = b"verified article";
+        let mut custom = pack(Origin::Custom {
+            definition_id: "physics".into(),
+        });
+        custom.objects[0].bytes = payload.len() as u64;
+        custom.objects[0].sha256 = crate::sha256_hex(payload);
+        let mut encoded = Vec::new();
+        crate::container::write_container(&mut encoded, &custom, |_, output| {
+            output.write_all(payload)
+        })
+        .unwrap();
+        let (decoded, status) = verify_and_classify(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded, custom);
+        assert_eq!(status, TrustStatus::CustomIntegrityVerified);
+
+        let mut forged = encoded.clone();
+        *forged.last_mut().unwrap() ^= 1;
+        assert!(verify_and_classify(&mut forged.as_slice()).is_err());
+
+        let mut official = custom;
+        official.origin = Origin::Official {
+            publisher: "unverified".into(),
+        };
+        let mut encoded = Vec::new();
+        crate::container::write_container(&mut encoded, &official, |_, output| {
+            output.write_all(payload)
+        })
+        .unwrap();
+        let (_, status) = verify_and_classify(&mut encoded.as_slice()).unwrap();
+        assert_eq!(status, TrustStatus::NotYetChecked);
     }
 
     #[test]
