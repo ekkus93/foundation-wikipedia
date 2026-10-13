@@ -83,7 +83,6 @@ mod tests {
 
     #[test]
     fn streamed_integrity_is_required_before_custom_trust_label() {
-        use std::io::Write;
         let payload = b"verified article";
         let mut custom = pack(Origin::Custom {
             definition_id: "physics".into(),
