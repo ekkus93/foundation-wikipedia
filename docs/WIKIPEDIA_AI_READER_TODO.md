@@ -1090,3 +1090,9 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** Joined Structured Contents evidence validation now accepts a leaf at the parser's maximum supported nesting depth, but rejects an actual child part beyond the limit. A regression exercises both boundary cases.
 - **Exact-head qualification:** `0bd51495bc310b5d99d3aed1d66d097da121f65b` passed Rust workspace CI 38342100682 and Platform shells CI 38342100563.
 - **Remaining:** Authenticated official sources, full HTML/media/category fidelity, public-dump rendering and real desktop/Android offline acceptance. **SRC-002 and SRC-005 remain unchecked.**
+
+### 2026-10-12 — SRC-003 Rust pinned inventory supports numbered public current dumps (partial)
+
+- **Implementation:** `wiki-source::public_dump::matches_current_export` now accepts a homogeneous `pages-meta-currentN.xml-pSTARTpEND.bz2` inventory in addition to the current-content export naming convention, with project/date identity, canonical positive numbered shard identifiers, nonoverlapping page-ID partitions, and rejection of mixed formats. The digest-pinned Rust inventory parser is exercised with two numbered legacy shards. This aligns Rust source staging with the already supported Python public-dump extractor.
+- **Exact-head qualification:** `cbc71e3ee795d5dae12f4d69906b56f8cc79e22b` passed Rust workspace CI 38342769217 and Platform shells CI 38342769248. The earlier formatting and fixture corrections were resolved before this qualified head.
+- **Remaining:** Independently authenticated official publication completeness, Parsoid/MediaWiki-compatible rendering of templates/Lua/math/references, visual media and end-to-end offline pack/desktop/Android acceptance. **SRC-003 and SRC-005 remain unchecked.**
