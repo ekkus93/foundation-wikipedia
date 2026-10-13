@@ -349,10 +349,31 @@ mod tests {
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
-            let mut request = vec![0u8; 8192];
-            let n = socket.read(&mut request).unwrap();
+            // Consume the entire POST body before closing this fixture
+            // connection. Unread request bytes can make the OS send RST,
+            // hiding the deliberately truncated response as a transport error.
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 8192];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0, "client closed before sending its request");
+                request.extend_from_slice(&buffer[..n]);
+                let Some(separator) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..separator]);
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Content-Length: "))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                if request.len() >= separator + 4 + length {
+                    break;
+                }
+            }
             socket.write_all(&body).unwrap();
-            String::from_utf8_lossy(&request[..n]).into_owned()
+            String::from_utf8_lossy(&request).into_owned()
         });
         (
             LocalEndpoint::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(),
