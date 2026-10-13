@@ -5,6 +5,7 @@
 //! Android needs its own platform HTTP transport. A successful response
 //! authenticates the TLS peer, NOT offline media completeness or pack trust.
 
+use std::collections::VecDeque;
 use std::io::Read;
 use std::process::{Command, Stdio};
 
@@ -14,6 +15,7 @@ use crate::online_fetch::MediaWikiTransport;
 use crate::online_requests::WikipediaRequests;
 
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CurlTransportError {
@@ -105,6 +107,24 @@ impl MediaWikiTransport for CurlTransport {
             .spawn()
             .map_err(|_| CurlTransportError::SpawnFailed)?;
 
+        // Read both subprocess pipes concurrently to avoid stderr pipe deadlock.
+        // Keep only the last 64 KiB, including the final HTTP status marker.
+        let mut stderr = child.stderr.take().ok_or(CurlTransportError::IoFailure)?;
+        let stderr_reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
+            let mut buffer = [0u8; 8192];
+            loop {
+                let count = stderr.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                tail.extend(&buffer[..count]);
+                let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
+                tail.drain(..excess);
+            }
+            Ok(tail.into_iter().collect())
+        });
+
         let mut stdout = child.stdout.take().ok_or(CurlTransportError::IoFailure)?;
         let mut body = Vec::new();
         let mut buffer = [0u8; 8192];
@@ -114,6 +134,7 @@ impl MediaWikiTransport for CurlTransport {
                 Err(_) => {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let _ = stderr_reader.join();
                     return Err(CurlTransportError::IoFailure);
                 }
             };
@@ -123,25 +144,19 @@ impl MediaWikiTransport for CurlTransport {
             if count > max_bytes.saturating_sub(body.len()) {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stderr_reader.join();
                 return Err(CurlTransportError::ResponseTooLarge);
             }
             body.extend_from_slice(&buffer[..count]);
         }
         drop(stdout);
 
-        let mut diagnostics = String::new();
-        if child
-            .stderr
-            .take()
-            .ok_or(CurlTransportError::IoFailure)?
-            .read_to_string(&mut diagnostics)
-            .is_err()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CurlTransportError::IoFailure);
-        }
         let status = child.wait().map_err(|_| CurlTransportError::IoFailure)?;
+        let stderr_bytes = stderr_reader
+            .join()
+            .map_err(|_| CurlTransportError::IoFailure)?
+            .map_err(|_| CurlTransportError::IoFailure)?;
+        let diagnostics = String::from_utf8_lossy(&stderr_bytes);
         let http_status = diagnostics
             .lines()
             .filter_map(|line| line.strip_prefix("FW_HTTP_CODE:"))
