@@ -12,3 +12,4 @@ workspace = true
 wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
 wiki-search = { path = "../wiki-search" }
+serde_json = "1"

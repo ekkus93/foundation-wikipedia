@@ -700,6 +700,7 @@ dependencies = [
 name = "wiki-ai"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "wiki-core",
  "wiki-model",
  "wiki-search",

@@ -5,6 +5,7 @@
 //! transports off the UI thread and honor the cancellation token.
 
 pub mod local_endpoint;
+pub mod openai_stream;
 pub mod rag;
 pub mod sse;
 
