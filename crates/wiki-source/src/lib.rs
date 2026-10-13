@@ -11,6 +11,7 @@ pub mod public_dump_pinned;
 pub mod public_dump_stage;
 pub mod public_dump_strict;
 pub mod public_dump_verify;
+pub mod online_search;
 
 use std::collections::BTreeSet;
 
