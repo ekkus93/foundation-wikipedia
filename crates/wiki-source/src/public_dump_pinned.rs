@@ -112,8 +112,7 @@ pub fn verify_pinned_staged_export(
         if size == 0 || size > MAX_SIDECAR_BYTES {
             return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
         }
-        let raw = std::fs::read(sidecar)
-            .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+        let raw = std::fs::read(sidecar).map_err(crate::public_dump_stage::StagedDumpError::Io)?;
         if raw.len() as u64 != size
             || format!("{:x}", Sha256::digest(&raw)) != inventory.inventory_sha256
         {
