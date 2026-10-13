@@ -236,7 +236,8 @@ mod tests {
 
     #[test]
     fn rejects_explicitly_incomplete_title_batches() {
-        let response = r#"{"batchcomplete":false,"query":{"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#;
+        let response =
+            r#"{"batchcomplete":false,"query":{"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#;
         assert_eq!(
             parse_title_resolution(response, "enwiki", "A"),
             Err(TitleResolutionError::InvalidResponse)
