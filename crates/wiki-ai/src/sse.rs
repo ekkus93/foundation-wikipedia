@@ -209,9 +209,11 @@ mod tests {
         let mut decoder = SseDecoder::new();
         assert!(decoder.push(&[0xef]).unwrap().is_empty());
         assert!(decoder.push(&[0xbb]).unwrap().is_empty());
-        assert!(decoder.push(b"\xbfdata: hello\n\n").unwrap().iter().any(|event| {
-            event.event_type.is_none() && event.data == "hello"
-        }));
+        assert!(decoder
+            .push(b"\xbfdata: hello\n\n")
+            .unwrap()
+            .iter()
+            .any(|event| { event.event_type.is_none() && event.data == "hello" }));
         assert_eq!(decoder.finish(), Ok(()));
 
         // A second BOM is not a stream prelude; it must not turn a
