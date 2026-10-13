@@ -289,7 +289,10 @@ mod tests {
         let mut older = original.clone();
         older.fetched_at = 50;
         cache.put(&older).unwrap();
-        assert_eq!(cache.get(&original.key, 123).unwrap().unwrap().fetched_at, 200);
+        assert_eq!(
+            cache.get(&original.key, 123).unwrap().unwrap().fetched_at,
+            200
+        );
 
         let mut different_html = original.clone();
         different_html.html = "<p>Unrelated content</p>".into();
@@ -303,7 +306,10 @@ mod tests {
             cache.put(&different_title),
             Err(HtmlCacheError::RevisionConflict)
         ));
-        assert_eq!(cache.get(&original.key, 123).unwrap().unwrap().html, original.html);
+        assert_eq!(
+            cache.get(&original.key, 123).unwrap().unwrap().html,
+            original.html
+        );
 
         // A new revision may legitimately carry different HTML.
         let mut next_revision = different_html;
