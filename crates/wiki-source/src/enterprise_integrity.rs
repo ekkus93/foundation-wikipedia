@@ -16,6 +16,10 @@ pub enum IntegrityError {
     PartCountExceeded,
 }
 
+fn valid_identifier(value: &str) -> bool {
+    !value.trim().is_empty() && value == value.trim()
+}
+
 fn check_parts(
     parts: &[StructuredPart],
     references: &BTreeSet<&str>,
@@ -40,11 +44,17 @@ fn check_parts(
             return Err(IntegrityError::PartCountExceeded);
         }
         for citation in &part.citations {
+            if !valid_identifier(&citation.identifier) {
+                return Err(IntegrityError::InvalidIdentifier("citation"));
+            }
             if !references.contains(citation.identifier.as_str()) {
                 return Err(IntegrityError::UnknownCitation(citation.identifier.clone()));
             }
         }
         for table in &part.table_references {
+            if !valid_identifier(&table.identifier) {
+                return Err(IntegrityError::InvalidIdentifier("table_reference"));
+            }
             if !tables.contains(table.identifier.as_str()) {
                 return Err(IntegrityError::UnknownTableReference(
                     table.identifier.clone(),
