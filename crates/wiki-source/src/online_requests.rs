@@ -16,6 +16,7 @@ pub enum OnlineRequestError {
     InvalidPageId,
     InvalidRevisionId,
     InvalidSearch,
+    InvalidTitle,
     InvalidLimit,
 }
 
@@ -97,6 +98,23 @@ impl WikipediaRequests {
         ]))
     }
 
+    /// Request one title's stable page identity, following explicit redirect
+    /// chains; caller must validate response edges with online_title.
+    pub fn resolve_title(&self, title: &str) -> Result<String, OnlineRequestError> {
+        if title.trim().is_empty()
+            || title != title.trim()
+            || title.len() > MAX_QUERY_BYTES
+            || title.chars().any(char::is_control)
+        {
+            return Err(OnlineRequestError::InvalidTitle);
+        }
+        Ok(self.request(&[
+            ("action", "query".to_owned()),
+            ("titles", title.to_owned()),
+            ("redirects", "1".to_owned()),
+        ]))
+    }
+
     /// Request the current revision of a specific stable page ID. No title
     /// redirect resolution or silent page identity substitution is requested.
     pub fn current_revision(&self, page_id: u64) -> Result<String, OnlineRequestError> {
@@ -166,6 +184,20 @@ mod tests {
         assert_eq!(params.get("srlimit").unwrap(), "12");
         assert_eq!(params.get("formatversion").unwrap(), "2");
         assert_eq!(api.project(), "enwiki");
+    }
+
+    #[test]
+    fn official_title_lookup_is_encoded_and_requires_redirect_resolution() {
+        let api = WikipediaRequests::new("enwiki").unwrap();
+        let lookup = api.resolve_title("Énergie &list=allusers").unwrap();
+        let params = query(&lookup);
+        assert_eq!(params.get("action").unwrap(), "query");
+        assert_eq!(params.get("titles").unwrap(), "Énergie &list=allusers");
+        assert_eq!(params.get("redirects").unwrap(), "1");
+        assert!(!params.contains_key("pageids"));
+        for bad in ["", " A", "A ", "A\nB", "A\0B"] {
+            assert_eq!(api.resolve_title(bad), Err(OnlineRequestError::InvalidTitle));
+        }
     }
 
     #[test]

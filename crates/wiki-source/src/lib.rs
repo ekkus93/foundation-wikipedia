@@ -11,6 +11,7 @@ pub mod online_flow;
 pub mod online_requests;
 pub mod online_search;
 pub mod online_selection;
+pub mod online_title;
 pub mod public_dump;
 pub mod public_dump_pinned;
 pub mod public_dump_stage;
