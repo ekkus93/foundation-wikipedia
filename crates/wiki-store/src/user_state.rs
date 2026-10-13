@@ -328,7 +328,6 @@ impl UserState {
         Ok(())
     }
 
-
     /// A chat belongs to one exact article revision; callers must never
     /// silently reuse its messages for a newer revision.
     pub fn create_chat_thread(
@@ -785,7 +784,8 @@ mod tests {
         user.set_history_enabled(true).unwrap();
         user.record_visit(&key(), 123, 100).unwrap();
         let thread = user.create_chat_thread(&key(), 123).unwrap();
-        user.append_chat_message(&key(), 123, thread, "user", "explain").unwrap();
+        user.append_chat_message(&key(), 123, thread, "user", "explain")
+            .unwrap();
 
         user.clear_personal_reading_data().unwrap();
         assert_eq!(user.bookmark(&key()).unwrap(), None);
