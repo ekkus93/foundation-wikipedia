@@ -127,6 +127,52 @@ pub fn audit_page_coverage(
     }
 }
 
+
+/// One shard's page IDs must be sorted and within its checksum-declared
+/// inclusive range. A range match does not establish page completeness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShardPageError {
+    InvalidMember,
+    EmptyShard,
+    TooManyPages,
+    UnsortedOrDuplicate,
+    OutsideDeclaredRange { page_id: u64, first: u64, last: u64 },
+}
+
+/// Check page identities extracted from one verified current-content XML shard.
+/// A valid member filename and sorted page IDs are necessary, NOT sufficient,
+/// to establish snapshot completeness, exact revisions or media fidelity.
+pub fn audit_shard_page_ids(
+    member: &crate::public_dump::DumpChecksum,
+    wiki: &str,
+    date: &str,
+    page_ids: &[u64],
+) -> Result<usize, ShardPageError> {
+    let (first, last) = crate::public_dump::declared_member_page_range(member, wiki, date)
+        .ok_or(ShardPageError::InvalidMember)?;
+    if page_ids.is_empty() {
+        return Err(ShardPageError::EmptyShard);
+    }
+    if page_ids.len() > MAX_IDS {
+        return Err(ShardPageError::TooManyPages);
+    }
+    let mut previous = 0;
+    for &id in page_ids {
+        if id <= previous {
+            return Err(ShardPageError::UnsortedOrDuplicate);
+        }
+        if id < first || id > last {
+            return Err(ShardPageError::OutsideDeclaredRange {
+                page_id: id,
+                first,
+                last,
+            });
+        }
+        previous = id;
+    }
+    Ok(page_ids.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,4 +259,67 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn verified_shard_ids_must_respect_declared_partition() {
+        use crate::public_dump::parse_sha256sums;
+        let member = parse_sha256sums(&format!(
+            "{}  enwiki-2026-10-01-p101p200.xml.bz2",
+            "a".repeat(64)
+        ))
+        .unwrap()
+        .remove(0);
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[101, 140, 200]),
+            Ok(3)
+        );
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[100, 140]),
+            Err(ShardPageError::OutsideDeclaredRange {
+                page_id: 100,
+                first: 101,
+                last: 200,
+            })
+        );
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[101, 201]),
+            Err(ShardPageError::OutsideDeclaredRange {
+                page_id: 201,
+                first: 101,
+                last: 200,
+            })
+        );
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[102, 102]),
+            Err(ShardPageError::UnsortedOrDuplicate)
+        );
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[]),
+            Err(ShardPageError::EmptyShard)
+        );
+        assert_eq!(
+            audit_shard_page_ids(&member, "frwiki", "2026-10-01", &[101]),
+            Err(ShardPageError::InvalidMember)
+        );
+    }
+
+    #[test]
+    fn legacy_numbered_shards_obey_the_same_partition_rule() {
+        use crate::public_dump::parse_sha256sums;
+        let member = parse_sha256sums(&format!(
+            "{}  enwiki-20261001-pages-meta-current2.xml-p101p200.bz2",
+            "a".repeat(64)
+        ))
+        .unwrap()
+        .remove(0);
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[101, 200]),
+            Ok(2)
+        );
+        assert!(matches!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[201]),
+            Err(ShardPageError::OutsideDeclaredRange { .. })
+        ));
+    }
+
 }

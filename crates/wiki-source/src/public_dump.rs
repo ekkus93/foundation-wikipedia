@@ -199,6 +199,35 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
             && legacy_shards.iter().copied().eq(1..=members.len() as u64)))
         && partitions.windows(2).all(|pair| pair[0].1 < pair[1].0)
 }
+
+/** Return the declared inclusive page-ID range of one current-content member.
+ *
+ * This is a filename identity preflight, not proof that the member contains
+ * every page in the range. The containing inventory MUST be verified
+ * independently and its complete set of partitions checked for overlaps.
+ */
+pub fn declared_member_page_range(
+    member: &DumpChecksum,
+    wiki: &str,
+    date: &str,
+) -> Option<(u64, u64)> {
+    if wiki.is_empty()
+        || !wiki
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        || !valid_dump_date(date)
+        || !safe_relative_path(&member.relative_path)
+        || member.sha256.len() != 64
+        || !member.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let name = member.relative_path.rsplit('/').next()?;
+    let prefix = format!("{wiki}-{date}-p");
+    let legacy_prefix = format!("{wiki}-{}-pages-meta-current", date.replace('-', ""));
+    page_partition(name, &prefix).or_else(|| legacy_page_partition(name, &legacy_prefix))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
