@@ -132,6 +132,7 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
     let mut format_kind = None;
     let mut names = BTreeSet::new();
     let mut partitions = Vec::with_capacity(members.len());
+    let mut legacy_shards = BTreeSet::new();
     for item in members {
         let name = item.relative_path.rsplit('/').next().unwrap_or("");
         if !safe_relative_path(&item.relative_path)
@@ -144,6 +145,13 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
         let (partition, kind) = if let Some(range) = page_partition(name, &prefix) {
             (range, 0)
         } else if let Some(range) = legacy_page_partition(name, &legacy_prefix) {
+            let number = name
+                .strip_prefix(&legacy_prefix)
+                .and_then(|suffix| suffix.split_once(".xml-p"))
+                .and_then(|(number, _)| number.parse::<u64>().ok());
+            if !number.is_some_and(|number| legacy_shards.insert(number)) {
+                return false;
+            }
             (range, 1)
         } else {
             return false;
@@ -158,7 +166,10 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
     // appear twice (even under different subdirectories), and overlapping
     // ranges cannot be treated as one coherent export generation.
     partitions.sort_unstable();
-    partitions.windows(2).all(|pair| pair[0].1 < pair[1].0)
+    (legacy_shards.is_empty()
+        || (legacy_shards.len() == members.len()
+            && legacy_shards.iter().copied().eq(1..=members.len() as u64)))
+        && partitions.windows(2).all(|pair| pair[0].1 < pair[1].0)
 }
 #[cfg(test)]
 mod tests {
@@ -250,6 +261,15 @@ mod tests {
         let second = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2";
         let legacy = parse_sha256sums(&format!("{}\n{}", line(first), line(second))).unwrap();
         assert!(matches_current_export(&legacy, "enwiki", "2026-10-01"));
+        // A partial numbered inventory must not look like a complete export.
+        for invalid in [
+            format!("{}\n{}", line(first), line("enwiki-20261001-pages-meta-current3.xml-p101p200.bz2")),
+            format!("{}\n{}", line(first), line("enwiki-20261001-pages-meta-current1.xml-p101p200.bz2")),
+            line(second),
+        ] {
+            let items = parse_sha256sums(&invalid).unwrap();
+            assert!(!matches_current_export(&items, "enwiki", "2026-10-01"));
+        }
         let current = "enwiki-2026-10-01-p201p300.xml.bz2";
         let mixed = parse_sha256sums(&format!("{}\n{}", line(first), line(current))).unwrap();
         assert!(!matches_current_export(&mixed, "enwiki", "2026-10-01"));
