@@ -334,7 +334,8 @@ mod tests {
 
     #[test]
     fn rejects_jsonp_discovery_media_type() {
-        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/jsonp\r\nContent-Length: 2\r\n\r\n{}";
+        let response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/jsonp\r\nContent-Length: 2\r\n\r\n{}";
         assert_eq!(
             parse_http_response(response),
             Err(ProviderError::InvalidResponse)
