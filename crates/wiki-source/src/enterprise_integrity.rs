@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart, MAX_PARTS, MAX_PART_DEPTH};
 
+// Upper bound for the total references, tables and nested evidence edges
+// accepted from an untrusted joined record, including hand-constructed DTOs.
+const MAX_EVIDENCE_ITEMS: usize = 10_000;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntegrityError {
     UnknownCitation(String),
@@ -14,6 +18,7 @@ pub enum IntegrityError {
     InvalidIdentifier(&'static str),
     PartDepthExceeded,
     PartCountExceeded,
+    EvidenceCountExceeded,
 }
 
 fn valid_identifier(value: &str) -> bool {
@@ -29,6 +34,7 @@ fn check_parts(
     tables: &BTreeSet<&str>,
     depth: usize,
     count: &mut usize,
+    evidence_count: &mut usize,
 ) -> Result<(), IntegrityError> {
     // A leaf at the maximum supported depth has an empty child slice at
     // depth + 1. Match the parser's limit: only actual parts count toward
@@ -46,6 +52,11 @@ fn check_parts(
         if *count > MAX_PARTS {
             return Err(IntegrityError::PartCountExceeded);
         }
+        *evidence_count = evidence_count
+            .checked_add(part.citations.len())
+            .and_then(|n| n.checked_add(part.table_references.len()))
+            .filter(|n| *n <= MAX_EVIDENCE_ITEMS)
+            .ok_or(IntegrityError::EvidenceCountExceeded)?;
         for citation in &part.citations {
             if !valid_identifier(&citation.identifier) {
                 return Err(IntegrityError::InvalidIdentifier("citation"));
@@ -64,7 +75,14 @@ fn check_parts(
                 ));
             }
         }
-        check_parts(&part.has_parts, references, tables, depth + 1, count)?;
+        check_parts(
+            &part.has_parts,
+            references,
+            tables,
+            depth + 1,
+            count,
+            evidence_count,
+        )?;
     }
     Ok(())
 }
@@ -73,6 +91,13 @@ fn check_parts(
 /// identifiers are resolvable. Reject broken links rather than silently
 /// inventing references when converting to the canonical article model.
 pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(), IntegrityError> {
+    let mut evidence_count = article
+        .structured
+        .references
+        .len()
+        .checked_add(article.structured.tables.len())
+        .filter(|n| *n <= MAX_EVIDENCE_ITEMS)
+        .ok_or(IntegrityError::EvidenceCountExceeded)?;
     let mut references = BTreeSet::new();
     for reference in &article.structured.references {
         if !valid_identifier(&reference.identifier) {
@@ -100,6 +125,7 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
         &tables,
         0,
         &mut count,
+        &mut evidence_count,
     )?;
     check_parts(
         &article.structured.sections,
@@ -107,6 +133,7 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
         &tables,
         0,
         &mut count,
+        &mut evidence_count,
     )?;
     Ok(())
 }
@@ -115,6 +142,86 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
 mod tests {
     use super::*;
     use crate::enterprise::{PartKind, StructuredCitation, StructuredTableReference};
+
+    #[test]
+    fn typed_evidence_budget_prevents_unbounded_joins() {
+        let mut article = JoinedEnterpriseArticle {
+            structured: crate::enterprise::StructuredArticle {
+                page: crate::join::PageKey {
+                    project: "enwiki".into(),
+                    page_id: 42,
+                },
+                revision_id: 99,
+                date_modified: "2026-10-10T00:00:00Z".into(),
+                generation_id: "20261010".into(),
+                namespace: 0,
+                language: "en".into(),
+                name: "Example".into(),
+                wikidata_id: None,
+                description: None,
+                infoboxes: vec![],
+                sections: vec![],
+                references: vec![],
+                tables: vec![],
+            },
+            rendered_html: "<p>Example</p>".into(),
+            categories: vec![],
+            redirects: vec![],
+        };
+        article.structured.references = vec![
+            crate::enterprise::StructuredReference {
+                identifier: "one".into(),
+                payload: serde_json::Map::new(),
+            };
+            MAX_EVIDENCE_ITEMS + 1
+        ];
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::EvidenceCountExceeded)
+        );
+        article.structured.references.clear();
+        article.structured.tables = vec![
+            crate::enterprise::StructuredTable {
+                identifier: "one".into(),
+                headers: vec![],
+                rows: vec![],
+                confidence_score: None,
+            };
+            MAX_EVIDENCE_ITEMS + 1
+        ];
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::EvidenceCountExceeded)
+        );
+        article.structured.tables.clear();
+        article.structured.references.push(crate::enterprise::StructuredReference {
+            identifier: "one".into(),
+            payload: serde_json::Map::new(),
+        });
+        article.structured.sections.push(StructuredPart {
+            kind: PartKind::Paragraph,
+            name: None,
+            value: Some("Example".into()),
+            values: vec![],
+            links: vec![],
+            citations: vec![
+                StructuredCitation {
+                    identifier: "one".into(),
+                    text: "[1]".into(),
+                };
+                MAX_EVIDENCE_ITEMS
+            ],
+            table_references: vec![],
+            images: vec![],
+            has_parts: vec![],
+        });
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::EvidenceCountExceeded)
+        );
+        article.structured.sections[0].citations.pop();
+        assert_eq!(validate_joined_evidence(&article), Ok(()));
+    }
 
     #[test]
     fn nested_evidence_requires_exact_local_identifiers() {
