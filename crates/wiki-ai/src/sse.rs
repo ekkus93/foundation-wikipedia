@@ -28,6 +28,7 @@ pub struct SseDecoder {
     has_data: bool,
     event_type: Option<String>,
     saw_cr: bool,
+    seen_first_line: bool,
 }
 
 impl SseDecoder {
@@ -73,7 +74,16 @@ impl SseDecoder {
     }
 
     fn accept_line(&mut self, events: &mut Vec<SseEvent>) -> Result<(), SseError> {
-        let line = std::str::from_utf8(&self.pending_line).map_err(|_| SseError::InvalidUtf8)?;
+        let raw_line =
+            std::str::from_utf8(&self.pending_line).map_err(|_| SseError::InvalidUtf8)?;
+        // SSE permits exactly one UTF-8 BOM at the beginning of the stream.
+        // Strip it from the first line only, even when network chunks split it.
+        let line = if self.seen_first_line {
+            raw_line
+        } else {
+            self.seen_first_line = true;
+            raw_line.strip_prefix('\u{feff}').unwrap_or(raw_line)
+        };
         if line.is_empty() {
             if self.has_data {
                 events.push(SseEvent {
@@ -191,6 +201,23 @@ mod tests {
     fn event_without_data_does_not_dispatch() {
         let mut decoder = SseDecoder::new();
         assert!(decoder.push(b"event: ignored\n\n").unwrap().is_empty());
+        assert_eq!(decoder.finish(), Ok(()));
+    }
+
+    #[test]
+    fn strips_only_the_initial_utf8_bom_even_across_network_chunks() {
+        let mut decoder = SseDecoder::new();
+        assert!(decoder.push(&[0xef]).unwrap().is_empty());
+        assert!(decoder.push(&[0xbb]).unwrap().is_empty());
+        assert!(decoder.push(b"\xbfdata: hello\n\n").unwrap().iter().any(|event| {
+            event.event_type.is_none() && event.data == "hello"
+        }));
+        assert_eq!(decoder.finish(), Ok(()));
+
+        // A second BOM is not a stream prelude; it must not turn a
+        // previously unrecognized field into a valid data field.
+        let unexpected_bom = "\u{feff}data: ignored\n\n";
+        assert!(decoder.push(unexpected_bom.as_bytes()).unwrap().is_empty());
         assert_eq!(decoder.finish(), Ok(()));
     }
 
