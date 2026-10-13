@@ -494,7 +494,20 @@ impl UserState {
                 content: row.get(2)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let messages = rows.collect::<Result<Vec<_>, _>>()?;
+        // SQLite rows are mutable and must not be treated as trusted simply
+        // because application writes enforce this contract.
+        for message in &messages {
+            if message.id <= 0
+                || !matches!(message.role.as_str(), "user" | "assistant")
+                || message.content.is_empty()
+                || message.content.len() > 65536
+                || message.content.contains('\0')
+            {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+        Ok(messages)
     }
 
     /// Deletion cascades to every message of this exact article-scoped thread.
@@ -851,6 +864,51 @@ mod tests {
         assert!(!user.delete_chat_thread(&key(), 123, thread).unwrap());
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 10),
+            Err(UserStateError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn chat_reader_rejects_corrupted_persisted_roles_and_messages() {
+        let user = UserState::in_memory().unwrap();
+        let thread = user.create_chat_thread(&key(), 123).unwrap();
+        let id = user
+            .append_chat_message(&key(), 123, thread, "user", "Hello")
+            .unwrap();
+        assert_eq!(user.chat_messages(&key(), 123, thread, 5).unwrap().len(), 1);
+        user.conn
+            .execute("UPDATE chat_messages SET role='system' WHERE id=?1", params![id])
+            .unwrap();
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 5),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute("UPDATE chat_messages SET role='user',content='' WHERE id=?1", params![id])
+            .unwrap();
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 5),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute("UPDATE chat_messages SET content=?1 WHERE id=?2", params!["bad\0value", id])
+            .unwrap();
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 5),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute("UPDATE chat_messages SET content=?1 WHERE id=?2", params!["x".repeat(65537), id])
+            .unwrap();
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 5),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute("UPDATE chat_messages SET content='ok',id=-1 WHERE id=?1", params![id])
+            .unwrap();
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 5),
             Err(UserStateError::InvalidValue)
         ));
     }
