@@ -41,11 +41,13 @@ pub struct ChatMessage {
 fn valid_pack_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
-        && id.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
         && id
             .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()
-                || matches!(byte, b'-' | b'_'))
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
 }
 
 fn valid_object_digest(digest: &str) -> bool {
@@ -411,11 +413,7 @@ impl UserState {
 
     /// Record that this installed pack owns one content-addressed object.
     /// Identities are constrained before storing them in mutable user state.
-    pub fn add_pack_owner(
-        &self,
-        pack_id: &str,
-        digest: &str,
-    ) -> Result<bool, UserStateError> {
+    pub fn add_pack_owner(&self, pack_id: &str, digest: &str) -> Result<bool, UserStateError> {
         if !valid_pack_id(pack_id) || !valid_object_digest(digest) {
             return Err(UserStateError::InvalidValue);
         }
@@ -428,11 +426,7 @@ impl UserState {
     /// Drop a single pack's ownership, never another pack's reference.
     /// Physical object deletion must be handled by a coordinated install
     /// transaction after confirming no remaining owners or other leases.
-    pub fn remove_pack_owner(
-        &self,
-        pack_id: &str,
-        digest: &str,
-    ) -> Result<bool, UserStateError> {
+    pub fn remove_pack_owner(&self, pack_id: &str, digest: &str) -> Result<bool, UserStateError> {
         if !valid_pack_id(pack_id) || !valid_object_digest(digest) {
             return Err(UserStateError::InvalidValue);
         }
