@@ -421,7 +421,10 @@ impl UserState {
         {
             return Err(UserStateError::InvalidValue);
         }
-        Ok(self.conn.execute("DELETE FROM settings WHERE key=?1", params![key])? != 0)
+        Ok(self
+            .conn
+            .execute("DELETE FROM settings WHERE key=?1", params![key])?
+            != 0)
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>, UserStateError> {
