@@ -36,6 +36,9 @@ pub fn verify_declared_media(
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             || entry.bytes == 0
+            // Match MediaObjectStore's per-object hard cap. Reject impossible
+            // size claims before opening or hashing any manifest members.
+            || entry.bytes > 64 * 1024 * 1024
         {
             return Err(MediaInventoryError::InvalidManifest);
         }
@@ -93,6 +96,16 @@ mod tests {
                 }]
             ),
             Err(MediaInventoryError::WrongSize)
+        ));
+        assert!(matches!(
+            verify_declared_media(
+                &store,
+                &[RequiredMedia {
+                    bytes: 64 * 1024 * 1024 + 1,
+                    ..item.clone()
+                }]
+            ),
+            Err(MediaInventoryError::InvalidManifest)
         ));
         fs::write(root.join(&digest[..2]).join(&digest), b"tampered").unwrap();
         assert!(matches!(
