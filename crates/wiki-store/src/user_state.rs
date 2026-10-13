@@ -410,10 +410,10 @@ impl UserState {
             "SELECT id FROM chat_threads WHERE project=?1 AND page_id=?2
              AND revision_id=?3 ORDER BY id DESC LIMIT ?4",
         )?;
-        let rows = statement.query_map(
-            params![key.project, page, revision, limit as i64],
-            |row| row.get::<_, i64>(0),
-        )?;
+        let rows = statement
+            .query_map(params![key.project, page, revision, limit as i64], |row| {
+                row.get::<_, i64>(0)
+            })?;
         let mut ids = Vec::new();
         for row in rows {
             let id = row?;
@@ -980,15 +980,27 @@ mod tests {
         let older = user.create_chat_thread(&key(), 123).unwrap();
         let newest = user.create_chat_thread(&key(), 123).unwrap();
         let another = user.create_chat_thread(&key(), 124).unwrap();
-        assert_eq!(user.list_chat_threads(&key(), 123, 2).unwrap(), vec![newest, older]);
-        assert_eq!(user.list_chat_threads(&key(), 124, 2).unwrap(), vec![another]);
-        assert_eq!(user.list_chat_threads(&key(), 123, 1).unwrap(), vec![newest]);
+        assert_eq!(
+            user.list_chat_threads(&key(), 123, 2).unwrap(),
+            vec![newest, older]
+        );
+        assert_eq!(
+            user.list_chat_threads(&key(), 124, 2).unwrap(),
+            vec![another]
+        );
+        assert_eq!(
+            user.list_chat_threads(&key(), 123, 1).unwrap(),
+            vec![newest]
+        );
         assert!(matches!(
             user.list_chat_threads(&key(), 123, 1001),
             Err(UserStateError::InvalidValue)
         ));
         user.delete_chat_thread(&key(), 123, older).unwrap();
-        assert_eq!(user.list_chat_threads(&key(), 123, 2).unwrap(), vec![newest]);
+        assert_eq!(
+            user.list_chat_threads(&key(), 123, 2).unwrap(),
+            vec![newest]
+        );
     }
 
     #[test]
