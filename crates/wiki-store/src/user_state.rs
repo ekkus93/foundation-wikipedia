@@ -458,13 +458,12 @@ impl UserState {
 
     /// Persist a durable, bounded builder-job state independent of snapshots.
     /// The pipeline owns actual recovery and cancellation implementation.
-    pub fn set_builder_job_status(
-        &self,
-        job_id: &str,
-        status: &str,
-    ) -> Result<(), UserStateError> {
+    pub fn set_builder_job_status(&self, job_id: &str, status: &str) -> Result<(), UserStateError> {
         if !valid_job_id(job_id)
-            || !matches!(status, "queued" | "running" | "succeeded" | "failed" | "cancelled")
+            || !matches!(
+                status,
+                "queued" | "running" | "succeeded" | "failed" | "cancelled"
+            )
         {
             return Err(UserStateError::InvalidValue);
         }
@@ -731,9 +730,13 @@ mod tests {
         let user = UserState::in_memory().unwrap();
         assert_eq!(user.builder_job_status("build_01").unwrap(), None);
         user.set_builder_job_status("build_01", "queued").unwrap();
-        assert_eq!(user.builder_job_status("build_01").unwrap().as_deref(), Some("queued"));
+        assert_eq!(
+            user.builder_job_status("build_01").unwrap().as_deref(),
+            Some("queued")
+        );
         user.set_builder_job_status("build_01", "running").unwrap();
-        user.set_builder_job_status("build_01", "succeeded").unwrap();
+        user.set_builder_job_status("build_01", "succeeded")
+            .unwrap();
         assert_eq!(
             user.builder_job_status("build_01").unwrap().as_deref(),
             Some("succeeded")
