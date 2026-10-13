@@ -143,7 +143,11 @@ mod tests {
         let current = item(ArticleLocation::OnlineCurrent, 110, false);
         let partial_cache = item(ArticleLocation::TemporaryCache, 109, false);
         assert_eq!(
-            choose_article(&key(), NetworkState::Offline, &[current.clone(), partial_cache]),
+            choose_article(
+                &key(),
+                NetworkState::Offline,
+                &[current.clone(), partial_cache]
+            ),
             Ok(ReaderSelection::MissingOffline)
         );
         let installed = item(ArticleLocation::InstalledPack, 100, true);
@@ -160,16 +164,30 @@ mod tests {
         let installed = item(ArticleLocation::InstalledPack, 90, true);
         let current = item(ArticleLocation::OnlineCurrent, 110, false);
         assert_eq!(
-            choose_article(&key(), NetworkState::Online, &[cached.clone(), current.clone()]),
+            choose_article(
+                &key(),
+                NetworkState::Online,
+                &[cached.clone(), current.clone()]
+            ),
             Ok(ReaderSelection::CurrentOnline(current))
         );
         assert_eq!(
-            choose_article(&key(), NetworkState::Online, &[cached.clone(), saved.clone()]),
-            Ok(ReaderSelection::FetchCurrent { fallback: Some(saved.clone()) })
+            choose_article(
+                &key(),
+                NetworkState::Online,
+                &[cached.clone(), saved.clone()]
+            ),
+            Ok(ReaderSelection::FetchCurrent {
+                fallback: Some(saved.clone())
+            })
         );
         assert_eq!(
             choose_article(&key(), NetworkState::Offline, &[cached.clone(), saved]),
-            Ok(ReaderSelection::Local(item(ArticleLocation::ExplicitOfflineSave, 103, true)))
+            Ok(ReaderSelection::Local(item(
+                ArticleLocation::ExplicitOfflineSave,
+                103,
+                true
+            )))
         );
         assert_eq!(
             choose_article(&key(), NetworkState::Offline, &[cached.clone()]),
@@ -204,15 +222,30 @@ mod tests {
             Err(SelectionError::DuplicateLocation)
         );
         assert_eq!(
-            choose_article(&key(), NetworkState::Online, &[good.clone(), item(ArticleLocation::TemporaryCache, 0, true)]),
+            choose_article(
+                &key(),
+                NetworkState::Online,
+                &[good.clone(), item(ArticleLocation::TemporaryCache, 0, true)]
+            ),
             Err(SelectionError::InvalidRevision)
         );
         assert_eq!(
-            choose_article(&key(), NetworkState::Online, &[good.clone(), item(ArticleLocation::TemporaryCache, u64::MAX, true)]),
+            choose_article(
+                &key(),
+                NetworkState::Online,
+                &[
+                    good.clone(),
+                    item(ArticleLocation::TemporaryCache, u64::MAX, true)
+                ]
+            ),
             Err(SelectionError::InvalidRevision)
         );
         assert_eq!(
-            choose_article(&key(), NetworkState::Online, &[good.clone(), good.clone(), good.clone(), good.clone(), good]),
+            choose_article(
+                &key(),
+                NetworkState::Online,
+                &[good.clone(), good.clone(), good.clone(), good.clone(), good]
+            ),
             Err(SelectionError::TooManyVersions)
         );
     }
