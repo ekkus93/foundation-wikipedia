@@ -133,6 +133,21 @@ mod tests {
     }
 
     #[test]
+    fn pinned_inventory_accepts_numbered_public_current_shards() {
+        let raw = format!(
+            "{}\\n{}",
+            format!("{}  enwiki-20261001-pages-meta-current1.xml-p1p100.bz2", "a".repeat(64)),
+            format!("{}  enwiki-20261001-pages-meta-current2.xml-p101p200.bz2", "b".repeat(64)),
+        );
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let inventory =
+            parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        assert_eq!(inventory.members().len(), 2);
+        assert_eq!(inventory.project(), "enwiki");
+        assert_eq!(inventory.date(), "2026-10-01");
+    }
+
+    #[test]
     fn pinned_staging_rejects_undeclared_members_and_corrupt_bytes() {
         use std::io::Cursor;
         use std::time::{SystemTime, UNIX_EPOCH};
