@@ -163,10 +163,17 @@ fn parse_http_response(bytes: &[u8]) -> Result<Vec<u8>, ProviderError> {
     }
     let mut length = None;
     let mut chunked = false;
+    let mut content_type = false;
     for line in lines {
         let (name, value) = line.split_once(':').ok_or(ProviderError::InvalidResponse)?;
         let value = value.trim();
-        if name.eq_ignore_ascii_case("content-length") {
+        if name.eq_ignore_ascii_case("content-type") {
+            let media_type = value.split(';').next().unwrap_or("").trim();
+            if content_type || !media_type.eq_ignore_ascii_case("application/json") {
+                return Err(ProviderError::InvalidResponse);
+            }
+            content_type = true;
+        } else if name.eq_ignore_ascii_case("content-length") {
             if length.is_some() || !value.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(ProviderError::InvalidResponse);
             }
