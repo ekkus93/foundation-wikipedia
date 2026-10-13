@@ -93,13 +93,34 @@ pub fn verify_pinned_staged_export(
     inventory: &PinnedInventory,
     max_member_bytes: u64,
 ) -> Result<u64, crate::public_dump_stage::StagedDumpError> {
-    crate::public_dump_stage::verify_staged_export(
+    let bytes = crate::public_dump_stage::verify_staged_export(
         root,
         &inventory.members,
         &inventory.project,
         &inventory.date,
         max_member_bytes,
-    )
+    )?;
+    // When publication sidecars are staged, bind the raw SHA256SUMS bytes
+    // to the already-pinned inventory digest. An arbitrary checksum sidecar
+    // must not accompany otherwise verified member payloads.
+    let sidecar = root.join("SHA256SUMS");
+    if sidecar.exists() {
+        const MAX_SIDECAR_BYTES: u64 = 32 * 1024 * 1024;
+        let size = std::fs::metadata(&sidecar)
+            .map_err(crate::public_dump_stage::StagedDumpError::Io)?
+            .len();
+        if size == 0 || size > MAX_SIDECAR_BYTES {
+            return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
+        }
+        let raw = std::fs::read(sidecar)
+            .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+        if raw.len() as u64 != size
+            || format!("{:x}", Sha256::digest(&raw)) != inventory.inventory_sha256
+        {
+            return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
+        }
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -182,6 +203,29 @@ mod tests {
             verify_pinned_staged_export(&root, &inventory, 1024).unwrap(),
             bytes.len() as u64
         );
+        std::fs::write(root.join("SHA256SUMS"), raw.as_bytes()).unwrap();
+        std::fs::write(root.join("PUBLICATION.json"), b"{}").unwrap();
+        assert_eq!(
+            verify_pinned_staged_export(&root, &inventory, 1024).unwrap(),
+            bytes.len() as u64
+        );
+        std::fs::write(root.join("SHA256SUMS"), b"forged inventory").unwrap();
+        assert!(matches!(
+            verify_pinned_staged_export(&root, &inventory, 1024),
+            Err(crate::public_dump_stage::StagedDumpError::InvalidInventory)
+        ));
+        std::fs::write(root.join("SHA256SUMS"), raw.as_bytes()).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("SHA256SUMS"))
+            .unwrap()
+            .set_len(32 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(matches!(
+            verify_pinned_staged_export(&root, &inventory, 1024),
+            Err(crate::public_dump_stage::StagedDumpError::InvalidInventory)
+        ));
+        std::fs::write(root.join("SHA256SUMS"), raw.as_bytes()).unwrap();
         std::fs::write(root.join(filename), b"tampered").unwrap();
         assert!(matches!(
             verify_pinned_staged_export(&root, &inventory, 1024),
