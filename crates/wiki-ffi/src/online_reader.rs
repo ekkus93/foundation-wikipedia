@@ -142,6 +142,30 @@ pub fn fetch_title_cached_host_https(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn host_transport_entrypoints_never_spawn_curl_while_offline() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        assert_eq!(
+            fetch_page_cached_host_https(&mut cache, &key(), NetworkState::Offline, &[], 0)
+                .unwrap(),
+            FetchOutcome::MissingOffline
+        );
+        assert_eq!(
+            fetch_title_cached_host_https(
+                &mut cache,
+                "enwiki",
+                "Physics",
+                NetworkState::Offline,
+                0,
+            )
+            .unwrap(),
+            FetchOutcome::MissingOffline
+        );
+        assert_eq!(cache.get(&key(), 333).unwrap(), None);
+    }
+
     use std::collections::VecDeque;
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
