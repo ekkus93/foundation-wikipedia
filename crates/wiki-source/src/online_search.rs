@@ -249,16 +249,27 @@ mod tests {
         );
         assert!(client.requests.is_empty());
         assert_eq!(
-            fetch_search(&mut client, "enwiki", "bad\\nquery", 1, NetworkState::Online),
+            fetch_search(
+                &mut client,
+                "enwiki",
+                "bad\nquery",
+                1,
+                NetworkState::Online
+            ),
             Err(SearchFetchError::Request(OnlineRequestError::InvalidSearch))
         );
         assert!(client.requests.is_empty());
 
         let body = br#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Physics","snippet":"<script>bad()</script>"}]}}"#;
         client.responses.push_back(Ok(body.to_vec()));
-        let result =
-            fetch_search(&mut client, "enwiki", "Énergie &list=allusers", 1, NetworkState::Online)
-                .unwrap();
+        let result = fetch_search(
+            &mut client,
+            "enwiki",
+            "Énergie &list=allusers",
+            1,
+            NetworkState::Online,
+        )
+        .unwrap();
         let SearchOutcome::Results(hits) = result else {
             panic!("expected online navigation hits");
         };
@@ -275,7 +286,9 @@ mod tests {
             fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
             Err(SearchFetchError::Transport("network unavailable"))
         );
-        client.responses.push_back(Ok(vec![b' '; MAX_RESPONSE_BYTES + 1]));
+        client
+            .responses
+            .push_back(Ok(vec![b' '; MAX_RESPONSE_BYTES + 1]));
         assert_eq!(
             fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
             Err(SearchFetchError::ResponseTooLarge)
@@ -285,11 +298,12 @@ mod tests {
             fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
             Err(SearchFetchError::InvalidUtf8)
         );
-        client.responses.push_back(Ok(br#"{"error":{"code":"ratelimited"}}"#.to_vec()));
+        client
+            .responses
+            .push_back(Ok(br#"{"error":{"code":"ratelimited"}}"#.to_vec()));
         assert_eq!(
             fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
             Err(SearchFetchError::Parse(OnlineSearchError::ApiError))
         );
     }
-
 }
