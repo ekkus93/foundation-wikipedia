@@ -9,6 +9,8 @@ use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart, MAX_PARTS, MAX_
 pub enum IntegrityError {
     UnknownCitation(String),
     UnknownTableReference(String),
+    DuplicateReference(String),
+    DuplicateTable(String),
     PartDepthExceeded,
     PartCountExceeded,
 }
@@ -57,18 +59,20 @@ fn check_parts(
 /// identifiers are resolvable. Reject broken links rather than silently
 /// inventing references when converting to the canonical article model.
 pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(), IntegrityError> {
-    let references: BTreeSet<&str> = article
-        .structured
-        .references
-        .iter()
-        .map(|reference| reference.identifier.as_str())
-        .collect();
-    let tables: BTreeSet<&str> = article
-        .structured
-        .tables
-        .iter()
-        .map(|table| table.identifier.as_str())
-        .collect();
+    let mut references = BTreeSet::new();
+    for reference in &article.structured.references {
+        if !references.insert(reference.identifier.as_str()) {
+            return Err(IntegrityError::DuplicateReference(
+                reference.identifier.clone(),
+            ));
+        }
+    }
+    let mut tables = BTreeSet::new();
+    for table in &article.structured.tables {
+        if !tables.insert(table.identifier.as_str()) {
+            return Err(IntegrityError::DuplicateTable(table.identifier.clone()));
+        }
+    }
     let mut count = 0;
     check_parts(
         &article.structured.infoboxes,
@@ -168,6 +172,25 @@ mod tests {
                 confidence_score: None,
             });
         assert_eq!(validate_joined_evidence(&article), Ok(()));
+
+        // Defensive revalidation must not allow callers that construct or
+        // transform typed joined records to bypass parser-level ID uniqueness.
+        let repeated_reference = article.structured.references[0].clone();
+        article.structured.references.push(repeated_reference);
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::DuplicateReference("cite1".into()))
+        );
+        article.structured.references.pop();
+        let repeated_table = article.structured.tables[0].clone();
+        article.structured.tables.push(repeated_table);
+        assert_eq!(
+            validate_joined_evidence(&article),
+            Err(IntegrityError::DuplicateTable("table1".into()))
+        );
+        article.structured.tables.pop();
+        assert_eq!(validate_joined_evidence(&article), Ok(()));
+
         let mut leaf = article.structured.sections[0].clone();
         leaf.has_parts.clear();
         let mut nested = leaf.clone();
