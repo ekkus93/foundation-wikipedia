@@ -44,7 +44,8 @@ pub struct RevisionHtmlCache {
 }
 
 fn validate_key(key: &ArticleKey, revision_id: u64) -> Result<(i64, i64), HtmlCacheError> {
-    key.validate().map_err(|_| HtmlCacheError::InvalidIdentity)?;
+    key.validate()
+        .map_err(|_| HtmlCacheError::InvalidIdentity)?;
     let page_id = i64::try_from(key.page_id).map_err(|_| HtmlCacheError::InvalidIdentity)?;
     let revision_id = i64::try_from(revision_id).map_err(|_| HtmlCacheError::InvalidIdentity)?;
     if page_id <= 0 || revision_id <= 0 {
@@ -234,13 +235,22 @@ mod tests {
     fn rejects_invalid_identity_content_and_corrupt_digest() {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
         let mut bad = article(0);
-        assert!(matches!(cache.put(&bad), Err(HtmlCacheError::InvalidIdentity)));
+        assert!(matches!(
+            cache.put(&bad),
+            Err(HtmlCacheError::InvalidIdentity)
+        ));
         bad = article(123);
         bad.html.clear();
-        assert!(matches!(cache.put(&bad), Err(HtmlCacheError::InvalidContent)));
+        assert!(matches!(
+            cache.put(&bad),
+            Err(HtmlCacheError::InvalidContent)
+        ));
         bad = article(123);
         cache.put(&bad).unwrap();
-        cache.conn.execute("UPDATE cached_html SET html='tampered'", []).unwrap();
+        cache
+            .conn
+            .execute("UPDATE cached_html SET html='tampered'", [])
+            .unwrap();
         assert!(matches!(
             cache.get(&bad.key, 123),
             Err(HtmlCacheError::DigestMismatch)
@@ -257,9 +267,10 @@ mod tests {
         }
         assert_eq!(cache.get(&article(1).key, 1).unwrap(), None);
         assert!(cache.get(&article(140).key, 140).unwrap().is_some());
-        let rows: i64 = cache.conn.query_row(
-            "SELECT count(*) FROM cached_html", [], |row| row.get(0)
-        ).unwrap();
+        let rows: i64 = cache
+            .conn
+            .query_row("SELECT count(*) FROM cached_html", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(rows, MAX_CACHE_ROWS);
     }
 }
