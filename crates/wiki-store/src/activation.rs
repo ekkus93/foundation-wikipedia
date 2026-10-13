@@ -62,6 +62,17 @@ impl ActiveSnapshotStore {
     }
 
     fn ensure_root(&self) -> Result<(), ActivationError> {
+        // Validate each existing path component, not merely the final root.
+        // The caller still must own these directories exclusively: this
+        // preflight cannot prevent concurrent hostile filesystem swaps.
+        for ancestor in self.root.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            if fs::symlink_metadata(ancestor)?.file_type().is_symlink() {
+                return Err(ActivationError::UnsafeRoot);
+            }
+        }
         if !real_directory(&self.root)? || !real_directory(&self.root.join("snapshots"))? {
             return Err(ActivationError::UnsafeRoot);
         }
@@ -191,6 +202,39 @@ impl ActiveSnapshotStore {
 mod interruption_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_root_with_symlinked_parent_is_not_accepted() {
+        use std::os::unix::fs::symlink;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "wiki-snapshot-ancestor-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("real/data");
+        let candidate = root.join("snapshots/old");
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), "{}").unwrap();
+        let canonical = ActiveSnapshotStore::new(&root);
+        canonical.switch_to_prevalidated("old").unwrap();
+        assert_eq!(canonical.current().unwrap(), Some("old".into()));
+
+        symlink(base.join("real"), base.join("alias")).unwrap();
+        let via_alias = ActiveSnapshotStore::new(base.join("alias/data"));
+        assert!(matches!(via_alias.current(), Err(ActivationError::UnsafeRoot)));
+        assert!(matches!(
+            via_alias.switch_to_prevalidated("old"),
+            Err(ActivationError::UnsafeRoot)
+        ));
+        assert_eq!(canonical.current().unwrap(), Some("old".into()));
+
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]
