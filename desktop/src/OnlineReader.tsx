@@ -27,6 +27,7 @@ function isolatedDocument(html: string): string {
 
 export default function OnlineReader() {
   const [query, setQuery] = useState("");
+  const [project, setProject] = useState("enwiki");
   const [offline, setOffline] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [article, setArticle] = useState<ArticlePreview | null>(null);
@@ -40,7 +41,7 @@ export default function OnlineReader() {
     setNotice(null);
     setArticle(null);
     try {
-      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), offline: offline || !navigator.onLine });
+      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !navigator.onLine });
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
@@ -58,7 +59,7 @@ export default function OnlineReader() {
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
         "open_wikipedia_title",
-        { title, offline: offline || !navigator.onLine },
+        { title, project, offline: offline || !navigator.onLine },
       );
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
     } catch (error) {
@@ -71,7 +72,20 @@ export default function OnlineReader() {
   return (
     <section aria-label="Online Wikipedia reader">
       <form className="online-search" onSubmit={search}>
-        <label htmlFor="online-wikipedia-query">Search English Wikipedia</label>
+        <label htmlFor="online-wikipedia-project">Wikipedia edition</label>
+        <select id="online-wikipedia-project" value={project} disabled={busy} onChange={(event) => {
+          setProject(event.target.value);
+          setHits([]);
+          setArticle(null);
+          setNotice(null);
+        }}>
+          <option value="enwiki">English</option>
+          <option value="dewiki">Deutsch</option>
+          <option value="frwiki">Français</option>
+          <option value="eswiki">Español</option>
+          <option value="jawiki">日本語</option>
+        </select>
+        <label htmlFor="online-wikipedia-query">Search articles</label>
         <div>
           <input
             id="online-wikipedia-query"
