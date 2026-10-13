@@ -5,3 +5,4 @@
 
 pub mod evidence;
 pub mod soft_anchor;
+pub mod offline_availability;
