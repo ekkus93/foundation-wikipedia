@@ -1084,3 +1084,9 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** `wiki-source::enterprise_integrity` validates nested Structured Contents evidence against configured depth and total-part limits, including a regression fixture for excessive nesting. Citation/table integrity validation remains in the joined-evidence layer, preserving verified-import error contracts. This does not qualify end-to-end source fidelity.
 - **Exact-head qualification:** The implementation and nested-depth regression are present at `30041ada590c1afedbb51cfb9fc8ea09615d9b42` (initial `cargo fmt --check` failure). Formatting corrected in `b190dfff19c902312336a298ce3f590081c6ef83`, which passed [Rust workspace CI 38340881791](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38340881791) and [Platform shells CI 38340881788](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38340881788).
 - **Remaining:** Authenticated official source and full revised schema/HTML/media fidelity, pack delivery, live desktop/Android offline acceptance. **SRC-002 and SRC-005 remain unchecked.**
+
+### 2026-10-12 — SRC-002/SRC-005 maximum nested-evidence depth boundary (partial)
+
+- **Implementation:** Joined Structured Contents evidence validation now accepts a leaf at the parser's maximum supported nesting depth, but rejects an actual child part beyond the limit. A regression exercises both boundary cases.
+- **Exact-head qualification:** `0bd51495bc310b5d99d3aed1d66d097da121f65b` passed Rust workspace CI 38342100682 and Platform shells CI 38342100563.
+- **Remaining:** Authenticated official sources, full HTML/media/category fidelity, public-dump rendering and real desktop/Android offline acceptance. **SRC-002 and SRC-005 remain unchecked.**
