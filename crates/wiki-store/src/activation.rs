@@ -226,7 +226,10 @@ mod interruption_tests {
 
         symlink(base.join("real"), base.join("alias")).unwrap();
         let via_alias = ActiveSnapshotStore::new(base.join("alias/data"));
-        assert!(matches!(via_alias.current(), Err(ActivationError::UnsafeRoot)));
+        assert!(matches!(
+            via_alias.current(),
+            Err(ActivationError::UnsafeRoot)
+        ));
         assert!(matches!(
             via_alias.switch_to_prevalidated("old"),
             Err(ActivationError::UnsafeRoot)
