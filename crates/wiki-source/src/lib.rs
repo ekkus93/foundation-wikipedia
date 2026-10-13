@@ -6,6 +6,7 @@ pub mod enterprise_integrity;
 pub mod enterprise_ndjson;
 pub mod enterprise_verified;
 pub mod join;
+pub mod online_article;
 pub mod online_search;
 pub mod public_dump;
 pub mod public_dump_pinned;
