@@ -2,7 +2,8 @@
 //!
 //! The read-only HTTP transport pins the already validated socket address,
 //! never follows redirects, and sends no article passages or credentials.
-//! HTTPS and chat generation remain unsupported until secure transports exist.
+//! Plain HTTP chat streaming is supported; HTTPS remains explicitly unavailable
+//! until authenticated TLS transport is implemented.
 
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -38,10 +39,11 @@ impl LlmProvider for LocalOpenAiProvider {
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
+        let supported = self.endpoint.base_url().starts_with("http://");
         ProviderCapabilities {
-            discover_models: true,
-            streaming: self.endpoint.base_url().starts_with("http://"),
-            cancellable: self.endpoint.base_url().starts_with("http://"),
+            discover_models: supported,
+            streaming: supported,
+            cancellable: supported,
         }
     }
 
@@ -312,5 +314,16 @@ mod tests {
     fn https_is_explicitly_unsupported_not_downgraded() {
         let endpoint = LocalEndpoint::parse("https://127.0.0.1:443/v1").unwrap();
         assert_eq!(discover_models(&endpoint), Err(ProviderError::Unsupported));
+        let provider = LocalOpenAiProvider::new(endpoint);
+        assert_eq!(
+            provider.capabilities(),
+            ProviderCapabilities {
+                discover_models: false,
+                streaming: false,
+                cancellable: false,
+            }
+        );
+        assert_eq!(provider.list_models(), Err(ProviderError::Unsupported));
+        assert_eq!(provider.test_connection(), Err(ProviderError::Unsupported));
     }
 }
