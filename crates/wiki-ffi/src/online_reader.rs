@@ -48,8 +48,8 @@ pub fn fetch_page_cached<T: MediaWikiTransport>(
     if network == NetworkState::Online && fetched_at <= 0 {
         return Err(CachedFetchError::InvalidFetchTime);
     }
-    let outcome = fetch_article(transport, key, network, versions)
-        .map_err(CachedFetchError::Fetch)?;
+    let outcome =
+        fetch_article(transport, key, network, versions).map_err(CachedFetchError::Fetch)?;
     persist(cache, &outcome, fetched_at)?;
     Ok(outcome)
 }
@@ -66,8 +66,8 @@ pub fn fetch_title_cached<T: MediaWikiTransport>(
     if network == NetworkState::Online && fetched_at <= 0 {
         return Err(CachedFetchError::InvalidFetchTime);
     }
-    let outcome = fetch_title(transport, project, title, network)
-        .map_err(CachedFetchError::Fetch)?;
+    let outcome =
+        fetch_title(transport, project, title, network).map_err(CachedFetchError::Fetch)?;
     persist(cache, &outcome, fetched_at)?;
     Ok(outcome)
 }
@@ -114,13 +114,30 @@ mod tests {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
         let mut first = good();
         assert!(matches!(
-            fetch_page_cached(&mut first, &mut cache, &key(), NetworkState::Online, &[], 100),
+            fetch_page_cached(
+                &mut first,
+                &mut cache,
+                &key(),
+                NetworkState::Online,
+                &[],
+                100
+            ),
             Ok(FetchOutcome::Rendered(_))
         ));
         assert_eq!(first.calls, 2);
-        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().html, "<p>Physics</p>");
-        fetch_page_cached(&mut good(), &mut cache, &key(), NetworkState::Online, &[], 200)
-            .unwrap();
+        assert_eq!(
+            cache.get(&key(), 333).unwrap().unwrap().html,
+            "<p>Physics</p>"
+        );
+        fetch_page_cached(
+            &mut good(),
+            &mut cache,
+            &key(),
+            NetworkState::Online,
+            &[],
+            200,
+        )
+        .unwrap();
         assert_eq!(cache.get(&key(), 333).unwrap().unwrap().fetched_at, 200);
     }
 
@@ -129,22 +146,44 @@ mod tests {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
         let mut offline = good();
         assert_eq!(
-            fetch_page_cached(&mut offline, &mut cache, &key(), NetworkState::Offline, &[], 0)
-                .unwrap(),
+            fetch_page_cached(
+                &mut offline,
+                &mut cache,
+                &key(),
+                NetworkState::Offline,
+                &[],
+                0
+            )
+            .unwrap(),
             FetchOutcome::MissingOffline
         );
         assert!(matches!(
-            fetch_page_cached(&mut offline, &mut cache, &key(), NetworkState::Online, &[], 0),
+            fetch_page_cached(
+                &mut offline,
+                &mut cache,
+                &key(),
+                NetworkState::Online,
+                &[],
+                0
+            ),
             Err(CachedFetchError::InvalidFetchTime)
         ));
         assert_eq!(offline.calls, 0);
         let mut forged = good();
         forged.replies.pop_back();
-        forged
-            .replies
-            .push_back(HTML.replace(r#""revid":333"#, r#""revid":334"#).into_bytes());
+        forged.replies.push_back(
+            HTML.replace(r#""revid":333"#, r#""revid":334"#)
+                .into_bytes(),
+        );
         assert!(matches!(
-            fetch_page_cached(&mut forged, &mut cache, &key(), NetworkState::Online, &[], 100),
+            fetch_page_cached(
+                &mut forged,
+                &mut cache,
+                &key(),
+                NetworkState::Online,
+                &[],
+                100
+            ),
             Err(CachedFetchError::Fetch(_))
         ));
         assert_eq!(cache.get(&key(), 333).unwrap(), None);
@@ -153,18 +192,36 @@ mod tests {
     #[test]
     fn revision_conflict_cannot_overwrite_cached_html() {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
-        fetch_page_cached(&mut good(), &mut cache, &key(), NetworkState::Online, &[], 100)
-            .unwrap();
+        fetch_page_cached(
+            &mut good(),
+            &mut cache,
+            &key(),
+            NetworkState::Online,
+            &[],
+            100,
+        )
+        .unwrap();
         let mut forged = good();
         forged.replies.pop_back();
-        forged
-            .replies
-            .push_back(HTML.replace("<p>Physics</p>", "<p>Changed</p>").into_bytes());
+        forged.replies.push_back(
+            HTML.replace("<p>Physics</p>", "<p>Changed</p>")
+                .into_bytes(),
+        );
         assert!(matches!(
-            fetch_page_cached(&mut forged, &mut cache, &key(), NetworkState::Online, &[], 200),
+            fetch_page_cached(
+                &mut forged,
+                &mut cache,
+                &key(),
+                NetworkState::Online,
+                &[],
+                200
+            ),
             Err(CachedFetchError::Cache(HtmlCacheError::RevisionConflict))
         ));
-        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().html, "<p>Physics</p>");
+        assert_eq!(
+            cache.get(&key(), 333).unwrap().unwrap().html,
+            "<p>Physics</p>"
+        );
     }
 
     #[test]
