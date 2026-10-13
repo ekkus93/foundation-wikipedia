@@ -327,6 +327,12 @@ mod tests {
     }
 
     #[test]
+    fn accepts_json_discovery_type_with_charset() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: Application/Json; charset=utf-8\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(parse_http_response(response), Ok(b"{}".to_vec()));
+    }
+
+    #[test]
     fn https_is_explicitly_unsupported_not_downgraded() {
         let endpoint = LocalEndpoint::parse("https://127.0.0.1:443/v1").unwrap();
         assert_eq!(discover_models(&endpoint), Err(ProviderError::Unsupported));
