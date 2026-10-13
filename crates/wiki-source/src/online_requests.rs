@@ -4,6 +4,7 @@
 //! eventual HTTPS client must enforce certificate validation, response size
 //! limits, timeouts, redirect restrictions, and the selected offline policy.
 
+use std::collections::BTreeMap;
 use url::Url;
 use wiki_model::ArticleKey;
 
@@ -71,14 +72,52 @@ impl WikipediaRequests {
             return false;
         };
         let expected = Url::parse(&self.api_url).expect("validated Wikipedia endpoint");
-        url.scheme() == "https"
-            && url.host_str() == expected.host_str()
-            && url.port().is_none()
-            && url.path() == expected.path()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.fragment().is_none()
-            && url.query().is_some()
+        if url.scheme() != "https"
+            || url.host_str() != expected.host_str()
+            || url.port().is_some()
+            || url.path() != expected.path()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.fragment().is_some()
+        {
+            return false;
+        }
+        // Accept only URLs produced by this read-only request builder. An
+        // official hostname alone is insufficient: arbitrary Action API
+        // actions, duplicated parameters, and unexpected query flags must
+        // never cross the network transport boundary.
+        let mut parameters = BTreeMap::new();
+        for (key, value) in url.query_pairs() {
+            if parameters
+                .insert(key.into_owned(), value.into_owned())
+                .is_some()
+            {
+                return false;
+            }
+        }
+        let value = |key: &str| parameters.get(key).map(String::as_str);
+        let canonical = match value("action") {
+            Some("query") if value("list") == Some("search") => {
+                value("srsearch").and_then(|search| {
+                    value("srlimit")
+                        .and_then(|limit| limit.parse::<usize>().ok())
+                        .and_then(|limit| self.search(search, limit).ok())
+                })
+            }
+            Some("query") if value("titles").is_some() => {
+                value("titles").and_then(|title| self.resolve_title(title).ok())
+            }
+            Some("query") if value("prop") == Some("revisions") => {
+                value("pageids")
+                    .and_then(|id| id.parse::<u64>().ok())
+                    .and_then(|id| self.current_revision(id).ok())
+            }
+            Some("parse") => value("oldid")
+                .and_then(|id| id.parse::<u64>().ok())
+                .and_then(|id| self.rendered_revision(id).ok()),
+            _ => None,
+        };
+        canonical.as_deref() == Some(candidate)
     }
 
     fn request(&self, parameters: &[(&str, String)]) -> String {
@@ -310,6 +349,10 @@ mod tests {
             "https://user:pass@en.wikipedia.org/w/api.php?action=query",
             "https://en.wikipedia.org/wiki/Physics?action=query",
             "https://en.wikipedia.org/w/api.php?action=query#fragment",
+            "https://en.wikipedia.org/w/api.php?action=delete",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=allusers",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=search&srsearch=Physics&srnamespace=0&srlimit=1&uselang=en",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=search&srsearch=Physics&srnamespace=0&srlimit=1&srlimit=2",
             "https://en.wikipedia.org/w/api.php",
             "file:///w/api.php",
             "not-a-url",
