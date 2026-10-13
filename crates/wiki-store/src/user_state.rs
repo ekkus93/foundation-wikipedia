@@ -877,35 +877,50 @@ mod tests {
             .unwrap();
         assert_eq!(user.chat_messages(&key(), 123, thread, 5).unwrap().len(), 1);
         user.conn
-            .execute("UPDATE chat_messages SET role='system' WHERE id=?1", params![id])
+            .execute(
+                "UPDATE chat_messages SET role='system' WHERE id=?1",
+                params![id],
+            )
             .unwrap();
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 5),
             Err(UserStateError::InvalidValue)
         ));
         user.conn
-            .execute("UPDATE chat_messages SET role='user',content='' WHERE id=?1", params![id])
+            .execute(
+                "UPDATE chat_messages SET role='user',content='' WHERE id=?1",
+                params![id],
+            )
             .unwrap();
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 5),
             Err(UserStateError::InvalidValue)
         ));
         user.conn
-            .execute("UPDATE chat_messages SET content=?1 WHERE id=?2", params!["bad\0value", id])
+            .execute(
+                "UPDATE chat_messages SET content=?1 WHERE id=?2",
+                params!["bad\0value", id],
+            )
             .unwrap();
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 5),
             Err(UserStateError::InvalidValue)
         ));
         user.conn
-            .execute("UPDATE chat_messages SET content=?1 WHERE id=?2", params!["x".repeat(65537), id])
+            .execute(
+                "UPDATE chat_messages SET content=?1 WHERE id=?2",
+                params!["x".repeat(65537), id],
+            )
             .unwrap();
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 5),
             Err(UserStateError::InvalidValue)
         ));
         user.conn
-            .execute("UPDATE chat_messages SET content='ok',id=-1 WHERE id=?1", params![id])
+            .execute(
+                "UPDATE chat_messages SET content='ok',id=-1 WHERE id=?1",
+                params![id],
+            )
             .unwrap();
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 5),
