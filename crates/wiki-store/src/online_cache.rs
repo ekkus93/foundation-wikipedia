@@ -532,7 +532,10 @@ mod tests {
         );
         cache
             .conn
-            .execute("UPDATE cached_html SET title='Changed' WHERE revision_id=11", [])
+            .execute(
+                "UPDATE cached_html SET title='Changed' WHERE revision_id=11",
+                [],
+            )
             .unwrap();
         assert!(matches!(
             cache.list_cached_revisions(&older.key),
