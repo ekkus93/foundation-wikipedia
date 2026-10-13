@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
+import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [destination, setDestination] = useState<"article" | "settings">("article");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const readingScrollRef = useRef(0);
+  const returnFocusRef = useRef(false);
+  const settingsBackRef = useRef<HTMLButtonElement>(null);
   const hubRef = useRef<HTMLDivElement>(null);
   const mainActionRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
@@ -34,10 +40,38 @@ export default function App() {
     };
   }, [expanded]);
 
+  useLayoutEffect(() => {
+    if (destination === "article") window.scrollTo(0, readingScrollRef.current);
+  }, [destination]);
+
+  useEffect(() => {
+    if (destination === "settings") settingsBackRef.current?.focus();
+    if (destination === "article" && returnFocusRef.current) {
+      mainActionRef.current?.focus();
+      returnFocusRef.current = false;
+    }
+  }, [destination, settingsSection]);
+
+  function leaveSettings() {
+    if (settingsSection !== null) {
+      setSettingsSection(null);
+    } else {
+      returnFocusRef.current = true;
+      setDestination("article");
+    }
+  }
+
   function activate(action: ReaderAction) {
     setExpanded(false);
     mainActionRef.current?.focus();
-    setMessage(`${action} is not implemented yet. This screen is a development shell.`);
+    if (action === "Settings") {
+      readingScrollRef.current = window.scrollY;
+      setSettingsSection(null);
+      setDestination("settings");
+      setMessage(null);
+    } else {
+      setMessage(`${action} is not implemented yet. This screen is a development shell.`);
+    }
   }
 
   return (
@@ -49,7 +83,7 @@ export default function App() {
         <input className="search" aria-label="Wikipedia search not yet available" disabled placeholder="Search Wikipedia (coming soon)" />
         <span className="status">Development preview</span>
       </header>
-      <div className="columns">
+      <div className="columns" hidden={destination !== "article"}>
         <nav className="contents" aria-label="Contents">
           <strong>Contents</strong>
           <a href="#overview">Overview</a>
@@ -64,10 +98,19 @@ export default function App() {
           <p>Project details are in the <a href="https://github.com/ekkus93/foundation-wikipedia/blob/master/docs/WIKIPEDIA_AI_READER_SPEC.md" target="_blank" rel="noreferrer">technical specification</a>.</p>
         </main>
       </div>
-      {message && <div className="notice" role="status">
+      {destination === "settings" && <main className="settings-view" aria-label="Settings">
+        <button className="settings-back" ref={settingsBackRef} onClick={leaveSettings}>
+          ← {settingsSection === null ? "Return to article" : "All settings"}
+        </button>
+        <h1>{settingsSection ?? "Settings"}</h1>
+        {settingsSection === null ? <nav className="settings-sections" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map((section) => <button key={section} onClick={() => setSettingsSection(section)}>{section} →</button>)}
+        </nav> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
+      </main>}
+      {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>
       </div>}
-      <div className="hub" ref={hubRef}>
+      {destination === "article" && <div className="hub" ref={hubRef}>
         {expanded && <div className="speed-dial" role="group" aria-label="Reader actions" id="reader-action-menu">
           {READER_ACTIONS.map((action, index) => <button key={action} ref={index === 0 ? firstActionRef : undefined} onClick={() => activate(action)}>{action}</button>)}
         </div>}
@@ -76,7 +119,7 @@ export default function App() {
           aria-expanded={expanded}
           aria-controls={expanded ? "reader-action-menu" : undefined}
           onClick={() => setExpanded(!expanded)}>{expanded ? "×" : "✦"}</button>
-      </div>
+      </div>}
     </div>
   );
 }
