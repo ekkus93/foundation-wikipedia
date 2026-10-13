@@ -3,9 +3,9 @@
 //! This module never opens a socket. The future transport must pin the
 //! validated local endpoint, reject redirects, bound reads and honor cancel.
 
-use serde_json::Value;
 use crate::sse::{SseDecoder, SseEvent};
 use crate::{ProviderError, StreamEvent};
+use serde_json::Value;
 
 pub const MAX_STREAM_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -20,11 +20,17 @@ pub struct OpenAiStreamDecoder {
 }
 
 impl OpenAiStreamDecoder {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
         let mut result = Vec::new();
-        for event in self.sse.push(chunk).map_err(|_| ProviderError::InvalidResponse)? {
+        for event in self
+            .sse
+            .push(chunk)
+            .map_err(|_| ProviderError::InvalidResponse)?
+        {
             self.accept(event, &mut result)?;
         }
         Ok(result)
@@ -32,14 +38,20 @@ impl OpenAiStreamDecoder {
 
     /// A clean EOF is not a completed response without both stop and [DONE].
     pub fn finish(&self) -> Result<(), ProviderError> {
-        self.sse.finish().map_err(|_| ProviderError::InvalidResponse)?;
-        if self.done { Ok(()) } else { Err(ProviderError::InvalidResponse) }
+        self.sse
+            .finish()
+            .map_err(|_| ProviderError::InvalidResponse)?;
+        if self.done {
+            Ok(())
+        } else {
+            Err(ProviderError::InvalidResponse)
+        }
     }
 
-    fn accept(&mut self, event: SseEvent, out: &mut Vec<StreamEvent>)
-        -> Result<(), ProviderError>
-    {
-        if self.done { return Err(ProviderError::InvalidResponse); }
+    fn accept(&mut self, event: SseEvent, out: &mut Vec<StreamEvent>) -> Result<(), ProviderError> {
+        if self.done {
+            return Err(ProviderError::InvalidResponse);
+        }
         if !matches!(event.event_type.as_deref(), None | Some("message")) {
             return Err(ProviderError::Rejected);
         }
@@ -54,10 +66,14 @@ impl OpenAiStreamDecoder {
             });
             return Ok(());
         }
-        let value: Value = serde_json::from_str(&event.data)
-            .map_err(|_| ProviderError::InvalidResponse)?;
-        if value.get("error").is_some() { return Err(ProviderError::Rejected); }
-        let choices = value.get("choices").and_then(Value::as_array)
+        let value: Value =
+            serde_json::from_str(&event.data).map_err(|_| ProviderError::InvalidResponse)?;
+        if value.get("error").is_some() {
+            return Err(ProviderError::Rejected);
+        }
+        let choices = value
+            .get("choices")
+            .and_then(Value::as_array)
             .ok_or(ProviderError::InvalidResponse)?;
         if let Some(usage) = value.get("usage").filter(|v| !v.is_null()) {
             self.usage = parse_usage(usage)?;
@@ -75,7 +91,9 @@ impl OpenAiStreamDecoder {
         if choice.get("index").and_then(Value::as_u64) != Some(0) {
             return Err(ProviderError::InvalidResponse);
         }
-        let delta = choice.get("delta").and_then(Value::as_object)
+        let delta = choice
+            .get("delta")
+            .and_then(Value::as_object)
             .ok_or(ProviderError::InvalidResponse)?;
         // Never disguise tool execution or refusal as a grounded text answer.
         if delta.contains_key("tool_calls")
@@ -86,7 +104,9 @@ impl OpenAiStreamDecoder {
         }
         if let Some(content) = delta.get("content").filter(|v| !v.is_null()) {
             let content = content.as_str().ok_or(ProviderError::InvalidResponse)?;
-            self.text_bytes = self.text_bytes.checked_add(content.len())
+            self.text_bytes = self
+                .text_bytes
+                .checked_add(content.len())
                 .filter(|size| *size <= MAX_STREAM_TEXT_BYTES)
                 .ok_or(ProviderError::InvalidResponse)?;
             if !content.is_empty() {
@@ -109,12 +129,17 @@ fn parse_usage(value: &Value) -> Result<(Option<u32>, Option<u32>), ProviderErro
     fn count(value: Option<&Value>) -> Result<Option<u32>, ProviderError> {
         match value {
             None => Ok(None),
-            Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok())
-                .map(Some).ok_or(ProviderError::InvalidResponse),
+            Some(v) => v
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .map(Some)
+                .ok_or(ProviderError::InvalidResponse),
         }
     }
-    Ok((count(object.get("prompt_tokens"))?,
-        count(object.get("completion_tokens"))?))
+    Ok((
+        count(object.get("prompt_tokens"))?,
+        count(object.get("completion_tokens"))?,
+    ))
 }
 
 #[cfg(test)]
@@ -136,13 +161,22 @@ mod tests {
         for chunk in body.as_bytes().chunks(7) {
             events.extend(parser.push(chunk).unwrap());
         }
-        assert_eq!(events, vec![
-            StreamEvent::TextDelta("Hello".into()),
-            StreamEvent::TextDelta(" world".into()),
-            StreamEvent::Completed { input_tokens: Some(9), output_tokens: Some(2) }
-        ]);
+        assert_eq!(
+            events,
+            vec![
+                StreamEvent::TextDelta("Hello".into()),
+                StreamEvent::TextDelta(" world".into()),
+                StreamEvent::Completed {
+                    input_tokens: Some(9),
+                    output_tokens: Some(2)
+                }
+            ]
+        );
         assert_eq!(parser.finish(), Ok(()));
-        assert_eq!(parser.push(b"data: [DONE]\n\n"), Err(ProviderError::InvalidResponse));
+        assert_eq!(
+            parser.push(b"data: [DONE]\n\n"),
+            Err(ProviderError::InvalidResponse)
+        );
     }
 
     #[test]
@@ -150,7 +184,10 @@ mod tests {
         let mut parser = OpenAiStreamDecoder::new();
         parser.push(FIRST.as_bytes()).unwrap();
         assert_eq!(parser.finish(), Err(ProviderError::InvalidResponse));
-        assert_eq!(parser.push(b"data: [DONE]\n\n"), Err(ProviderError::InvalidResponse));
+        assert_eq!(
+            parser.push(b"data: [DONE]\n\n"),
+            Err(ProviderError::InvalidResponse)
+        );
         let mut parser = OpenAiStreamDecoder::new();
         parser.push(STOP.as_bytes()).unwrap();
         assert_eq!(parser.finish(), Err(ProviderError::InvalidResponse));
@@ -166,8 +203,11 @@ mod tests {
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"no\"}}]}\n\n",
             "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
         ] {
-            assert_eq!(OpenAiStreamDecoder::new().push(body.as_bytes()),
-                Err(ProviderError::Rejected), "{body}");
+            assert_eq!(
+                OpenAiStreamDecoder::new().push(body.as_bytes()),
+                Err(ProviderError::Rejected),
+                "{body}"
+            );
         }
     }
 
@@ -179,13 +219,21 @@ mod tests {
             "data: {\"choices\":[]}\n\n",
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4294967296}}\n\n",
         ] {
-            assert_eq!(OpenAiStreamDecoder::new().push(body.as_bytes()),
-                Err(ProviderError::InvalidResponse), "{body}");
+            assert_eq!(
+                OpenAiStreamDecoder::new().push(body.as_bytes()),
+                Err(ProviderError::InvalidResponse),
+                "{body}"
+            );
         }
         let mut parser = OpenAiStreamDecoder::new();
         parser.push(STOP.as_bytes()).unwrap();
-        assert_eq!(parser.push(FIRST.as_bytes()), Err(ProviderError::InvalidResponse));
-        assert_eq!(OpenAiStreamDecoder::new().push(b"data: \xff\n\n"),
-            Err(ProviderError::InvalidResponse));
+        assert_eq!(
+            parser.push(FIRST.as_bytes()),
+            Err(ProviderError::InvalidResponse)
+        );
+        assert_eq!(
+            OpenAiStreamDecoder::new().push(b"data: \xff\n\n"),
+            Err(ProviderError::InvalidResponse)
+        );
     }
 }
