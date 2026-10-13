@@ -87,12 +87,22 @@ pub fn parse_sha256sums(text: &str) -> Result<Vec<DumpChecksum>, DumpChecksumErr
     Ok(members)
 }
 
+fn canonical_page_id(value: &str) -> Option<u64> {
+    // Match the bounded canonical page-ID contract of the XML shard importer.
+    // A leading zero or a value outside signed 64-bit range is not an identity.
+    if value.is_empty() || value.starts_with('0') {
+        return None;
+    }
+    let id = value.parse::<u64>().ok()?;
+    (id <= i64::MAX as u64).then_some(id)
+}
+
 fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
     let range = name.strip_prefix(prefix)?.strip_suffix(".xml.bz2")?;
     let (first, last) = range.split_once('p')?;
-    let start = first.parse::<u64>().ok()?;
-    let end = last.parse::<u64>().ok()?;
-    (start > 0 && end >= start).then_some((start, end))
+    let start = canonical_page_id(first)?;
+    let end = canonical_page_id(last)?;
+    (end >= start).then_some((start, end))
 }
 
 fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
@@ -102,9 +112,9 @@ fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
         return None;
     }
     let (first, last) = range.strip_suffix(".bz2")?.split_once('p')?;
-    let start = first.parse::<u64>().ok()?;
-    let end = last.parse::<u64>().ok()?;
-    (start > 0 && end >= start).then_some((start, end))
+    let start = canonical_page_id(first)?;
+    let end = canonical_page_id(last)?;
+    (end >= start).then_some((start, end))
 }
 
 /// Accept actual ISO calendar days, including non-month-start releases.
@@ -223,6 +233,10 @@ mod tests {
             "enwiki-2026-10-01-p100p1.xml.bz2",
             "enwiki-2026-10-01-p0p100.xml.bz2",
             "enwiki-2026-10-01-p1p2p3.xml.bz2",
+            "enwiki-2026-10-01-p01p100.xml.bz2",
+            "enwiki-2026-10-01-p1p0100.xml.bz2",
+            "enwiki-2026-10-01-p1p9223372036854775808.xml.bz2",
+            "enwiki-2026-10-01-p9223372036854775808p9223372036854775809.xml.bz2",
         ] {
             members[0].relative_path = invalid.into();
             assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
@@ -304,6 +318,9 @@ mod tests {
             "enwiki-20261001-pages-meta-current01.xml-p1p100.bz2",
             "enwiki-20260901-pages-meta-current1.xml-p1p100.bz2",
             "enwiki-20261001-pages-meta-history1.xml-p1p100.bz2",
+            "enwiki-20261001-pages-meta-current1.xml-p01p100.bz2",
+            "enwiki-20261001-pages-meta-current1.xml-p1p0100.bz2",
+            "enwiki-20261001-pages-meta-current1.xml-p1p9223372036854775808.bz2",
         ] {
             let items = parse_sha256sums(&line(invalid)).unwrap();
             assert!(!matches_current_export(&items, "enwiki", "2026-10-01"));
