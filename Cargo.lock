@@ -722,6 +722,7 @@ dependencies = [
  "wiki-model",
  "wiki-pack-format",
  "wiki-search",
+ "wiki-source",
  "wiki-store",
 ]
 

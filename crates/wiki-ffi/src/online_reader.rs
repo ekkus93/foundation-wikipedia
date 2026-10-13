@@ -1,0 +1,196 @@
+//! Bridge revision-pinned Wikimedia responses to disposable HTML cache.
+//! TLS transport, trusted source provenance and required-media completeness
+//! remain separate obligations; a temporary cache is never an offline pack.
+
+use wiki_model::ArticleKey;
+use wiki_source::online_fetch::{
+    fetch_article, fetch_title, FetchFailure, FetchOutcome, MediaWikiTransport,
+};
+use wiki_source::online_selection::{ArticleVersion, NetworkState};
+use wiki_store::online_cache::{CachedHtml, HtmlCacheError, RevisionHtmlCache};
+
+#[derive(Debug)]
+pub enum CachedFetchError<E> {
+    InvalidFetchTime,
+    Fetch(FetchFailure<E>),
+    Cache(HtmlCacheError),
+}
+
+fn persist<E>(
+    cache: &mut RevisionHtmlCache,
+    result: &FetchOutcome,
+    fetched_at: i64,
+) -> Result<(), CachedFetchError<E>> {
+    if let FetchOutcome::Rendered(article) = result {
+        cache
+            .put(&CachedHtml {
+                key: article.revision.key.clone(),
+                revision_id: article.revision.revision_id,
+                title: article.revision.title.clone(),
+                html: article.html.clone(),
+                fetched_at,
+            })
+            .map_err(CachedFetchError::Cache)?;
+    }
+    Ok(())
+}
+
+/// Only a successful exact-oldid render may populate temporary storage.
+/// Offline and preexisting local-version responses never write to this cache.
+pub fn fetch_page_cached<T: MediaWikiTransport>(
+    transport: &mut T,
+    cache: &mut RevisionHtmlCache,
+    key: &ArticleKey,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    fetched_at: i64,
+) -> Result<FetchOutcome, CachedFetchError<T::Error>> {
+    if network == NetworkState::Online && fetched_at <= 0 {
+        return Err(CachedFetchError::InvalidFetchTime);
+    }
+    let outcome = fetch_article(transport, key, network, versions)
+        .map_err(CachedFetchError::Fetch)?;
+    persist(cache, &outcome, fetched_at)?;
+    Ok(outcome)
+}
+
+/// Title aliases are resolved before caching under the actual page identity.
+pub fn fetch_title_cached<T: MediaWikiTransport>(
+    transport: &mut T,
+    cache: &mut RevisionHtmlCache,
+    project: &str,
+    title: &str,
+    network: NetworkState,
+    fetched_at: i64,
+) -> Result<FetchOutcome, CachedFetchError<T::Error>> {
+    if network == NetworkState::Online && fetched_at <= 0 {
+        return Err(CachedFetchError::InvalidFetchTime);
+    }
+    let outcome = fetch_title(transport, project, title, network)
+        .map_err(CachedFetchError::Fetch)?;
+    persist(cache, &outcome, fetched_at)?;
+    Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
+    const HTML: &str =
+        r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#;
+
+    #[derive(Default)]
+    struct Fake {
+        replies: VecDeque<Vec<u8>>,
+        calls: usize,
+    }
+
+    impl MediaWikiTransport for Fake {
+        type Error = &'static str;
+        fn get(&mut self, _url: &str, _limit: usize) -> Result<Vec<u8>, Self::Error> {
+            self.calls += 1;
+            self.replies.pop_front().ok_or("missing reply")
+        }
+    }
+
+    fn key() -> ArticleKey {
+        ArticleKey {
+            project: "enwiki".into(),
+            page_id: 42,
+        }
+    }
+
+    fn good() -> Fake {
+        Fake {
+            replies: VecDeque::from(vec![META.as_bytes().to_vec(), HTML.as_bytes().to_vec()]),
+            calls: 0,
+        }
+    }
+
+    #[test]
+    fn online_revision_is_stored_and_identical_refresh_updates_timestamp() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let mut first = good();
+        assert!(matches!(
+            fetch_page_cached(&mut first, &mut cache, &key(), NetworkState::Online, &[], 100),
+            Ok(FetchOutcome::Rendered(_))
+        ));
+        assert_eq!(first.calls, 2);
+        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().html, "<p>Physics</p>");
+        fetch_page_cached(&mut good(), &mut cache, &key(), NetworkState::Online, &[], 200)
+            .unwrap();
+        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().fetched_at, 200);
+    }
+
+    #[test]
+    fn offline_invalid_time_and_wrong_render_do_not_cache() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let mut offline = good();
+        assert_eq!(
+            fetch_page_cached(&mut offline, &mut cache, &key(), NetworkState::Offline, &[], 0)
+                .unwrap(),
+            FetchOutcome::MissingOffline
+        );
+        assert!(matches!(
+            fetch_page_cached(&mut offline, &mut cache, &key(), NetworkState::Online, &[], 0),
+            Err(CachedFetchError::InvalidFetchTime)
+        ));
+        assert_eq!(offline.calls, 0);
+        let mut forged = good();
+        forged.replies.pop_back();
+        forged
+            .replies
+            .push_back(HTML.replace(r#""revid":333"#, r#""revid":334"#).into_bytes());
+        assert!(matches!(
+            fetch_page_cached(&mut forged, &mut cache, &key(), NetworkState::Online, &[], 100),
+            Err(CachedFetchError::Fetch(_))
+        ));
+        assert_eq!(cache.get(&key(), 333).unwrap(), None);
+    }
+
+    #[test]
+    fn revision_conflict_cannot_overwrite_cached_html() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        fetch_page_cached(&mut good(), &mut cache, &key(), NetworkState::Online, &[], 100)
+            .unwrap();
+        let mut forged = good();
+        forged.replies.pop_back();
+        forged
+            .replies
+            .push_back(HTML.replace("<p>Physics</p>", "<p>Changed</p>").into_bytes());
+        assert!(matches!(
+            fetch_page_cached(&mut forged, &mut cache, &key(), NetworkState::Online, &[], 200),
+            Err(CachedFetchError::Cache(HtmlCacheError::RevisionConflict))
+        ));
+        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().html, "<p>Physics</p>");
+    }
+
+    #[test]
+    fn redirect_fetch_caches_target_page_id() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let title = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        let mut client = Fake {
+            replies: VecDeque::from(vec![
+                title.as_bytes().to_vec(),
+                META.as_bytes().to_vec(),
+                HTML.as_bytes().to_vec(),
+            ]),
+            calls: 0,
+        };
+        assert!(matches!(
+            fetch_title_cached(
+                &mut client,
+                &mut cache,
+                "enwiki",
+                "Physics intro",
+                NetworkState::Online,
+                100,
+            ),
+            Ok(FetchOutcome::Rendered(_))
+        ));
+        assert_eq!(client.calls, 3);
+        assert_eq!(cache.get(&key(), 333).unwrap().unwrap().title, "Physics");
+    }
+}

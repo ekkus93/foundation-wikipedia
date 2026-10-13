@@ -4,3 +4,5 @@
 //! callable C symbols yet. The workspace's strict unsafe-code lint is retained;
 //! any future ABI export requires a separately reviewed FFI safety boundary.
 //! Native ELF compilation is not equivalent to a working Kotlin/UniFFI API.
+
+pub mod online_reader;

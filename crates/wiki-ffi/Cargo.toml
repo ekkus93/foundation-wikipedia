@@ -16,6 +16,7 @@ workspace = true
 wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
 wiki-store = { path = "../wiki-store" }
+wiki-source = { path = "../wiki-source" }
 wiki-search = { path = "../wiki-search" }
 wiki-ai = { path = "../wiki-ai" }
 wiki-pack-format = { path = "../wiki-pack-format" }
