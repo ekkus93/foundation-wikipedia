@@ -6,6 +6,7 @@
 
 pub mod local_endpoint;
 pub mod rag;
+pub mod sse;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
