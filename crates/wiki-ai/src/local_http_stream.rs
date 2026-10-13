@@ -288,7 +288,8 @@ fn read_headers<R: Read>(
         let (name, value) = line.split_once(':').ok_or(ProviderError::InvalidResponse)?;
         let value = value.trim();
         if name.eq_ignore_ascii_case("content-type") {
-            if event_stream || !value.to_ascii_lowercase().starts_with("text/event-stream") {
+            let media_type = value.split(';').next().unwrap_or("").trim();
+            if event_stream || !media_type.eq_ignore_ascii_case("text/event-stream") {
                 return Err(ProviderError::InvalidResponse);
             }
             event_stream = true;
@@ -455,6 +456,66 @@ mod tests {
         });
         assert_eq!(result, Err(ProviderError::Cancelled));
         assert_eq!(seen, vec![StreamEvent::TextDelta("one".into())]);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_event_stream_media_type_before_delivery() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"unsafe\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        for invalid_type in ["text/event-stream-extra", "text/event-stream,text/html"] {
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {invalid_type}\r\nContent-Length: {}\r\n\r\n{sse}",
+                sse.len()
+            );
+            let (endpoint, handle) = fixture_server(response.into_bytes());
+            let mut events = Vec::new();
+            assert_eq!(
+                stream_chat(
+                    &endpoint,
+                    &request(),
+                    &CancellationToken::default(),
+                    &mut |event| {
+                        events.push(event);
+                        Ok(())
+                    }
+                ),
+                Err(ProviderError::InvalidResponse),
+                "{invalid_type}"
+            );
+            assert!(events.is_empty(), "malformed content type delivered model output");
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn accepts_event_stream_media_type_with_charset_parameter() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: Text/Event-Stream; charset=utf-8\r\nContent-Length: {}\r\n\r\n{sse}",
+            sse.len()
+        );
+        let (endpoint, handle) = fixture_server(response.into_bytes());
+        let mut events = Vec::new();
+        assert_eq!(
+            stream_chat(
+                &endpoint,
+                &request(),
+                &CancellationToken::default(),
+                &mut |event| {
+                    events.push(event);
+                    Ok(())
+                }
+            ),
+            Ok(())
+        );
+        assert_eq!(events[0], StreamEvent::TextDelta("ok".into()));
+        assert!(matches!(events[1], StreamEvent::Completed { .. }));
         handle.join().unwrap();
     }
 
