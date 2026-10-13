@@ -14,7 +14,10 @@ pub enum CachedFetchError<E> {
     InvalidFetchTime,
     /// Upstream must not silently replace a previously observed newer
     /// revision with an older current-revision response.
-    RevisionRegression { newest_cached: u64, incoming: u64 },
+    RevisionRegression {
+        newest_cached: u64,
+        incoming: u64,
+    },
     Fetch(FetchFailure<E>),
     Cache(HtmlCacheError),
 }
