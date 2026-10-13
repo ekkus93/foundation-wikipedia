@@ -8,7 +8,10 @@
 use wiki_model::ArticleKey;
 
 use crate::online_article::OnlineRenderedRevision;
-use crate::online_flow::{begin_open, finish_render, plan_render, OnlineFlowError, OpenArticle};
+use crate::online_flow::{
+    begin_open, begin_title_open, finish_render, finish_title_resolution, plan_render,
+    OnlineFlowError, OpenArticle, OpenTitle,
+};
 use crate::online_selection::{ArticleVersion, NetworkState};
 
 const METADATA_BYTES: usize = 1024 * 1024;
@@ -24,6 +27,7 @@ pub trait MediaWikiTransport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FetchStage {
     Selection,
+    TitleResolution,
     Metadata,
     RenderedHtml,
 }
@@ -130,6 +134,42 @@ pub fn fetch_article<T: MediaWikiTransport>(
     Ok(FetchOutcome::Rendered(article))
 }
 
+/// Resolve an explicitly online title through canonical redirect metadata,
+/// then read the current page revision and its pinned HTML. Offline title
+/// navigation requires the separate local index and must never invoke HTTP.
+pub fn fetch_title<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    let route = begin_title_open(project, requested_title, network).map_err(|cause| FetchFailure {
+        stage: FetchStage::Selection,
+        fallback: None,
+        cause: FetchCause::Flow(cause),
+    })?;
+    let title_url = match route {
+        OpenTitle::MissingOffline => return Ok(FetchOutcome::MissingOffline),
+        OpenTitle::Resolve { title_url } => title_url,
+    };
+    let response = read_response(
+        client,
+        &title_url,
+        METADATA_BYTES,
+        FetchStage::TitleResolution,
+        &None,
+    )?;
+    let resolved =
+        finish_title_resolution(project, requested_title, &response).map_err(|cause| {
+            FetchFailure {
+                stage: FetchStage::TitleResolution,
+                fallback: None,
+                cause: FetchCause::Flow(cause),
+            }
+        })?;
+    fetch_article(client, &resolved.key, NetworkState::Online, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +268,53 @@ mod tests {
         assert_eq!(error.fallback, Some(local()));
         assert!(matches!(error.cause, FetchCause::Flow(_)));
         assert_eq!(transport.requests.len(), 1);
+    }
+
+    #[test]
+    fn title_fetch_resolves_redirect_then_fetches_revision_and_html() {
+        let mut client = FakeTransport::default();
+        let title_json = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let result = fetch_title(
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+        )
+        .unwrap();
+        let FetchOutcome::Rendered(article) = result else {
+            panic!("resolved article must contain exact pinned HTML");
+        };
+        assert_eq!(article.revision.key, key());
+        assert_eq!(client.requests.len(), 3);
+        for (index, expected) in [("titles", "Physics intro"), ("pageids", "42"), ("oldid", "333")]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(Url::parse(&client.requests[index])
+                .unwrap()
+                .query_pairs()
+                .any(|(key, val)| key == expected.0 && val == expected.1));
+        }
+    }
+
+    #[test]
+    fn title_fetch_never_uses_network_offline_or_after_failed_resolution() {
+        let mut client = FakeTransport::default();
+        assert_eq!(
+            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Offline),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert!(client.requests.is_empty());
+        let forged = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Other"}]}}"#;
+        client.answers.push_back(Ok(forged.as_bytes().to_vec()));
+        let error = fetch_title(&mut client, "enwiki", "Physics", NetworkState::Online)
+            .unwrap_err();
+        assert_eq!(error.stage, FetchStage::TitleResolution);
+        assert!(matches!(error.cause, FetchCause::Flow(_)));
+        assert_eq!(client.requests.len(), 1);
     }
 
     #[test]
