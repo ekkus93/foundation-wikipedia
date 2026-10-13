@@ -196,7 +196,10 @@ mod tests {
         assert_eq!(params.get("redirects").unwrap(), "1");
         assert!(!params.contains_key("pageids"));
         for bad in ["", " A", "A ", "A\nB", "A\0B"] {
-            assert_eq!(api.resolve_title(bad), Err(OnlineRequestError::InvalidTitle));
+            assert_eq!(
+                api.resolve_title(bad),
+                Err(OnlineRequestError::InvalidTitle)
+            );
         }
     }
 

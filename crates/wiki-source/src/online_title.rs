@@ -4,8 +4,8 @@
 //! response from a trusted upstream transport. It does not authenticate
 //! Wikimedia responses, fetch HTML, or treat a title alone as citation identity.
 
-use std::collections::BTreeSet;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use wiki_model::ArticleKey;
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -67,7 +67,9 @@ pub fn parse_title_resolution(
     if response.get("continue").is_some() {
         return Err(TitleResolutionError::InvalidResponse);
     }
-    let query = response.get("query").ok_or(TitleResolutionError::InvalidResponse)?;
+    let query = response
+        .get("query")
+        .ok_or(TitleResolutionError::InvalidResponse)?;
     let pages = query
         .get("pages")
         .and_then(Value::as_array)
@@ -162,10 +164,14 @@ mod tests {
         assert_eq!(resolved.canonical_title, "Physics");
         assert_eq!(resolved.edges.len(), 2);
         assert_eq!(
-            parse_title_resolution(r#"{"query":{"pages":[{"pageid":19,"ns":0,"title":"Énergie"}]}}"#, "frwiki", "Énergie")
-                .unwrap()
-                .key
-                .page_id,
+            parse_title_resolution(
+                r#"{"query":{"pages":[{"pageid":19,"ns":0,"title":"Énergie"}]}}"#,
+                "frwiki",
+                "Énergie"
+            )
+            .unwrap()
+            .key
+            .page_id,
             19
         );
     }
@@ -183,7 +189,11 @@ mod tests {
             );
         }
         assert_eq!(
-            parse_title_resolution(r#"{"query":{"pages":[{"missing":true,"ns":0,"title":"A"}]}}"#, "enwiki", "A"),
+            parse_title_resolution(
+                r#"{"query":{"pages":[{"missing":true,"ns":0,"title":"A"}]}}"#,
+                "enwiki",
+                "A"
+            ),
             Err(TitleResolutionError::MissingPage)
         );
         assert_eq!(
