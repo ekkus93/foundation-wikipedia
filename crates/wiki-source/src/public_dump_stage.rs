@@ -71,7 +71,7 @@ fn verify_exact_tree(root: &Path, members: &[DumpChecksum]) -> Result<(), Staged
             let metadata = fs::symlink_metadata(entry.path()).map_err(StagedDumpError::Io)?;
             if metadata.file_type().is_file() {
                 if !files.remove(&relative) {
-                    return Err(StagedDumpError::UnsafeStagingPath);
+                    return Err(StagedDumpError::InvalidInventory);
                 }
                 #[cfg(unix)]
                 {
@@ -82,7 +82,7 @@ fn verify_exact_tree(root: &Path, members: &[DumpChecksum]) -> Result<(), Staged
                 }
             } else if metadata.file_type().is_dir() {
                 if !directories.contains(&relative) {
-                    return Err(StagedDumpError::UnsafeStagingPath);
+                    return Err(StagedDumpError::InvalidInventory);
                 }
                 pending.push((entry.path(), relative));
             } else {
