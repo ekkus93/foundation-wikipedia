@@ -3,6 +3,7 @@
 use crate::public_dump::{
     matches_current_export, parse_sha256sums, DumpChecksum, DumpChecksumError,
 };
+use crate::public_dump_origin::is_official_checksum_url;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -11,6 +12,7 @@ pub enum PinnedInventoryError {
     InvalidUtf8,
     InvalidInventory(DumpChecksumError),
     WrongGeneration,
+    WrongOrigin,
     DigestMismatch,
 }
 
@@ -67,6 +69,25 @@ pub fn parse_pinned_inventory(
         inventory_sha256: actual,
         members,
     })
+}
+
+/// Bind a digest-pinned inventory to the exact published Wikimedia current-
+/// content checksum URL as well as to its declared project and generation.
+///
+/// A URL string match is only an origin preflight: the caller must perform
+/// certificate-verified HTTPS retrieval, independently pin the expected digest,
+/// and still verify each downloaded shard before activating content.
+pub fn parse_origin_checked_pinned_inventory(
+    raw: &[u8],
+    project: &str,
+    date: &str,
+    checksum_url: &str,
+    expected_sha256: &str,
+) -> Result<PinnedInventory, PinnedInventoryError> {
+    if !is_official_checksum_url(checksum_url, project, date) {
+        return Err(PinnedInventoryError::WrongOrigin);
+    }
+    parse_pinned_inventory(raw, project, date, expected_sha256)
 }
 
 /// Stage only a member declared by the digest-pinned inventory. This does
@@ -165,6 +186,38 @@ mod tests {
         assert_eq!(inventory.members().len(), 2);
         assert_eq!(inventory.project(), "enwiki");
         assert_eq!(inventory.date(), "2026-10-01");
+    }
+
+    #[test]
+    fn official_origin_preflight_binds_pinned_inventory_to_publisher_url() {
+        let raw = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let url = "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS";
+        let valid = parse_origin_checked_pinned_inventory(
+            raw.as_bytes(), "enwiki", "2026-10-01", url, &digest,
+        )
+        .unwrap();
+        assert_eq!(valid.members().len(), 1);
+        for wrong_url in [
+            url.replace("https://", "http://"),
+            url.replace("dumps.wikimedia.org", "dumps.wikimedia.org.evil.test"),
+            format!("{url}?raw=1"),
+            url.replace("/enwiki/", "/frwiki/"),
+            url.replace("/2026-10-01/", "/2026-10-02/"),
+        ] {
+            assert_eq!(
+                parse_origin_checked_pinned_inventory(
+                    raw.as_bytes(), "enwiki", "2026-10-01", &wrong_url, &digest,
+                ),
+                Err(PinnedInventoryError::WrongOrigin),
+            );
+        }
+        assert_eq!(
+            parse_origin_checked_pinned_inventory(
+                raw.as_bytes(), "enwiki", "2026-10-01", url, &"0".repeat(64),
+            ),
+            Err(PinnedInventoryError::DigestMismatch),
+        );
     }
 
     #[test]

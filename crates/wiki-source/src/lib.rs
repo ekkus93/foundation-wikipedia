@@ -16,6 +16,7 @@ pub mod online_search;
 pub mod online_selection;
 pub mod online_title;
 pub mod public_dump;
+pub mod public_dump_origin;
 pub mod public_dump_pinned;
 pub mod public_dump_stage;
 pub mod public_dump_strict;
