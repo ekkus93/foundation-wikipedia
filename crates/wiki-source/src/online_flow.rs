@@ -78,12 +78,8 @@ pub fn plan_render(
     metadata_json: &str,
 ) -> Result<RenderRequest, OnlineFlowError> {
     let api = WikipediaRequests::new(&requested.project).map_err(OnlineFlowError::Request)?;
-    let pinned = parse_current_revision(
-        metadata_json,
-        &requested.project,
-        requested.page_id,
-    )
-    .map_err(OnlineFlowError::Article)?;
+    let pinned = parse_current_revision(metadata_json, &requested.project, requested.page_id)
+        .map_err(OnlineFlowError::Article)?;
     let rendered_url = api
         .rendered_revision(pinned.revision_id)
         .map_err(OnlineFlowError::Request)?;
@@ -117,7 +113,8 @@ mod tests {
     }
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
-    const HTML: &str = r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#;
+    const HTML: &str =
+        r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#;
 
     #[test]
     fn metadata_request_to_exact_rendered_revision_roundtrip() {
@@ -135,13 +132,17 @@ mod tests {
         assert!(url.query_pairs().any(|(k, v)| k == "pageids" && v == "42"));
         let render = plan_render(&key(), META).unwrap();
         let parsed_url = Url::parse(&render.rendered_url).unwrap();
-        assert!(parsed_url.query_pairs().any(|(k, v)| k == "oldid" && v == "333"));
+        assert!(parsed_url
+            .query_pairs()
+            .any(|(k, v)| k == "oldid" && v == "333"));
         let article = finish_render(&render, HTML).unwrap();
         assert_eq!(article.revision.revision_id, 333);
         assert!(article.html.contains("Physics"));
         assert_eq!(
             finish_render(&render, &HTML.replace(r#""revid":333"#, r#""revid":334"#)),
-            Err(OnlineFlowError::Article(OnlineArticleError::RevisionMismatch))
+            Err(OnlineFlowError::Article(
+                OnlineArticleError::RevisionMismatch
+            ))
         );
     }
 
@@ -164,7 +165,11 @@ mod tests {
             local_complete: true,
         };
         assert_eq!(
-            begin_open(&key(), NetworkState::Offline, &[incomplete.clone(), saved.clone()]),
+            begin_open(
+                &key(),
+                NetworkState::Offline,
+                &[incomplete.clone(), saved.clone()]
+            ),
             Ok(OpenArticle::Local(saved.clone()))
         );
         let start = begin_open(&key(), NetworkState::Online, &[incomplete, saved.clone()]).unwrap();
@@ -179,11 +184,15 @@ mod tests {
         let foreign = META.replace(r#""pageid":42"#, r#""pageid":43"#);
         assert_eq!(
             plan_render(&key(), &foreign),
-            Err(OnlineFlowError::Article(OnlineArticleError::InvalidIdentity))
+            Err(OnlineFlowError::Article(
+                OnlineArticleError::InvalidIdentity
+            ))
         );
         assert_eq!(
             plan_render(&key(), r#"{"query":{"pages":[]}}"#),
-            Err(OnlineFlowError::Article(OnlineArticleError::InvalidResponse))
+            Err(OnlineFlowError::Article(
+                OnlineArticleError::InvalidResponse
+            ))
         );
         assert_eq!(
             plan_render(&key(), r#"{"error":{"code":"ratelimited"}}"#),
