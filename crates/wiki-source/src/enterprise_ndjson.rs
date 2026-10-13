@@ -56,7 +56,9 @@ pub enum BatchImportError {
         error: EnterpriseError,
     },
     Join(EnterpriseError),
-    TooManyTombstones { limit: usize },
+    TooManyTombstones {
+        limit: usize,
+    },
 }
 
 fn reject_oversized_tombstone_batch(count: usize) -> Result<(), BatchImportError> {
