@@ -152,7 +152,9 @@ mod tests {
 
         fn get(&mut self, url: &str, _max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
             self.requests.push(url.to_owned());
-            self.answers.pop_front().unwrap_or(Err("unexpected HTTP request"))
+            self.answers
+                .pop_front()
+                .unwrap_or(Err("unexpected HTTP request"))
         }
     }
 
@@ -189,8 +191,12 @@ mod tests {
     #[test]
     fn metadata_then_exact_oldid_and_sanitized_response() {
         let mut transport = FakeTransport::default();
-        transport.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
-        transport.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        transport
+            .answers
+            .push_back(Ok(METADATA.as_bytes().to_vec()));
+        transport
+            .answers
+            .push_back(Ok(RENDERED.as_bytes().to_vec()));
         let outcome = fetch_article(&mut transport, &key(), NetworkState::Online, &[]).unwrap();
         let FetchOutcome::Rendered(result) = outcome else {
             panic!("expected rendered article");
@@ -202,16 +208,22 @@ mod tests {
         let second = Url::parse(&transport.requests[1]).unwrap();
         assert_eq!(first.host_str(), Some("en.wikipedia.org"));
         assert_eq!(second.host_str(), Some("en.wikipedia.org"));
-        assert!(first.query_pairs().any(|(k, v)| k == "pageids" && v == "42"));
-        assert!(second.query_pairs().any(|(k, v)| k == "oldid" && v == "333"));
+        assert!(first
+            .query_pairs()
+            .any(|(k, v)| k == "pageids" && v == "42"));
+        assert!(second
+            .query_pairs()
+            .any(|(k, v)| k == "oldid" && v == "333"));
     }
 
     #[test]
     fn bad_metadata_stops_before_html_request_and_preserves_fallback() {
         let mut transport = FakeTransport::default();
-        transport.answers.push_back(Ok(METADATA.replace(r#""pageid":42"#, r#""pageid":43"#).into_bytes()));
-        let error = fetch_article(&mut transport, &key(), NetworkState::Online, &[local()])
-            .unwrap_err();
+        transport.answers.push_back(Ok(METADATA
+            .replace(r#""pageid":42"#, r#""pageid":43"#)
+            .into_bytes()));
+        let error =
+            fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
         assert_eq!(error.stage, FetchStage::Metadata);
         assert_eq!(error.fallback, Some(local()));
         assert!(matches!(error.cause, FetchCause::Flow(_)));
@@ -222,12 +234,14 @@ mod tests {
     fn network_error_or_oversized_bytes_are_not_displayed_as_current() {
         let mut unavailable = FakeTransport::default();
         unavailable.answers.push_back(Err("network offline"));
-        let error = fetch_article(&mut unavailable, &key(), NetworkState::Online, &[local()])
-            .unwrap_err();
+        let error =
+            fetch_article(&mut unavailable, &key(), NetworkState::Online, &[local()]).unwrap_err();
         assert_eq!(error.cause, FetchCause::Transport("network offline"));
         assert_eq!(error.fallback, Some(local()));
         let mut oversized = FakeTransport::default();
-        oversized.answers.push_back(Ok(vec![b' '; METADATA_BYTES + 1]));
+        oversized
+            .answers
+            .push_back(Ok(vec![b' '; METADATA_BYTES + 1]));
         let error = fetch_article(&mut oversized, &key(), NetworkState::Online, &[]).unwrap_err();
         assert_eq!(error.stage, FetchStage::Metadata);
         assert_eq!(error.cause, FetchCause::ResponseTooLarge);
