@@ -177,6 +177,14 @@ fn required_string(
     Ok(value.to_owned())
 }
 
+fn required_evidence_identifier(map: &Map<String, Value>, field: &'static str) -> Result<String, EnterpriseError> {
+    let value = required_string(map, field)?;
+    if value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err(EnterpriseError::InvalidField(field));
+    }
+    Ok(value)
+}
+
 fn optional_string(
     map: &Map<String, Value>,
     field: &'static str,
@@ -319,7 +327,7 @@ fn parse_citations(value: Option<&Value>) -> Result<Vec<StructuredCitation>, Ent
         .map(|item| {
             let map = object(item, "citations")?;
             Ok(StructuredCitation {
-                identifier: required_string(map, "identifier")?,
+                identifier: required_evidence_identifier(map, "identifier")?,
                 text: required_string(map, "text")?,
             })
         })
@@ -351,7 +359,7 @@ fn parse_table_refs(
         .map(|item| {
             let map = object(item, "table_references")?;
             Ok(StructuredTableReference {
-                identifier: required_string(map, "identifier")?,
+                identifier: required_evidence_identifier(map, "identifier")?,
                 confidence_score: decimal_string(map.get("confidence_score"), "confidence_score")?,
             })
         })
@@ -414,7 +422,7 @@ fn parse_references(value: Option<&Value>) -> Result<Vec<StructuredReference>, E
     let mut output = Vec::with_capacity(array.len());
     for item in array {
         let map = object(item, "references")?;
-        let identifier = required_string(map, "identifier")?;
+        let identifier = required_evidence_identifier(map, "identifier")?;
         if !identifiers.insert(identifier.clone()) {
             return Err(EnterpriseError::DuplicateReference(identifier));
         }
@@ -462,7 +470,7 @@ fn parse_tables(value: Option<&Value>) -> Result<Vec<StructuredTable>, Enterpris
     let mut output = Vec::with_capacity(array.len());
     for item in array {
         let map = object(item, "tables")?;
-        let identifier = required_string(map, "identifier")?;
+        let identifier = required_evidence_identifier(map, "identifier")?;
         if !identifiers.insert(identifier.clone()) {
             return Err(EnterpriseError::DuplicateTable(identifier));
         }
