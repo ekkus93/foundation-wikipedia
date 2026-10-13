@@ -73,6 +73,7 @@ impl WikipediaRequests {
         let expected = Url::parse(&self.api_url).expect("validated Wikipedia endpoint");
         url.scheme() == "https"
             && url.host_str() == expected.host_str()
+            && url.port().is_none()
             && url.path() == expected.path()
             && url.username().is_empty()
             && url.password().is_none()
