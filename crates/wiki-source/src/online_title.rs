@@ -85,6 +85,9 @@ pub fn parse_title_resolution(
     if page.get("missing").is_some() || page.get("invalid").is_some() {
         return Err(TitleResolutionError::MissingPage);
     }
+    if page.get("redirect").is_some() {
+        return Err(TitleResolutionError::RedirectChain);
+    }
     let page_id = page
         .get("pageid")
         .and_then(Value::as_u64)
@@ -233,6 +236,15 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_unresolved_redirect_page_without_canonical_target() {
+        let body = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"A","redirect":true}]}}"#;
+        assert_eq!(
+            parse_title_resolution(body, "enwiki", "A"),
+            Err(TitleResolutionError::RedirectChain)
+        );
     }
 
     #[test]
