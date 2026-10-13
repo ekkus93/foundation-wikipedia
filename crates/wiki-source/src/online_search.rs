@@ -89,7 +89,7 @@ pub fn parse_search_results(
             .and_then(Value::as_str)
             .filter(|title| {
                 !title.trim().is_empty()
-                    && title == title.trim()
+                    && *title == title.trim()
                     && title.len() <= MAX_TITLE_BYTES
                     && !title.chars().any(char::is_control)
             })
