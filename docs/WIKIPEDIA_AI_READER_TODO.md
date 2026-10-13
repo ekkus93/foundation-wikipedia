@@ -1380,3 +1380,8 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Exact-head qualification:** `5441b55bc19f04a34bc531ec5b9ad39c02f1297d` passed [Rust workspace CI 38459961022](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38459961022), [Platform shells CI 38459961032](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38459961032), and [Android Rust ABI CI 38459961068](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38459961068). [Android record codec probe 38459961092](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38459961092) was still running when recorded and is not evidence of media rendering or installed pack acceptance.
 - **Remaining:** A size guard does not discover all required visual dependencies, sanitize SVG/MathML, fetch media with attribution, prove a complete authenticated pack, or qualify desktop/Android airplane-mode rendering. **PACK-003 and STORE-002 remain unchecked.**
 
+### 2026-10-13 — SRC-004 unsupported redirect destinations (partial)
+
+- Reject unrepresented interwiki destinations and section-fragment redirect edges in the title resolver rather than silently binding to the wrong same-project page. Synthetic regression coverage was committed on master at `faa6bb6f54778545f365bf59d74377f21285a935`.
+- Exact-head Rust workspace CI 38465853155 and Platform shells CI 38465853057 passed. See `docs/SRC_004_REDIRECT_GUARD_2026-10-13.md` for the compact evidence record.
+- Production TLS transport, fragment/interwiki navigation, offline media completeness and device qualification remain outstanding. **SRC-004 remains unchecked.**
