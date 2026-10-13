@@ -61,9 +61,17 @@ impl MediaObjectStore {
         if !valid_digest(digest) {
             return Err(MediaObjectError::InvalidDigest);
         }
-        let root = fs::symlink_metadata(&self.root)?;
-        if !root.file_type().is_dir() || root.file_type().is_symlink() {
-            return Err(MediaObjectError::UnsafeDirectory);
+        // An apparently ordinary root reached through a symlinked ancestor
+        // could escape the caller's designated object-storage directory.
+        // This preflight is not race protection against an untrusted writer.
+        for ancestor in self.root.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(ancestor)?;
+            if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+                return Err(MediaObjectError::UnsafeDirectory);
+            }
         }
         Ok(self.root.join(&digest[..2]).join(digest))
     }
@@ -291,6 +299,36 @@ mod tests {
             Err(MediaObjectError::UnsafeDirectory)
         ));
         assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_root_ancestor_cannot_escape_media_store() {
+        use std::os::unix::fs::symlink;
+
+        let root = root();
+        let canonical = root.join("canonical");
+        let nested = canonical.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let alias = root.join("alias");
+        symlink(&canonical, &alias).unwrap();
+
+        let valid = MediaObjectStore::new(&nested);
+        let digest = valid.store_bytes(b"figure").unwrap();
+        assert_eq!(valid.read_verified(&digest).unwrap(), b"figure");
+
+        // The leaf 'nested' is a real directory, but its parent is not.
+        let through_alias = MediaObjectStore::new(alias.join("nested"));
+        assert!(matches!(
+            through_alias.store_bytes(b"another figure"),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert!(matches!(
+            through_alias.read_verified(&digest),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert_eq!(valid.read_verified(&digest).unwrap(), b"figure");
         fs::remove_dir_all(root).unwrap();
     }
 
