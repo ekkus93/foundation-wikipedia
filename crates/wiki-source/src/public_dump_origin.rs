@@ -16,7 +16,8 @@ pub fn is_official_checksum_url(url: &str, wiki: &str, date: &str) -> bool {
         || d[7] != b'-'
         || &d[8..] != b"01"
         || d[5..7] == *b"00"
-        || d[5..7] > *b"12"
+        || d[5] > b'1'
+        || (d[5] == b'1' && d[6] > b'2')
     {
         return false;
     }
