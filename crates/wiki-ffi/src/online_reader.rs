@@ -122,14 +122,7 @@ pub fn fetch_page_cached_host_https(
     fetched_at: i64,
 ) -> Result<FetchOutcome, CachedFetchError<wiki_source::online_curl::CurlTransportError>> {
     let mut transport = wiki_source::online_curl::CurlTransport::new();
-    fetch_page_cached(
-        &mut transport,
-        cache,
-        key,
-        network,
-        versions,
-        fetched_at,
-    )
+    fetch_page_cached(&mut transport, cache, key, network, versions, fetched_at)
 }
 
 /// Host/desktop-only title navigation through the same verified-HTTPS adapter.
@@ -143,14 +136,7 @@ pub fn fetch_title_cached_host_https(
     fetched_at: i64,
 ) -> Result<FetchOutcome, CachedFetchError<wiki_source::online_curl::CurlTransportError>> {
     let mut transport = wiki_source::online_curl::CurlTransport::new();
-    fetch_title_cached(
-        &mut transport,
-        cache,
-        project,
-        title,
-        network,
-        fetched_at,
-    )
+    fetch_title_cached(&mut transport, cache, project, title, network, fetched_at)
 }
 
 #[cfg(test)]
