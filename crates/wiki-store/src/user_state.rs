@@ -313,6 +313,21 @@ impl UserState {
     pub fn clear_history(&self) -> Result<usize, UserStateError> {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
+    /// Atomically delete personal reading activity while preserving separately
+    /// managed installed-pack ownership, builder jobs and non-secret settings.
+    /// SQLite foreign keys cascade chat message deletion from chat threads.
+    pub fn clear_personal_reading_data(&mut self) -> Result<(), UserStateError> {
+        let tx = self.conn.transaction()?;
+        tx.execute_batch(
+            "DELETE FROM bookmarks;
+             DELETE FROM reading_positions;
+             DELETE FROM history;
+             DELETE FROM chat_threads;",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
 
     /// A chat belongs to one exact article revision; callers must never
     /// silently reuse its messages for a newer revision.
@@ -756,6 +771,40 @@ mod tests {
         assert!(user.remove_builder_job("build_01").unwrap());
         assert!(!user.remove_builder_job("build_01").unwrap());
         assert_eq!(user.builder_job_status("build_01").unwrap(), None);
+    }
+
+    #[test]
+    fn personal_data_deletion_is_atomic_and_preserves_installed_pack_ownership() {
+        let mut user = UserState::in_memory().unwrap();
+        let digest = "d".repeat(64);
+        user.add_pack_owner("science", &digest).unwrap();
+        user.set_builder_job_status("build_01", "running").unwrap();
+        user.set_setting("reading.theme", "dark").unwrap();
+        user.set_bookmark(&key(), 123, "physics").unwrap();
+        user.set_reading_position(&key(), 123, 240).unwrap();
+        user.set_history_enabled(true).unwrap();
+        user.record_visit(&key(), 123, 100).unwrap();
+        let thread = user.create_chat_thread(&key(), 123).unwrap();
+        user.append_chat_message(&key(), 123, thread, "user", "explain").unwrap();
+
+        user.clear_personal_reading_data().unwrap();
+        assert_eq!(user.bookmark(&key()).unwrap(), None);
+        assert_eq!(user.reading_position(&key()).unwrap(), None);
+        assert!(user.recent_history(10).unwrap().is_empty());
+        assert!(matches!(
+            user.chat_messages(&key(), 123, thread, 10),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(user.object_owner_count(&digest).unwrap(), 1);
+        assert_eq!(
+            user.builder_job_status("build_01").unwrap().as_deref(),
+            Some("running")
+        );
+        assert_eq!(
+            user.setting("reading.theme").unwrap().as_deref(),
+            Some("dark")
+        );
+        user.clear_personal_reading_data().unwrap();
     }
 
     #[test]
