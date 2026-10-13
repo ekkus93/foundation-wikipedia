@@ -38,6 +38,13 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderJob {
+    pub id: String,
+    pub status: String,
+}
+
+
 fn valid_pack_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
@@ -503,6 +510,37 @@ impl UserState {
             .map_err(Into::into)
     }
 
+    /// Enumerate bounded persisted jobs after restart without guessing IDs.
+    /// Unexpected/corrupted status rows cannot masquerade as valid jobs.
+    pub fn list_builder_jobs(&self, limit: usize) -> Result<Vec<BuilderJob>, UserStateError> {
+        if limit > 1000 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT job_id,status FROM builder_jobs ORDER BY job_id ASC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit as i64], |row| {
+            Ok(BuilderJob {
+                id: row.get(0)?,
+                status: row.get(1)?,
+            })
+        })?;
+        let mut jobs = Vec::new();
+        for row in rows {
+            let job = row?;
+            if !valid_job_id(&job.id)
+                || !matches!(
+                    job.status.as_str(),
+                    "queued" | "running" | "succeeded" | "failed" | "cancelled"
+                )
+            {
+                return Err(UserStateError::InvalidValue);
+            }
+            jobs.push(job);
+        }
+        Ok(jobs)
+    }
+
     pub fn remove_builder_job(&self, job_id: &str) -> Result<bool, UserStateError> {
         if !valid_job_id(job_id) {
             return Err(UserStateError::InvalidValue);
@@ -805,6 +843,29 @@ mod tests {
             Some("dark")
         );
         user.clear_personal_reading_data().unwrap();
+    }
+
+    #[test]
+    fn job_inventory_is_ordered_bounded_and_rejects_corrupt_status() {
+        let user = UserState::in_memory().unwrap();
+        user.set_builder_job_status("job_b", "running").unwrap();
+        user.set_builder_job_status("job_a", "queued").unwrap();
+        assert_eq!(user.list_builder_jobs(1).unwrap()[0].id, "job_a");
+        assert_eq!(user.list_builder_jobs(2).unwrap().len(), 2);
+        assert!(matches!(
+            user.list_builder_jobs(1001),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute(
+                "UPDATE builder_jobs SET status='unknown' WHERE job_id='job_a'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            user.list_builder_jobs(2),
+            Err(UserStateError::InvalidValue)
+        ));
     }
 
     #[test]
