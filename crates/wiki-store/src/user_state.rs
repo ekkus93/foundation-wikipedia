@@ -141,6 +141,69 @@ impl UserState {
             .transpose()
     }
 
+    /// Persist a revision-scoped scroll position independently of immutable snapshots.
+    pub fn set_reading_position(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        scroll_offset: u64,
+    ) -> Result<(), UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        let offset = i64::try_from(scroll_offset).map_err(|_| UserStateError::InvalidValue)?;
+        self.conn.execute(
+            "INSERT INTO reading_positions (project,page_id,revision_id,scroll_offset)
+             VALUES (?1,?2,?3,?4)
+             ON CONFLICT(project,page_id) DO UPDATE SET
+             revision_id=excluded.revision_id, scroll_offset=excluded.scroll_offset",
+            params![key.project, page, revision, offset],
+        )?;
+        Ok(())
+    }
+
+    /// Returns the saved revision and scroll offset; the caller must verify the
+    /// revision before applying an exact position to newly updated content.
+    pub fn reading_position(
+        &self,
+        key: &ArticleKey,
+    ) -> Result<Option<(u64, u64)>, UserStateError> {
+        let (page, _) = Self::ids(key, 1)?;
+        let found: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT revision_id,scroll_offset FROM reading_positions
+                 WHERE project=?1 AND page_id=?2",
+                params![key.project, page],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        found
+            .map(|(revision, offset)| {
+                let revision = u64::try_from(revision)
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or(UserStateError::InvalidValue)?;
+                let offset = u64::try_from(offset).map_err(|_| UserStateError::InvalidValue)?;
+                Ok((revision, offset))
+            })
+            .transpose()
+    }
+
+    pub fn remove_bookmark(&self, key: &ArticleKey) -> Result<bool, UserStateError> {
+        let (page, _) = Self::ids(key, 1)?;
+        Ok(self.conn.execute(
+            "DELETE FROM bookmarks WHERE project=?1 AND page_id=?2",
+            params![key.project, page],
+        )? != 0)
+    }
+
+    pub fn remove_reading_position(&self, key: &ArticleKey) -> Result<bool, UserStateError> {
+        let (page, _) = Self::ids(key, 1)?;
+        Ok(self.conn.execute(
+            "DELETE FROM reading_positions WHERE project=?1 AND page_id=?2",
+            params![key.project, page],
+        )? != 0)
+    }
+
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
         if key.is_empty()
@@ -214,6 +277,33 @@ mod tests {
     }
 
     #[test]
+    fn reading_position_revision_and_deletion_contract() {
+        let user = UserState::in_memory().unwrap();
+        assert_eq!(user.reading_position(&key()).unwrap(), None);
+        user.set_reading_position(&key(), 123, 0).unwrap();
+        assert_eq!(user.reading_position(&key()).unwrap(), Some((123, 0)));
+        user.set_reading_position(&key(), 124, 4096).unwrap();
+        assert_eq!(user.reading_position(&key()).unwrap(), Some((124, 4096)));
+        assert!(matches!(
+            user.set_reading_position(&key(), 0, 10),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.set_reading_position(&key(), 124, u64::MAX),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(user.reading_position(&key()).unwrap(), Some((124, 4096)));
+        assert!(user.remove_reading_position(&key()).unwrap());
+        assert!(!user.remove_reading_position(&key()).unwrap());
+        assert_eq!(user.reading_position(&key()).unwrap(), None);
+
+        user.set_bookmark(&key(), 124, "Section").unwrap();
+        assert!(user.remove_bookmark(&key()).unwrap());
+        assert!(!user.remove_bookmark(&key()).unwrap());
+        assert_eq!(user.bookmark(&key()).unwrap(), None);
+    }
+
+    #[test]
     fn state_survives_snapshot_activation_and_process_reopen() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -234,6 +324,7 @@ mod tests {
             let user = UserState::open(&db).unwrap();
             user.set_bookmark(&key(), 123, "saved place").unwrap();
             user.set_setting("history.enabled", "false").unwrap();
+            user.set_reading_position(&key(), 123, 2048).unwrap();
         }
         snapshot.switch_to_prevalidated("new").unwrap();
         let user = UserState::open(&db).unwrap();
@@ -245,6 +336,7 @@ mod tests {
             user.setting("history.enabled").unwrap().as_deref(),
             Some("false")
         );
+        assert_eq!(user.reading_position(&key()).unwrap(), Some((123, 2048)));
         assert_eq!(snapshot.current().unwrap().as_deref(), Some("new"));
         drop(user);
         fs::remove_dir_all(root).unwrap();
