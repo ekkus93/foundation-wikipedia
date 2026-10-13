@@ -15,6 +15,8 @@ use crate::join::{DeletionMarker, PageKey};
 /// Callers can partition verified snapshots into independently staged chunks.
 pub const MAX_BATCH_RECORDS: usize = 10_000;
 pub const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
+/// Deletion feeds are partitioned with the same budget as live article batches.
+pub const MAX_BATCH_TOMBSTONES: usize = MAX_BATCH_RECORDS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
@@ -54,6 +56,16 @@ pub enum BatchImportError {
         error: EnterpriseError,
     },
     Join(EnterpriseError),
+    TooManyTombstones { limit: usize },
+}
+
+fn reject_oversized_tombstone_batch(count: usize) -> Result<(), BatchImportError> {
+    if count > MAX_BATCH_TOMBSTONES {
+        return Err(BatchImportError::TooManyTombstones {
+            limit: MAX_BATCH_TOMBSTONES,
+        });
+    }
+    Ok(())
 }
 
 fn parse_lines<R: BufRead, T>(
@@ -148,6 +160,8 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
     {
         return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
     }
+    // Fail before parsing source bytes or allocating a tombstone lookup table.
+    reject_oversized_tombstone_batch(deleted.len())?;
     let structured: Vec<StructuredArticle> =
         parse_lines(structured, InputKind::Structured, |line| {
             parse_structured_article(line, generation_id)
@@ -189,6 +203,7 @@ pub fn join_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     {
         return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
     }
+    reject_oversized_tombstone_batch(deleted.len())?;
     let mut seen = BTreeSet::new();
     let mut tombstones = Vec::with_capacity(deleted.len());
     for marker in deleted {
@@ -233,6 +248,48 @@ mod tests {
         format!(
             r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}},"date_modified":"2026-10-10T00:00:00Z","article_body":{{"html":"<article>Example</article>"}},"categories":[{{"name":"Science"}}],"redirects":[]}}"#
         )
+    }
+
+    #[test]
+    fn refuses_oversized_deletion_feed_before_parsing_or_joining() {
+        let deleted = (1..=(MAX_BATCH_TOMBSTONES as u64 + 1))
+            .map(|page_id| PageKey {
+                project: "enwiki".into(),
+                page_id,
+            })
+            .collect::<Vec<_>>();
+        let expected = Err(BatchImportError::TooManyTombstones {
+            limit: MAX_BATCH_TOMBSTONES,
+        });
+        // The malformed bytes would fail parsing if the cap did not run first.
+        assert_eq!(
+            join_enterprise_ndjson(
+                Cursor::new(vec![0xff]),
+                Cursor::new(vec![0xff]),
+                "20261010",
+                deleted.clone(),
+            ),
+            expected
+        );
+        let scoped = deleted
+            .into_iter()
+            .map(|page| DeletionMarker {
+                page,
+                generation_id: "20261010".into(),
+            })
+            .collect();
+        assert_eq!(
+            join_enterprise_ndjson_scoped(
+                Cursor::new(vec![0xff]),
+                Cursor::new(vec![0xff]),
+                "enwiki",
+                "20261010",
+                scoped,
+            ),
+            Err(BatchImportError::TooManyTombstones {
+                limit: MAX_BATCH_TOMBSTONES,
+            })
+        );
     }
 
     #[test]
