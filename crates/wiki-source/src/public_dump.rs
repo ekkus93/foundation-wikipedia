@@ -251,10 +251,10 @@ mod tests {
     fn legacy_public_current_dump_members_are_supported_without_format_mixing() {
         let first = "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2";
         let second = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2";
-        let legacy = parse_sha256sums(&format!("{}\\n{}", line(first), line(second))).unwrap();
+        let legacy = parse_sha256sums(&format!("{}\n{}", line(first), line(second))).unwrap();
         assert!(matches_current_export(&legacy, "enwiki", "2026-10-01"));
         let current = "enwiki-2026-10-01-p201p300.xml.bz2";
-        let mixed = parse_sha256sums(&format!("{}\\n{}", line(first), line(current))).unwrap();
+        let mixed = parse_sha256sums(&format!("{}\n{}", line(first), line(current))).unwrap();
         assert!(!matches_current_export(&mixed, "enwiki", "2026-10-01"));
         for invalid in [
             "enwiki-20261001-pages-meta-current0.xml-p1p100.bz2",
