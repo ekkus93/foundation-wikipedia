@@ -8,6 +8,7 @@ use wiki_model::{
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::record_codec::append_record_frame;
 use wiki_store::search_index::{OfflineSearchIndex, SearchError};
+use wiki_store::offline_reader::{OfflineReader, ReaderError};
 
 fn article(page_id: u64, title: &str, body: &str) -> Article {
     Article {
@@ -197,6 +198,19 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         "Physics"
     );
     assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
+    let reader = OfflineReader::new(&catalog, &index, &root);
+    let redirect_key = ArticleKey {
+        project: "enwiki".into(),
+        page_id: 10,
+    };
+    assert_eq!(reader.open_page(&redirect_key).unwrap().unwrap().title, "Physics");
+    assert_eq!(reader.open_title("enwiki", "Physics alias").unwrap().unwrap().key.page_id, 1);
+    assert!(reader.open_title("enwiki", "Missing").unwrap().is_none());
+    assert!(reader.open_page(&ArticleKey {
+        project: "enwiki".into(),
+        page_id: 999,
+    }).unwrap().is_none());
+    assert_eq!(reader.search_articles("alias", 5).unwrap()[0].key.page_id, 1);
     let verified = index
         .search_verified(&catalog, &root, "gravity molecules", 10)
         .unwrap();
@@ -238,6 +252,15 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
     assert!(matches!(
         index.search_verified(&catalog, &root, "gravity molecules", 10),
         Err(SearchError::Catalog(_))
+    ));
+    let reader = OfflineReader::new(&catalog, &index, &root);
+    assert!(matches!(
+        reader.search_articles("gravity molecules", 10),
+        Err(ReaderError::Search(SearchError::Catalog(_)))
+    ));
+    assert!(matches!(
+        reader.open_title("enwiki", "Chemistry"),
+        Err(ReaderError::Catalog(_))
     ));
     fs::remove_dir_all(root).unwrap();
 }
