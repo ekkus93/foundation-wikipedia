@@ -412,6 +412,18 @@ impl UserState {
         Ok(())
     }
 
+    pub fn delete_setting(&self, key: &str) -> Result<bool, UserStateError> {
+        if key.is_empty()
+            || key.len() > 128
+            || !key.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+            })
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute("DELETE FROM settings WHERE key=?1", params![key])? != 0)
+    }
+
     pub fn setting(&self, key: &str) -> Result<Option<String>, UserStateError> {
         if key.is_empty() || key.len() > 128 {
             return Err(UserStateError::InvalidValue);
@@ -456,6 +468,13 @@ mod tests {
         );
         assert!(matches!(
             user.set_bookmark(&key(), 0, ""),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(user.delete_setting("reading.theme").unwrap());
+        assert!(!user.delete_setting("reading.theme").unwrap());
+        assert_eq!(user.setting("reading.theme").unwrap(), None);
+        assert!(matches!(
+            user.delete_setting("INVALID_KEY"),
             Err(UserStateError::InvalidValue)
         ));
         assert!(matches!(
