@@ -138,7 +138,7 @@ mod tests {
             r#"{"query":{"search":[{"pageid":9223372036854775808,"ns":0,"title":"A"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":2147483648,"title":"A"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":" "} ]}}"#,
-            r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"A\\nB"}]}}"#,
+            r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"A\nB"}]}}"#,
         ] {
             assert_eq!(
                 parse_search_results(bad, "enwiki", 0),
