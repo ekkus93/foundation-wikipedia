@@ -358,7 +358,10 @@ mod tests {
         assert_eq!(cache.get(&second.key, second.revision_id).unwrap(), None);
         assert_eq!(cache.clear().unwrap(), 0);
         cache.put(&first).unwrap();
-        assert_eq!(cache.get(&first.key, first.revision_id).unwrap(), Some(first));
+        assert_eq!(
+            cache.get(&first.key, first.revision_id).unwrap(),
+            Some(first)
+        );
     }
 
     #[test]
