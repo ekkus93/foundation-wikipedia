@@ -466,11 +466,17 @@ mod tests {
         response.extend_from_slice(b"\r\n"); // omit the required final zero chunk
         let (endpoint, handle) = fixture_server(response);
         let mut events = Vec::new();
-        let result = stream_chat(&endpoint, &request(), &CancellationToken::default(),
-            &mut |event| { events.push(event); Ok(()) });
+        let result = stream_chat(
+            &endpoint,
+            &request(),
+            &CancellationToken::default(),
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        );
         assert_eq!(result, Err(ProviderError::InvalidResponse));
         assert_eq!(events, vec![StreamEvent::TextDelta("text".into())]);
         handle.join().unwrap();
     }
-
 }
