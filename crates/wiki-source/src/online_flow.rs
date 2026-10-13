@@ -14,9 +14,7 @@ use crate::online_requests::{OnlineRequestError, WikipediaRequests};
 use crate::online_selection::{
     choose_article, ArticleVersion, NetworkState, ReaderSelection, SelectionError,
 };
-use crate::online_title::{
-    parse_title_resolution, ResolvedTitle, TitleResolutionError,
-};
+use crate::online_title::{parse_title_resolution, ResolvedTitle, TitleResolutionError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpenArticle {
@@ -107,8 +105,7 @@ pub fn finish_title_resolution(
     requested_title: &str,
     response_json: &str,
 ) -> Result<ResolvedTitle, OnlineFlowError> {
-    parse_title_resolution(response_json, project, requested_title)
-        .map_err(OnlineFlowError::Title)
+    parse_title_resolution(response_json, project, requested_title).map_err(OnlineFlowError::Title)
 }
 
 /// Decode a fresh metadata response and request HTML ONLY for its exact oldid.
