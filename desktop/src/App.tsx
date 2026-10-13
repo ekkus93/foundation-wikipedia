@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import OnlineReader from "./OnlineReader";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
@@ -99,7 +98,7 @@ export default function App() {
         <div className="brand"><span aria-hidden="true" className="brandmark">W</span><span>
           <strong>Wikipedia</strong><small>Foundation reader · preview</small>
         </span></div>
-        <span className="search-hint">Search Wikipedia in the reader below</span>
+        <input className="search" aria-label="Wikipedia search not yet available" disabled placeholder="Search Wikipedia (coming soon)" />
         <span className="status">Development preview</span>
       </header>
       <div className="columns" hidden={destination !== "article"}>
@@ -110,10 +109,11 @@ export default function App() {
         </nav>
         <main>
           <p className="eyebrow">FOUNDATION WIKIPEDIA</p>
-          <h1 id="overview">Wikipedia reader preview</h1>
-          <OnlineReader />
+          <h1>Welcome to Foundation Wikipedia</h1>
+          <p id="overview" className="lead">A Wikipedia-first reader with optional AI assistance and offline topic packs.</p>
           <h2 id="roadmap">Under development</h2>
-          <p>Offline media, installed packs, grounded AI, bookmarks, and complete article navigation are still in development.</p>
+          <p>This is a placeholder article surface. Wikipedia fetch/search, offline packs and grounded AI are not implemented yet. Article rendering will preserve familiar Wikipedia layouts.</p>
+          <p>Project details are in the <a href="https://github.com/ekkus93/foundation-wikipedia/blob/master/docs/WIKIPEDIA_AI_READER_SPEC.md" target="_blank" rel="noreferrer">technical specification</a>.</p>
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">
