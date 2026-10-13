@@ -149,10 +149,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "wiki-trust-stage-{}-{stamp}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("wiki-trust-stage-{}-{stamp}", std::process::id()));
         create_private_dir(&parent).unwrap();
         let payload = b"verified article";
         let mut manifest = Manifest {
@@ -183,12 +181,9 @@ mod tests {
                 out.write_all(payload)
             })
             .unwrap();
-            let (staged, root, status) = stage_container_with_trust(
-                &mut std::io::Cursor::new(encoded),
-                &parent,
-                name,
-            )
-            .unwrap();
+            let (staged, root, status) =
+                stage_container_with_trust(&mut std::io::Cursor::new(encoded), &parent, name)
+                    .unwrap();
             assert_eq!(staged, manifest);
             assert_eq!(status, expected);
             assert_eq!(fs::read(root.join("articles/42.cbor")).unwrap(), payload);
