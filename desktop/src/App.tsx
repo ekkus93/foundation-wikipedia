@@ -1,12 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
+import { THEMES, isTheme, type Theme } from "./theme";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const [theme, setTheme] = useState<Theme>(() => {
+    try {
+      const saved = window.localStorage.getItem("foundation-wikipedia.theme");
+      return isTheme(saved) ? saved : "system";
+    } catch {
+      return "system";
+    }
+  });
   const readingScrollRef = useRef(0);
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
@@ -39,6 +48,15 @@ export default function App() {
       document.removeEventListener("pointerdown", onOutsidePointer);
     };
   }, [expanded]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem("foundation-wikipedia.theme", theme);
+    } catch {
+      // The preference remains usable for this session when storage is denied.
+    }
+  }, [theme]);
 
   useLayoutEffect(() => {
     if (destination === "article") window.scrollTo(0, readingScrollRef.current);
@@ -105,7 +123,13 @@ export default function App() {
         <h1>{settingsSection ?? "Settings"}</h1>
         {settingsSection === null ? <nav className="settings-sections" aria-label="Settings sections">
           {SETTINGS_SECTIONS.map((section) => <button key={section} onClick={() => setSettingsSection(section)}>{section} →</button>)}
-        </nav> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
+        </nav> : settingsSection === "Appearance & Reading" ? <fieldset className="theme-choice">
+          <legend>Color theme</legend>
+          {THEMES.map((choice) => <label key={choice}>
+            <input type="radio" name="color-theme" value={choice} checked={theme === choice} onChange={() => setTheme(choice)} />
+            {choice === "system" ? "Use system setting" : choice === "light" ? "Light" : "Dark"}
+          </label>)}
+        </fieldset> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>
