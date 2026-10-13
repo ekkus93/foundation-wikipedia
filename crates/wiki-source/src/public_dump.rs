@@ -107,23 +107,41 @@ fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
     (start > 0 && end >= start).then_some((start, end))
 }
 
+/// Accept actual ISO calendar days, including non-month-start releases.
+/// The date is an identifier check, not authentication of a dump publication.
+fn valid_dump_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..7].iter().all(u8::is_ascii_digit)
+        || !bytes[8..].iter().all(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    let year: u32 = date[..4].parse().unwrap_or(0);
+    let month: u32 = date[5..7].parse().unwrap_or(0);
+    let day: u32 = date[8..].parse().unwrap_or(0);
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => return false,
+    };
+    year > 0 && day > 0 && day <= days_in_month
+}
+
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
-    let d = date.as_bytes();
     if members.is_empty()
         || wiki.is_empty()
         || !wiki
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        || d.len() != 10
-        || !d[..4].iter().all(u8::is_ascii_digit)
-        || d[4] != b'-'
-        || !d[5..7].iter().all(u8::is_ascii_digit)
-        || d[7] != b'-'
-        || &d[8..] != b"01"
-        || (d[5] == b'0' && d[6] == b'0')
-        || d[5] > b'1'
-        || (d[5] == b'1' && d[6] > b'2')
+        || !valid_dump_date(date)
     {
         return false;
     }
@@ -289,6 +307,34 @@ mod tests {
         ] {
             let items = parse_sha256sums(&line(invalid)).unwrap();
             assert!(!matches_current_export(&items, "enwiki", "2026-10-01"));
+        }
+    }
+
+    #[test]
+    fn accepts_daily_public_dump_dates_and_rejects_impossible_calendar_days() {
+        for date in ["2026-10-12", "2024-02-29", "2000-02-29", "2026-12-31"] {
+            let iso = format!("enwiki-{date}-p1p100.xml.bz2");
+            let members = parse_sha256sums(&line(&iso)).unwrap();
+            assert!(matches_current_export(&members, "enwiki", date), "{date}");
+            let compact = date.replace('-', "");
+            let legacy = format!("enwiki-{compact}-pages-meta-current1.xml-p1p100.bz2");
+            let members = parse_sha256sums(&line(&legacy)).unwrap();
+            assert!(matches_current_export(&members, "enwiki", date), "{date}");
+        }
+        for date in [
+            "2026-00-12",
+            "2026-13-01",
+            "2026-02-29",
+            "2026-04-31",
+            "1900-02-29",
+            "2026-10-00",
+            "0000-01-01",
+            "2026-1-01",
+            "2026-10-1",
+            "2026-10-1x",
+        ] {
+            let members = parse_sha256sums(&line("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
+            assert!(!matches_current_export(&members, "enwiki", date), "{date}");
         }
     }
 
