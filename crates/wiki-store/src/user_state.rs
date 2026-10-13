@@ -57,6 +57,14 @@ fn valid_object_digest(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
+fn valid_job_id(job_id: &str) -> bool {
+    !job_id.is_empty()
+        && job_id.len() <= 128
+        && job_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -448,6 +456,50 @@ impl UserState {
         u64::try_from(count).map_err(|_| UserStateError::InvalidValue)
     }
 
+    /// Persist a durable, bounded builder-job state independent of snapshots.
+    /// The pipeline owns actual recovery and cancellation implementation.
+    pub fn set_builder_job_status(
+        &self,
+        job_id: &str,
+        status: &str,
+    ) -> Result<(), UserStateError> {
+        if !valid_job_id(job_id)
+            || !matches!(status, "queued" | "running" | "succeeded" | "failed" | "cancelled")
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        self.conn.execute(
+            "INSERT INTO builder_jobs (job_id,status) VALUES (?1,?2)
+             ON CONFLICT(job_id) DO UPDATE SET status=excluded.status",
+            params![job_id, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn builder_job_status(&self, job_id: &str) -> Result<Option<String>, UserStateError> {
+        if !valid_job_id(job_id) {
+            return Err(UserStateError::InvalidValue);
+        }
+        self.conn
+            .query_row(
+                "SELECT status FROM builder_jobs WHERE job_id=?1",
+                params![job_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn remove_builder_job(&self, job_id: &str) -> Result<bool, UserStateError> {
+        if !valid_job_id(job_id) {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self
+            .conn
+            .execute("DELETE FROM builder_jobs WHERE job_id=?1", params![job_id])?
+            != 0)
+    }
+
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
         if key.is_empty()
@@ -672,6 +724,35 @@ mod tests {
             user.object_owner_count("not-a-digest"),
             Err(UserStateError::InvalidValue)
         ));
+    }
+
+    #[test]
+    fn durable_job_inventory_tracks_validated_statuses() {
+        let user = UserState::in_memory().unwrap();
+        assert_eq!(user.builder_job_status("build_01").unwrap(), None);
+        user.set_builder_job_status("build_01", "queued").unwrap();
+        assert_eq!(user.builder_job_status("build_01").unwrap().as_deref(), Some("queued"));
+        user.set_builder_job_status("build_01", "running").unwrap();
+        user.set_builder_job_status("build_01", "succeeded").unwrap();
+        assert_eq!(
+            user.builder_job_status("build_01").unwrap().as_deref(),
+            Some("succeeded")
+        );
+        assert!(matches!(
+            user.set_builder_job_status("../outside", "running"),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.set_builder_job_status("build_01", "arbitrary"),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(
+            user.builder_job_status("build_01").unwrap().as_deref(),
+            Some("succeeded")
+        );
+        assert!(user.remove_builder_job("build_01").unwrap());
+        assert!(!user.remove_builder_job("build_01").unwrap());
+        assert_eq!(user.builder_job_status("build_01").unwrap(), None);
     }
 
     #[test]
