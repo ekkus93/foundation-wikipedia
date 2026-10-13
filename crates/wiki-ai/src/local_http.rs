@@ -268,7 +268,8 @@ mod tests {
         let (endpoint, handle) = serve_once(response.into_bytes());
         let provider = LocalOpenAiProvider::new(endpoint);
         assert_eq!(provider.locality(), Locality::Localhost);
-        assert!(!provider.capabilities().streaming);
+        assert!(provider.capabilities().streaming);
+        assert!(provider.capabilities().cancellable);
         let models = provider.list_models().unwrap();
         assert_eq!(models[0].id, "local-1");
         assert_eq!(models[0].context_window, Some(8192));
