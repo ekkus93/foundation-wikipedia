@@ -177,7 +177,10 @@ fn required_string(
     Ok(value.to_owned())
 }
 
-fn required_evidence_identifier(map: &Map<String, Value>, field: &'static str) -> Result<String, EnterpriseError> {
+fn required_evidence_identifier(
+    map: &Map<String, Value>,
+    field: &'static str,
+) -> Result<String, EnterpriseError> {
     let value = required_string(map, field)?;
     if value.len() > 4096 || value.chars().any(char::is_control) {
         return Err(EnterpriseError::InvalidField(field));
@@ -881,7 +884,8 @@ mod tests {
         ];
         for pointer in fields {
             let mut record: Value = serde_json::from_str(&structured_json()).unwrap();
-            *record.pointer_mut(pointer).unwrap() = Value::String("bad".to_owned() + &char::from(10).to_string());
+            *record.pointer_mut(pointer).unwrap() =
+                Value::String("bad".to_owned() + &char::from(10).to_string());
             assert_eq!(
                 parse_structured_article(&record.to_string(), "2026-10-01"),
                 Err(EnterpriseError::InvalidField("identifier"))
