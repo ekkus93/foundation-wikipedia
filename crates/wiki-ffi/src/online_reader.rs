@@ -110,6 +110,22 @@ pub fn fetch_title_cached<T: MediaWikiTransport>(
     Ok(outcome)
 }
 
+/// Host/desktop-only online search; returns navigation identities only,
+/// never revision-pinned article evidence. Offline mode needs the local index.
+#[cfg(not(target_os = "android"))]
+pub fn fetch_search_host_https(
+    project: &str,
+    query: &str,
+    limit: usize,
+    network: NetworkState,
+) -> Result<
+    wiki_source::online_search::SearchOutcome,
+    wiki_source::online_search::SearchFetchError<wiki_source::online_curl::CurlTransportError>,
+> {
+    let mut transport = wiki_source::online_curl::CurlTransport::new();
+    wiki_source::online_search::fetch_search(&mut transport, project, query, limit, network)
+}
+
 /// Host/desktop-only concrete HTTPS path. The caller explicitly chooses
 /// NetworkState::Online; offline requests never start a curl process.
 /// Android must use a native certificate-verifying transport instead.
@@ -164,6 +180,10 @@ mod tests {
             FetchOutcome::MissingOffline
         );
         assert_eq!(cache.get(&key(), 333).unwrap(), None);
+        assert_eq!(
+            fetch_search_host_https("enwiki", "Physics", 3, NetworkState::Offline).unwrap(),
+            wiki_source::online_search::SearchOutcome::OfflineNeedsLocalIndex
+        );
     }
 
     use std::collections::VecDeque;
