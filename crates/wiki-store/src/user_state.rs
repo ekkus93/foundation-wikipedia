@@ -44,6 +44,13 @@ pub struct BuilderJob {
     pub status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedBookmark {
+    pub key: ArticleKey,
+    pub revision_id: u64,
+    pub anchor: String,
+}
+
 fn valid_pack_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
@@ -187,6 +194,44 @@ impl UserState {
                 Ok((rev, anchor))
             })
             .transpose()
+    }
+
+    /// Enumerate validated bookmarks in deterministic order for management UI.
+    /// Canonical article identity must be revalidated when reading mutable rows.
+    pub fn list_bookmarks(&self, limit: usize) -> Result<Vec<SavedBookmark>, UserStateError> {
+        if limit > 1000 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT project,page_id,revision_id,anchor FROM bookmarks
+             ORDER BY project,page_id LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut bookmarks = Vec::new();
+        for row in rows {
+            let (project, page_id, revision_id, anchor) = row?;
+            let page_id = u64::try_from(page_id).map_err(|_| UserStateError::InvalidValue)?;
+            let revision_id =
+                u64::try_from(revision_id).map_err(|_| UserStateError::InvalidValue)?;
+            let key = ArticleKey { project, page_id };
+            Self::ids(&key, revision_id)?;
+            if anchor.len() > 4096 || anchor.contains('\0') {
+                return Err(UserStateError::InvalidValue);
+            }
+            bookmarks.push(SavedBookmark {
+                key,
+                revision_id,
+                anchor,
+            });
+        }
+        Ok(bookmarks)
     }
 
     /// Persist a revision-scoped scroll position independently of immutable snapshots.
@@ -640,6 +685,37 @@ mod tests {
         ));
         assert!(matches!(
             user.set_setting("API_KEY", "secret"),
+            Err(UserStateError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn bookmark_listing_is_bounded_ordered_and_validates_stored_rows() {
+        let user = UserState::in_memory().unwrap();
+        let earlier = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 7,
+        };
+        user.set_bookmark(&key(), 123, "physics").unwrap();
+        user.set_bookmark(&earlier, 98, "history").unwrap();
+        let bookmarks = user.list_bookmarks(2).unwrap();
+        assert_eq!(bookmarks.len(), 2);
+        assert_eq!(bookmarks[0].key.page_id, 7);
+        assert_eq!(bookmarks[0].revision_id, 98);
+        assert_eq!(user.list_bookmarks(1).unwrap().len(), 1);
+        assert!(matches!(
+            user.list_bookmarks(1001),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute(
+                "INSERT INTO bookmarks(project,page_id,revision_id,anchor)
+                 VALUES ('BAD',99,123,'bad')",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            user.list_bookmarks(3),
             Err(UserStateError::InvalidValue)
         ));
     }
