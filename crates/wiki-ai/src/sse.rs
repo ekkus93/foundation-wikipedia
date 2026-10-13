@@ -116,14 +116,20 @@ mod tests {
     #[test]
     fn parses_split_crlf_utf8_multiline_data_and_comments() {
         let mut decoder = SseDecoder::new();
-        assert!(decoder.push(b": keepalive\r\nevent: message\r\ndata: {\"text\":\"").unwrap().is_empty());
+        assert!(decoder
+            .push(b": keepalive\r\nevent: message\r\ndata: {\"text\":\"")
+            .unwrap()
+            .is_empty());
         assert!(decoder.push(&[0xe2, 0x98]).unwrap().is_empty());
         assert!(decoder.push(&[0x83, b'"', b'}', b'\r']).unwrap().is_empty());
         let events = decoder.push(b"\ndata: second\r\n\r\n").unwrap();
-        assert_eq!(events, vec![SseEvent {
-            event_type: Some("message".into()),
-            data: "{\"text\":\"☃\"}\nsecond".into(),
-        }]);
+        assert_eq!(
+            events,
+            vec![SseEvent {
+                event_type: Some("message".into()),
+                data: "{\"text\":\"☃\"}\nsecond".into(),
+            }]
+        );
         assert_eq!(decoder.finish(), Ok(()));
     }
 
