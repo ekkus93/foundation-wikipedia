@@ -192,6 +192,27 @@ class ExportTests(unittest.TestCase):
         self.assertEqual([entry["source_text"] for entry in entries],
                          ["Wiki 10", "Wiki 110"])
 
+    def test_rejects_missing_or_duplicate_numbered_legacy_shards(self):
+        first = "enwiki-20261001-pages-meta-current1.xml-p1p100.bz2"
+        for second in (
+            "enwiki-20261001-pages-meta-current3.xml-p101p200.bz2",
+            "enwiki-20261001-pages-meta-current1.xml-p101p200.bz2",
+            "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2",
+        ):
+            with self.subTest(second=second):
+                self.shards = {
+                    first: bz2.compress(xml(10)),
+                    second: bz2.compress(xml(110)),
+                }
+                self.write_inventory()
+                if "current2." in second:
+                    self.assertEqual(self.extract(), 2)
+                    self.output.unlink()
+                else:
+                    with self.assertRaisesRegex(DumpExtractionError, "numbered shard"):
+                        self.extract()
+                    self.assert_no_publication()
+
     def test_rejects_mixed_export_formats_and_wrong_legacy_members(self):
         legacy = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2"
         self.shards = {self.first: bz2.compress(xml(10)),

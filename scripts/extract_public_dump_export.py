@@ -79,9 +79,10 @@ def _inventory(path, project, date):
     )
     legacy_prefix = re.compile(
         rf"{re.escape(project)}-{date.replace('-', '')}-pages-meta-current"
-        r"[1-9][0-9]*\.xml-p([0-9]+)p([0-9]+)\.bz2"
+        r"([1-9][0-9]*)\.xml-p([0-9]+)p([0-9]+)\.bz2"
     )
     formats = set()
+    numbered_shards = set()
     for line in records:
         match = re.fullmatch(r"([0-9A-Fa-f]{64}) [ *](.+)", line)
         if match is None:
@@ -96,13 +97,20 @@ def _inventory(path, project, date):
         if current is None and legacy is None:
             raise DumpExtractionError("unexpected export member identity")
         formats.add("current-content" if current is not None else "pages-meta-current")
-        range_match = current if current is not None else legacy
-        first, last = (int(value) for value in range_match.groups())
+        if legacy is not None:
+            number = int(legacy.group(1))
+            if number in numbered_shards:
+                raise DumpExtractionError("duplicate numbered shard identity")
+            numbered_shards.add(number)
+        range_fields = current.groups() if current is not None else legacy.groups()[1:]
+        first, last = (int(value) for value in range_fields)
         if not 0 < first <= last <= 2**63 - 1:
             raise DumpExtractionError("invalid shard page-ID partition")
         parsed.append((first, last, relative, digest.lower()))
     if len(formats) != 1:
         raise DumpExtractionError("mixed current-content export formats")
+    if numbered_shards and numbered_shards != set(range(1, len(parsed) + 1)):
+        raise DumpExtractionError("incomplete numbered shard sequence")
     parsed.sort()
     for previous, current in zip(parsed, parsed[1:]):
         if previous[1] >= current[0]:
