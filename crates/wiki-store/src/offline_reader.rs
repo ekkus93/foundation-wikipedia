@@ -44,7 +44,11 @@ impl<'a> OfflineReader<'a> {
         index: &'a OfflineSearchIndex,
         root: &'a Path,
     ) -> Self {
-        Self { catalog, index, root }
+        Self {
+            catalog,
+            index,
+            root,
+        }
     }
 
     /// Open an installed page by stable project/page ID, including redirects.
@@ -76,7 +80,9 @@ impl<'a> OfflineReader<'a> {
     /// Search installed articles, verifying all matched immutable frames
     /// before returning any article body to the caller.
     pub fn search_articles(&self, query: &str, limit: usize) -> Result<Vec<Article>, ReaderError> {
-        Ok(self.index.search_verified(self.catalog, self.root, query, limit)?)
+        Ok(self
+            .index
+            .search_verified(self.catalog, self.root, query, limit)?)
     }
 
     fn require_article(record: PageRecord) -> Result<Article, ReaderError> {
