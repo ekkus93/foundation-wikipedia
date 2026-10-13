@@ -38,6 +38,23 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+fn valid_pack_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()
+                || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_object_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -392,6 +409,51 @@ impl UserState {
         )? != 0)
     }
 
+    /// Record that this installed pack owns one content-addressed object.
+    /// Identities are constrained before storing them in mutable user state.
+    pub fn add_pack_owner(
+        &self,
+        pack_id: &str,
+        digest: &str,
+    ) -> Result<bool, UserStateError> {
+        if !valid_pack_id(pack_id) || !valid_object_digest(digest) {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "INSERT OR IGNORE INTO pack_owners (pack_id,digest) VALUES (?1,?2)",
+            params![pack_id, digest],
+        )? != 0)
+    }
+
+    /// Drop a single pack's ownership, never another pack's reference.
+    /// Physical object deletion must be handled by a coordinated install
+    /// transaction after confirming no remaining owners or other leases.
+    pub fn remove_pack_owner(
+        &self,
+        pack_id: &str,
+        digest: &str,
+    ) -> Result<bool, UserStateError> {
+        if !valid_pack_id(pack_id) || !valid_object_digest(digest) {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "DELETE FROM pack_owners WHERE pack_id=?1 AND digest=?2",
+            params![pack_id, digest],
+        )? != 0)
+    }
+
+    pub fn object_owner_count(&self, digest: &str) -> Result<u64, UserStateError> {
+        if !valid_object_digest(digest) {
+            return Err(UserStateError::InvalidValue);
+        }
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pack_owners WHERE digest=?1",
+            params![digest],
+            |row| row.get(0),
+        )?;
+        u64::try_from(count).map_err(|_| UserStateError::InvalidValue)
+    }
+
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
         if key.is_empty()
@@ -586,6 +648,34 @@ mod tests {
         assert!(!user.delete_chat_thread(&key(), 123, thread).unwrap());
         assert!(matches!(
             user.chat_messages(&key(), 123, thread, 10),
+            Err(UserStateError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn shared_object_ownership_survives_removal_of_one_pack() {
+        let user = UserState::in_memory().unwrap();
+        let digest = "a".repeat(64);
+        assert_eq!(user.object_owner_count(&digest).unwrap(), 0);
+        assert!(user.add_pack_owner("science", &digest).unwrap());
+        assert!(!user.add_pack_owner("science", &digest).unwrap());
+        assert!(user.add_pack_owner("mathematics", &digest).unwrap());
+        assert_eq!(user.object_owner_count(&digest).unwrap(), 2);
+        assert!(user.remove_pack_owner("science", &digest).unwrap());
+        assert!(!user.remove_pack_owner("science", &digest).unwrap());
+        assert_eq!(user.object_owner_count(&digest).unwrap(), 1);
+        assert!(user.remove_pack_owner("mathematics", &digest).unwrap());
+        assert_eq!(user.object_owner_count(&digest).unwrap(), 0);
+        assert!(matches!(
+            user.add_pack_owner("../outside", &digest),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.add_pack_owner("science", &"F".repeat(64)),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.object_owner_count("not-a-digest"),
             Err(UserStateError::InvalidValue)
         ));
     }
