@@ -149,7 +149,6 @@ pub fn stream_chat(
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    drop(relay);
     decoder.finish()?;
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
