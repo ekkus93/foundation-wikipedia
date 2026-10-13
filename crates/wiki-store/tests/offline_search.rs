@@ -60,6 +60,25 @@ fn offline_title_and_body_ranking_unicode_and_query_bounds() {
 }
 
 #[test]
+fn canonical_title_outranks_repeated_body_mentions() {
+    // FTS5 weights are positional across all five columns. The first three
+    // are UNINDEXED metadata; the fourth is the canonical title, not the first.
+    let mut index = OfflineSearchIndex::in_memory().unwrap();
+    index
+        .rebuild(&[
+            article(1, "Physics", "Matter and energy"),
+            article(2, "Mathematics", &"Physics ".repeat(10)),
+            article(3, "Geometry", "Physics studies matter"),
+        ])
+        .unwrap();
+    let hits = index.search("Physics", 10).unwrap();
+    assert_eq!(
+        hits.iter().map(|hit| hit.key.page_id).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+}
+
+#[test]
 fn rebuild_failure_rolls_back_and_new_revision_replaces_old() {
     let mut index = OfflineSearchIndex::in_memory().unwrap();
     index.rebuild(&[article(1, "Physics", "gravity")]).unwrap();
