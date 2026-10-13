@@ -197,6 +197,14 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         "Physics"
     );
     assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
+    let verified = index
+        .search_verified(&catalog, &root, "gravity molecules", 10)
+        .unwrap();
+    assert_eq!(verified.len(), 2);
+    assert_eq!(
+        verified.iter().map(|a| a.key.page_id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     let mut stale = gravity_hit.clone();
     stale.revision_id += 1;
     assert!(matches!(
@@ -226,6 +234,12 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
     ));
     assert_eq!(index.search("gravity", 10).unwrap()[0].key.page_id, 1);
     assert_eq!(index.search("molecules", 10).unwrap()[0].key.page_id, 2);
+    // FTS may still contain the prior entries when one immutable frame
+    // corrupts. Never display an apparently complete partial search result.
+    assert!(matches!(
+        index.search_verified(&catalog, &root, "gravity molecules", 10),
+        Err(SearchError::Catalog(_))
+    ));
     fs::remove_dir_all(root).unwrap();
 }
 

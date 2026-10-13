@@ -446,6 +446,24 @@ impl OfflineSearchIndex {
         }
     }
 
+    /// Resolve bounded offline search results to exact indexed article
+    /// revisions. Any stale identity or corrupt catalog frame fails the
+    /// entire operation, rather than returning a partial result set.
+    ///
+    /// Publisher trust and snapshot completeness must be verified separately.
+    pub fn search_verified(
+        &self,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, SearchError> {
+        self.search(query, limit)?
+            .iter()
+            .map(|hit| self.resolve_hit(catalog, root, hit))
+            .collect()
+    }
+
     /// Local-only title-boosted lexical ranking, at most 100 results.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, SearchError> {
         if limit == 0 {
