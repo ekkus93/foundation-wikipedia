@@ -143,11 +143,12 @@ pub fn fetch_title<T: MediaWikiTransport>(
     requested_title: &str,
     network: NetworkState,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
-    let route = begin_title_open(project, requested_title, network).map_err(|cause| FetchFailure {
-        stage: FetchStage::Selection,
-        fallback: None,
-        cause: FetchCause::Flow(cause),
-    })?;
+    let route =
+        begin_title_open(project, requested_title, network).map_err(|cause| FetchFailure {
+            stage: FetchStage::Selection,
+            fallback: None,
+            cause: FetchCause::Flow(cause),
+        })?;
     let title_url = match route {
         OpenTitle::MissingOffline => return Ok(FetchOutcome::MissingOffline),
         OpenTitle::Resolve { title_url } => title_url,
@@ -277,21 +278,20 @@ mod tests {
         client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
-        let result = fetch_title(
-            &mut client,
-            "enwiki",
-            "Physics intro",
-            NetworkState::Online,
-        )
-        .unwrap();
+        let result =
+            fetch_title(&mut client, "enwiki", "Physics intro", NetworkState::Online).unwrap();
         let FetchOutcome::Rendered(article) = result else {
             panic!("resolved article must contain exact pinned HTML");
         };
         assert_eq!(article.revision.key, key());
         assert_eq!(client.requests.len(), 3);
-        for (index, expected) in [("titles", "Physics intro"), ("pageids", "42"), ("oldid", "333")]
-            .into_iter()
-            .enumerate()
+        for (index, expected) in [
+            ("titles", "Physics intro"),
+            ("pageids", "42"),
+            ("oldid", "333"),
+        ]
+        .into_iter()
+        .enumerate()
         {
             assert!(Url::parse(&client.requests[index])
                 .unwrap()
@@ -310,8 +310,8 @@ mod tests {
         assert!(client.requests.is_empty());
         let forged = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Other"}]}}"#;
         client.answers.push_back(Ok(forged.as_bytes().to_vec()));
-        let error = fetch_title(&mut client, "enwiki", "Physics", NetworkState::Online)
-            .unwrap_err();
+        let error =
+            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Online).unwrap_err();
         assert_eq!(error.stage, FetchStage::TitleResolution);
         assert!(matches!(error.cause, FetchCause::Flow(_)));
         assert_eq!(client.requests.len(), 1);
