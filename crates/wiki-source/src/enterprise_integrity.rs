@@ -109,6 +109,9 @@ mod tests {
 
     #[test]
     fn nested_evidence_requires_exact_local_identifiers() {
+        assert!(!valid_identifier(" "));
+        assert!(!valid_identifier(" cite1"));
+        assert!(valid_identifier("cite1"));
         let mut article = JoinedEnterpriseArticle {
             structured: crate::enterprise::StructuredArticle {
                 page: crate::join::PageKey {
