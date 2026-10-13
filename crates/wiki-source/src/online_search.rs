@@ -61,6 +61,12 @@ pub fn parse_search_results(
     if value.get("error").is_some() {
         return Err(OnlineSearchError::ApiError);
     }
+    if value
+        .get("batchcomplete")
+        .is_some_and(|flag| flag.as_bool() != Some(true))
+    {
+        return Err(OnlineSearchError::InvalidResponse);
+    }
     let results = value
         .get("query")
         .and_then(|query| query.get("search"))
@@ -197,6 +203,18 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_explicitly_incomplete_search_batches() {
+        assert_eq!(
+            parse_search_results(
+                r#"{"batchcomplete":false,"query":{"search":[]}}"#,
+                "enwiki",
+                5
+            ),
+            Err(OnlineSearchError::InvalidResponse)
+        );
     }
 
     #[test]

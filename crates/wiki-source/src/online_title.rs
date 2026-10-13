@@ -64,7 +64,11 @@ pub fn parse_title_resolution(
     if response.get("error").is_some() {
         return Err(TitleResolutionError::ApiError);
     }
-    if response.get("continue").is_some() {
+    if response.get("continue").is_some()
+        || response
+            .get("batchcomplete")
+            .is_some_and(|flag| flag.as_bool() != Some(true))
+    {
         return Err(TitleResolutionError::InvalidResponse);
     }
     let query = response
@@ -228,6 +232,15 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_explicitly_incomplete_title_batches() {
+        let response = r#"{"batchcomplete":false,"query":{"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#;
+        assert_eq!(
+            parse_title_resolution(response, "enwiki", "A"),
+            Err(TitleResolutionError::InvalidResponse)
+        );
     }
 
     #[test]

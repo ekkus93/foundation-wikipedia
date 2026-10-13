@@ -53,7 +53,11 @@ fn parse_response(body: &str, bound: usize) -> Result<Value, OnlineArticleError>
     if value.get("error").is_some() {
         return Err(OnlineArticleError::ApiError);
     }
-    if value.get("continue").is_some() {
+    if value.get("continue").is_some()
+        || value
+            .get("batchcomplete")
+            .is_some_and(|flag| flag.as_bool() != Some(true))
+    {
         // A partial/multi-page response is not sufficient for revision pinning.
         return Err(OnlineArticleError::InvalidResponse);
     }
@@ -232,6 +236,21 @@ mod tests {
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Énergie","revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
     const RENDER: &str = r#"{"parse":{"title":"Énergie","pageid":42,"revid":300,"text":"<p onclick=\"bad()\">Hello</p><script>bad()</script><a href=\"javascript:bad()\">bad link</a>"}}"#;
+
+    #[test]
+    fn rejects_explicitly_incomplete_revision_responses() {
+        let incomplete = META.replacen(r#"{"query":"#, r#"{"batchcomplete":false,"query":"#, 1);
+        assert_eq!(
+            parse_current_revision(&incomplete, "frwiki", 42),
+            Err(OnlineArticleError::InvalidResponse)
+        );
+        let revision = parse_current_revision(META, "frwiki", 42).unwrap();
+        let incomplete = RENDER.replacen(r#"{"parse":"#, r#"{"batchcomplete":false,"parse":"#, 1);
+        assert_eq!(
+            parse_rendered_revision(&incomplete, &revision),
+            Err(OnlineArticleError::InvalidResponse)
+        );
+    }
 
     #[test]
     fn revision_timestamp_rejects_impossible_calendar_dates() {
