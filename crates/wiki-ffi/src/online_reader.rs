@@ -12,6 +12,9 @@ use wiki_store::online_cache::{CachedHtml, HtmlCacheError, RevisionHtmlCache};
 #[derive(Debug)]
 pub enum CachedFetchError<E> {
     InvalidFetchTime,
+    /// Upstream must not silently replace a previously observed newer
+    /// revision with an older current-revision response.
+    RevisionRegression { newest_cached: u64, incoming: u64 },
     Fetch(FetchFailure<E>),
     Cache(HtmlCacheError),
 }
@@ -22,6 +25,16 @@ fn persist<E>(
     fetched_at: i64,
 ) -> Result<(), CachedFetchError<E>> {
     if let FetchOutcome::Rendered(article) = result {
+        if let Some(newest) = latest_temporary_version(cache, &article.revision.key)
+            .map_err(CachedFetchError::Cache)?
+        {
+            if newest.revision_id > article.revision.revision_id {
+                return Err(CachedFetchError::RevisionRegression {
+                    newest_cached: newest.revision_id,
+                    incoming: article.revision.revision_id,
+                });
+            }
+        }
         cache
             .put(&CachedHtml {
                 key: article.revision.key.clone(),
@@ -272,6 +285,41 @@ mod tests {
         assert_eq!(client.calls, 3);
         assert_eq!(cache.get(&key(), 333).unwrap().unwrap().title, "Physics");
     }
+    #[test]
+    fn upstream_revision_regression_fails_closed_without_cache_mutation() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        cache
+            .put(&CachedHtml {
+                key: key(),
+                revision_id: 334,
+                title: "Physics".into(),
+                html: "<p>Newer version</p>".into(),
+                fetched_at: 100,
+            })
+            .unwrap();
+        let mut transport = good();
+        assert!(matches!(
+            fetch_page_cached(
+                &mut transport,
+                &mut cache,
+                &key(),
+                NetworkState::Online,
+                &[],
+                200
+            ),
+            Err(CachedFetchError::RevisionRegression {
+                newest_cached: 334,
+                incoming: 333,
+            })
+        ));
+        assert_eq!(transport.calls, 2);
+        assert_eq!(cache.get(&key(), 333).unwrap(), None);
+        assert_eq!(
+            cache.get(&key(), 334).unwrap().unwrap().html,
+            "<p>Newer version</p>"
+        );
+    }
+
     #[test]
     fn newest_cached_revision_does_not_regress_after_older_refresh() {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
