@@ -56,7 +56,8 @@ pub fn verify_pinned_staged_export_exact(
                 // The underlying verifier permits these only as a pair and
                 // rejects symlinks/hardlinks. Do not reject its own valid
                 // publication sidecars during this second exact-tree walk.
-                let publication_sidecar = matches!(relative.as_str(), "SHA256SUMS" | "PUBLICATION.json");
+                let publication_sidecar =
+                    matches!(relative.as_str(), "SHA256SUMS" | "PUBLICATION.json");
                 if !publication_sidecar && !files.contains(relative.as_str()) {
                     return Err(StagedDumpError::InvalidInventory);
                 }
@@ -82,20 +83,32 @@ mod tests {
 
     #[test]
     fn accepts_paired_publication_sidecars_but_rejects_extra_files() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-dump-exact-{}-{stamp}", std::process::id()));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("wiki-dump-exact-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let name = "enwiki-2026-10-01-p1p100.xml.bz2";
         let bytes = b"verified fixture member";
         let inventory_bytes = format!("{:x}  {name}\n", Sha256::digest(bytes));
         let digest = format!("{:x}", Sha256::digest(inventory_bytes.as_bytes()));
-        let inventory = parse_pinned_inventory(inventory_bytes.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let inventory =
+            parse_pinned_inventory(inventory_bytes.as_bytes(), "enwiki", "2026-10-01", &digest)
+                .unwrap();
         fs::write(root.join(name), bytes).unwrap();
-        assert_eq!(verify_pinned_staged_export_exact(&root, &inventory, 4096).unwrap(), bytes.len() as u64);
+        assert_eq!(
+            verify_pinned_staged_export_exact(&root, &inventory, 4096).unwrap(),
+            bytes.len() as u64
+        );
         fs::write(root.join("SHA256SUMS"), inventory_bytes).unwrap();
         assert!(verify_pinned_staged_export_exact(&root, &inventory, 4096).is_err());
         fs::write(root.join("PUBLICATION.json"), b"{}").unwrap();
-        assert_eq!(verify_pinned_staged_export_exact(&root, &inventory, 4096).unwrap(), bytes.len() as u64);
+        assert_eq!(
+            verify_pinned_staged_export_exact(&root, &inventory, 4096).unwrap(),
+            bytes.len() as u64
+        );
         fs::write(root.join("rogue.txt"), b"unexpected").unwrap();
         assert!(verify_pinned_staged_export_exact(&root, &inventory, 4096).is_err());
         fs::remove_dir_all(root).unwrap();
