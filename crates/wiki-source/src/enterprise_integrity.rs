@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart, MAX_PART_DEPTH, MAX_PARTS};
+use crate::enterprise::{JoinedEnterpriseArticle, StructuredPart, MAX_PARTS, MAX_PART_DEPTH};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntegrityError {
@@ -24,7 +24,9 @@ fn check_parts(
         return Err(IntegrityError::PartDepthExceeded);
     }
     for part in parts {
-        *count = count.checked_add(1).ok_or(IntegrityError::PartCountExceeded)?;
+        *count = count
+            .checked_add(1)
+            .ok_or(IntegrityError::PartCountExceeded)?;
         if *count > MAX_PARTS {
             return Err(IntegrityError::PartCountExceeded);
         }
@@ -62,8 +64,20 @@ pub fn validate_joined_evidence(article: &JoinedEnterpriseArticle) -> Result<(),
         .map(|table| table.identifier.as_str())
         .collect();
     let mut count = 0;
-    check_parts(&article.structured.infoboxes, &references, &tables, 0, &mut count)?;
-    check_parts(&article.structured.sections, &references, &tables, 0, &mut count)?;
+    check_parts(
+        &article.structured.infoboxes,
+        &references,
+        &tables,
+        0,
+        &mut count,
+    )?;
+    check_parts(
+        &article.structured.sections,
+        &references,
+        &tables,
+        0,
+        &mut count,
+    )?;
     Ok(())
 }
 
