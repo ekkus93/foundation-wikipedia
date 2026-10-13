@@ -149,7 +149,15 @@ impl RevisionHtmlCache {
                  FROM cached_html
                  WHERE project=?1 AND page_id=?2 AND revision_id=?3",
                 params![article.key.project, page_id, revision_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .optional()?;
         let mut stored = article.clone();
@@ -161,9 +169,7 @@ impl RevisionHtmlCache {
                 html,
                 fetched_at,
             };
-            if digest(&previous.html) != sha256
-                || record_digest(&previous) != record_sha256
-            {
+            if digest(&previous.html) != sha256 || record_digest(&previous) != record_sha256 {
                 return Err(HtmlCacheError::DigestMismatch);
             }
             if previous.title != article.title || previous.html != article.html {
@@ -228,7 +234,15 @@ impl RevisionHtmlCache {
                  FROM cached_html
                  WHERE project=?1 AND page_id=?2 AND revision_id=?3",
                 params![key.project, page_id, revision],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .optional()?;
         let Some((title, html, sha256, record_sha256, fetched_at)) = row else {
