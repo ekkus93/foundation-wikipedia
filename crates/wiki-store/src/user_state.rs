@@ -162,10 +162,7 @@ impl UserState {
 
     /// Returns the saved revision and scroll offset; the caller must verify the
     /// revision before applying an exact position to newly updated content.
-    pub fn reading_position(
-        &self,
-        key: &ArticleKey,
-    ) -> Result<Option<(u64, u64)>, UserStateError> {
+    pub fn reading_position(&self, key: &ArticleKey) -> Result<Option<(u64, u64)>, UserStateError> {
         let (page, _) = Self::ids(key, 1)?;
         let found: Option<(i64, i64)> = self
             .conn
