@@ -9,6 +9,10 @@ use std::collections::HashSet;
 use serde_json::Value;
 use wiki_model::ArticleKey;
 
+use crate::online_fetch::MediaWikiTransport;
+use crate::online_requests::{OnlineRequestError, WikipediaRequests};
+use crate::online_selection::NetworkState;
+
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 500;
 const MAX_TITLE_BYTES: usize = 4096;
@@ -105,6 +109,49 @@ pub fn parse_search_results(
     Ok(hits)
 }
 
+/// Search metadata is for navigation, never revision-pinned citation evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SearchOutcome {
+    OfflineNeedsLocalIndex,
+    Results(Vec<OnlineSearchHit>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SearchFetchError<E> {
+    Request(OnlineRequestError),
+    Transport(E),
+    ResponseTooLarge,
+    InvalidUtf8,
+    Parse(OnlineSearchError),
+}
+
+/// Explicit online-only search through an injected HTTPS-capable transport.
+/// Implementations MUST verify TLS/origin, forbid off-origin redirects and
+/// enforce timeouts. A second response-size check protects against a client
+/// that ignores its byte limit.
+pub fn fetch_search<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    text: &str,
+    limit: usize,
+    network: NetworkState,
+) -> Result<SearchOutcome, SearchFetchError<T::Error>> {
+    let api = WikipediaRequests::new(project).map_err(SearchFetchError::Request)?;
+    let url = api.search(text, limit).map_err(SearchFetchError::Request)?;
+    if network == NetworkState::Offline {
+        return Ok(SearchOutcome::OfflineNeedsLocalIndex);
+    }
+    let bytes = client
+        .get(&url, MAX_RESPONSE_BYTES)
+        .map_err(SearchFetchError::Transport)?;
+    if bytes.len() > MAX_RESPONSE_BYTES {
+        return Err(SearchFetchError::ResponseTooLarge);
+    }
+    let body = String::from_utf8(bytes).map_err(|_| SearchFetchError::InvalidUtf8)?;
+    let hits = parse_search_results(&body, project, limit).map_err(SearchFetchError::Parse)?;
+    Ok(SearchOutcome::Results(hits))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,4 +222,74 @@ mod tests {
             Err(OnlineSearchError::TooManyResults)
         );
     }
+
+    #[test]
+    fn online_search_respects_offline_gate_and_exact_response_limits() {
+        use std::collections::VecDeque;
+        use url::Url;
+
+        #[derive(Default)]
+        struct Fake {
+            responses: VecDeque<Result<Vec<u8>, &'static str>>,
+            requests: Vec<String>,
+        }
+        impl MediaWikiTransport for Fake {
+            type Error = &'static str;
+            fn get(&mut self, url: &str, limit: usize) -> Result<Vec<u8>, Self::Error> {
+                assert_eq!(limit, MAX_RESPONSE_BYTES);
+                self.requests.push(url.to_owned());
+                self.responses.pop_front().unwrap_or(Err("no response"))
+            }
+        }
+
+        let mut client = Fake::default();
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Offline),
+            Ok(SearchOutcome::OfflineNeedsLocalIndex)
+        );
+        assert!(client.requests.is_empty());
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "bad\\nquery", 1, NetworkState::Online),
+            Err(SearchFetchError::Request(OnlineRequestError::InvalidSearch))
+        );
+        assert!(client.requests.is_empty());
+
+        let body = br#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Physics","snippet":"<script>bad()</script>"}]}}"#;
+        client.responses.push_back(Ok(body.to_vec()));
+        let result =
+            fetch_search(&mut client, "enwiki", "Énergie &list=allusers", 1, NetworkState::Online)
+                .unwrap();
+        let SearchOutcome::Results(hits) = result else {
+            panic!("expected online navigation hits");
+        };
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].key.page_id, 42);
+        let url = Url::parse(&client.requests[0]).unwrap();
+        assert_eq!(url.host_str(), Some("en.wikipedia.org"));
+        assert!(url
+            .query_pairs()
+            .any(|(key, value)| key == "srsearch" && value == "Énergie &list=allusers"));
+
+        client.responses.push_back(Err("network unavailable"));
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
+            Err(SearchFetchError::Transport("network unavailable"))
+        );
+        client.responses.push_back(Ok(vec![b' '; MAX_RESPONSE_BYTES + 1]));
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
+            Err(SearchFetchError::ResponseTooLarge)
+        );
+        client.responses.push_back(Ok(vec![0xff]));
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
+            Err(SearchFetchError::InvalidUtf8)
+        );
+        client.responses.push_back(Ok(br#"{"error":{"code":"ratelimited"}}"#.to_vec()));
+        assert_eq!(
+            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
+            Err(SearchFetchError::Parse(OnlineSearchError::ApiError))
+        );
+    }
+
 }
