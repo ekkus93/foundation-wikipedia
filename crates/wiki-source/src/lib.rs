@@ -8,6 +8,8 @@ pub mod enterprise_verified;
 pub mod join;
 pub mod online_article;
 pub mod online_fetch;
+#[cfg(not(target_os = "android"))]
+pub mod online_curl;
 pub mod online_flow;
 pub mod online_requests;
 pub mod online_search;
