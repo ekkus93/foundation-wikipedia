@@ -508,6 +508,41 @@ mod tests {
     }
 
     #[test]
+    fn lists_only_verified_temporary_revisions_for_one_page() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let mut older = article(10);
+        older.fetched_at = 100;
+        let mut latest = article(11);
+        latest.fetched_at = 300;
+        let mut middle = article(12);
+        middle.fetched_at = 200;
+        cache.put(&older).unwrap();
+        cache.put(&latest).unwrap();
+        cache.put(&middle).unwrap();
+        let mut other = article(13);
+        other.key.project = "frwiki".into();
+        cache.put(&other).unwrap();
+        assert_eq!(
+            cache.list_cached_revisions(&older.key).unwrap(),
+            vec![latest.clone(), middle, older.clone()]
+        );
+        assert_eq!(
+            cache.list_cached_revisions(&other.key).unwrap(),
+            vec![other]
+        );
+        cache
+            .conn
+            .execute("UPDATE cached_html SET title='Changed' WHERE revision_id=11", [])
+            .unwrap();
+        assert!(matches!(
+            cache.list_cached_revisions(&older.key),
+            Err(HtmlCacheError::DigestMismatch)
+        ));
+        cache.clear().unwrap();
+        assert!(cache.list_cached_revisions(&older.key).unwrap().is_empty());
+    }
+
+    #[test]
     fn bounds_number_of_revision_rows_and_keeps_newest() {
         let mut cache = RevisionHtmlCache::in_memory().unwrap();
         for revision in 1..=140 {
