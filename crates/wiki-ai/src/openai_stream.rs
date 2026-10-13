@@ -95,6 +95,15 @@ impl OpenAiStreamDecoder {
             .get("delta")
             .and_then(Value::as_object)
             .ok_or(ProviderError::InvalidResponse)?;
+        // Streaming text must originate from the assistant role. A malicious
+        // or incompatible endpoint cannot inject system, user or tool output
+        // into the validated answer stream by changing delta.role.
+        if delta
+            .get("role")
+            .is_some_and(|role| role.as_str() != Some("assistant"))
+        {
+            return Err(ProviderError::InvalidResponse);
+        }
         // Never disguise tool execution or refusal as a grounded text answer.
         if delta.contains_key("tool_calls")
             || delta.contains_key("function_call")
@@ -209,6 +218,32 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_non_assistant_stream_roles() {
+        for role in ["system", "user", "tool", "function"] {
+            let data = format!(
+                "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"role\":\"{role}\",\"content\":\"unsafe\"}},\"finish_reason\":null}}]}}\n\n"
+            );
+            assert_eq!(
+                OpenAiStreamDecoder::new().push(data.as_bytes()),
+                Err(ProviderError::InvalidResponse),
+                "{role}"
+            );
+        }
+        for role in ["null", "42", "true"] {
+            let data = format!(
+                "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"role\":{role},\"content\":\"unsafe\"}},\"finish_reason\":null}}]}}\n\n"
+            );
+            assert_eq!(
+                OpenAiStreamDecoder::new().push(data.as_bytes()),
+                Err(ProviderError::InvalidResponse),
+                "{role}"
+            );
+        }
+        let mut parser = OpenAiStreamDecoder::new();
+        assert_eq!(parser.push(FIRST.as_bytes()).unwrap(), vec![StreamEvent::TextDelta("Hello".into())]);
     }
 
     #[test]
