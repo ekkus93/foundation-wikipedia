@@ -15,6 +15,7 @@ use crate::search_index::{OfflineSearchIndex, SearchError};
 pub enum ReaderError {
     Catalog(CatalogError),
     Search(SearchError),
+    StaleRevision { expected: u64, actual: u64 },
 }
 
 impl From<CatalogError> for ReaderError {
@@ -66,6 +67,26 @@ impl<'a> OfflineReader<'a> {
                 Ok(Some(Self::require_article(resolved.1)?))
             }
         }
+    }
+
+    /// Open a page only when its installed canonical revision still matches
+    /// the recorded revision. Redirects resolve to their target revision.
+    /// A changed revision is an error, never a silent citation relocation.
+    pub fn open_exact_revision(
+        &self,
+        key: &ArticleKey,
+        expected: u64,
+    ) -> Result<Option<Article>, ReaderError> {
+        self.open_page(key)?
+            .map(|article| {
+                let actual = article.revision.revision_id;
+                if actual != expected {
+                    Err(ReaderError::StaleRevision { expected, actual })
+                } else {
+                    Ok(article)
+                }
+            })
+            .transpose()
     }
 
     /// Open a canonical title or installed redirect alias without requesting

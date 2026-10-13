@@ -217,6 +217,22 @@ fn catalog_rebuild_skips_redirects_and_rolls_back_on_late_corruption() {
         1
     );
     assert!(reader.open_title("enwiki", "Missing").unwrap().is_none());
+    assert_eq!(
+        reader
+            .open_exact_revision(&redirect_key, 42)
+            .unwrap()
+            .unwrap()
+            .key
+            .page_id,
+        1
+    );
+    assert!(matches!(
+        reader.open_exact_revision(&redirect_key, 41),
+        Err(ReaderError::StaleRevision {
+            expected: 41,
+            actual: 42
+        })
+    ));
     assert!(reader
         .open_page(&ArticleKey {
             project: "enwiki".into(),
