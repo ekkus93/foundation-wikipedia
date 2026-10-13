@@ -457,7 +457,7 @@ impl OfflineSearchIndex {
         let mut stmt = self.conn.prepare(
             "SELECT project,page_id,revision_id,title FROM offline_article_fts
              WHERE offline_article_fts MATCH ?1
-             ORDER BY bm25(offline_article_fts, 0.0, 0.0, 0.0, 4.0, 1.0),
+             ORDER BY bm25(offline_article_fts, 0.0, 0.0, 0.0, 8.0, 1.0),
                       project, CAST(page_id AS INTEGER) LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![expression, limit.min(100) as i64], |row| {
