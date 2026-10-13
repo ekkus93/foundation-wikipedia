@@ -8,6 +8,7 @@ pub mod enterprise_verified;
 pub mod join;
 pub mod online_article;
 pub mod online_search;
+pub mod online_selection;
 pub mod public_dump;
 pub mod public_dump_pinned;
 pub mod public_dump_stage;
