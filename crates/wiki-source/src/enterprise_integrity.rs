@@ -194,10 +194,13 @@ mod tests {
             Err(IntegrityError::EvidenceCountExceeded)
         );
         article.structured.tables.clear();
-        article.structured.references.push(crate::enterprise::StructuredReference {
-            identifier: "one".into(),
-            payload: serde_json::Map::new(),
-        });
+        article
+            .structured
+            .references
+            .push(crate::enterprise::StructuredReference {
+                identifier: "one".into(),
+                payload: serde_json::Map::new(),
+            });
         article.structured.sections.push(StructuredPart {
             kind: PartKind::Paragraph,
             name: None,
