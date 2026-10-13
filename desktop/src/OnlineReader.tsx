@@ -27,6 +27,7 @@ function isolatedDocument(html: string): string {
 
 export default function OnlineReader() {
   const [query, setQuery] = useState("");
+  const [offline, setOffline] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [article, setArticle] = useState<ArticlePreview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +40,7 @@ export default function OnlineReader() {
     setNotice(null);
     setArticle(null);
     try {
-      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim() });
+      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), offline: offline || !navigator.onLine });
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
@@ -57,7 +58,7 @@ export default function OnlineReader() {
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
         "open_wikipedia_title",
-        { title },
+        { title, offline: offline || !navigator.onLine },
       );
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
     } catch (error) {
@@ -83,7 +84,9 @@ export default function OnlineReader() {
           <button type="submit" disabled={busy || !query.trim()}>Search</button>
         </div>
       </form>
+      <label><input type="checkbox" checked={offline} onChange={(event) => setOffline(event.target.checked)} /> Work offline (no network requests)</label>
       <p className="preview-warning">
+        {offline || !navigator.onLine ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;
         this page is not offline-ready. Links inside the isolated preview are disabled.
       </p>

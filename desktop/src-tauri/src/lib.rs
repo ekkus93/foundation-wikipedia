@@ -8,10 +8,11 @@ use wiki_source::online_selection::NetworkState;
 
 /// Search results are navigation identities only, never AI evidence.
 #[tauri::command]
-async fn search_wikipedia(query: String) -> Result<Vec<(u64, String)>, String> {
+async fn search_wikipedia(query: String, offline: bool) -> Result<Vec<(u64, String)>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
-        let outcome = fetch_search(&mut client, "enwiki", &query, 10, NetworkState::Online)
+        let network = if offline { NetworkState::Offline } else { NetworkState::Online };
+        let outcome = fetch_search(&mut client, "enwiki", &query, 10, network)
             .map_err(|error| format!("Wikipedia search failed: {error:?}"))?;
         match outcome {
             SearchOutcome::Results(hits) => Ok(hits
@@ -19,7 +20,7 @@ async fn search_wikipedia(query: String) -> Result<Vec<(u64, String)>, String> {
                 .map(|hit| (hit.key.page_id, hit.title))
                 .collect()),
             SearchOutcome::OfflineNeedsLocalIndex => {
-                Err("Offline search requires an installed local index".to_owned())
+                Err("Offline search requires an installed local index; no network request was made".to_owned())
             }
         }
     })
@@ -30,10 +31,11 @@ async fn search_wikipedia(query: String) -> Result<Vec<(u64, String)>, String> {
 /// Return sanitized HTML tied to the exact Wikimedia page and revision.
 /// This is an online-only, text-preview bridge, not an offline-ready article.
 #[tauri::command]
-async fn open_wikipedia_title(title: String) -> Result<(u64, u64, String, String), String> {
+async fn open_wikipedia_title(title: String, offline: bool) -> Result<(u64, u64, String, String), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
-        let outcome = fetch_title(&mut client, "enwiki", &title, NetworkState::Online)
+        let network = if offline { NetworkState::Offline } else { NetworkState::Online };
+        let outcome = fetch_title(&mut client, "enwiki", &title, network)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
         match outcome {
             FetchOutcome::Rendered(article) => Ok((
@@ -42,6 +44,7 @@ async fn open_wikipedia_title(title: String) -> Result<(u64, u64, String, String
                 article.revision.title,
                 article.html,
             )),
+            FetchOutcome::MissingOffline => Err("Article is not installed for offline reading; no network request was made".to_owned()),
             _ => Err("No current online article is available".to_owned()),
         }
     })
