@@ -452,4 +452,25 @@ mod tests {
         );
         handle.join().unwrap();
     }
+    #[test]
+    fn does_not_emit_completed_for_truncated_chunked_http() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"text\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n",
+            sse.len()
+        ).into_bytes();
+        response.extend_from_slice(sse.as_bytes());
+        response.extend_from_slice(b"\r\n"); // omit the required final zero chunk
+        let (endpoint, handle) = fixture_server(response);
+        let mut events = Vec::new();
+        let result = stream_chat(&endpoint, &request(), &CancellationToken::default(),
+            &mut |event| { events.push(event); Ok(()) });
+        assert_eq!(result, Err(ProviderError::InvalidResponse));
+        assert_eq!(events, vec![StreamEvent::TextDelta("text".into())]);
+        handle.join().unwrap();
+    }
+
 }
