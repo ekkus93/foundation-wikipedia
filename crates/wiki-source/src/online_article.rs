@@ -257,7 +257,10 @@ mod tests {
             "2026-04-30T10:45:00Z",
         ] {
             let payload = META.replace("2026-10-13T10:45:00Z", valid);
-            assert!(parse_current_revision(&payload, "frwiki", 42).is_ok(), "{valid}");
+            assert!(
+                parse_current_revision(&payload, "frwiki", 42).is_ok(),
+                "{valid}"
+            );
         }
     }
 
