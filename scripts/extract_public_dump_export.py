@@ -198,7 +198,8 @@ def _validate_staged_publication_receipt(root, checksum_file, records, project, 
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 65536:
                 raise DumpExtractionError("unsafe staged publication receipt")
             payload = reader.read(65537)
-            if len(payload) != info.st_size or os.fstat(reader.fileno()) != info:
+            if (len(payload) != info.st_size
+                    or _source_identity(os.fstat(reader.fileno())) != _source_identity(info)):
                 raise DumpExtractionError("staged publication receipt changed")
         receipt = json.loads(payload)
     except (OSError, ValueError, TypeError, UnicodeDecodeError) as error:
