@@ -333,6 +333,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_jsonp_discovery_media_type() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/jsonp\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(
+            parse_http_response(response),
+            Err(ProviderError::InvalidResponse)
+        );
+    }
+
+    #[test]
     fn https_is_explicitly_unsupported_not_downgraded() {
         let endpoint = LocalEndpoint::parse("https://127.0.0.1:443/v1").unwrap();
         assert_eq!(discover_models(&endpoint), Err(ProviderError::Unsupported));
