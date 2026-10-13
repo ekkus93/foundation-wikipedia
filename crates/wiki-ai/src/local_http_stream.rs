@@ -30,32 +30,47 @@ pub fn stream_chat(
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    let authority = endpoint.base_url().strip_prefix("http://")
+    let authority = endpoint
+        .base_url()
+        .strip_prefix("http://")
         .ok_or(ProviderError::Unsupported)?
-        .split('/').next().ok_or(ProviderError::InvalidRequest)?;
-    let messages: Vec<_> = request.messages.iter().map(|m| json!({
-        "role": match m.role {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-        },
-        "content": m.content,
-    })).collect();
+        .split('/')
+        .next()
+        .ok_or(ProviderError::InvalidRequest)?;
+    let messages: Vec<_> = request
+        .messages
+        .iter()
+        .map(|m| {
+            json!({
+                "role": match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                },
+                "content": m.content,
+            })
+        })
+        .collect();
     let body = json!({
         "model": request.model,
         "messages": messages,
         "max_tokens": request.max_output_tokens,
         "stream": true,
         "stream_options": { "include_usage": true },
-    }).to_string();
+    })
+    .to_string();
     if body.len() > MAX_REQUEST_BYTES {
         return Err(ProviderError::InvalidRequest);
     }
     let deadline = Instant::now() + MAX_DURATION;
     let mut socket = TcpStream::connect_timeout(&endpoint.connect_addr(), Duration::from_secs(3))
         .map_err(map_io)?;
-    socket.set_read_timeout(Some(READ_TIMEOUT)).map_err(map_io)?;
-    socket.set_write_timeout(Some(Duration::from_secs(3))).map_err(map_io)?;
+    socket
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .map_err(map_io)?;
+    socket
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .map_err(map_io)?;
     let header = format!(
         "POST /v1/chat/completions HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -69,7 +84,8 @@ pub fn stream_chat(
     match mode {
         BodyMode::Chunked => loop {
             let size_line = read_line(&mut reader, 64, cancellation, deadline)?;
-            let size = std::str::from_utf8(&size_line).ok()
+            let size = std::str::from_utf8(&size_line)
+                .ok()
                 .and_then(|s| usize::from_str_radix(s, 16).ok())
                 .ok_or(ProviderError::InvalidResponse)?;
             if size == 0 {
@@ -81,22 +97,40 @@ pub fn stream_chat(
             if size > MAX_BODY - total {
                 return Err(ProviderError::InvalidResponse);
             }
-            read_body(&mut reader, size, &mut decoder, cancellation, deadline, on_event)?;
+            read_body(
+                &mut reader,
+                size,
+                &mut decoder,
+                cancellation,
+                deadline,
+                on_event,
+            )?;
             total += size;
             if !read_line(&mut reader, 2, cancellation, deadline)?.is_empty() {
                 return Err(ProviderError::InvalidResponse);
             }
         },
         BodyMode::Length(size) => {
-            read_body(&mut reader, size, &mut decoder, cancellation, deadline, on_event)?;
+            read_body(
+                &mut reader,
+                size,
+                &mut decoder,
+                cancellation,
+                deadline,
+                on_event,
+            )?;
         }
         BodyMode::UntilClose => {
             let mut buffer = [0u8; 8192];
             loop {
                 let n = checked_read(&mut reader, &mut buffer, cancellation, deadline)?;
-                if n == 0 { break; }
-                total = total.checked_add(n)
-                    .filter(|n| *n <= MAX_BODY).ok_or(ProviderError::InvalidResponse)?;
+                if n == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(n)
+                    .filter(|n| *n <= MAX_BODY)
+                    .ok_or(ProviderError::InvalidResponse)?;
                 feed(&mut decoder, &buffer[..n], cancellation, on_event)?;
             }
         }
@@ -118,9 +152,15 @@ fn read_body<R: Read>(
     let mut remaining = size;
     let mut buffer = [0u8; 8192];
     while remaining > 0 {
-        let n = checked_read(reader, &mut buffer[..remaining.min(buffer.len())],
-            cancellation, deadline)?;
-        if n == 0 { return Err(ProviderError::InvalidResponse); }
+        let n = checked_read(
+            reader,
+            &mut buffer[..remaining.min(buffer.len())],
+            cancellation,
+            deadline,
+        )?;
+        if n == 0 {
+            return Err(ProviderError::InvalidResponse);
+        }
         feed(decoder, &buffer[..n], cancellation, on_event)?;
         remaining -= n;
     }
@@ -134,7 +174,9 @@ fn feed(
     on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
 ) -> Result<(), ProviderError> {
     for event in decoder.push(bytes)? {
-        if cancellation.is_cancelled() { return Err(ProviderError::Cancelled); }
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
         on_event(event)?;
     }
     Ok(())
@@ -147,12 +189,24 @@ fn checked_read<R: Read>(
     deadline: Instant,
 ) -> Result<usize, ProviderError> {
     loop {
-        if cancellation.is_cancelled() { return Err(ProviderError::Cancelled); }
-        if Instant::now() >= deadline { return Err(ProviderError::Timeout); }
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
+        if Instant::now() >= deadline {
+            return Err(ProviderError::Timeout);
+        }
         match reader.read(buffer) {
             Ok(n) => return Ok(n),
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue
+            }
             Err(e) => return Err(map_io(e)),
         }
     }
@@ -208,8 +262,12 @@ fn read_headers<R: Read>(
     loop {
         let line = read_line(reader, MAX_LINE, cancellation, deadline)?;
         total += line.len() + 2;
-        if total > MAX_HEADERS { return Err(ProviderError::InvalidResponse); }
-        if line.is_empty() { break; }
+        if total > MAX_HEADERS {
+            return Err(ProviderError::InvalidResponse);
+        }
+        if line.is_empty() {
+            break;
+        }
         let line = std::str::from_utf8(&line).map_err(|_| ProviderError::InvalidResponse)?;
         let (name, value) = line.split_once(':').ok_or(ProviderError::InvalidResponse)?;
         let value = value.trim();
@@ -222,7 +280,11 @@ fn read_headers<R: Read>(
             if length.is_some() || !value.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(ProviderError::InvalidResponse);
             }
-            length = Some(value.parse::<usize>().map_err(|_| ProviderError::InvalidResponse)?);
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| ProviderError::InvalidResponse)?,
+            );
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             if chunked || !value.eq_ignore_ascii_case("chunked") {
                 return Err(ProviderError::InvalidResponse);
@@ -237,11 +299,17 @@ fn read_headers<R: Read>(
     if !event_stream || (chunked && length.is_some()) {
         return Err(ProviderError::InvalidResponse);
     }
-    if chunked { Ok(BodyMode::Chunked) }
-    else if let Some(n) = length {
-        if n > MAX_BODY { Err(ProviderError::InvalidResponse) }
-        else { Ok(BodyMode::Length(n)) }
-    } else { Ok(BodyMode::UntilClose) }
+    if chunked {
+        Ok(BodyMode::Chunked)
+    } else if let Some(n) = length {
+        if n > MAX_BODY {
+            Err(ProviderError::InvalidResponse)
+        } else {
+            Ok(BodyMode::Length(n))
+        }
+    } else {
+        Ok(BodyMode::UntilClose)
+    }
 }
 
 fn map_io(error: std::io::Error) -> ProviderError {
@@ -262,13 +330,18 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let handle = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = vec![0u8; 8192];
             let n = socket.read(&mut request).unwrap();
             socket.write_all(&body).unwrap();
             String::from_utf8_lossy(&request[..n]).into_owned()
         });
-        (LocalEndpoint::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(), handle)
+        (
+            LocalEndpoint::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(),
+            handle,
+        )
     }
 
     fn request() -> GenerateRequest {
@@ -298,13 +371,26 @@ mod tests {
         response.extend_from_slice(b"0\r\n\r\n");
         let (endpoint, handle) = fixture_server(response);
         let mut events = Vec::new();
-        let result = stream_chat(&endpoint, &request(), &CancellationToken::default(),
-            &mut |event| { events.push(event); Ok(()) });
+        let result = stream_chat(
+            &endpoint,
+            &request(),
+            &CancellationToken::default(),
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        );
         assert_eq!(result, Ok(()));
-        assert_eq!(events, vec![
-            StreamEvent::TextDelta("Blue".into()),
-            StreamEvent::Completed { input_tokens: None, output_tokens: None },
-        ]);
+        assert_eq!(
+            events,
+            vec![
+                StreamEvent::TextDelta("Blue".into()),
+                StreamEvent::Completed {
+                    input_tokens: None,
+                    output_tokens: None
+                },
+            ]
+        );
         let request = handle.join().unwrap();
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
         assert!(request.contains("\r\nHost: 127.0.0.1:"));
@@ -337,11 +423,17 @@ mod tests {
 
     #[test]
     fn rejects_redirects_without_following_them() {
-        let (endpoint, handle) = fixture_server(
-            b"HTTP/1.1 302 Found\r\nLocation: http://example.com/\r\n\r\n".to_vec()
+        let (endpoint, handle) =
+            fixture_server(b"HTTP/1.1 302 Found\r\nLocation: http://example.com/\r\n\r\n".to_vec());
+        assert_eq!(
+            stream_chat(
+                &endpoint,
+                &request(),
+                &CancellationToken::default(),
+                &mut |_| Ok(())
+            ),
+            Err(ProviderError::Rejected)
         );
-        assert_eq!(stream_chat(&endpoint, &request(), &CancellationToken::default(),
-            &mut |_| Ok(())), Err(ProviderError::Rejected));
         handle.join().unwrap();
     }
 }
