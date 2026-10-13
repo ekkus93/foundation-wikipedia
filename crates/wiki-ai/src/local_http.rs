@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -22,6 +22,7 @@ const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_MODELS: usize = 256;
 const TIMEOUT: Duration = Duration::from_secs(3);
+const READ_POLL: Duration = Duration::from_millis(250);
 
 pub struct LocalOpenAiProvider {
     endpoint: LocalEndpoint,
@@ -76,20 +77,15 @@ pub fn discover_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, Provi
         .ok_or(ProviderError::InvalidRequest)?;
     let mut socket =
         TcpStream::connect_timeout(&endpoint.connect_addr(), TIMEOUT).map_err(map_io)?;
-    socket.set_read_timeout(Some(TIMEOUT)).map_err(map_io)?;
+    socket.set_read_timeout(Some(READ_POLL)).map_err(map_io)?;
     socket.set_write_timeout(Some(TIMEOUT)).map_err(map_io)?;
     let request = format!(
         "GET /v1/models HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
     );
     socket.write_all(request.as_bytes()).map_err(map_io)?;
-    let mut response = Vec::new();
-    socket
-        .take((MAX_HTTP_RESPONSE_BYTES + 1) as u64)
-        .read_to_end(&mut response)
-        .map_err(map_io)?;
-    if response.len() > MAX_HTTP_RESPONSE_BYTES {
-        return Err(ProviderError::InvalidResponse);
-    }
+    // A peer that drips one byte before every socket timeout must not
+    // keep model discovery alive indefinitely.
+    let response = read_bounded_response(&mut socket, Instant::now() + TIMEOUT)?;
     let body = parse_http_response(&response)?;
     let json: Value = serde_json::from_slice(&body).map_err(|_| ProviderError::InvalidResponse)?;
     let data = json
@@ -130,6 +126,39 @@ pub fn discover_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, Provi
         });
     }
     Ok(models)
+}
+
+/// Enforce both an absolute response deadline and an aggregate byte cap.
+/// Callers configure a short read timeout so a stalled socket can recheck
+/// the deadline instead of blocking past it indefinitely.
+fn read_bounded_response<R: Read>(
+    reader: &mut R,
+    deadline: Instant,
+) -> Result<Vec<u8>, ProviderError> {
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(ProviderError::Timeout);
+        }
+        match reader.read(&mut chunk) {
+            Ok(0) => return Ok(response),
+            Ok(n) => {
+                if response.len().checked_add(n).is_none_or(|total| total > MAX_HTTP_RESPONSE_BYTES) {
+                    return Err(ProviderError::InvalidResponse);
+                }
+                response.extend_from_slice(&chunk[..n]);
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => return Err(map_io(error)),
+        }
+    }
 }
 
 fn map_io(error: std::io::Error) -> ProviderError {
@@ -264,6 +293,25 @@ mod tests {
             LocalEndpoint::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(),
             handle,
         )
+    }
+
+    #[test]
+    fn discovery_response_enforces_absolute_deadline_and_size_cap() {
+        let mut empty = std::io::Cursor::new(Vec::<u8>::new());
+        assert_eq!(
+            read_bounded_response(&mut empty, Instant::now()),
+            Err(ProviderError::Timeout)
+        );
+        let mut oversized = std::io::Cursor::new(vec![b'a'; MAX_HTTP_RESPONSE_BYTES + 1]);
+        assert_eq!(
+            read_bounded_response(&mut oversized, Instant::now() + TIMEOUT),
+            Err(ProviderError::InvalidResponse)
+        );
+        let mut valid = std::io::Cursor::new(b"response".to_vec());
+        assert_eq!(
+            read_bounded_response(&mut valid, Instant::now() + TIMEOUT),
+            Ok(b"response".to_vec())
+        );
     }
 
     #[test]
