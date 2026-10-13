@@ -96,6 +96,13 @@ pub fn parse_title_resolution(
         .and_then(Value::as_str)
         .filter(|value| valid_title(value))
         .ok_or(TitleResolutionError::InvalidTitle)?;
+    // Reject unsupported interwiki destinations instead of binding them
+    // to an unrelated page ID in the requested project.
+    if let Some(interwiki) = query.get("interwiki") {
+        if !interwiki.as_array().is_some_and(Vec::is_empty) {
+            return Err(TitleResolutionError::RedirectChain);
+        }
+    }
     let normalized = match query.get("normalized") {
         None => &[][..],
         Some(value) => value
@@ -121,6 +128,11 @@ pub fn parse_title_resolution(
     visited.insert(current.clone());
     let mut edges = Vec::new();
     for edge in normalized.iter().chain(redirects) {
+        // Preserve correctness until fragment and cross-project navigation
+        // have dedicated, explicitly validated representations.
+        if edge.get("tofragment").is_some() || edge.get("tointerwiki").is_some() {
+            return Err(TitleResolutionError::RedirectChain);
+        }
         let from = edge
             .get("from")
             .and_then(Value::as_str)
