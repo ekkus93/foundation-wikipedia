@@ -485,7 +485,10 @@ mod tests {
                 Err(ProviderError::InvalidResponse),
                 "{invalid_type}"
             );
-            assert!(events.is_empty(), "malformed content type delivered model output");
+            assert!(
+                events.is_empty(),
+                "malformed content type delivered model output"
+            );
             handle.join().unwrap();
         }
     }
