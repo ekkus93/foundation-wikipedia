@@ -144,7 +144,11 @@ fn read_bounded_response<R: Read>(
         match reader.read(&mut chunk) {
             Ok(0) => return Ok(response),
             Ok(n) => {
-                if response.len().checked_add(n).is_none_or(|total| total > MAX_HTTP_RESPONSE_BYTES) {
+                if response
+                    .len()
+                    .checked_add(n)
+                    .is_none_or(|total| total > MAX_HTTP_RESPONSE_BYTES)
+                {
                     return Err(ProviderError::InvalidResponse);
                 }
                 response.extend_from_slice(&chunk[..n]);
