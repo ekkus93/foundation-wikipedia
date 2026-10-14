@@ -178,7 +178,7 @@ class ExportTests(unittest.TestCase):
                     if path.name == self.first:
                         rows = [json.loads(line) for line in output.read_text().splitlines()]
                         rows[0][field] = value
-                        output.write_text("".join(json.dumps(row) + "\\n" for row in rows))
+                        output.write_text("".join(json.dumps(row) + "\n" for row in rows))
                     return count
 
                 with patch("extract_public_dump_export.extract_current_dump",
