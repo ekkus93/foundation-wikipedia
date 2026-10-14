@@ -153,7 +153,7 @@ mod tests {
 
     fn fixture() -> PinnedInventory {
         let raw = format!(
-            "{}  enwiki-2026-10-01-p1p100.xml.bz2\n{}  enwiki-2026-10-01-p101p200.xml.bz2\n",
+            "{}  enwiki-2026-10-01-p1p100.xml.bz2\n{}  enwiki-2026-10-01-p201p300.xml.bz2\n",
             "a".repeat(64),
             "b".repeat(64)
         );
@@ -167,9 +167,9 @@ mod tests {
         let mut audit = StreamShardAudit::new(&inventory);
         for member in inventory.members() {
             audit.begin_member(&member.relative_path).unwrap();
-            if member.relative_path.contains("p101p200") {
-                audit.push_page_id(101).unwrap();
-                audit.push_page_id(200).unwrap();
+            if member.relative_path.contains("p201p300") {
+                audit.push_page_id(201).unwrap();
+                audit.push_page_id(300).unwrap();
             } else {
                 audit.push_page_id(1).unwrap();
                 audit.push_page_id(100).unwrap();
@@ -257,7 +257,7 @@ mod tests {
                 page_id: 0
             })
         );
-        audit.push_page_id(101).unwrap();
+        audit.push_page_id(201).unwrap();
         audit.end_member().unwrap();
         assert_eq!(audit.finish(), Ok(3));
     }
