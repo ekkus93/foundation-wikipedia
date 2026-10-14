@@ -19,7 +19,7 @@ export default function App() {
       return "system";
     }
   });
-  const readingScrollRef = useRef(0);
+  const tabScrollRef = useRef(new Map<number, number>());
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
   const hubRef = useRef<HTMLDivElement>(null);
@@ -61,9 +61,14 @@ export default function App() {
     }
   }, [theme]);
 
+  // Restore the outer reading position after switching tabs or returning from Settings.
+  // The sandboxed iframe has its own scroll state and is deliberately not given
+  // allow-same-origin merely to inspect its internal scroll offset.
   useLayoutEffect(() => {
-    if (destination === "article") window.scrollTo(0, readingScrollRef.current);
-  }, [destination]);
+    if (destination === "article") {
+      window.scrollTo(0, tabScrollRef.current.get(readerTabs.activeId) ?? 0);
+    }
+  }, [destination, readerTabs.activeId]);
 
   useEffect(() => {
     if (destination === "settings") settingsBackRef.current?.focus();
@@ -72,6 +77,26 @@ export default function App() {
       returnFocusRef.current = false;
     }
   }, [destination, settingsSection]);
+
+  function rememberTabScroll() {
+    tabScrollRef.current.set(readerTabs.activeId, window.scrollY);
+  }
+
+  function selectTab(id: number) {
+    rememberTabScroll();
+    setReaderTabs((state) => selectReaderTab(state, id));
+  }
+
+  function addTab() {
+    rememberTabScroll();
+    setReaderTabs(addReaderTab);
+  }
+
+  function closeTab(id: number) {
+    rememberTabScroll();
+    tabScrollRef.current.delete(id);
+    setReaderTabs((state) => closeReaderTab(state, id));
+  }
 
   function leaveSettings() {
     if (settingsSection !== null) {
@@ -86,7 +111,7 @@ export default function App() {
     setExpanded(false);
     mainActionRef.current?.focus();
     if (action === "Settings") {
-      readingScrollRef.current = window.scrollY;
+      rememberTabScroll();
       setSettingsSection(null);
       setDestination("settings");
       setMessage(null);
@@ -117,16 +142,16 @@ export default function App() {
             {readerTabs.tabs.map((tab) => (
               <div className="reader-tab" key={tab.id}>
                 <button type="button" aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
-                  onClick={() => setReaderTabs((state) => selectReaderTab(state, tab.id))}>
+                  onClick={() => selectTab(tab.id)}>
                   {tab.title}
                 </button>
                 <button type="button" aria-label={`Close tab ${tab.id}: ${tab.title}`}
                   disabled={readerTabs.tabs.length === 1}
-                  onClick={() => setReaderTabs((state) => closeReaderTab(state, tab.id))}>×</button>
+                  onClick={() => closeTab(tab.id)}>×</button>
               </div>
             ))}
             <button type="button" disabled={readerTabs.tabs.length >= MAX_READER_TABS}
-              onClick={() => setReaderTabs(addReaderTab)}>+ New tab</button>
+              onClick={addTab}>+ New tab</button>
           </nav>
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
