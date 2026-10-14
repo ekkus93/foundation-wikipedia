@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
+import { appendReaderHistory, popReaderHistory } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 
 type SearchHit = [pageId: number, title: string];
@@ -36,6 +37,7 @@ export default function OnlineReader() {
   const requestEpoch = useRef(new RequestEpoch());
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [article, setArticle] = useState<ArticlePreview | null>(null);
+  const [previousArticles, setPreviousArticles] = useState<ArticlePreview[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -46,6 +48,7 @@ export default function OnlineReader() {
       setBusy(false);
       setHits([]);
       setArticle(null);
+      setPreviousArticles([]);
       setNotice("Connection lost. This preview has no installed offline articles.");
     };
     const reconnected = () => setConnected(true);
@@ -64,6 +67,7 @@ export default function OnlineReader() {
     setBusy(true);
     setNotice(null);
     setArticle(null);
+    setPreviousArticles([]);
     try {
       const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine });
       if (!requestEpoch.current.matches(epoch)) return;
@@ -81,6 +85,7 @@ export default function OnlineReader() {
 
   async function openTitle(title: string) {
     if (busy) return;
+    const previous = article;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
@@ -91,6 +96,7 @@ export default function OnlineReader() {
         { title, project, offline: offline || !connected || !navigator.onLine },
       );
       if (!requestEpoch.current.matches(epoch)) return;
+      if (previous) setPreviousArticles((stack) => appendReaderHistory(stack, previous));
       setArticle({ pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) });
     } catch (error) {
       if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
@@ -107,6 +113,7 @@ export default function OnlineReader() {
           setProject(event.target.value);
           setHits([]);
           setArticle(null);
+          setPreviousArticles([]);
           setNotice(null);
         }}>
           <option value="enwiki">English</option>
@@ -134,6 +141,7 @@ export default function OnlineReader() {
         if (nowOffline) {
           // Never present previously fetched online HTML or search as installed content.
           setArticle(null);
+          setPreviousArticles([]);
           setHits([]);
           setNotice("Offline mode enabled. No article is installed in this preview.");
         } else {
@@ -149,7 +157,12 @@ export default function OnlineReader() {
       {busy && <p role="status">Loading Wikipedia…</p>}
       {article ? (
         <div className="online-article">
-          <button type="button" onClick={() => setArticle(null)}>← Back to search results</button>
+          <button type="button" onClick={() => {
+            const { previous, rest } = popReaderHistory(previousArticles);
+            setPreviousArticles(rest);
+            setArticle(previous ?? null);
+            setNotice(null);
+          }}>← {previousArticles.length ? "Back to previous article" : "Back to search results"}</button>
           <h2>{article.title}</h2>
           <p>Online revision {article.revisionId} · page ID {article.pageId}</p>
           <iframe
