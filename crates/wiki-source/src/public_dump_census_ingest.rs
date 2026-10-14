@@ -492,10 +492,7 @@ mod tests {
     fn shared_staging_directory_is_rejected_before_writing() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!(
-            "wiki-census-public-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("wiki-census-public-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(matches!(
