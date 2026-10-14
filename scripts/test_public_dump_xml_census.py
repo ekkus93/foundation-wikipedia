@@ -119,6 +119,15 @@ class DumpXmlTests(unittest.TestCase):
                 self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_invalid_calendar_revision_timestamp_rejected(self):
+        for invalid in ("2026-02-30", "2026-13-01", "2026-10-01T25:00:00"):
+            self.manifest["files"].clear()
+            xml = page(1).replace("2026-10-01T00:00:00", invalid + ("" if "T" in invalid else "T00:00:00"))
+            self.add(1, 100, f"<mediawiki>{xml}</mediawiki>")
+            with self.assertRaises(DumpDecodeError):
+                self.run_census()
+            self.assertEqual(list(self.output.iterdir()), [])
+
     def test_revision_and_contributor_ids_never_become_page_ids(self):
         self.add(1, 100, f"<mediawiki>{page(42, revision=9000)}</mediawiki>")
         path, count = self.run_census()

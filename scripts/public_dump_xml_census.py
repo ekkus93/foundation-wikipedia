@@ -6,6 +6,7 @@ is not the Rust importer, a source-completeness oracle, or an HTML renderer.
 It publishes only after all declared members decode and validate successfully.
 """
 import bz2
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -68,6 +69,10 @@ def _page_id(page):
     timestamp = _one(revision, "timestamp").text
     if not timestamp or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp):
         raise DumpDecodeError("invalid revision timestamp")
+    try:
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise DumpDecodeError("invalid revision calendar timestamp") from exc
     return page_id, int(namespace)
 
 
