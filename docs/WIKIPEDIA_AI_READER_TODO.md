@@ -66,11 +66,13 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Obtain matching rendered body/HTML, categories, redirects, namespace data from official source(s); don't assume Structured Contents has those fields.
   - [x] Enforce project/page/revision equality across imported components; detect duplicates and deleted pages.
   - **Accept:** article HTML, retrieved blocks and category membership have proven consistent provenance.
+  - **Progress (2026-10-14):** Scoped verified import and exact-head CI evidence: [SRC-002 qualification](SRC_002_SCOPED_IMPORT_QUALIFICATION_2026-10-14.md). External source authenticity/completeness and end-to-end acceptance remain outstanding.
 - [ ] **SRC-003** Qualify an official public-dump fallback. **Depends:** SRC-001.  
   - [ ] Inspect current-content dump/checksum contract and build importer.
   - [ ] Evaluate Parsoid/MediaWiki-compatible rendering for templates, Lua, math and references.
   - [ ] Record source fidelity and hosting/availability tradeoffs; implement defensible fallback.
   - **Accept:** representative public-dump articles render/read and can be packed without mandatory paid API access.
+  - **Progress (2026-10-14):** [Renderer evaluation](SRC_003_RENDERER_EVALUATION_2026-10-14.md) and source-census identity validation are implemented/evaluated; renderer fidelity, independent completeness and mandatory media remain outstanding.
 - [ ] **SRC-004** Implement online article/search and revision-aware caches. **Depends:** SRC-002 or SRC-003, MOD-002.  
   - [ ] Fetch search results and article by title/page ID, normalize redirects, capture exact revision.
   - [ ] Distinguish online current version, installed offline version and temporary cached version.
