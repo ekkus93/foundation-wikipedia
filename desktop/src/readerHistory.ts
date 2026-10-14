@@ -1,6 +1,16 @@
-/** Bounded revision-scoped back stack; HTML snapshots consume memory. */
+/** Bounded revision-scoped navigation snapshots; never refetch old revisions on Back/Forward. */
 const MAX_HISTORY_ENTRIES = 12;
 const MAX_HISTORY_CHARS = 4_000_000;
+
+export interface ReaderNavigation<T> {
+  current: T | null;
+  back: T[];
+  forward: T[];
+}
+
+export function emptyReaderNavigation<T>(): ReaderNavigation<T> {
+  return { current: null, back: [], forward: [] };
+}
 
 export function appendReaderHistory<T extends { html: string }>(stack: readonly T[], article: T): T[] {
   const entries = [...stack, article];
@@ -17,4 +27,32 @@ export function appendReaderHistory<T extends { html: string }>(stack: readonly 
 
 export function popReaderHistory<T>(stack: readonly T[]): { previous: T | undefined; rest: T[] } {
   return { previous: stack[stack.length - 1], rest: stack.slice(0, -1) };
+}
+
+export function openReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>, article: T): ReaderNavigation<T> {
+  return {
+    current: article,
+    back: state.current ? appendReaderHistory(state.back, state.current) : state.back,
+    forward: [], // A new article creates a new branch in the navigation history.
+  };
+}
+
+export function backReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>): ReaderNavigation<T> {
+  if (!state.current) return state;
+  const { previous, rest } = popReaderHistory(state.back);
+  return {
+    current: previous ?? null, // Back from the first article returns to search results.
+    back: rest,
+    forward: appendReaderHistory(state.forward, state.current),
+  };
+}
+
+export function forwardReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>): ReaderNavigation<T> {
+  const { previous, rest } = popReaderHistory(state.forward);
+  if (!previous) return state;
+  return {
+    current: previous,
+    back: state.current ? appendReaderHistory(state.back, state.current) : state.back,
+    forward: rest,
+  };
 }
