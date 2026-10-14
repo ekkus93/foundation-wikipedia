@@ -159,7 +159,7 @@ export default function OnlineReader() {
           {navigation.forward.length > 0 && <button type="button" disabled={busy} onClick={() => {
             setNavigation(forwardReaderArticle);
             setNotice(null);
-          }}>→ Forward to article</button>
+          }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
           <p>Online revision {article.revisionId} · page ID {article.pageId}</p>
           <iframe
