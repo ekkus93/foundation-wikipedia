@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sqlite3
 import tempfile
 import xml.etree.ElementTree as ET
 
@@ -304,8 +305,16 @@ def extract_current_dump(path, expected_sha256, project, output, *,
     temporary = None
     count = 0
     previous_page_id = 0
-    seen_revisions = set()
+    revision_index = None
+    revision_index_path = None
     try:
+        # A disk-backed unique index bounds RAM even for a multi-million-page
+        # shard, while keeping the existing fail-closed duplicate-revision gate.
+        with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".dump-revisions.",
+                                         suffix=".sqlite", delete=False) as database:
+            revision_index_path = Path(database.name)
+        revision_index = sqlite3.connect(revision_index_path)
+        revision_index.execute("CREATE TABLE revisions (id INTEGER PRIMARY KEY)")
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
                                          prefix=".dump-pages.", suffix=".tmp",
                                          delete=False) as writer:
@@ -373,9 +382,13 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                     "out-of-order or duplicate page ID in shard"
                                 )
                             previous_page_id = record["page_id"]
-                            if record["revision_id"] in seen_revisions:
-                                raise DumpExtractionError("duplicate revision ID in shard")
-                            seen_revisions.add(record["revision_id"])
+                            try:
+                                revision_index.execute(
+                                    "INSERT INTO revisions (id) VALUES (?)",
+                                    (record["revision_id"],),
+                                )
+                            except sqlite3.IntegrityError as error:
+                                raise DumpExtractionError("duplicate revision ID in shard") from error
                             count += 1
                             if count > max_pages:
                                 raise DumpExtractionError("page count exceeds budget")
@@ -403,6 +416,10 @@ def extract_current_dump(path, expected_sha256, project, output, *,
         return count
     finally:
         source.close()
+        if revision_index is not None:
+            revision_index.close()
+        if revision_index_path is not None:
+            revision_index_path.unlink(missing_ok=True)
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 

@@ -78,6 +78,18 @@ class ExtractTests(unittest.TestCase):
         self.assertIsNone(json.loads(self.output.read_text().splitlines()[1])
                           ["parent_revision_id"])
 
+    def test_revision_uniqueness_uses_private_disk_index_and_cleans_it(self):
+        self.assertEqual(self.extract(), 2)
+        self.assertFalse(list(self.root.glob(".dump-revisions.*")))
+        self.output.unlink()
+        duplicate = XML.replace(b"<revision><id>60</id>", b"<revision><id>50</id>")
+        self.write_xml(duplicate)
+        with self.assertRaisesRegex(DumpExtractionError, "duplicate revision ID"):
+            self.extract()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-revisions.*")))
+        self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_invalid_parent_or_main_slot_origin_fail_before_output(self):
         for element in ("parentid", "origin"):
             for invalid in ("0", "-1", "01", "bad", "9223372036854775808"):
