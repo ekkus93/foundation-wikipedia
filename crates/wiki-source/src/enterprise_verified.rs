@@ -110,6 +110,24 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn scoped_verified_import_accepts_revision_matched_components() {
+        let structured = r#"{"name":"Example","identifier":1,"version":{"identifier":17},"is_part_of":{"identifier":"enwiki"},"in_language":{"identifier":"en"},"namespace":{"identifier":0},"date_modified":"2026-10-10T00:00:00Z"}"#;
+        let regular = r#"{"name":"Example","identifier":1,"version":{"identifier":17},"is_part_of":{"identifier":"enwiki"},"in_language":{"identifier":"en"},"namespace":{"identifier":0},"date_modified":"2026-10-10T00:00:00Z","article_body":{"html":"<article>Example</article>"},"categories":[{"name":"Science"}],"redirects":[]}"#;
+        let joined = import_verified_enterprise_ndjson_scoped(
+            Cursor::new(structured),
+            Cursor::new(regular),
+            "enwiki",
+            "20261010",
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(joined.len(), 1);
+        assert_eq!(joined[0].structured.page.page_id, 1);
+        assert_eq!(joined[0].structured.revision_id, 17);
+        assert_eq!(joined[0].categories, ["Science"]);
+    }
+
+    #[test]
     fn scoped_verified_import_requires_matching_tombstone_generation() {
         let deletion = DeletionMarker {
             page: PageKey {
