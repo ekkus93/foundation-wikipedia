@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
+import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 
 type SearchHit = [pageId: number, title: string];
 type ArticleResponse = [pageId: number, revisionId: number, title: string, html: string];
@@ -10,6 +11,7 @@ interface ArticlePreview {
   revisionId: number;
   title: string;
   html: string;
+  links: WikiArticleLink[];
 }
 
 // The iframe is deliberately unprivileged and has no external resource access.
@@ -89,7 +91,7 @@ export default function OnlineReader() {
         { title, project, offline: offline || !connected || !navigator.onLine },
       );
       if (!requestEpoch.current.matches(epoch)) return;
-      setArticle({ pageId, revisionId, title: canonicalTitle, html });
+      setArticle({ pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) });
     } catch (error) {
       if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
@@ -141,7 +143,7 @@ export default function OnlineReader() {
       <p className="preview-warning">
         {offline || !connected ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;
-        this page is not offline-ready. Links inside the isolated preview are disabled.
+        this page is not offline-ready. Links inside the isolated preview are disabled; verified same-edition article links are listed below.
       </p>
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Loading Wikipedia…</p>}
@@ -157,6 +159,20 @@ export default function OnlineReader() {
             className="article-preview-frame"
             srcDoc={isolatedDocument(article.html)}
           />
+          {article.links.length > 0 && (
+            <nav aria-label="Internal Wikipedia article links">
+              <h3>Article links</h3>
+              <ul>
+                {article.links.map((link) => (
+                  <li key={link.title}>
+                    <button type="button" disabled={busy || offline || !connected} onClick={() => void openTitle(link.title)}>
+                      {link.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
         </div>
       ) : hits.length > 0 ? (
         <div className="online-results">
