@@ -168,8 +168,8 @@ mod tests {
         for ids in [vec![101], vec![20, 20], vec![20, 19]] {
             let mut ingest = PinnedPageIngest::new(&pinned);
             ingest
-            .begin_member(&pinned.members()[0].relative_path)
-            .unwrap();
+                .begin_member(&pinned.members()[0].relative_path)
+                .unwrap();
             for id in ids {
                 if page(&mut ingest, id).is_err() {
                     break;
