@@ -415,26 +415,21 @@ impl Article {
             }
         }
         let mut footnote_ids = HashSet::new();
-        let mut block_count = 0;
-        let mut nested_count = 0;
+        let mut budget = ValidationBudget::default();
         check_blocks(
             &self.lead,
             self.media.len(),
             &refs,
             &mut footnote_ids,
-            &mut block_count,
-            &mut nested_count,
+            &mut budget,
         )?;
-        let mut section_count = 0;
         check_sections(
             &self.sections,
             self.media.len(),
             &refs,
             &mut footnote_ids,
             0,
-            &mut section_count,
-            &mut block_count,
-            &mut nested_count,
+            &mut budget,
         )?;
         Ok(())
     }
@@ -445,6 +440,13 @@ impl Article {
         self.validate()?;
         Ok(&self.rendered_html)
     }
+}
+
+#[derive(Default)]
+struct ValidationBudget {
+    sections: usize,
+    blocks: usize,
+    nested_items: usize,
 }
 
 /// The same article-wide budget is shared by all nested list entries, table
@@ -466,10 +468,9 @@ fn check_blocks<'a>(
     media_len: usize,
     references: &HashSet<&str>,
     footnote_ids: &mut HashSet<&'a str>,
-    total_blocks: &mut usize,
-    total_nested_items: &mut usize,
+    budget: &mut ValidationBudget,
 ) -> Result<(), ModelError> {
-    *total_blocks = total_blocks
+    budget.blocks = budget.blocks
         .checked_add(blocks.len())
         .filter(|count| *count <= MAX_BLOCKS)
         .ok_or(ModelError::BlockCountExceeded)?;
@@ -492,13 +493,13 @@ fn check_blocks<'a>(
                 }
             }
             BlockContent::List(items) => {
-                count_nested_items(items.len(), total_nested_items)?;
+                count_nested_items(items.len(), &mut budget.nested_items)?;
                 if items.is_empty() || items.iter().any(|item| item.trim().is_empty()) {
                     return Err(ModelError::InvalidBlockContent);
                 }
             }
             BlockContent::Table(rows) => {
-                count_nested_items(rows.len(), total_nested_items)?;
+                count_nested_items(rows.len(), &mut budget.nested_items)?;
                 if rows.is_empty() {
                     return Err(ModelError::InvalidBlockContent);
                 }
@@ -509,7 +510,7 @@ fn check_blocks<'a>(
                     if row.len() > MAX_TABLE_COLUMNS {
                         return Err(ModelError::NestedItemCountExceeded);
                     }
-                    count_nested_items(row.len(), total_nested_items)?;
+                    count_nested_items(row.len(), &mut budget.nested_items)?;
                 }
             }
             BlockContent::Math { source, html } => {
@@ -518,7 +519,7 @@ fn check_blocks<'a>(
                 }
             }
             BlockContent::Infobox(fields) => {
-                count_nested_items(fields.len(), total_nested_items)?;
+                count_nested_items(fields.len(), &mut budget.nested_items)?;
                 if fields.is_empty() || fields.iter().any(|(name, _)| name.trim().is_empty()) {
                     return Err(ModelError::InvalidBlockContent);
                 }
@@ -531,7 +532,7 @@ fn check_blocks<'a>(
                 {
                     return Err(ModelError::InvalidFootnote(footnote.source_id.clone()));
                 }
-                count_nested_items(footnote.reference_ids.len(), total_nested_items)?;
+                count_nested_items(footnote.reference_ids.len(), &mut budget.nested_items)?;
                 let mut linked = HashSet::new();
                 for reference_id in &footnote.reference_ids {
                     if reference_id.trim().is_empty()
@@ -553,16 +554,14 @@ fn check_sections<'a>(
     references: &HashSet<&str>,
     footnote_ids: &mut HashSet<&'a str>,
     depth: usize,
-    visited: &mut usize,
-    total_blocks: &mut usize,
-    total_nested_items: &mut usize,
+    budget: &mut ValidationBudget,
 ) -> Result<(), ModelError> {
     if !sections.is_empty() && depth >= MAX_SECTION_DEPTH {
         return Err(ModelError::SectionDepthExceeded);
     }
     let mut ordinals = HashSet::new();
     for section in sections {
-        *visited = visited
+        budget.sections = budget.sections
             .checked_add(1)
             .filter(|count| *count <= MAX_SECTIONS)
             .ok_or(ModelError::SectionCountExceeded)?;
@@ -577,8 +576,7 @@ fn check_sections<'a>(
             media_len,
             references,
             footnote_ids,
-            total_blocks,
-            total_nested_items,
+            budget,
         )?;
         check_sections(
             &section.subsections,
@@ -586,9 +584,7 @@ fn check_sections<'a>(
             references,
             footnote_ids,
             depth + 1,
-            visited,
-            total_blocks,
-            total_nested_items,
+            budget,
         )?;
     }
     Ok(())
