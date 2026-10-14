@@ -57,23 +57,28 @@ export default function OnlineReader() {
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!query.trim() || busy) return;
+    const epoch = ++requestEpoch.current;
     setBusy(true);
     setNotice(null);
     setArticle(null);
     try {
       const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected });
+      if (epoch !== requestEpoch.current) return;
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
-      setHits([]);
-      setNotice(`Search unavailable: ${String(error)}`);
+      if (epoch === requestEpoch.current) {
+        setHits([]);
+        setNotice(`Search unavailable: ${String(error)}`);
+      }
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
   async function openTitle(title: string) {
     if (busy) return;
+    const epoch = ++requestEpoch.current;
     setBusy(true);
     setNotice(null);
     setArticle(null);
@@ -82,11 +87,12 @@ export default function OnlineReader() {
         "open_wikipedia_title",
         { title, project, offline: offline || !connected },
       );
+      if (epoch !== requestEpoch.current) return;
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
     } catch (error) {
-      setNotice(`Article unavailable: ${String(error)}`);
+      if (epoch === requestEpoch.current) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
-      setBusy(false);
+      if (epoch === requestEpoch.current) setBusy(false);
     }
   }
 
