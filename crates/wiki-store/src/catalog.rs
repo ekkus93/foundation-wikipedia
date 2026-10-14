@@ -114,11 +114,21 @@ fn as_u64(value: i64) -> Result<u64, CatalogError> {
 }
 
 fn validate_snapshot_root(root: &Path) -> Result<(), CatalogError> {
-    // A caller-owned immutable snapshot root must be an actual directory,
-    // not a symlink to a different tree. This is not a defense against
-    // untrusted processes concurrently replacing parent path components.
+    // Reject symlinks in every existing path component, not only the final
+    // snapshot directory. Otherwise a regular root reached through a linked
+    // parent can silently read records from an unrelated directory.
+    // This remains a preflight: callers must prevent concurrent renames.
+    for ancestor in root.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let meta = fs::symlink_metadata(ancestor)?;
+        if meta.file_type().is_symlink() {
+            return Err(CatalogError::InvalidFrame);
+        }
+    }
     let meta = fs::symlink_metadata(root)?;
-    if !meta.is_dir() || meta.file_type().is_symlink() {
+    if !meta.is_dir() {
         return Err(CatalogError::InvalidFrame);
     }
     Ok(())
@@ -675,6 +685,40 @@ mod tests {
         ));
         fs::remove_file(hardlink).unwrap();
         assert!(catalog.read_record(&snapshot, &key).unwrap().is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_catalog_rejects_symlinked_parent_even_when_root_is_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        let actual_parent = root.join("actual-parent");
+        let actual_snapshot = actual_parent.join("snapshot");
+        fs::create_dir(&actual_parent).unwrap();
+        fs::create_dir(&actual_snapshot).unwrap();
+        let mut frame = Vec::new();
+        append_record_frame(&mut frame, &article(42, "Earth")).unwrap();
+        fs::write(actual_snapshot.join("one.shard"), &frame).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        let key = catalog
+            .insert_verified(&actual_snapshot, "one.shard", 0, frame.len() as u64)
+            .unwrap();
+
+        let alias_parent = root.join("alias-parent");
+        symlink(&actual_parent, &alias_parent).unwrap();
+        let aliased_snapshot = alias_parent.join("snapshot");
+        assert!(fs::symlink_metadata(&aliased_snapshot).unwrap().is_dir());
+        assert!(matches!(
+            catalog.read_record(&aliased_snapshot, &key),
+            Err(CatalogError::InvalidFrame)
+        ));
+        assert!(matches!(
+            catalog.insert_verified(&aliased_snapshot, "one.shard", 0, frame.len() as u64),
+            Err(CatalogError::InvalidFrame)
+        ));
+        assert!(catalog.read_record(&actual_snapshot, &key).unwrap().is_some());
         fs::remove_dir_all(root).unwrap();
     }
 
