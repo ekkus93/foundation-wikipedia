@@ -6,9 +6,11 @@ is not the Rust importer, a source-completeness oracle, or an HTML renderer.
 It publishes only after all declared members decode and validate successfully.
 """
 import bz2
+import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -81,40 +83,68 @@ class BoundedDecompressed:
         return data
 
 
-def decode_member(path, first, last, output, namespace):
+class HashingCompressed:
+    """Hash the exact compressed bytes consumed by the XML decoder."""
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = hashlib.sha256()
+        self.size = 0
+
+    def read(self, size=-1):
+        data = self.stream.read(size)
+        self.digest.update(data)
+        self.size += len(data)
+        return data
+
+
+def decode_member(path, first, last, output, namespace, expected_sha256, expected_size):
     """Stream a complete, well-formed bzip2 XML member to a pending sink."""
     previous = first - 1
     pages = 0
     selected = 0
     try:
-        with bz2.open(path, "rb") as stream:
-            events = ET.iterparse(BoundedDecompressed(stream), events=("start", "end"))
-            depth = 0
-            root = None
-            for event, elem in events:
-                if event == "start":
-                    depth += 1
-                    if depth == 1:
-                        if _tag(elem.tag) != "mediawiki":
-                            raise DumpDecodeError("expected mediawiki XML root")
-                        root = elem
-                    continue
-                if _tag(elem.tag) == "page" and depth != 2:
-                    raise DumpDecodeError("page outside mediawiki root")
-                if depth == 2 and _tag(elem.tag) == "page":
-                    page_id, ns = _page_id(elem)
-                    if not first <= page_id <= last or page_id <= previous:
-                        raise DumpDecodeError("page ID out of shard range or not strictly increasing")
-                    previous = page_id
-                    pages += 1
-                    if ns == namespace:
-                        output.write(f"{page_id}\n".encode("ascii"))
-                        selected += 1
-                    elem.clear()
-                    root.clear()
-                depth -= 1
-            if depth != 0 or root is None or pages == 0:
-                raise DumpDecodeError("empty or incomplete XML member")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != expected_size:
+                raise DumpDecodeError("unsafe or replaced compressed member")
+            compressed = HashingCompressed(handle)
+            with bz2.BZ2File(compressed) as stream:
+                events = ET.iterparse(BoundedDecompressed(stream), events=("start", "end"))
+                depth = 0
+                root = None
+                for event, elem in events:
+                    if event == "start":
+                        depth += 1
+                        if depth == 1:
+                            if _tag(elem.tag) != "mediawiki":
+                                raise DumpDecodeError("expected mediawiki XML root")
+                            root = elem
+                        continue
+                    if _tag(elem.tag) == "page" and depth != 2:
+                        raise DumpDecodeError("page outside mediawiki root")
+                    if depth == 2 and _tag(elem.tag) == "page":
+                        page_id, ns = _page_id(elem)
+                        if not first <= page_id <= last or page_id <= previous:
+                            raise DumpDecodeError("page ID out of shard range or not strictly increasing")
+                        previous = page_id
+                        pages += 1
+                        if ns == namespace:
+                            output.write(f"{page_id}\n".encode("ascii"))
+                            selected += 1
+                        elem.clear()
+                        root.clear()
+                    depth -= 1
+                if depth != 0 or root is None or pages == 0:
+                    raise DumpDecodeError("empty or incomplete XML member")
+            after = os.fstat(handle.fileno())
+            if (compressed.size != expected_size
+                    or compressed.digest.hexdigest() != expected_sha256
+                    or before.st_dev != after.st_dev or before.st_ino != after.st_ino
+                    or before.st_size != after.st_size
+                    or before.st_mtime_ns != after.st_mtime_ns
+                    or before.st_ctime_ns != after.st_ctime_ns):
+                raise DumpDecodeError("compressed member changed during decoding")
     except (ET.ParseError, EOFError, OSError, UnicodeError) as exc:
         raise DumpDecodeError("malformed or truncated bzip2/XML member") from exc
     return selected
@@ -136,6 +166,7 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0):
     except SourceVerificationError as exc:
         raise DumpDecodeError("source staging verification failed") from exc
     shards = []
+    metadata = {}
     for item in manifest["files"]:
         match = NAME.fullmatch(item["name"])
         if not match or match["project"] != manifest["project"] or match["date"] != manifest["generation_id"]:
@@ -144,6 +175,7 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0):
         if not 0 < first <= last <= MAX_PAGE_ID:
             raise DumpDecodeError("invalid declared shard range")
         shards.append((first, last, item["name"]))
+        metadata[item["name"]] = item
     shards.sort()
     for previous, current in zip(shards, shards[1:]):
         if current[0] <= previous[1]:
@@ -155,7 +187,9 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0):
         with os.fdopen(fd, "wb") as sink:
             selected = 0
             for first, last, name in shards:
-                selected += decode_member(Path(staging) / name, first, last, sink, namespace)
+                item = metadata[name]
+                selected += decode_member(Path(staging) / name, first, last, sink, namespace,
+                                          item["sha256"], item["bytes"])
             if not selected:
                 raise DumpDecodeError("selected namespace has no pages")
             sink.flush()

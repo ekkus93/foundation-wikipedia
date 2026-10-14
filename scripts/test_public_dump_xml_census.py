@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from public_dump_xml_census import DumpDecodeError, stage_observed_census
 
@@ -73,6 +74,15 @@ class DumpXmlTests(unittest.TestCase):
             with self.assertRaises(DumpDecodeError):
                 self.run_census()
             self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_member_replaced_after_preverification_is_rejected(self):
+        path = self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        def replace(_manifest, _staging):
+            path.write_bytes(bz2.compress(f"<mediawiki>{page(2)}</mediawiki>".encode()))
+        with patch("public_dump_xml_census.verify_source_bytes", side_effect=replace):
+            with self.assertRaises(DumpDecodeError):
+                self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
 
     def test_truncated_bzip2_with_matching_digest_is_rejected(self):
         path = self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")

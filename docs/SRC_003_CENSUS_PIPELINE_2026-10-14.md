@@ -66,3 +66,7 @@ Added `scripts/public_dump_xml_census.py` and `scripts/test_public_dump_xml_cens
 **Limits:** The manifest's `completed` and `source_url` labels do not authenticate the publisher; the digest must be independently trusted. The script supports the `enwiki-YYYY-MM-DD-pFIRSTpLAST.xml.bz2` filename family only, has a 16-GiB decompressed-member cap, and is not qualified against real upstream dumps. It does not produce article wikitext, canonical records, revision-pinned rendered HTML, an independent expected census, mandatory offline media, or a pack. It is a narrow step toward SRC-003 and must not be described as complete source qualification.
 
 Run: `python3 -m unittest discover -s scripts -p 'test_public_dump_xml_census.py'`. The Rust workflow's existing `python3 -m unittest discover -s scripts` includes these tests.
+
+## Same-descriptor compressed-byte revalidation
+
+The diagnostic decoder now opens each staged member with no-follow semantics, rejects nonregular and hard-linked files, and hashes the exact compressed bytes consumed by bzip2. It compares their digest, byte length and file metadata against the previously verified manifest after full XML parsing, preventing a replacement between initial staging verification and decode from silently yielding a publishable census. A deterministic replacement-after-preverification test is included. This still does not establish independent Wikimedia publisher authentication or expected page census.
