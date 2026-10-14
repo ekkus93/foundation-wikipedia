@@ -121,7 +121,7 @@ pub fn verify_staged_export(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
+        if metadata.permissions().mode() & 0o022 != 0 {
             return Err(StagedDumpError::UnsafeStagingPath);
         }
     }
@@ -142,7 +142,7 @@ pub fn verify_staged_export(
             #[cfg(unix)]
             if !is_last {
                 use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o077 != 0 {
+                if metadata.permissions().mode() & 0o022 != 0 {
                     return Err(StagedDumpError::UnsafeStagingPath);
                 }
             }
@@ -206,7 +206,7 @@ pub fn stage_verified_member<R: Read>(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
+        if metadata.permissions().mode() & 0o022 != 0 {
             return Err(StageWriteError::UnsafeStagingPath);
         }
     }
