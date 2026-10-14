@@ -224,16 +224,10 @@ mod tests {
     #[test]
     fn flush_error_after_valid_shards_never_returns_export_bytes() {
         let pinned = inventory();
-        let mut pipeline = PinnedObservedCensus::new(
-            &pinned,
-            RejectingFlush { bytes: Vec::new() },
-            0,
-        )
-        .unwrap();
+        let mut pipeline =
+            PinnedObservedCensus::new(&pinned, RejectingFlush { bytes: Vec::new() }, 0).unwrap();
         for member in pinned.members() {
-            pipeline
-                .begin_member(&member.relative_path)
-                .unwrap();
+            pipeline.begin_member(&member.relative_path).unwrap();
             let id = if member.relative_path.contains("p201p300") {
                 201
             } else {
