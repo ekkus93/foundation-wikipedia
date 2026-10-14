@@ -43,5 +43,28 @@ fn writable_dump_staging_root_is_rejected_before_ingest_or_verification() {
         verify_staged_export(&root, &[member], "enwiki", "2026-10-01", 1024).unwrap(),
         bytes.len() as u64
     );
+    let nested = root.join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o770)).unwrap();
+    let nested_member = DumpChecksum {
+        relative_path: format!("nested/{name}"),
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    };
+    assert!(matches!(
+        stage_verified_member(&root, &nested_member, &mut Cursor::new(bytes), 1024),
+        Err(StageWriteError::UnsafeStagingPath)
+    ));
+    assert!(!nested.join(name).exists());
+    fs::write(nested.join(name), bytes).unwrap();
+    assert!(matches!(
+        verify_staged_export(&root, &[nested_member.clone()], "enwiki", "2026-10-01", 1024),
+        Err(StagedDumpError::UnsafeStagingPath)
+    ));
+    fs::remove_file(root.join(name)).unwrap();
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        verify_staged_export(&root, &[nested_member], "enwiki", "2026-10-01", 1024).unwrap(),
+        bytes.len() as u64
+    );
     fs::remove_dir_all(root).unwrap();
 }
