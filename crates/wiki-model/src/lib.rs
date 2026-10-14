@@ -470,7 +470,8 @@ fn check_blocks<'a>(
     footnote_ids: &mut HashSet<&'a str>,
     budget: &mut ValidationBudget,
 ) -> Result<(), ModelError> {
-    budget.blocks = budget.blocks
+    budget.blocks = budget
+        .blocks
         .checked_add(blocks.len())
         .filter(|count| *count <= MAX_BLOCKS)
         .ok_or(ModelError::BlockCountExceeded)?;
@@ -561,7 +562,8 @@ fn check_sections<'a>(
     }
     let mut ordinals = HashSet::new();
     for section in sections {
-        budget.sections = budget.sections
+        budget.sections = budget
+            .sections
             .checked_add(1)
             .filter(|count| *count <= MAX_SECTIONS)
             .ok_or(ModelError::SectionCountExceeded)?;
@@ -571,13 +573,7 @@ fn check_sections<'a>(
         if !ordinals.insert(section.ordinal) {
             return Err(ModelError::DuplicateOrdinal);
         }
-        check_blocks(
-            &section.blocks,
-            media_len,
-            references,
-            footnote_ids,
-            budget,
-        )?;
+        check_blocks(&section.blocks, media_len, references, footnote_ids, budget)?;
         check_sections(
             &section.subsections,
             media_len,
