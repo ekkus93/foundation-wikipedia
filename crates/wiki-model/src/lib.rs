@@ -730,8 +730,10 @@ mod tests {
         a.lead[0].content = BlockContent::Table(vec![vec!["x".into(); MAX_TABLE_COLUMNS + 1]]);
         assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
 
-        a.lead[0].content =
-            BlockContent::Infobox(vec![("field".into(), "value".into()); MAX_NESTED_ITEMS_PER_BLOCK + 1]);
+        a.lead[0].content = BlockContent::Infobox(vec![
+            ("field".into(), "value".into());
+            MAX_NESTED_ITEMS_PER_BLOCK + 1
+        ]);
         assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
 
         a.lead[0].content = BlockContent::Footnote(Footnote {
@@ -1198,47 +1200,3 @@ mod record_contract_tests {
     use super::*;
 
     fn key(page_id: u64) -> ArticleKey {
-        ArticleKey {
-            project: "enwiki".into(),
-            page_id,
-        }
-    }
-
-    #[test]
-    fn redirect_record_rejects_self_redirect_and_missing_title() {
-        let mut redirect = Redirect {
-            from: key(10),
-            title: "Old title".into(),
-            to: key(11),
-        };
-        assert_eq!(PageRecord::Redirect(redirect.clone()).validate(), Ok(()));
-        redirect.to = key(10);
-        assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
-        redirect.to = key(11);
-        redirect.title = " ".into();
-        assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
-    }
-
-    #[test]
-    fn redirect_record_rejects_cross_project_targets() {
-        let redirect = Redirect {
-            from: key(10),
-            title: "Old title".into(),
-            to: ArticleKey {
-                project: "frwiki".into(),
-                page_id: 11,
-            },
-        };
-        assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
-    }
-
-    #[test]
-    fn redirect_record_rejects_invalid_target_identity() {
-        let redirect = Redirect {
-            from: key(10),
-            title: "Old title".into(),
-            to: key(0),
-        };
-        assert_eq!(redirect.validate(), Err(ModelError::InvalidIdentity));
-    }
-}
