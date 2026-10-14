@@ -122,6 +122,42 @@ mod tests {
         })
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn shard_reads_reject_symlinked_parent_and_hardlinked_file() {
+        use std::os::unix::fs::symlink;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-shard-path-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &record(10)).unwrap();
+        let shard = root.join("shard.bin");
+        fs::write(&shard, &bytes).unwrap();
+        let alias = root.with_extension("link");
+        symlink(&root, &alias).unwrap();
+        assert!(matches!(
+            read_path(&alias.join("shard.bin"), 0, bytes.len() as u64),
+            Err(ShardError::UnsafePath)
+        ));
+        fs::remove_file(&alias).unwrap();
+
+        let linked = root.join("hardlink.bin");
+        fs::hard_link(&shard, &linked).unwrap();
+        assert!(matches!(
+            read_path(&shard, 0, bytes.len() as u64),
+            Err(ShardError::UnsafePath)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn direct_offset_read_and_corrupt_catalog_fail_closed() {
         let mut shard = Vec::new();
