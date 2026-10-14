@@ -149,6 +149,94 @@ pub fn audit_pinned_census_files(
     Ok(delta)
 }
 
+
+#[derive(Debug)]
+pub enum VerifiedCensusStageError {
+    UnsafePath,
+    Stage(crate::public_dump_census_ingest::CensusStageError),
+    Audit(CensusGateError),
+    Io(io::Error),
+    CountMismatch,
+}
+
+/// Stage all pinned semantic events in a private directory and expose the
+/// requested final filename ONLY after the digest-pinned census audit passes.
+/// The caller must separately authenticate and establish independence/cutoff
+/// semantics for the expected census. The callback must feed verified XML.
+pub fn stage_and_audit_pinned_census<F>(
+    root: &Path,
+    filename: &str,
+    inventory: &PinnedInventory,
+    namespace: i32,
+    expected_path: &Path,
+    expected_sha256: &str,
+    feed: F,
+) -> Result<(std::path::PathBuf, PageCoverageDelta), VerifiedCensusStageError>
+where
+    F: FnOnce(
+        &mut crate::public_dump_census_ingest::PinnedObservedCensus<'_, File>,
+    ) -> Result<(), crate::public_dump_census_ingest::PinnedCensusError>,
+{
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_PENDING: AtomicU64 = AtomicU64::new(0);
+
+    if filename.is_empty()
+        || filename.len() > 255
+        || filename.starts_with('.')
+        || filename.ends_with('.')
+        || crate::windows_device_name(filename)
+        || !filename
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(VerifiedCensusStageError::UnsafePath);
+    }
+    let pending_name = format!(
+        "pending-census-{}-{}.ids",
+        std::process::id(),
+        NEXT_PENDING.fetch_add(1, Ordering::Relaxed)
+    );
+    let (pending, count) = crate::public_dump_census_ingest::stage_pinned_observed_census(
+        root,
+        &pending_name,
+        inventory,
+        namespace,
+        feed,
+    )
+    .map_err(VerifiedCensusStageError::Stage)?;
+    let destination = root.join(filename);
+    let mut published = false;
+    let result = (|| {
+        let delta = audit_pinned_census_files(
+            inventory,
+            namespace,
+            expected_path,
+            expected_sha256,
+            &pending,
+        )
+        .map_err(VerifiedCensusStageError::Audit)?;
+        if delta.observed_count != count {
+            return Err(VerifiedCensusStageError::CountMismatch);
+        }
+        // Same-filesystem hard link atomically refuses an existing destination.
+        fs::hard_link(&pending, &destination).map_err(VerifiedCensusStageError::Io)?;
+        published = true;
+        fs::remove_file(&pending).map_err(VerifiedCensusStageError::Io)?;
+        #[cfg(unix)]
+        File::open(root)
+            .and_then(|dir| dir.sync_all())
+            .map_err(VerifiedCensusStageError::Io)?;
+        Ok((destination.clone(), delta))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&pending);
+        if published {
+            let _ = fs::remove_file(&destination);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +396,86 @@ mod tests {
         let result = audit_pinned_census_files(&pinned, 0, &expected, &digest, &observed).unwrap();
         assert_eq!(result.expected_count, count);
         assert_eq!(result.observed_count, count);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn feed_two_pinned_pages(
+        pinned: &PinnedInventory,
+        pipeline: &mut crate::public_dump_census_ingest::PinnedObservedCensus<'_, File>,
+    ) -> Result<(), crate::public_dump_census_ingest::PinnedCensusError> {
+        use crate::public_dump_page_meta::PageEvent;
+        for (index, member) in pinned.members().iter().enumerate() {
+            pipeline.begin_member(&member.relative_path)?;
+            pipeline.push(PageEvent::BeginPage)?;
+            pipeline.push(PageEvent::Title("Example"))?;
+            pipeline.push(PageEvent::Namespace(0))?;
+            pipeline.push(PageEvent::PageId(if index == 0 { 1 } else { 201 }))?;
+            pipeline.push(PageEvent::BeginRevision)?;
+            pipeline.push(PageEvent::RevisionId(1001 + index as u64))?;
+            pipeline.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+            pipeline.push(PageEvent::EndRevision)?;
+            pipeline.push(PageEvent::EndPage)?;
+            pipeline.end_member()?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn audited_publication_is_no_overwrite_and_removes_failed_pending_files() {
+        let (root, expected, observed, digest) = fixture();
+        fs::remove_file(&observed).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let pinned = inventory();
+        let (published, delta) = stage_and_audit_pinned_census(
+            &root,
+            "ready.ids",
+            &pinned,
+            0,
+            &expected,
+            &digest,
+            |pipeline| feed_two_pinned_pages(&pinned, pipeline),
+        )
+        .unwrap();
+        assert_eq!(delta.observed_count, 2);
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        assert!(matches!(
+            stage_and_audit_pinned_census(
+                &root,
+                "ready.ids",
+                &pinned,
+                0,
+                &expected,
+                &digest,
+                |pipeline| feed_two_pinned_pages(&pinned, pipeline),
+            ),
+            Err(VerifiedCensusStageError::Io(error))
+                if error.kind() == io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+
+        fs::write(&expected, b"1\n202\n").unwrap();
+        let wrong_digest = format!("{:x}", Sha256::digest(b"1\n202\n"));
+        assert!(matches!(
+            stage_and_audit_pinned_census(
+                &root,
+                "unverified.ids",
+                &pinned,
+                0,
+                &expected,
+                &wrong_digest,
+                |pipeline| feed_two_pinned_pages(&pinned, pipeline),
+            ),
+            Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
+                StreamCoverageError::MissingOrUnexpected(_)
+            )))
+        ));
+        assert!(!root.join("unverified.ids").exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 }
