@@ -75,11 +75,11 @@ mod tests {
         let valid = [
             ObservedShard {
                 relative_path: first,
-                page_ids: &[101, 200],
+                page_ids: &[1, 50, 100],
             },
             ObservedShard {
                 relative_path: second,
-                page_ids: &[1, 50, 100],
+                page_ids: &[101, 200],
             },
         ];
         assert_eq!(audit_export_shards(&inventory, &valid), Ok(5));
@@ -97,7 +97,7 @@ mod tests {
         let invalid = [
             ObservedShard {
                 relative_path: first,
-                page_ids: &[101, 201],
+                page_ids: &[1, 201],
             },
             valid[1],
         ];
@@ -107,8 +107,8 @@ mod tests {
                 index: 0,
                 error: ShardPageError::OutsideDeclaredRange {
                     page_id: 201,
-                    first: 101,
-                    last: 200,
+                    first: 1,
+                    last: 100,
                 },
             })
         );
