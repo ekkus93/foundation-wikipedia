@@ -66,9 +66,26 @@ pub fn read_at(
 /// Reject a symlink path before opening the shard. Snapshot integrity and
 /// digest verification remain separate prerequisites for activation.
 pub fn read_path(path: &Path, offset: u64, frame_bytes: u64) -> Result<DecodedRecord, ShardError> {
+    // A regular file reached through a symlinked parent is still unsafe.
+    // The caller must prevent concurrent renames during this preflight.
+    for ancestor in path.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        if fs::symlink_metadata(ancestor)?.file_type().is_symlink() {
+            return Err(ShardError::UnsafePath);
+        }
+    }
     let meta = fs::symlink_metadata(path)?;
     if !meta.is_file() || meta.file_type().is_symlink() {
         return Err(ShardError::UnsafePath);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() != 1 {
+            return Err(ShardError::UnsafePath);
+        }
     }
     let mut file = File::open(path)?;
     let opened = file.metadata()?;
