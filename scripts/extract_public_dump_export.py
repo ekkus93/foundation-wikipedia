@@ -273,6 +273,8 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
             revisions.execute("CREATE TABLE titles (namespace INTEGER, title TEXT, PRIMARY KEY(namespace, title))")
             with joined.open("wb") as writer:
                 for index, (path, digest) in enumerate(paths):
+                    first_page_id, last_page_id = records[index][:2]
+                    previous_page_id = first_page_id - 1
                     part = work / f"part-{index:06d}.jsonl"
                     remaining = max_total_pages - count
                     if remaining <= 0:
@@ -284,6 +286,25 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
                     with part.open("rb") as reader:
                         for line in reader:
                             record = json.loads(line)
+                            # Revalidate the decoded JSONL boundary as well as
+                            # the XML parser: never publish forged or reordered
+                            # page/revision identities from a replacement decoder.
+                            page_id = record.get("page_id")
+                            revision_id = record.get("revision_id")
+                            if (type(page_id) is not int
+                                    or not previous_page_id < page_id <= last_page_id):
+                                raise DumpExtractionError(
+                                    "export page IDs not strictly increasing within shard"
+                                )
+                            previous_page_id = page_id
+                            if (type(revision_id) is not int
+                                    or not 0 < revision_id <= 2**63 - 1):
+                                raise DumpExtractionError("invalid decoded revision ID")
+                            if (record.get("project") != project
+                                    or record.get("source_sha256") != digest):
+                                raise DumpExtractionError(
+                                    "decoded page source identity mismatch"
+                                )
                             try:
                                 revisions.execute(
                                     "INSERT INTO revisions (id) VALUES (?)",

@@ -298,7 +298,7 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                                  max_compressed_bytes)
     temporary = None
     count = 0
-    seen = set()
+    previous_page_id = 0
     seen_revisions = set()
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
@@ -360,11 +360,16 @@ def extract_current_dump(path, expected_sha256, project, output, *,
                                                   max_text_bytes)
                             if not first_id <= record["page_id"] <= last_id:
                                 raise DumpExtractionError("page ID outside declared shard partition")
-                            if record["page_id"] in seen:
-                                raise DumpExtractionError("duplicate page ID in shard")
+                            # A public current-content shard is a page-ID-ordered
+                            # partition. Enforce that contract in the actual XML
+                            # decoder, not only in the Rust audit primitives.
+                            if record["page_id"] <= previous_page_id:
+                                raise DumpExtractionError(
+                                    "out-of-order or duplicate page ID in shard"
+                                )
+                            previous_page_id = record["page_id"]
                             if record["revision_id"] in seen_revisions:
                                 raise DumpExtractionError("duplicate revision ID in shard")
-                            seen.add(record["page_id"])
                             seen_revisions.add(record["revision_id"])
                             count += 1
                             if count > max_pages:

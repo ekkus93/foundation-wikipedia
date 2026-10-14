@@ -353,6 +353,18 @@ class ExtractTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpExtractionError, "one revision"):
             self.extract()
 
+    def test_rejects_out_of_order_unique_page_ids_before_publication(self):
+        start = XML.index(b"  <page>")
+        second = XML.index(b"  <page>", start + 1)
+        end = XML.index(b"</mediawiki>")
+        # Both pages and revisions are individually valid and distinct.
+        # Reversing their XML order must fail before publishing JSONL.
+        self.write_xml(XML[:start] + XML[second:end] + XML[start:second] + XML[end:])
+        with self.assertRaisesRegex(DumpExtractionError, "out-of-order"):
+            self.extract()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_rejects_reused_revision_id_across_distinct_page_ids(self):
         # A single Wikimedia revision belongs to exactly one page. An
         # otherwise valid shard must not publish conflicting provenance.
