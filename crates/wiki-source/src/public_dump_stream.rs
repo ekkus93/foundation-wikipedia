@@ -210,7 +210,10 @@ mod tests {
 
         let mut audit = StreamShardAudit::new(&inventory);
         assert_eq!(audit.push_page_id(1), Err(StreamAuditError::InvalidState));
-        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(
+            audit.begin_member(first),
+            Err(StreamAuditError::InvalidState)
+        );
         assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
 
         let mut audit = StreamShardAudit::new(&inventory);
@@ -218,12 +221,18 @@ mod tests {
             audit.begin_member(second),
             Err(StreamAuditError::MemberMismatch { index: 0 })
         );
-        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(
+            audit.begin_member(first),
+            Err(StreamAuditError::InvalidState)
+        );
         assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
 
         let mut audit = StreamShardAudit::new(&inventory);
         audit.begin_member(first).unwrap();
-        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(
+            audit.begin_member(first),
+            Err(StreamAuditError::InvalidState)
+        );
         assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
 
         let mut audit = StreamShardAudit::new(&inventory);
@@ -305,10 +314,14 @@ mod tests {
     fn duplicate_after_valid_first_shard_cannot_be_laundered_by_ending_second() {
         let inventory = fixture();
         let mut audit = StreamShardAudit::new(&inventory);
-        audit.begin_member(&inventory.members()[0].relative_path).unwrap();
+        audit
+            .begin_member(&inventory.members()[0].relative_path)
+            .unwrap();
         audit.push_page_id(1).unwrap();
         audit.end_member().unwrap();
-        audit.begin_member(&inventory.members()[1].relative_path).unwrap();
+        audit
+            .begin_member(&inventory.members()[1].relative_path)
+            .unwrap();
         audit.push_page_id(201).unwrap();
         assert_eq!(
             audit.push_page_id(201),
