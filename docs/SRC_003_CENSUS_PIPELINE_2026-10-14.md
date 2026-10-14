@@ -19,3 +19,12 @@ Status: Qualified partial implementation; SRC-003 remains unchecked.
 ## Not yet demonstrated
 
 The caller must still discover/authenticate the original Wikimedia publication, verify each actual compressed member's digest, securely decode bzip2 and well-formed XML into events, and stage the output privately before atomic publication. This *observed* census is **not an independent expected census** and cannot prove that upstream pages were omitted. Full Parsoid/MediaWiki rendering, mandatory offline visuals with attribution, pack installation, and real desktop/Android acceptance remain outstanding. Do not mark SRC-003 complete.
+
+## Additional fail-closed completion tests
+
+Exact source SHA `ce48afe4a9f04434f1f761f5af30b43c1c6711bf` adds integration regressions for a completely validated multi-member stream with **no pages in the selected namespace**, and for a staging writer that accepts all page bytes but fails final `flush()`. Both must return an error without yielding a publishable output handle. Formatting correction of the first test-only commit `5de04bb6d14ffdce2d2f34f68d52dddeac70e278` preceded qualification.
+
+- [Rust workspace CI 38610955304](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38610955304) — passed, exact source SHA.
+- [Platform shells CI 38610955599](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38610955599) — passed, exact source SHA.
+
+These tests qualify fail-closed completion behavior only; staged files still require caller-managed deletion/atomic promotion and independently authenticated source data.
