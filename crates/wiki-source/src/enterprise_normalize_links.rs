@@ -2,7 +2,7 @@
 use super::enterprise_normalize::NormalizeError;
 use crate::enterprise::StructuredPart;
 use std::collections::BTreeMap;
-use wiki_model::{ArticleKey, ArticleLink};
+use wiki_model::{wikipedia_title_key, ArticleKey, ArticleLink};
 
 fn hex(byte: u8) -> Option<u8> {
     match byte {
@@ -40,19 +40,7 @@ fn decode(value: &str) -> Option<String> {
 /// title's case; never perform a whole-title case-insensitive lookup.
 /// Multi-scalar uppercase expansions are left unchanged rather than guessed.
 pub(crate) fn title_key(value: &str) -> String {
-    let spaced = value.replace('_', " ");
-    let mut chars = spaced.chars();
-    let Some(first) = chars.next() else {
-        return spaced;
-    };
-    let mut upper = first.to_uppercase();
-    let Some(initial) = upper.next() else {
-        return spaced;
-    };
-    if upper.next().is_some() {
-        return spaced;
-    }
-    format!("{initial}{}", chars.as_str())
+    wikipedia_title_key(value)
 }
 
 fn resolve(
