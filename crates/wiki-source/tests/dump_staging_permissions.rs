@@ -57,7 +57,13 @@ fn writable_dump_staging_root_is_rejected_before_ingest_or_verification() {
     assert!(!nested.join(name).exists());
     fs::write(nested.join(name), bytes).unwrap();
     assert!(matches!(
-        verify_staged_export(&root, &[nested_member.clone()], "enwiki", "2026-10-01", 1024),
+        verify_staged_export(
+            &root,
+            &[nested_member.clone()],
+            "enwiki",
+            "2026-10-01",
+            1024
+        ),
         Err(StagedDumpError::UnsafeStagingPath)
     ));
     fs::remove_file(root.join(name)).unwrap();
