@@ -98,3 +98,29 @@ pub fn import_canonical_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     enterprise_normalize_article::normalize_enterprise_batch(&joined)
         .map_err(CanonicalImportError::Normalize)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn scoped_verified_import_requires_matching_tombstone_generation() {
+        let deletion = DeletionMarker {
+            page: PageKey { project: "enwiki".into(), page_id: 2 },
+            generation_id: "20261009".into(),
+        };
+        assert_eq!(
+            import_verified_enterprise_ndjson_scoped(
+                Cursor::new(Vec::<u8>::new()),
+                Cursor::new(Vec::<u8>::new()),
+                "enwiki",
+                "20261010",
+                vec![deletion],
+            ),
+            Err(VerifiedImportError::Batch(BatchImportError::Join(
+                crate::enterprise::EnterpriseError::GenerationMismatch
+            )))
+        );
+    }
+}
