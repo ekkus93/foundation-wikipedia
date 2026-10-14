@@ -266,4 +266,49 @@ mod tests {
         ));
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn staged_pinned_events_roundtrip_through_digest_pinned_coverage_gate() {
+        use crate::public_dump_census_ingest::stage_pinned_observed_census;
+        use crate::public_dump_page_meta::PageEvent;
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-integration-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let expected = root.join("expected.ids");
+        fs::write(&expected, b"1\\n201\\n").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"1\\n201\\n"));
+        let pinned = inventory();
+        let (observed, count) =
+            stage_pinned_observed_census(&root, "observed.ids", &pinned, 0, |pipeline| {
+                for (index, member) in pinned.members().iter().enumerate() {
+                    pipeline.begin_member(&member.relative_path)?;
+                    pipeline.push(PageEvent::BeginPage)?;
+                    pipeline.push(PageEvent::Title("Example"))?;
+                    pipeline.push(PageEvent::Namespace(0))?;
+                    pipeline.push(PageEvent::PageId(if index == 0 { 1 } else { 201 }))?;
+                    pipeline.push(PageEvent::BeginRevision)?;
+                    pipeline.push(PageEvent::RevisionId(1001 + index as u64))?;
+                    pipeline.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+                    pipeline.push(PageEvent::EndRevision)?;
+                    pipeline.push(PageEvent::EndPage)?;
+                    pipeline.end_member()?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 2);
+        let result = audit_pinned_census_files(&pinned, 0, &expected, &digest, &observed)
+            .unwrap();
+        assert_eq!(result.expected_count, count);
+        assert_eq!(result.observed_count, count);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
