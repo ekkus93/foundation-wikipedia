@@ -23,6 +23,8 @@ NAME = re.compile(r"^(?P<project>[a-z0-9_]+)-(?P<date>\d{4}-\d{2}-\d{2})-p(?P<fi
 MAX_XML_BYTES = 16 * 1024**3
 # Bound the ElementTree subtree retained for any one page (including wikitext).
 MAX_PAGE_XML_BYTES = 32 * 1024**2
+# Keep non-page XML (such as <siteinfo>) from growing an unbounded tree.
+MAX_NON_PAGE_XML_BYTES = 8 * 1024**2
 MAX_XML_DEPTH = 128
 MAX_PAGE_ID = 2**63 - 1
 
@@ -84,6 +86,7 @@ class BoundedDecompressed:
         self.total = 0
         self.tail = b""
         self.page_start = None
+        self.non_page_start = 0
 
     def read(self, size=-1):
         if size < 0:
@@ -96,6 +99,8 @@ class BoundedDecompressed:
             raise DumpDecodeError("decompressed member exceeds limit")
         if self.page_start is not None and self.total - self.page_start > MAX_PAGE_XML_BYTES:
             raise DumpDecodeError("XML page exceeds per-page memory limit")
+        if self.page_start is None and self.total - self.non_page_start > MAX_NON_PAGE_XML_BYTES:
+            raise DumpDecodeError("non-page XML exceeds metadata memory limit")
         joined = self.tail + data
         if b"<!DOCTYPE" in joined or b"<!ENTITY" in joined:
             raise DumpDecodeError("DTD/entity declarations are forbidden")
@@ -134,6 +139,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                 events = ET.iterparse(bounded, events=("start", "end"))
                 depth = 0
                 root = None
+                seen_siteinfo = False
+                seen_page = False
                 for event, elem in events:
                     if event == "start":
                         depth += 1
@@ -144,10 +151,19 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                                     or (_namespace(elem.tag) and not EXPORT_NS.fullmatch(_namespace(elem.tag)))):
                                 raise DumpDecodeError("expected official mediawiki XML root")
                             root = elem
-                        if _tag(elem.tag) == "page":
-                            if depth != 2 or _namespace(elem.tag) != _namespace(root.tag):
-                                raise DumpDecodeError("page outside mediawiki root namespace")
-                            bounded.page_start = bounded.total
+                        if depth == 2:
+                            if (_namespace(elem.tag) != _namespace(root.tag)
+                                    or _tag(elem.tag) not in ("page", "siteinfo")):
+                                raise DumpDecodeError("unexpected mediawiki root child")
+                            if _tag(elem.tag) == "siteinfo":
+                                if seen_siteinfo or seen_page:
+                                    raise DumpDecodeError("duplicate or misplaced siteinfo")
+                                seen_siteinfo = True
+                            else:
+                                seen_page = True
+                                bounded.page_start = bounded.total
+                        elif _tag(elem.tag) == "page":
+                            raise DumpDecodeError("page outside mediawiki root namespace")
                         continue
                     if _tag(elem.tag) == "page" and depth != 2:
                         raise DumpDecodeError("page outside mediawiki root")
@@ -163,6 +179,9 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                         elem.clear()
                         root.clear()
                         bounded.page_start = None
+                        bounded.non_page_start = bounded.total
+                    elif depth == 2 and _tag(elem.tag) == "siteinfo":
+                        elem.clear()
                     depth -= 1
                 if depth != 0 or root is None or pages == 0:
                     raise DumpDecodeError("empty or incomplete XML member")

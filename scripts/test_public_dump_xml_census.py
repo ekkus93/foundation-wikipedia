@@ -182,6 +182,29 @@ class DumpXmlTests(unittest.TestCase):
                 expected_sha256=hashlib.sha256(expected.read_bytes()).hexdigest())
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_siteinfo_is_accepted_but_unexpected_top_level_xml_fails(self):
+        self.add(1, 100, f"<mediawiki><siteinfo><sitename>Test</sitename></siteinfo>{page(1)}</mediawiki>")
+        result, count = self.run_census()
+        self.assertEqual((count, result.read_bytes()), (1, b"1\\n"))
+        result.unlink()
+        for xml in (
+            f"<mediawiki><unknown/>{page(1)}</mediawiki>",
+            f"<mediawiki><siteinfo/><siteinfo/>{page(1)}</mediawiki>",
+            f"<mediawiki>{page(1)}<siteinfo/></mediawiki>",
+        ):
+            self.manifest["files"].clear()
+            self.add(1, 100, xml)
+            with self.assertRaises(DumpDecodeError):
+                self.run_census()
+            self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_oversized_siteinfo_rejected_without_publication(self):
+        self.add(1, 100, f"<mediawiki><siteinfo><description>{'x' * 4096}</description></siteinfo>{page(1)}</mediawiki>")
+        with patch("public_dump_xml_census.MAX_NON_PAGE_XML_BYTES", 512):
+            with self.assertRaisesRegex(DumpDecodeError, "metadata memory limit"):
+                self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_namespace_absence_and_overlapping_ranges_fail_closed(self):
         self.add(1, 100, f"<mediawiki>{page(1, ns=1)}</mediawiki>")
         with self.assertRaisesRegex(DumpDecodeError, "no pages"):
