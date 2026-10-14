@@ -35,6 +35,26 @@ fn decode(value: &str) -> Option<String> {
     Some(text.replace('_', " "))
 }
 
+/// MediaWiki first-letter title normalization: underscores are spaces and
+/// only the initial Unicode scalar is uppercased. Preserve the rest of the
+/// title's case; never perform a whole-title case-insensitive lookup.
+/// Multi-scalar uppercase expansions are left unchanged rather than guessed.
+pub(crate) fn title_key(value: &str) -> String {
+    let spaced = value.replace('_', " ");
+    let mut chars = spaced.chars();
+    let Some(first) = chars.next() else {
+        return spaced;
+    };
+    let mut upper = first.to_uppercase();
+    let Some(initial) = upper.next() else {
+        return spaced;
+    };
+    if upper.next().is_some() {
+        return spaced;
+    }
+    format!("{initial}{}", chars.as_str())
+}
+
 fn resolve(
     url: &str,
     project: &str,
@@ -74,7 +94,7 @@ fn resolve(
         .transpose_option()
         .ok_or(NormalizeError::UnresolvedLink)?;
     let target = index
-        .get(&(project.to_owned(), title))
+        .get(&(project.to_owned(), title_key(&title)))
         .cloned()
         .ok_or(NormalizeError::UnresolvedLink)?;
     Ok((target, fragment))
@@ -121,6 +141,15 @@ pub(crate) fn collect_links(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_letter_title_keys_preserve_remaining_case() {
+        assert_eq!(title_key("gravity_waves"), "Gravity waves");
+        assert_eq!(title_key("énergie"), "Énergie");
+        assert_eq!(title_key("gRAVITY"), "GRAVITY");
+        assert_eq!(title_key(""), "");
+        assert_eq!(title_key("Straße"), "Straße");
+    }
 
     #[test]
     fn absolute_hosts_are_bound_to_the_actual_wiki_project() {

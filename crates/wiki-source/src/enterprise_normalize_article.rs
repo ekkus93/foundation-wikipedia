@@ -2,7 +2,7 @@
 use super::enterprise_normalize::{digest_article, CanonicalEnterpriseArticle, NormalizeError};
 use super::enterprise_normalize_blocks::convert;
 use super::enterprise_normalize_html::sanitize_rendered_html;
-use super::enterprise_normalize_links::collect_links;
+use super::enterprise_normalize_links::{collect_links, title_key};
 use super::enterprise_normalize_references::references;
 use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
 use crate::enterprise_integrity::validate_joined_evidence;
@@ -99,7 +99,7 @@ impl EnterpriseLinkIndex {
                 if title.trim().is_empty() || title != title.trim() {
                     return Err(NormalizeError::Missing("link index title"));
                 }
-                let index_key = (key.project.clone(), title.replace('_', " "));
+                let index_key = (key.project.clone(), title_key(title));
                 if let Some(existing) = by_title.insert(index_key, key.clone()) {
                     if existing != key {
                         return Err(NormalizeError::UnresolvedLink);
@@ -380,6 +380,62 @@ mod tests {
         assert_eq!(normalized.article.links.len(), 1);
         assert_eq!(normalized.article.links[0].target.page_id, 43);
         assert_eq!(normalized.article.links[0].target.project, "enwiki");
+    }
+
+    #[test]
+    fn snapshot_link_index_resolves_lowercase_initial_and_redirect_alias() {
+        let mut source = joined("enwiki", 42);
+        source.structured.name = "Source".into();
+        source.structured.sections.push(StructuredPart {
+            kind: PartKind::Paragraph,
+            name: None,
+            value: Some("Read more.".into()),
+            values: vec![],
+            links: vec![
+                StructuredLink {
+                    url: "/wiki/gravity_waves#History".into(),
+                    text: "Gravity waves".into(),
+                },
+                StructuredLink {
+                    url: "/wiki/target_alias".into(),
+                    text: "Alias".into(),
+                },
+            ],
+            citations: vec![],
+            table_references: vec![],
+            images: vec![],
+            has_parts: vec![],
+        });
+        let mut target = joined("enwiki", 43);
+        target.structured.name = "Gravity waves".into();
+        target.redirects.push("Target alias".into());
+        let identities = [&source, &target]
+            .into_iter()
+            .map(EnterpriseLinkIdentity::from_joined)
+            .collect::<Vec<_>>();
+        let index = EnterpriseLinkIndex::build(&identities).unwrap();
+        let normalized =
+            normalize_enterprise_article_with_link_index(&source, false, &index).unwrap();
+        assert_eq!(normalized.article.links.len(), 2);
+        assert_eq!(normalized.article.links[0].target.page_id, 43);
+        assert_eq!(normalized.article.links[0].fragment.as_deref(), Some("History"));
+        assert_eq!(normalized.article.links[1].target.page_id, 43);
+    }
+
+    #[test]
+    fn first_letter_normalization_rejects_colliding_page_identities() {
+        let mut upper = joined("enwiki", 42);
+        upper.structured.name = "Gravity".into();
+        let mut lower = joined("enwiki", 43);
+        lower.structured.name = "gravity".into();
+        let identities = [&upper, &lower]
+            .into_iter()
+            .map(EnterpriseLinkIdentity::from_joined)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            EnterpriseLinkIndex::build(&identities),
+            Err(NormalizeError::UnresolvedLink)
+        );
     }
 
     #[test]
