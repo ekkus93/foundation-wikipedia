@@ -56,7 +56,10 @@ impl<'a> PinnedPageIngest<'a> {
         Ok(())
     }
 
-    pub fn push(&mut self, event: PageEvent<'_>) -> Result<Option<PublicDumpPage>, PageIngestError> {
+    pub fn push(
+        &mut self,
+        event: PageEvent<'_>,
+    ) -> Result<Option<PublicDumpPage>, PageIngestError> {
         if self.failed || !self.active {
             self.failed = true;
             return Err(PageIngestError::InvalidState);
@@ -145,11 +148,15 @@ mod tests {
     fn binds_complete_revision_metadata_to_pinned_shard_order() {
         let pinned = inventory();
         let mut ingest = PinnedPageIngest::new(&pinned);
-        ingest.begin_member(&pinned.members()[0].relative_path).unwrap();
+        ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         assert_eq!(page(&mut ingest, 1).unwrap().revision_id, 1001);
         assert_eq!(page(&mut ingest, 100).unwrap().title, "München");
         ingest.end_member().unwrap();
-        ingest.begin_member(&pinned.members()[1].relative_path).unwrap();
+        ingest
+            .begin_member(&pinned.members()[1].relative_path)
+            .unwrap();
         assert_eq!(page(&mut ingest, 201).unwrap().page_id, 201);
         ingest.end_member().unwrap();
         assert_eq!(ingest.finish(), Ok(3));
@@ -160,7 +167,9 @@ mod tests {
         let pinned = inventory();
         for ids in [vec![101], vec![20, 20], vec![20, 19]] {
             let mut ingest = PinnedPageIngest::new(&pinned);
-            ingest.begin_member(&pinned.members()[0].relative_path).unwrap();
+            ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
             for id in ids {
                 if page(&mut ingest, id).is_err() {
                     break;
@@ -175,18 +184,24 @@ mod tests {
     fn cannot_finish_with_open_page_or_missing_shard() {
         let pinned = inventory();
         let mut ingest = PinnedPageIngest::new(&pinned);
-        ingest.begin_member(&pinned.members()[0].relative_path).unwrap();
+        ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         ingest.push(PageEvent::BeginPage).unwrap();
         assert_eq!(ingest.end_member(), Err(PageIngestError::IncompletePage));
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
 
         let mut ingest = PinnedPageIngest::new(&pinned);
-        ingest.begin_member(&pinned.members()[0].relative_path).unwrap();
+        ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         page(&mut ingest, 1).unwrap();
         ingest.end_member().unwrap();
         assert_eq!(
             ingest.finish(),
-            Err(PageIngestError::Shard(StreamAuditError::MissingMember { index: 1 }))
+            Err(PageIngestError::Shard(StreamAuditError::MissingMember {
+                index: 1
+            }))
         );
     }
 
@@ -194,7 +209,9 @@ mod tests {
     fn metadata_failure_poisoning_prevents_false_completion() {
         let pinned = inventory();
         let mut ingest = PinnedPageIngest::new(&pinned);
-        ingest.begin_member(&pinned.members()[0].relative_path).unwrap();
+        ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         ingest.push(PageEvent::BeginPage).unwrap();
         ingest.push(PageEvent::Title("Example")).unwrap();
         ingest.push(PageEvent::Namespace(0)).unwrap();
@@ -203,7 +220,10 @@ mod tests {
             ingest.push(PageEvent::PageId(2)),
             Err(PageIngestError::Metadata(PageMetadataError::DuplicateField))
         );
-        assert_eq!(ingest.push(PageEvent::BeginRevision), Err(PageIngestError::InvalidState));
+        assert_eq!(
+            ingest.push(PageEvent::BeginRevision),
+            Err(PageIngestError::InvalidState)
+        );
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
     }
 }
