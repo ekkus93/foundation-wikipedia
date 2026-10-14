@@ -1,0 +1,263 @@
+//! Digest-pinned, bounded-memory comparison of an independently supplied
+//! expected page census with the observed census from verified dump ingestion.
+//!
+//! A caller MUST separately authenticate the expected census publisher, its
+//! snapshot cutoff and namespace semantics. A checksum supplied by that same
+//! caller is an integrity pin, not proof of Wikimedia origin or independence.
+//! This gate does not decode XML, render wikitext, or certify offline packs.
+
+use std::fs::{self, File, Metadata};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::path::Path;
+
+use sha2::{Digest, Sha256};
+
+use crate::public_dump_census_stream::{CensusScope, StreamCoverageError};
+use crate::public_dump_census_text::audit_page_coverage_text;
+use crate::public_dump_coverage::PageCoverageDelta;
+use crate::public_dump_pinned::PinnedInventory;
+
+const MAX_CENSUS_BYTES: u64 = 2_000_000_000;
+
+#[derive(Debug)]
+pub enum CensusGateError {
+    InvalidDigest,
+    UnsafeInput,
+    SameSource,
+    Io(io::Error),
+    ExpectedDigestMismatch,
+    Coverage(StreamCoverageError),
+    ChangedDuringAudit,
+}
+
+fn open_regular(path: &Path) -> Result<(File, Metadata), CensusGateError> {
+    let link = fs::symlink_metadata(path).map_err(CensusGateError::Io)?;
+    if !link.file_type().is_file() || link.len() == 0 || link.len() > MAX_CENSUS_BYTES {
+        return Err(CensusGateError::UnsafeInput);
+    }
+    let file = File::open(path).map_err(CensusGateError::Io)?;
+    let opened = file.metadata().map_err(CensusGateError::Io)?;
+    if !opened.is_file() || !same_identity(&link, &opened) {
+        return Err(CensusGateError::UnsafeInput);
+    }
+    Ok((file, opened))
+}
+
+fn same_identity(a: &Metadata, b: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev() && a.ino() == b.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        a.len() == b.len() && a.modified().ok() == b.modified().ok()
+    }
+}
+
+fn unchanged(before: &Metadata, after: &Metadata) -> bool {
+    if !same_identity(before, after)
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn sha256_file(file: &mut File) -> Result<String, CensusGateError> {
+    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let size = file.read(&mut buffer).map_err(CensusGateError::Io)?;
+        if size == 0 {
+            break;
+        }
+        hash.update(&buffer[..size]);
+    }
+    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+/// Audit observed IDs against a separately authenticated, SHA-256-pinned
+/// expected census for the same pinned project/generation and namespace.
+///
+/// Both files must be regular, non-symlink files and may not refer to the same
+/// inode. A successful comparison is not proof that the expected census is
+/// independent or has a compatible snapshot cutoff: callers must establish
+/// those facts out of band. Both readers use bounded memory and strict LF
+/// decimal parsing. Expected bytes are hashed before and after comparison.
+pub fn audit_pinned_census_files(
+    inventory: &PinnedInventory,
+    namespace: i32,
+    expected_path: &Path,
+    expected_sha256: &str,
+    observed_path: &Path,
+) -> Result<PageCoverageDelta, CensusGateError> {
+    if namespace < 0 {
+        return Err(CensusGateError::UnsafeInput);
+    }
+    if expected_sha256.len() != 64
+        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(CensusGateError::InvalidDigest);
+    }
+    let (mut expected, expected_before) = open_regular(expected_path)?;
+    let (mut observed, observed_before) = open_regular(observed_path)?;
+    if same_identity(&expected_before, &observed_before)
+        || fs::canonicalize(expected_path).map_err(CensusGateError::Io)?
+            == fs::canonicalize(observed_path).map_err(CensusGateError::Io)?
+    {
+        return Err(CensusGateError::SameSource);
+    }
+    if !sha256_file(&mut expected)?.eq_ignore_ascii_case(expected_sha256) {
+        return Err(CensusGateError::ExpectedDigestMismatch);
+    }
+    let scope = CensusScope {
+        project: inventory.project(),
+        generation: inventory.date(),
+        namespace,
+    };
+    let delta = audit_page_coverage_text(
+        scope,
+        BufReader::new(&mut expected),
+        scope,
+        BufReader::new(&mut observed),
+    )
+    .map_err(CensusGateError::Coverage)?;
+    if !sha256_file(&mut expected)?.eq_ignore_ascii_case(expected_sha256) {
+        return Err(CensusGateError::ChangedDuringAudit);
+    }
+    let expected_after = expected.metadata().map_err(CensusGateError::Io)?;
+    let observed_after = observed.metadata().map_err(CensusGateError::Io)?;
+    if !unchanged(&expected_before, &expected_after)
+        || !unchanged(&observed_before, &observed_after)
+    {
+        return Err(CensusGateError::ChangedDuringAudit);
+    }
+    Ok(delta)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::public_dump_pinned::parse_pinned_inventory;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn inventory() -> PinnedInventory {
+        let sums = format!(
+            "{}  enwiki-2026-10-01-p1p100.xml.bz2\n{}  enwiki-2026-10-01-p201p300.xml.bz2\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap()
+    }
+
+    fn fixture() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, String) {
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-gate-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let expected = root.join("expected.ids");
+        let observed = root.join("observed.ids");
+        fs::write(&expected, b"1\n201\n").unwrap();
+        fs::write(&observed, b"1\n201\n").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
+        (root, expected, observed, digest)
+    }
+
+    #[test]
+    fn pinned_independent_census_matches_without_materializing_ids() {
+        let (root, expected, observed, digest) = fixture();
+        let delta =
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed).unwrap();
+        assert_eq!(delta.expected_count, 2);
+        assert_eq!(delta.observed_count, 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_unpinned_expected_bytes_and_mismatched_page_sets() {
+        let (root, expected, observed, digest) = fixture();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &"0".repeat(64), &observed),
+            Err(CensusGateError::ExpectedDigestMismatch)
+        ));
+        fs::write(&observed, b"1\n202\n").unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::Coverage(StreamCoverageError::MissingOrUnexpected(_)))
+        ));
+        fs::write(&expected, b"1\n201\nextra\n").unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::ExpectedDigestMismatch)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_aliases_malformed_inputs_and_invalid_scopes() {
+        let (root, expected, observed, digest) = fixture();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &expected),
+            Err(CensusGateError::SameSource)
+        ));
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), -1, &expected, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, "bad", &observed),
+            Err(CensusGateError::InvalidDigest)
+        ));
+        fs::write(&observed, b"1\n201").unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::Coverage(StreamCoverageError::Read { .. }))
+        ));
+        fs::write(&observed, b"").unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinks_and_hardlink_aliases() {
+        use std::os::unix::fs::symlink;
+        let (root, expected, observed, digest) = fixture();
+        let linked = root.join("linked.ids");
+        symlink(&expected, &linked).unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &linked, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        fs::remove_file(&linked).unwrap();
+        fs::hard_link(&expected, &linked).unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &linked),
+            Err(CensusGateError::SameSource)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
