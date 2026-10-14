@@ -140,6 +140,48 @@ class DumpXmlTests(unittest.TestCase):
         path, count = self.run_census()
         self.assertEqual((count, path.read_bytes()), (1, b"42\n"))
 
+    def test_digest_pinned_expected_census_gate_before_publication(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}{page(2)}</mediawiki>")
+        expected = self.root / "independent.ids"
+        expected.write_bytes(b"1\n2\n")
+        digest = hashlib.sha256(expected.read_bytes()).hexdigest()
+        result, count = stage_observed_census(
+            self.manifest, self.staging, self.output, "observed.ids",
+            expected_census=expected, expected_sha256=digest)
+        self.assertEqual((count, result.read_bytes()), (2, b"1\n2\n"))
+        result.unlink()
+        for bad in (b"1\n3\n", b"1\n", b"1\n2\n3\n", b"2\n1\n",
+                    b"01\n2\n", b"1\n2", b"1\n2\nextra\n"):
+            expected.write_bytes(bad)
+            with self.assertRaises(DumpDecodeError):
+                stage_observed_census(
+                    self.manifest, self.staging, self.output, "observed.ids",
+                    expected_census=expected,
+                    expected_sha256=hashlib.sha256(bad).hexdigest())
+            self.assertEqual(list(self.output.iterdir()), [])
+        expected.write_bytes(b"1\n2\n")
+        with self.assertRaisesRegex(DumpDecodeError, "digest"):
+            stage_observed_census(
+                self.manifest, self.staging, self.output, "observed.ids",
+                expected_census=expected, expected_sha256="0" * 64)
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_expected_gate_rejects_missing_digest_and_symlink(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        expected = self.root / "expected.ids"
+        expected.write_bytes(b"1\n")
+        with self.assertRaisesRegex(DumpDecodeError, "supplied together"):
+            stage_observed_census(self.manifest, self.staging, self.output,
+                                  "observed.ids", expected_census=expected)
+        link = self.root / "expected-link.ids"
+        link.symlink_to(expected)
+        with self.assertRaises(OSError):
+            stage_observed_census(
+                self.manifest, self.staging, self.output, "observed.ids",
+                expected_census=link,
+                expected_sha256=hashlib.sha256(expected.read_bytes()).hexdigest())
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_namespace_absence_and_overlapping_ranges_fail_closed(self):
         self.add(1, 100, f"<mediawiki>{page(1, ns=1)}</mediawiki>")
         with self.assertRaisesRegex(DumpDecodeError, "no pages"):

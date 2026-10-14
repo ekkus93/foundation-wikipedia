@@ -179,8 +179,60 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
     return selected
 
 
-def stage_observed_census(manifest, staging, output_dir, filename, namespace=0):
+MAX_EXPECTED_CENSUS_BYTES = 2_000_000_000
+
+
+def _audit_expected_census(expected_path, expected_sha256, observed_path, selected):
+    """Compare a separately supplied, digest-pinned expected census before publish.
+
+    The expected census's publisher, independence, namespace and snapshot cutoff
+    MUST be established by the caller. Matching a caller-supplied digest alone
+    cannot establish any of those properties.
+    """
+    if (not isinstance(expected_sha256, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256)):
+        raise DumpDecodeError("invalid expected census digest")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(expected_path, flags), "rb") as expected, open(observed_path, "rb") as observed:
+        before = os.fstat(expected.fileno())
+        observed_meta = os.fstat(observed.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or not 0 < before.st_size <= MAX_EXPECTED_CENSUS_BYTES
+                or (before.st_dev, before.st_ino) == (observed_meta.st_dev, observed_meta.st_ino)):
+            raise DumpDecodeError("unsafe or aliased expected census")
+        digest = hashlib.sha256()
+        previous = 0
+        count = 0
+        while True:
+            line = expected.readline(21)  # at most 19 decimal digits plus LF
+            if not line:
+                break
+            digest.update(line)
+            if (len(line) > 20 or not re.fullmatch(rb"[1-9][0-9]*\n", line)):
+                raise DumpDecodeError("invalid expected census record")
+            value = int(line[:-1])
+            if value > MAX_PAGE_ID or value <= previous:
+                raise DumpDecodeError("expected census is not strictly increasing")
+            previous = value
+            if observed.readline(21) != line:
+                raise DumpDecodeError("expected and observed page IDs differ")
+            count += 1
+        if count != selected or observed.read(1):
+            raise DumpDecodeError("expected and observed census lengths differ")
+        after = os.fstat(expected.fileno())
+        if (digest.hexdigest() != expected_sha256.lower()
+                or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                    before.st_ctime_ns, before.st_nlink)
+                != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                    after.st_ctime_ns, after.st_nlink)):
+            raise DumpDecodeError("expected census digest mismatch or file changed")
+
+
+def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
+                          expected_census=None, expected_sha256=None):
     """Verify all staged digests, decode all shards, then publish atomically."""
+    if (expected_census is None) != (expected_sha256 is None):
+        raise DumpDecodeError("expected census and SHA-256 must be supplied together")
     if type(namespace) is not int or namespace < 0:
         raise DumpDecodeError("invalid namespace")
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", filename) or filename.endswith("."):
@@ -223,6 +275,8 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0):
                 raise DumpDecodeError("selected namespace has no pages")
             sink.flush()
             os.fsync(sink.fileno())
+        if expected_census is not None:
+            _audit_expected_census(expected_census, expected_sha256, pending, selected)
         os.link(pending, destination)  # no-overwrite, same filesystem
         published = True
         os.unlink(pending)
@@ -251,9 +305,13 @@ def main():
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("filename")
     parser.add_argument("--namespace", type=int, default=0)
+    parser.add_argument("--expected-census", type=Path)
+    parser.add_argument("--expected-sha256")
     args = parser.parse_args()
-    result, count = stage_observed_census(json.loads(args.manifest.read_text()), args.staging, args.output_dir, args.filename, args.namespace)
-    print(f"Observed {count} page IDs in {result}; publisher authenticity and completeness NOT established")
+    result, count = stage_observed_census(json.loads(args.manifest.read_text()), args.staging, args.output_dir, args.filename, args.namespace,
+                                          args.expected_census, args.expected_sha256)
+    status = "digest-pinned expected census matched; its authority/independence NOT established" if args.expected_census else "publisher authenticity and completeness NOT established"
+    print(f"Observed {count} page IDs in {result}; {status}")
 
 
 if __name__ == "__main__":
