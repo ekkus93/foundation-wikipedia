@@ -28,6 +28,23 @@ pub fn import_verified_enterprise_ndjson<S: BufRead, R: BufRead>(
     Ok(joined)
 }
 
+/// Apply project- and generation-scoped deletion evidence before accepting
+/// a batch of revision-matched Structured Contents and rendered components.
+pub fn import_verified_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
+    structured: S,
+    regular: R,
+    project: &str,
+    generation_id: &str,
+    deleted: Vec<DeletionMarker>,
+) -> Result<Vec<JoinedEnterpriseArticle>, VerifiedImportError> {
+    let joined = join_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
+        .map_err(VerifiedImportError::Batch)?;
+    for article in &joined {
+        validate_joined_evidence(article).map_err(VerifiedImportError::Integrity)?;
+    }
+    Ok(joined)
+}
+
 #[path = "enterprise_normalize.rs"]
 pub mod enterprise_normalize;
 #[path = "enterprise_normalize_article.rs"]
