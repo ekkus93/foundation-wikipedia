@@ -583,6 +583,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_excessive_section_nesting() {
+        let mut section = Section {
+            ordinal: 1,
+            heading: "Nested".into(),
+            blocks: vec![],
+            subsections: vec![],
+        };
+        for _ in 0..MAX_SECTION_DEPTH {
+            section = Section {
+                ordinal: 1,
+                heading: "Nested".into(),
+                blocks: vec![],
+                subsections: vec![section],
+            };
+        }
+        let mut a = article();
+        a.sections = vec![section];
+        assert_eq!(a.validate(), Err(ModelError::SectionDepthExceeded));
+    }
+
+    #[test]
     fn accepts_unicode_and_sections() {
         assert!(article().validate().is_ok());
     }
