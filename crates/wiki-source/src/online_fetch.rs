@@ -134,6 +134,18 @@ pub fn fetch_article<T: MediaWikiTransport>(
     Ok(FetchOutcome::Rendered(article))
 }
 
+/// Open a stable page identity obtained from search rather than resolving its
+/// mutable display title a second time. Offline mode never invokes transport.
+pub fn fetch_page_id<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    page_id: u64,
+    network: NetworkState,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    let key = ArticleKey { project: project.to_owned(), page_id };
+    fetch_article(client, &key, network, &[])
+}
+
 /// Resolve an explicitly online title through canonical redirect metadata,
 /// then read the current page revision and its pinned HTML. Offline title
 /// navigation requires the separate local index and must never invoke HTTP.
@@ -269,6 +281,26 @@ mod tests {
         assert_eq!(error.fallback, Some(local()));
         assert!(matches!(error.cause, FetchCause::Flow(_)));
         assert_eq!(transport.requests.len(), 1);
+    }
+
+    #[test]
+    fn page_id_from_search_uses_stable_identity_and_never_resolves_title() {
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let result = fetch_page_id(&mut client, "enwiki", 42, NetworkState::Online).unwrap();
+        let FetchOutcome::Rendered(article) = result else { panic!("expected revision"); };
+        assert_eq!(article.revision.key.page_id, 42);
+        assert_eq!(article.revision.revision_id, 333);
+        assert_eq!(client.requests.len(), 2);
+        assert!(Url::parse(&client.requests[0]).unwrap().query_pairs()
+            .any(|(key, value)| key == "pageids" && value == "42"));
+        assert!(!client.requests[0].contains("titles="));
+        assert_eq!(
+            fetch_page_id(&mut client, "enwiki", 42, NetworkState::Offline),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(client.requests.len(), 2);
     }
 
     #[test]

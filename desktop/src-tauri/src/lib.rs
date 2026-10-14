@@ -2,7 +2,7 @@
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
 use wiki_source::online_curl::CurlTransport;
-use wiki_source::online_fetch::{fetch_title, FetchOutcome};
+use wiki_source::online_fetch::{fetch_page_id, fetch_title, FetchOutcome};
 use wiki_source::online_search::{fetch_search, SearchOutcome};
 use wiki_source::online_selection::NetworkState;
 
@@ -37,16 +37,36 @@ async fn open_wikipedia_title(title: String, project: String, offline: bool) -> 
         let network = if offline { NetworkState::Offline } else { NetworkState::Online };
         let outcome = fetch_title(&mut client, &project, &title, network)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
-        match outcome {
-            FetchOutcome::Rendered(article) => Ok((
-                article.revision.key.page_id,
-                article.revision.revision_id,
-                article.revision.title,
-                article.html,
-            )),
-            FetchOutcome::MissingOffline => Err("Article is not installed for offline reading; no network request was made".to_owned()),
-            _ => Err("No current online article is available".to_owned()),
-        }
+        preview_response(outcome)
+    })
+    .await
+    .map_err(|_| "Wikipedia article worker stopped".to_owned())?
+}
+
+/// Convert only authenticated, exact-revision rendered HTML into the preview DTO.
+fn preview_response(outcome: FetchOutcome) -> Result<(u64, u64, String, String), String> {
+    match outcome {
+        FetchOutcome::Rendered(article) => Ok((
+            article.revision.key.page_id,
+            article.revision.revision_id,
+            article.revision.title,
+            article.html,
+        )),
+        FetchOutcome::MissingOffline => Err("Article is not installed for offline reading; no network request was made".to_owned()),
+        _ => Err("No current online article is available".to_owned()),
+    }
+}
+
+/// Search hits carry page IDs. Re-resolving their mutable titles can select
+/// a different article between search and click, so open the stable ID instead.
+#[tauri::command]
+async fn open_wikipedia_page(page_id: u64, project: String, offline: bool) -> Result<(u64, u64, String, String), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut client = CurlTransport::new();
+        let network = if offline { NetworkState::Offline } else { NetworkState::Online };
+        let outcome = fetch_page_id(&mut client, &project, page_id, network)
+            .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
+        preview_response(outcome)
     })
     .await
     .map_err(|_| "Wikipedia article worker stopped".to_owned())?
@@ -56,7 +76,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
-            open_wikipedia_title
+            open_wikipedia_title,
+            open_wikipedia_page
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");

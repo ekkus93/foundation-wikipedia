@@ -81,7 +81,7 @@ export default function OnlineReader() {
     }
   }
 
-  async function openTitle(title: string) {
+  async function openArticle(command: "open_wikipedia_title" | "open_wikipedia_page", args: { title?: string; pageId?: number }) {
     if (busy) return;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
@@ -89,8 +89,8 @@ export default function OnlineReader() {
     // Keep the current article visible if the next fetch fails.
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
-        "open_wikipedia_title",
-        { title, project, offline: offline || !connected || !navigator.onLine },
+        command,
+        { ...args, project, offline: offline || !connected || !navigator.onLine },
       );
       if (!requestEpoch.current.matches(epoch)) return;
       setNavigation((state) => openReaderArticle(state, { pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) }));
@@ -99,6 +99,18 @@ export default function OnlineReader() {
     } finally {
       if (requestEpoch.current.matches(epoch)) setBusy(false);
     }
+  }
+
+  function openTitle(title: string) {
+    return openArticle("open_wikipedia_title", { title });
+  }
+
+  function openPage(pageId: number) {
+    if (!Number.isSafeInteger(pageId) || pageId <= 0) {
+      setNotice("Invalid Wikipedia page identity in search results.");
+      return;
+    }
+    return openArticle("open_wikipedia_page", { pageId });
   }
 
   return (
@@ -190,7 +202,7 @@ export default function OnlineReader() {
           <ul>
             {hits.map(([pageId, title]) => (
               <li key={pageId}>
-                <button type="button" disabled={busy} onClick={() => void openTitle(title)}>
+                <button type="button" disabled={busy} onClick={() => void openPage(pageId)}>
                   {title}
                 </button>
               </li>
