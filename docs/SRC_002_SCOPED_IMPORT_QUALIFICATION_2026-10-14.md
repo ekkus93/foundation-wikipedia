@@ -28,3 +28,10 @@ mandatory media, or demonstrate real-world snapshot installation.
 The canonical `docs/WIKIPEDIA_AI_READER_TODO.md` SRC-002 checkbox therefore
 remains **unchecked**. SRC-003 rendering and offline media qualification
 remain independent acceptance requirements.
+
+## First-letter link qualification (2026-10-14)
+
+Source head: `0e0787e0e9060139a8090741ee6ec75652428728`.
+Rust CI run `38581833366`: success. Platform CI run `38581833124`: success.
+
+Snapshot link indexing and lookup now share first-letter title normalization, preserving all other characters' case. Regression tests cover lowercase-initial links, aliases, fragment retention, and colliding page identities. This does not establish publication authenticity, source completeness, mandatory media or device acceptance; SRC-002 remains unchecked.
