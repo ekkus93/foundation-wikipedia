@@ -109,8 +109,7 @@ pub fn audit_pinned_census_files(
     if namespace < 0 {
         return Err(CensusGateError::UnsafeInput);
     }
-    if expected_sha256.len() != 64
-        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(CensusGateError::InvalidDigest);
     }
@@ -168,7 +167,12 @@ mod tests {
         parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap()
     }
 
-    fn fixture() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf, String) {
+    fn fixture() -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        String,
+    ) {
         let root = std::env::temp_dir().join(format!(
             "wiki-census-gate-{}-{}",
             std::process::id(),
@@ -203,7 +207,9 @@ mod tests {
         fs::write(&observed, b"1\n202\n").unwrap();
         assert!(matches!(
             audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
-            Err(CensusGateError::Coverage(StreamCoverageError::MissingOrUnexpected(_)))
+            Err(CensusGateError::Coverage(
+                StreamCoverageError::MissingOrUnexpected(_)
+            ))
         ));
         fs::write(&expected, b"1\n201\nextra\n").unwrap();
         assert!(matches!(
