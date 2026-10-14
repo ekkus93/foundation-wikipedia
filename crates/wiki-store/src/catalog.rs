@@ -718,7 +718,10 @@ mod tests {
             catalog.insert_verified(&aliased_snapshot, "one.shard", 0, frame.len() as u64),
             Err(CatalogError::InvalidFrame)
         ));
-        assert!(catalog.read_record(&actual_snapshot, &key).unwrap().is_some());
+        assert!(catalog
+            .read_record(&actual_snapshot, &key)
+            .unwrap()
+            .is_some());
         fs::remove_dir_all(root).unwrap();
     }
 
