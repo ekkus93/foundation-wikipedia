@@ -94,6 +94,13 @@ class DumpXmlTests(unittest.TestCase):
             self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_oversized_single_page_fails_before_tree_can_grow_unbounded(self):
+        self.add(1, 100, f"<mediawiki>{page(1).replace('Sample', 'x' * 4096)}</mediawiki>")
+        with patch("public_dump_xml_census.MAX_PAGE_XML_BYTES", 512):
+            with self.assertRaisesRegex(DumpDecodeError, "per-page memory limit"):
+                self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_revision_and_contributor_ids_never_become_page_ids(self):
         self.add(1, 100, f"<mediawiki>{page(42, revision=9000)}</mediawiki>")
         path, count = self.run_census()

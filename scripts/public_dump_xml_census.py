@@ -19,6 +19,8 @@ from verify_source_staging import SourceVerificationError, verify_source_bytes
 
 NAME = re.compile(r"^(?P<project>[a-z0-9_]+)-(?P<date>\d{4}-\d{2}-\d{2})-p(?P<first>[1-9]\d*)p(?P<last>[1-9]\d*)\.xml\.bz2$")
 MAX_XML_BYTES = 16 * 1024**3
+# Bound the ElementTree subtree retained for any one page (including wikitext).
+MAX_PAGE_XML_BYTES = 32 * 1024**2
 MAX_PAGE_ID = 2**63 - 1
 
 
@@ -68,14 +70,19 @@ class BoundedDecompressed:
         self.stream = stream
         self.total = 0
         self.tail = b""
+        self.page_start = None
 
     def read(self, size=-1):
         if size < 0:
             size = 65536
-        data = self.stream.read(min(size, 65536))
+        # Small reads also make a lowered test limit meaningful when one XML
+        # page otherwise fits in the parser's first input buffer.
+        data = self.stream.read(min(size, 65536, max(1, MAX_PAGE_XML_BYTES // 4)))
         self.total += len(data)
         if self.total > MAX_XML_BYTES:
             raise DumpDecodeError("decompressed member exceeds limit")
+        if self.page_start is not None and self.total - self.page_start > MAX_PAGE_XML_BYTES:
+            raise DumpDecodeError("XML page exceeds per-page memory limit")
         joined = self.tail + data
         if b"<!DOCTYPE" in joined or b"<!ENTITY" in joined:
             raise DumpDecodeError("DTD/entity declarations are forbidden")
@@ -110,7 +117,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                 raise DumpDecodeError("unsafe or replaced compressed member")
             compressed = HashingCompressed(handle)
             with bz2.BZ2File(compressed) as stream:
-                events = ET.iterparse(BoundedDecompressed(stream), events=("start", "end"))
+                bounded = BoundedDecompressed(stream)
+                events = ET.iterparse(bounded, events=("start", "end"))
                 depth = 0
                 root = None
                 for event, elem in events:
@@ -120,6 +128,10 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                             if _tag(elem.tag) != "mediawiki":
                                 raise DumpDecodeError("expected mediawiki XML root")
                             root = elem
+                        if _tag(elem.tag) == "page":
+                            if depth != 2:
+                                raise DumpDecodeError("page outside mediawiki root")
+                            bounded.page_start = bounded.total
                         continue
                     if _tag(elem.tag) == "page" and depth != 2:
                         raise DumpDecodeError("page outside mediawiki root")
@@ -134,6 +146,7 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                             selected += 1
                         elem.clear()
                         root.clear()
+                        bounded.page_start = None
                     depth -= 1
                 if depth != 0 or root is None or pages == 0:
                     raise DumpDecodeError("empty or incomplete XML member")
