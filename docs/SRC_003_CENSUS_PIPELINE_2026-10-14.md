@@ -40,3 +40,12 @@ Exact source SHA: `43f17e9fe80edb07ea74ded8792db7c3182b60d6`.
 `public_dump_census_ingest::stage_pinned_observed_census` writes to a private, restrictive-permission temporary file, requires all pinned semantic events and a successful final flush, syncs the output, and atomically hard-links it to a no-overwrite destination. Failure removes the temporary file; an existing published census is not replaced. Tests cover successful multi-member output, duplicate destination, incomplete/duplicate source events, invalid filenames, and symlink staging root rejection.
 
 **Limits:** the caller must use a private directory that cannot be concurrently modified by an adversary. The callback is responsible for supplying semantic events decoded from independently checksum-verified compressed XML members. The function does not authenticate Wikimedia, decode bzip2/XML, compare an independently sourced expected census, render HTML or publish a qualified offline pack. SRC-003 stays unchecked.
+
+## Staging directory permission hardening
+
+Exact source SHA: `581eeb2eb45ea080a58f24e9dce311a47f4094fd`. The staging API now refuses Unix directory roots readable or writable by group/other users (permission bits `0o077`), rather than relying only on caller documentation. Tests create a private `0700` staging root and verify that a `0755` root is rejected before any output is written. The requirement protects temporary census contents and destination names but does not replace upstream authenticity or the independent expected census.
+
+- [Rust workspace CI 38618062528](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38618062528) — passed at exact source SHA.
+- [Platform shells CI 38618062607](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38618062607) — passed at exact source SHA.
+
+`SRC-003` remains unchecked.
