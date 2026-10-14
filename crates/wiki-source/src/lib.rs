@@ -17,6 +17,7 @@ pub mod online_selection;
 pub mod online_title;
 pub mod public_dump;
 pub mod public_dump_coverage;
+pub mod public_dump_census_stream;
 pub mod public_dump_ingest;
 pub mod public_dump_origin;
 pub mod public_dump_page_meta;
