@@ -11,3 +11,7 @@ This is not a completed SRC-004 or DUI-001. Outstanding: live Wikimedia navigati
 Commit `6d9ead915a806d36aea110c1edd01cd0a27373b5` adds a bounded 50-entry article back stack, preserving the exact prior page ID, revision ID and HTML snapshot when following a validated article link. Search, edition changes and offline transitions clear the back stack rather than presenting stale online content. Deterministic Node tests cover exact revision restoration and the history bound.
 
 Exact-head CI passed: Rust workspace run 38500054328, Platform shells run 38500054353 (including frontend typecheck/tests), and Desktop launch smoke run 38500054325. No automated browser interaction, scroll-position restoration, forward navigation or physical-device acceptance is claimed. DUI-003 remains unchecked.
+
+## Memory-bound history follow-up
+
+Exact `14d014d06796dc244a0271794d640db9eb3346d0` caps the back stack at 12 snapshots and four million retained HTML characters, dropping older revisions first to prevent unbounded memory growth. Node regressions cover the count and aggregate HTML budget. Rust CI 38500430404, Platform CI 38500430510 and Desktop launch smoke 38500431250 all passed at that exact code SHA. Browser navigation, scroll restoration and physical-device qualification remain pending; DUI-003 stays unchecked.
