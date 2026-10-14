@@ -44,13 +44,17 @@ pub fn audit_article_media(
         .validate()
         .map_err(MediaCoverageError::InvalidManifest)?;
     if article.key.project != manifest.project {
-        return Err(MediaCoverageError::InvalidArticle(ModelError::InvalidIdentity));
+        return Err(MediaCoverageError::InvalidArticle(
+                ModelError::InvalidIdentity
+            ));
     }
 
     let mut media = BTreeMap::new();
     for object in &manifest.objects {
         if object.path.starts_with("media/") {
-            media.entry(object.sha256.to_ascii_lowercase()).or_insert(object.bytes);
+            media
+                .entry(object.sha256.to_ascii_lowercase())
+                .or_insert(object.bytes);
         }
     }
     let mut unique = BTreeSet::new();
@@ -85,7 +89,10 @@ mod tests {
     fn article() -> Article {
         Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: 42 },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
             revision: Revision {
                 revision_id: 7,
                 timestamp: "2026-10-14T00:00:00Z".into(),
@@ -121,7 +128,9 @@ mod tests {
             pack_id: "physics".into(),
             project: "enwiki".into(),
             snapshot: "20261014".into(),
-            origin: Origin::Custom { definition_id: "physics".into() },
+            origin: Origin::Custom {
+                definition_id: "physics".into(),
+            },
             objects: vec![Object {
                 path: "media/figure.svg".into(),
                 sha256: "b".repeat(64),
@@ -147,13 +156,22 @@ mod tests {
     fn fails_closed_on_missing_digest_or_missing_media_object() {
         let mut a = article();
         a.media[0].sha256 = None;
-        assert_eq!(audit_article_media(&a, &manifest()), Err(MediaCoverageError::MissingDigest(0)));
+        assert_eq!(
+            audit_article_media(&a, &manifest()),
+            Err(MediaCoverageError::MissingDigest(0))
+        );
         a.media[0].sha256 = Some("c".repeat(64));
-        assert_eq!(audit_article_media(&a, &manifest()), Err(MediaCoverageError::MissingMediaObject(0)));
+        assert_eq!(
+            audit_article_media(&a, &manifest()),
+            Err(MediaCoverageError::MissingMediaObject(0))
+        );
 
         let mut pack = manifest();
         pack.objects[0].path = "articles/42.cbor".into();
-        assert_eq!(audit_article_media(&article(), &pack), Err(MediaCoverageError::MissingMediaObject(0)));
+        assert_eq!(
+            audit_article_media(&article(), &pack),
+            Err(MediaCoverageError::MissingMediaObject(0))
+        );
     }
 
     #[test]
