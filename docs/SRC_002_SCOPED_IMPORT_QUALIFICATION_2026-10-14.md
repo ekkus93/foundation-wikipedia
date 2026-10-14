@@ -35,3 +35,7 @@ Source head: `0e0787e0e9060139a8090741ee6ec75652428728`.
 Rust CI run `38581833366`: success. Platform CI run `38581833124`: success.
 
 Snapshot link indexing and lookup now share first-letter title normalization, preserving all other characters' case. Regression tests cover lowercase-initial links, aliases, fragment retention, and colliding page identities. This does not establish publication authenticity, source completeness, mandatory media or device acceptance; SRC-002 remains unchecked.
+
+## Shared model normalization follow-up
+
+The model alias validator now distinguishes noninitial case and rejects duplicate first-letter-normalized aliases. Qualified model head `0a5855f5487bdb7dc0a85ebc589bf2638492da4a`: Rust CI 38582924419, Platform CI 38582924318, Android ABI CI 38582924191 (all success). The source link resolver delegates to the model's shared title-key function as of `3e99ba436d3cf4246ddec36cb214229d1da76a7b`: Rust CI 38583240914 and Platform CI 38583241117 (both success). Source authenticity and SRC-002 acceptance remain outstanding.
