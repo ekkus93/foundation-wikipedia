@@ -39,7 +39,22 @@ const MAX_IDS: usize = 100_000_000;
 const MAX_EXAMPLES: usize = 12;
 
 fn validate(census: PageCensus<'_>) -> Result<(), PageCoverageError> {
-    if census.project.is_empty() || census.generation.is_empty() || census.page_ids.is_empty() {
+    if census.project.is_empty()
+        || census.project.len() > 255
+        || !census
+            .project
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        || census.generation.is_empty()
+        || census.generation.len() > 255
+        || census.generation.starts_with('.')
+        || census.generation.ends_with('.')
+        || !census
+            .generation
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || census.page_ids.is_empty()
+    {
         return Err(PageCoverageError::InvalidCensus);
     }
     if census.page_ids.len() > MAX_IDS {
