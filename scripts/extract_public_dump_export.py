@@ -22,6 +22,9 @@ from extract_public_dump_pages import (DumpExtractionError, _source_identity,
                                        _verified_source, extract_current_dump)
 
 MAX_INVENTORY_BYTES = 32 * 1024 * 1024
+# The XML decoder caps combined page text at 8 MiB; allow JSON escaping
+# overhead but never allocate an unbounded caller-supplied JSONL record.
+MAX_JSONL_RECORD_BYTES = 64 * 1024 * 1024
 MAX_MEMBERS = 100_000
 MAX_MEMBER_BYTES = 1024 * 1024 * 1024
 MAX_TOTAL_BYTES = 1 << 44
@@ -279,13 +282,21 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
                     remaining = max_total_pages - count
                     if remaining <= 0:
                         raise DumpExtractionError("export exceeds aggregate page budget")
-                    count += extract_current_dump(
+                    decoded_count = extract_current_dump(
                         path, digest, project, part,
                         max_compressed_bytes=max_member_bytes, max_pages=remaining,
                     )
+                    count += decoded_count
+                    observed_count = 0
                     with part.open("rb") as reader:
-                        for line in reader:
+                        for line in iter(lambda: reader.readline(MAX_JSONL_RECORD_BYTES + 1), b""):
+                            if (len(line) > MAX_JSONL_RECORD_BYTES
+                                    or not line.endswith(b"\n")):
+                                raise DumpExtractionError("oversized or incomplete decoded JSONL record")
                             record = json.loads(line)
+                            if not isinstance(record, dict):
+                                raise DumpExtractionError("invalid decoded JSONL record")
+                            observed_count += 1
                             # Revalidate the decoded JSONL boundary as well as
                             # the XML parser: never publish forged or reordered
                             # page/revision identities from a replacement decoder.
@@ -328,6 +339,8 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
                                     "export exceeds aggregate JSONL byte budget"
                                 )
                             writer.write(line)
+                    if observed_count != decoded_count:
+                        raise DumpExtractionError("decoded shard count mismatch")
                     part.unlink()
                 writer.flush()
                 os.fsync(writer.fileno())

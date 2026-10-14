@@ -126,6 +126,36 @@ class ExportTests(unittest.TestCase):
                         self.extract()
                 self.assert_no_publication()
 
+    def test_rejects_decoder_count_and_bounded_jsonl_violations(self):
+        from extract_public_dump_pages import extract_current_dump as real_extract
+        import extract_public_dump_export as export_module
+
+        def wrong_count(path, digest, project, output, **kwargs):
+            return real_extract(path, digest, project, output, **kwargs) + 1
+
+        with patch("extract_public_dump_export.extract_current_dump",
+                   side_effect=wrong_count):
+            with self.assertRaisesRegex(DumpExtractionError, "count mismatch"):
+                self.extract()
+        self.assert_no_publication()
+
+        def missing_newline(path, digest, project, output, **kwargs):
+            count = real_extract(path, digest, project, output, **kwargs)
+            if path.name == self.first:
+                output.write_bytes(output.read_bytes().rstrip(b"\n"))
+            return count
+
+        with patch("extract_public_dump_export.extract_current_dump",
+                   side_effect=missing_newline):
+            with self.assertRaisesRegex(DumpExtractionError, "incomplete decoded JSONL"):
+                self.extract()
+        self.assert_no_publication()
+
+        with patch.object(export_module, "MAX_JSONL_RECORD_BYTES", 64):
+            with self.assertRaisesRegex(DumpExtractionError, "oversized"):
+                self.extract()
+        self.assert_no_publication()
+
     def test_rejects_duplicate_revision_id_across_distinct_shards(self):
         # Page partitions do not overlap, but revision identity still must.
         collision = xml(110).replace(b"<revision><id>1110</id>",
