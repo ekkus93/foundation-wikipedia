@@ -183,6 +183,71 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn empty_selected_namespace_is_not_published_even_after_full_shard_audit() {
+        let pinned = inventory();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        for member in pinned.members() {
+            pipeline.begin_member(&member.relative_path).unwrap();
+            let id = if member.relative_path.contains("p201p300") {
+                201
+            } else {
+                1
+            };
+            push_page(&mut pipeline, id, 1).unwrap();
+            pipeline.end_member().unwrap();
+        }
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::Export(CensusExportError::EmptyCensus))
+        ));
+    }
+
+    struct RejectingFlush {
+        bytes: Vec<u8>,
+    }
+
+    impl Write for RejectingFlush {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "staging flush failed",
+            ))
+        }
+    }
+
+    #[test]
+    fn flush_error_after_valid_shards_never_returns_export_bytes() {
+        let pinned = inventory();
+        let mut pipeline = PinnedObservedCensus::new(
+            &pinned,
+            RejectingFlush { bytes: Vec::new() },
+            0,
+        )
+        .unwrap();
+        for member in pinned.members() {
+            pipeline
+                .begin_member(&member.relative_path)
+                .unwrap();
+            let id = if member.relative_path.contains("p201p300") {
+                201
+            } else {
+                1
+            };
+            push_page(&mut pipeline, id, 0).unwrap();
+            pipeline.end_member().unwrap();
+        }
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::Export(CensusExportError::Write(_)))
+        ));
+    }
+
     struct RejectingWriter;
 
     impl Write for RejectingWriter {
