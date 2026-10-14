@@ -41,15 +41,16 @@ fn legacy_shard_ten_follows_shard_two() {
 
 #[test]
 fn modern_page_range_shards_are_sorted_numerically() {
-    let raw = [
+    use std::fmt::Write;
+    let mut raw = String::new();
+    for name in [
         "enwiki-2026-10-01-p201p300.xml.bz2",
         "enwiki-2026-10-01-p1001p1100.xml.bz2",
         "enwiki-2026-10-01-p1p100.xml.bz2",
         "enwiki-2026-10-01-p101p200.xml.bz2",
-    ]
-    .iter()
-    .map(|name| format!("{}  {name}\\n", "a".repeat(64)))
-    .collect::<String>();
+    ] {
+        writeln!(&mut raw, "{}  {name}", "a".repeat(64)).unwrap();
+    }
     let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
     let inventory =
         parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
