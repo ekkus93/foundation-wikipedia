@@ -37,8 +37,9 @@ pub fn import_verified_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<DeletionMarker>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, VerifiedImportError> {
-    let joined = join_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
-        .map_err(VerifiedImportError::Batch)?;
+    let joined =
+        join_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
+            .map_err(VerifiedImportError::Batch)?;
     for article in &joined {
         validate_joined_evidence(article).map_err(VerifiedImportError::Integrity)?;
     }
