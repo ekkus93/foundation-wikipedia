@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeWikiHref } from "../src/articleLinks.ts";
+import { extractWikiArticleLinks, normalizeWikiHref } from "../src/articleLinks.ts";
 
 test("accepts only same-edition article links and normalizes titles", () => {
   assert.equal(normalizeWikiHref("./Albert_Einstein", "enwiki"), "Albert Einstein");
@@ -23,4 +23,51 @@ test("rejects external, unsafe, cross-edition and non-article destinations", () 
 
 test("accepts fragments as article-only navigation, not privileged iframe navigation", () => {
   assert.equal(normalizeWikiHref("./Quantum_mechanics#History", "enwiki"), "Quantum mechanics");
+});
+
+
+test("extracts article links from an uninstantiated template rather than DOMParser", () => {
+  const originalDocument = globalThis.document;
+  let templateCreated = 0;
+  let parsed = "";
+  const anchor = (href, label) => ({
+    getAttribute: (name) => name === "href" ? href : null,
+    textContent: label,
+  });
+  const nodes = [
+    anchor("./Physics", " Physics "),
+    anchor("javascript:alert(1)", "unsafe"),
+    anchor("./Physics", "duplicate"),
+    anchor("./Gravit%C3%A4t", " Gravität "),
+  ];
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "template");
+      templateCreated += 1;
+      return {
+        set innerHTML(html) { parsed = html; },
+        content: {
+          querySelectorAll(selector) {
+            assert.equal(selector, "a[href]");
+            return nodes;
+          },
+        },
+      };
+    },
+  };
+  try {
+    const html = '<img src="https://example.invalid/track"><a href="./Physics">Physics</a>';
+    assert.deepEqual(extractWikiArticleLinks(html, "enwiki"), [
+      { title: "Physics", label: "Physics" },
+      { title: "Gravität", label: "Gravität" },
+    ]);
+    assert.equal(parsed, html);
+    assert.equal(templateCreated, 1);
+    assert.deepEqual(extractWikiArticleLinks(html, "unknown"), []);
+    assert.deepEqual(extractWikiArticleLinks("x".repeat(2_000_001), "enwiki"), []);
+    assert.equal(templateCreated, 1, "invalid inputs must not parse HTML");
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
 });

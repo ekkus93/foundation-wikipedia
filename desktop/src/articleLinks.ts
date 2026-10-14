@@ -38,13 +38,17 @@ export function normalizeWikiHref(href: string, project: string): string | null 
   return title;
 }
 
-/** DOMParser is inert: do not attach the parsed document to the app DOM. */
+/** Parse untrusted HTML in a detached template, not DOMParser.
+ * DOMParser documents can fetch img/iframe resources even when scripts are inert.
+ * Template contents stay uninstantiated and must never be appended to the DOM.
+ */
 export function extractWikiArticleLinks(html: string, project: string): WikiArticleLink[] {
   if (html.length > MAX_HTML_BYTES || !EDITIONS.has(project)) return [];
-  const doc = new DOMParser().parseFromString(html, "text/html");
+  const template = document.createElement("template");
+  template.innerHTML = html;
   const links: WikiArticleLink[] = [];
   const seen = new Set<string>();
-  for (const anchor of doc.querySelectorAll("a[href]")) {
+  for (const anchor of template.content.querySelectorAll("a[href]")) {
     const title = normalizeWikiHref(anchor.getAttribute("href") ?? "", project);
     if (!title || seen.has(title)) continue;
     seen.add(title);
