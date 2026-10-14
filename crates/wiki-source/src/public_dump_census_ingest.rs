@@ -97,6 +97,104 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
     }
 }
 
+
+/// Publish an observed census from validated semantic events using a private,
+/// no-overwrite staging file. The callback must feed *all* pinned members and
+/// must only emit events from independently checksum-verified, well-formed XML.
+///
+/// This is NOT a source authenticator or an independent completeness audit.
+/// The staging directory must be private to the caller: path validation cannot
+/// defend against an adversary concurrently replacing directory components.
+pub fn stage_pinned_observed_census<F>(
+    root: &std::path::Path,
+    filename: &str,
+    inventory: &PinnedInventory,
+    namespace: i32,
+    feed: F,
+) -> Result<(std::path::PathBuf, usize), CensusStageError>
+where
+    F: FnOnce(&mut PinnedObservedCensus<'_, std::fs::File>) -> Result<(), PinnedCensusError>,
+{
+    use std::fs::{self, File, OpenOptions};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    if filename.is_empty()
+        || filename.len() > 255
+        || filename.starts_with('.')
+        || filename.ends_with('.')
+        || crate::windows_device_name(filename)
+        || !filename
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(CensusStageError::UnsafePath);
+    }
+    for component in root.ancestors() {
+        let metadata = fs::symlink_metadata(component).map_err(CensusStageError::Io)?;
+        if metadata.file_type().is_symlink() {
+            return Err(CensusStageError::UnsafePath);
+        }
+    }
+    if !fs::symlink_metadata(root)
+        .map_err(CensusStageError::Io)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(CensusStageError::UnsafePath);
+    }
+    let target = root.join(filename);
+    let (temporary, output) = loop {
+        let candidate = root.join(format!(
+            ".wiki-census-{}-{}.tmp",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(output) => break (candidate, output),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(CensusStageError::Io(error)),
+        }
+    };
+    let result = (|| -> Result<usize, CensusStageError> {
+        let mut pipeline =
+            PinnedObservedCensus::new(inventory, output, namespace).map_err(CensusStageError::Census)?;
+        feed(&mut pipeline).map_err(CensusStageError::Census)?;
+        let (output, count) = pipeline.finish().map_err(CensusStageError::Census)?;
+        output.sync_all().map_err(CensusStageError::Io)?;
+        // hard_link is atomic and refuses to overwrite an existing census.
+        fs::hard_link(&temporary, &target).map_err(CensusStageError::Io)?;
+        if let Err(error) = fs::remove_file(&temporary) {
+            let _ = fs::remove_file(&target);
+            return Err(CensusStageError::Io(error));
+        }
+        #[cfg(unix)]
+        if let Err(error) = File::open(root).and_then(|directory| directory.sync_all()) {
+            let _ = fs::remove_file(&target);
+            return Err(CensusStageError::Io(error));
+        }
+        Ok(count)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map(|count| (target, count))
+}
+
+#[derive(Debug)]
+pub enum CensusStageError {
+    UnsafePath,
+    Census(PinnedCensusError),
+    Io(std::io::Error),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,4 +375,101 @@ mod tests {
             Err(PinnedCensusError::InvalidState)
         ));
     }
+
+    #[test]
+    fn private_staging_publishes_only_complete_census_and_refuses_overwrite() {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-stage-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let pinned = inventory();
+        let complete = |pipeline: &mut PinnedObservedCensus<'_, fs::File>| {
+            for (index, member) in pinned.members().iter().enumerate() {
+                pipeline.begin_member(&member.relative_path)?;
+                push_page(pipeline, if index == 0 { 1 } else { 201 }, 0)?;
+                pipeline.end_member()?;
+            }
+            Ok(())
+        };
+        let (published, count) =
+            stage_pinned_observed_census(&root, "observed.ids", &pinned, 0, complete).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&published).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "observed.ids", &pinned, 0, complete),
+            Err(CensusStageError::Io(error))
+                if error.kind() == io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_or_incomplete_ingest_never_publishes_a_census() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-fail-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        fs::create_dir(&root).unwrap();
+        let pinned = inventory();
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "incomplete.ids", &pinned, 0, |pipeline| {
+                pipeline.begin_member(&pinned.members()[0].relative_path)?;
+                push_page(pipeline, 1, 0)?;
+                pipeline.end_member()
+            }),
+            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
+        ));
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "rejected.ids", &pinned, 0, |pipeline| {
+                pipeline.begin_member(&pinned.members()[0].relative_path)?;
+                push_page(pipeline, 1, 0)?;
+                push_page(pipeline, 1, 0)
+            }),
+            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
+        ));
+        for bad in ["../escape", "CON", ".hidden", "file/name", "a\\b"] {
+            assert!(matches!(
+                stage_pinned_observed_census(&root, bad, &pinned, 0, |_| Ok(())),
+                Err(CensusStageError::UnsafePath)
+            ));
+        }
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_staging_root_is_rejected_before_file_creation() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-link-{}",
+            std::process::id()
+        ));
+        let linked = root.with_extension("link");
+        fs::create_dir(&root).unwrap();
+        symlink(&root, &linked).unwrap();
+        assert!(matches!(
+            stage_pinned_observed_census(&linked, "observed.ids", &inventory(), 0, |_| Ok(())),
+            Err(CensusStageError::UnsafePath)
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_file(linked).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }
