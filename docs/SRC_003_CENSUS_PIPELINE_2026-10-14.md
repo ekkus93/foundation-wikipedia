@@ -70,3 +70,10 @@ Run: `python3 -m unittest discover -s scripts -p 'test_public_dump_xml_census.py
 ## Same-descriptor compressed-byte revalidation
 
 The diagnostic decoder now opens each staged member with no-follow semantics, rejects nonregular and hard-linked files, and hashes the exact compressed bytes consumed by bzip2. It compares their digest, byte length and file metadata against the previously verified manifest after full XML parsing, preventing a replacement between initial staging verification and decode from silently yielding a publishable census. A deterministic replacement-after-preverification test is included. This still does not establish independent Wikimedia publisher authentication or expected page census.
+
+## Exact-head qualification of diagnostic XML decoding
+
+- Implementation commit `b1fa28cb1e93b76117e2e4cb7049d8c8bb2ec8cc`: [Rust workspace CI 38633415979](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633415979) and [Platform shells CI 38633416286](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633416286) both passed.
+- Same-descriptor source revalidation commit `2557eb055f212a7511d56657e50e2035081ad278`: [Rust workspace CI 38633971602](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633971602) and [Platform shells CI 38633971483](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633971483) both passed. The Rust workflow runs Python unittest discovery, including seven diagnostic XML tests.
+
+These results establish **synthetic fixture regression qualification**, not successful parsing of an official dump generation or complete public-dump fallback acceptance.
