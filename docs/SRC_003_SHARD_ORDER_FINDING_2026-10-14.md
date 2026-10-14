@@ -27,3 +27,11 @@ Platform shells passed, run
 publisher authenticity, source completeness, real XML/bzip2 decoding,
 MediaWiki/Parsoid rendering, offline required media, or desktop/Android
 real-device acceptance. Do not mark SRC-003 complete.
+
+**Additional modern-shard regression:** `1a48f01409e060e2754c987d8fab59b1bb38dee6`
+also tests out-of-order modern `p1p100`/`p101p200`/`p201p300`/
+`p1001p1100` names. Exact-head Rust workspace CI
+[38562954921](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38562954921)
+and Platform shells CI
+[38562955031](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38562955031)
+both passed. No source-completeness or real-device qualification is implied.
