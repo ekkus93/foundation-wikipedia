@@ -319,7 +319,18 @@ mod transcript_tests {
     }
 
     #[test]
-    fn invalid_manifest_never_produces_transcript() {
+    fn conflicting_digest_lengths_fail_closed() {
+        let mut bad = sample();
+        bad.objects[1].sha256 = bad.objects[0].sha256.to_ascii_lowercase();
+        assert_eq!(bad.validate(), Err(ManifestError::ConflictingDigest));
+        bad.objects.reverse();
+        assert_eq!(bad.identity_transcript(), Err(ManifestError::ConflictingDigest));
+        bad.objects[0].bytes = bad.objects[1].bytes;
+        assert_eq!(bad.validate(), Ok(()));
+    }
+
+    #[test]
+    fn invalid_manifest_never_produce_transcript() {
         let mut invalid = sample();
         invalid.objects[0].path = "../escape".into();
         assert_eq!(
