@@ -283,8 +283,8 @@ mod tests {
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let expected = root.join("expected.ids");
-        fs::write(&expected, b"1\\n201\\n").unwrap();
-        let digest = format!("{:x}", Sha256::digest(b"1\\n201\\n"));
+        fs::write(&expected, b"1\n201\n").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
         let pinned = inventory();
         let (observed, count) =
             stage_pinned_observed_census(&root, "observed.ids", &pinned, 0, |pipeline| {
@@ -305,8 +305,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 2);
-        let result = audit_pinned_census_files(&pinned, 0, &expected, &digest, &observed)
-            .unwrap();
+        let result = audit_pinned_census_files(&pinned, 0, &expected, &digest, &observed).unwrap();
         assert_eq!(result.expected_count, count);
         assert_eq!(result.observed_count, count);
         fs::remove_dir_all(root).unwrap();
