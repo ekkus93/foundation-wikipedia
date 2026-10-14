@@ -163,7 +163,7 @@ class ExportTests(unittest.TestCase):
             ("namespace", True, "decoded namespace"),
             ("namespace", 2**31, "decoded namespace"),
             ("title", " bad title ", "decoded title"),
-            ("title", "bad\\ncontrol", "decoded title"),
+            ("title", "bad\ncontrol", "decoded title"),
             ("timestamp", "2026-02-30T00:00:00Z", "decoded timestamp"),
             ("content_format", "application/json", "decoded content model"),
             ("source_text", [], "decoded source text"),
