@@ -275,6 +275,31 @@ mod tests {
     }
 
     #[test]
+    fn census_identity_must_not_accept_unsafe_project_or_generation_labels() {
+        let ids = [1, 2, 3];
+        for project in ["Enwiki", "en/wiki", "../wiki", "a b", ""] {
+            let invalid = PageCensus {
+                project,
+                ..census(&ids)
+            };
+            assert_eq!(
+                audit_page_coverage(invalid, invalid),
+                Err(PageCoverageError::InvalidCensus)
+            );
+        }
+        for generation in [".hidden", "2026/10/01", "../outside", "bad label", ""] {
+            let invalid = PageCensus {
+                generation,
+                ..census(&ids)
+            };
+            assert_eq!(
+                audit_page_coverage(invalid, invalid),
+                Err(PageCoverageError::InvalidCensus)
+            );
+        }
+    }
+
+    #[test]
     fn verified_shard_ids_must_respect_declared_partition() {
         use crate::public_dump::parse_sha256sums;
         let member = parse_sha256sums(&format!(
