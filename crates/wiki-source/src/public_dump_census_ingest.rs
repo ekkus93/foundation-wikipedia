@@ -67,13 +67,10 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
                 self.failed = true;
                 PinnedCensusError::Export(error)
             })?;
-            self.observed_pages = self
-                .observed_pages
-                .checked_add(1)
-                .ok_or_else(|| {
-                    self.failed = true;
-                    PinnedCensusError::CountMismatch
-                })?;
+            self.observed_pages = self.observed_pages.checked_add(1).ok_or_else(|| {
+                self.failed = true;
+                PinnedCensusError::CountMismatch
+            })?;
         }
         Ok(())
     }
@@ -137,11 +134,15 @@ mod tests {
     fn validated_multi_shard_pages_produce_only_selected_namespace_ids() {
         let pinned = inventory();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
-        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         push_page(&mut pipeline, 1, 0).unwrap();
         push_page(&mut pipeline, 2, 1).unwrap();
         pipeline.end_member().unwrap();
-        pipeline.begin_member(&pinned.members()[1].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[1].relative_path)
+            .unwrap();
         push_page(&mut pipeline, 201, 0).unwrap();
         pipeline.end_member().unwrap();
         let (bytes, namespace_count) = pipeline.finish().unwrap();
@@ -153,27 +154,43 @@ mod tests {
     fn unfinished_shards_and_invalid_pages_never_return_census_bytes() {
         let pinned = inventory();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
-        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         push_page(&mut pipeline, 1, 0).unwrap();
         pipeline.end_member().unwrap();
-        assert!(matches!(pipeline.finish(), Err(PinnedCensusError::Ingest(_))));
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::Ingest(_))
+        ));
 
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
-        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         push_page(&mut pipeline, 1, 0).unwrap();
         assert!(matches!(
             push_page(&mut pipeline, 1, 0),
             Err(PinnedCensusError::Ingest(_))
         ));
-        assert!(matches!(pipeline.end_member(), Err(PinnedCensusError::InvalidState)));
-        assert!(matches!(pipeline.finish(), Err(PinnedCensusError::InvalidState)));
+        assert!(matches!(
+            pipeline.end_member(),
+            Err(PinnedCensusError::InvalidState)
+        ));
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
     }
 
     struct RejectingWriter;
 
     impl Write for RejectingWriter {
         fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed staging sink"))
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "closed staging sink",
+            ))
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -185,12 +202,20 @@ mod tests {
     fn staging_write_failure_poisons_entire_pinned_ingestion() {
         let pinned = inventory();
         let mut pipeline = PinnedObservedCensus::new(&pinned, RejectingWriter, 0).unwrap();
-        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         assert!(matches!(
             push_page(&mut pipeline, 1, 0),
             Err(PinnedCensusError::Export(CensusExportError::Write(_)))
         ));
-        assert!(matches!(pipeline.end_member(), Err(PinnedCensusError::InvalidState)));
-        assert!(matches!(pipeline.finish(), Err(PinnedCensusError::InvalidState)));
+        assert!(matches!(
+            pipeline.end_member(),
+            Err(PinnedCensusError::InvalidState)
+        ));
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
     }
 }
