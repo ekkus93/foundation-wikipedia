@@ -7,6 +7,7 @@
 pub mod container;
 pub mod export;
 pub mod manifest;
+pub mod media_coverage;
 pub mod objects;
 pub mod stage;
 pub mod trust;
