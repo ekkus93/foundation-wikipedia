@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openReaderArticle, type ReaderNavigation } from "./readerHistory";
@@ -31,6 +31,9 @@ function isolatedDocument(html: string): string {
 }
 
 export default function OnlineReader({ onArticleChange }: { onArticleChange?: (title: string | null) => void }) {
+  const uniqueId = useId();
+  const projectFieldId = `${uniqueId}-project`;
+  const queryFieldId = `${uniqueId}-query`;
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("enwiki");
   const [offline, setOffline] = useState(false);
@@ -122,8 +125,8 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   return (
     <section aria-label="Online Wikipedia reader">
       <form className="online-search" onSubmit={search}>
-        <label htmlFor="online-wikipedia-project">Wikipedia edition</label>
-        <select id="online-wikipedia-project" value={project} disabled={busy} onChange={(event) => {
+        <label htmlFor={projectFieldId}>Wikipedia edition</label>
+        <select id={projectFieldId} value={project} disabled={busy} onChange={(event) => {
           setProject(event.target.value);
           setHits([]);
           setNavigation(emptyReaderNavigation());
@@ -135,10 +138,10 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
           <option value="eswiki">Español</option>
           <option value="jawiki">日本語</option>
         </select>
-        <label htmlFor="online-wikipedia-query">Search articles</label>
+        <label htmlFor={queryFieldId}>Search articles</label>
         <div>
           <input
-            id="online-wikipedia-query"
+            id={queryFieldId}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             maxLength={512}
