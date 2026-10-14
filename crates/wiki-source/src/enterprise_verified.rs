@@ -92,9 +92,14 @@ pub fn import_canonical_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<DeletionMarker>,
 ) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
-    let joined =
-        import_verified_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
-            .map_err(CanonicalImportError::Import)?;
+    let joined = import_verified_enterprise_ndjson_scoped(
+        structured,
+        regular,
+        project,
+        generation_id,
+        deleted,
+    )
+    .map_err(CanonicalImportError::Import)?;
     enterprise_normalize_article::normalize_enterprise_batch(&joined)
         .map_err(CanonicalImportError::Normalize)
 }
@@ -107,7 +112,10 @@ mod tests {
     #[test]
     fn scoped_verified_import_requires_matching_tombstone_generation() {
         let deletion = DeletionMarker {
-            page: PageKey { project: "enwiki".into(), page_id: 2 },
+            page: PageKey {
+                project: "enwiki".into(),
+                page_id: 2,
+            },
             generation_id: "20261009".into(),
         };
         assert_eq!(
