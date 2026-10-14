@@ -819,7 +819,10 @@ mod tests {
         assert_eq!(title_key("énergie").unwrap(), "Énergie");
         assert_eq!(title_key("gRAVITY").unwrap(), "GRAVITY");
         assert_ne!(title_key("Gravity").unwrap(), title_key("GRAVITY").unwrap());
-        assert!(matches!(title_key("  "), Err(CatalogError::InvalidCatalogEntry)));
+        assert!(matches!(
+            title_key("  "),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
     }
 
     #[test]
