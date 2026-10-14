@@ -162,7 +162,7 @@ impl PageMetadataCollector {
                 if self.timestamp.is_some() {
                     return self.invalid(PageMetadataError::DuplicateField);
                 }
-                if !valid_text(value, MAX_TIMESTAMP_BYTES) {
+                if value.len() > MAX_TIMESTAMP_BYTES || !crate::online_article::valid_utc_timestamp(value) {
                     return self.invalid(PageMetadataError::InvalidField);
                 }
                 self.timestamp = Some(value.to_owned());
@@ -339,6 +339,30 @@ mod tests {
             Err(PageMetadataError::InvalidState)
         );
         assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
+    }
+
+    #[test]
+    fn rejects_noncanonical_or_impossible_revision_timestamps() {
+        for timestamp in [
+            "2026-02-29T12:00:00Z",
+            "2026-10-13T24:00:00Z",
+            "2026-10-13T12:60:00Z",
+            "2026-10-13",
+            "2026-10-13T12:00:00+00:00",
+        ] {
+            let mut collector = PageMetadataCollector::new();
+            collector.push(PageEvent::BeginPage).unwrap();
+            collector.push(PageEvent::Title("Example")).unwrap();
+            collector.push(PageEvent::Namespace(0)).unwrap();
+            collector.push(PageEvent::PageId(1)).unwrap();
+            collector.push(PageEvent::BeginRevision).unwrap();
+            collector.push(PageEvent::RevisionId(2)).unwrap();
+            assert_eq!(
+                collector.push(PageEvent::Timestamp(timestamp)),
+                Err(PageMetadataError::InvalidField)
+            );
+            assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
+        }
     }
 
     #[test]

@@ -71,7 +71,7 @@ fn valid_title(title: &str) -> bool {
         && !title.chars().any(char::is_control)
 }
 
-fn valid_utc_timestamp(stamp: &str) -> bool {
+pub(crate) fn valid_utc_timestamp(stamp: &str) -> bool {
     let b = stamp.as_bytes();
     // MediaWiki rvprop=timestamp returns ISO 8601 whole-second UTC.
     // This checks the syntax and coarse ranges; it does not certify a source clock.
