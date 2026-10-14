@@ -13,11 +13,22 @@ const MAX_PAGES: usize = 100_000_000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamAuditError {
     InvalidState,
-    MissingMember { index: usize },
-    MemberMismatch { index: usize },
-    InvalidRange { index: usize },
-    EmptyMember { index: usize },
-    UnsortedOrDuplicate { index: usize, page_id: u64 },
+    MissingMember {
+        index: usize,
+    },
+    MemberMismatch {
+        index: usize,
+    },
+    InvalidRange {
+        index: usize,
+    },
+    EmptyMember {
+        index: usize,
+    },
+    UnsortedOrDuplicate {
+        index: usize,
+        page_id: u64,
+    },
     OutsideRange {
         index: usize,
         page_id: u64,
@@ -68,12 +79,9 @@ impl<'a> StreamShardAudit<'a> {
         if member.relative_path != relative_path {
             return Err(StreamAuditError::MemberMismatch { index });
         }
-        let (first, last) = declared_member_page_range(
-            member,
-            self.inventory.project(),
-            self.inventory.date(),
-        )
-        .ok_or(StreamAuditError::InvalidRange { index })?;
+        let (first, last) =
+            declared_member_page_range(member, self.inventory.project(), self.inventory.date())
+                .ok_or(StreamAuditError::InvalidRange { index })?;
         self.first = first;
         self.last = last;
         self.previous_id = 0;
@@ -180,15 +188,28 @@ mod tests {
             audit.begin_member(&inventory.members()[1].relative_path),
             Err(StreamAuditError::MemberMismatch { index: 0 })
         );
-        audit.begin_member(&inventory.members()[0].relative_path).unwrap();
-        assert_eq!(audit.begin_member("anything"), Err(StreamAuditError::InvalidState));
-        assert_eq!(audit.end_member(), Err(StreamAuditError::EmptyMember { index: 0 }));
+        audit
+            .begin_member(&inventory.members()[0].relative_path)
+            .unwrap();
+        assert_eq!(
+            audit.begin_member("anything"),
+            Err(StreamAuditError::InvalidState)
+        );
+        assert_eq!(
+            audit.end_member(),
+            Err(StreamAuditError::EmptyMember { index: 0 })
+        );
         audit.push_page_id(1).unwrap();
         audit.end_member().unwrap();
-        assert_eq!(audit.finish(), Err(StreamAuditError::MissingMember { index: 1 }));
+        assert_eq!(
+            audit.finish(),
+            Err(StreamAuditError::MissingMember { index: 1 })
+        );
 
         let mut audit = StreamShardAudit::new(&inventory);
-        audit.begin_member(&inventory.members()[0].relative_path).unwrap();
+        audit
+            .begin_member(&inventory.members()[0].relative_path)
+            .unwrap();
         audit.push_page_id(1).unwrap();
         assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
     }
@@ -197,7 +218,9 @@ mod tests {
     fn rejects_duplicate_unsorted_and_out_of_range_pages() {
         let inventory = fixture();
         let mut audit = StreamShardAudit::new(&inventory);
-        audit.begin_member(&inventory.members()[0].relative_path).unwrap();
+        audit
+            .begin_member(&inventory.members()[0].relative_path)
+            .unwrap();
         audit.push_page_id(10).unwrap();
         assert_eq!(
             audit.push_page_id(10),
@@ -224,7 +247,9 @@ mod tests {
         );
         audit.push_page_id(100).unwrap();
         audit.end_member().unwrap();
-        audit.begin_member(&inventory.members()[1].relative_path).unwrap();
+        audit
+            .begin_member(&inventory.members()[1].relative_path)
+            .unwrap();
         assert_eq!(
             audit.push_page_id(0),
             Err(StreamAuditError::UnsortedOrDuplicate {

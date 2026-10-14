@@ -21,8 +21,8 @@ pub mod public_dump_origin;
 pub mod public_dump_pinned;
 pub mod public_dump_shards;
 pub mod public_dump_stage;
-pub mod public_dump_strict;
 pub mod public_dump_stream;
+pub mod public_dump_strict;
 pub mod public_dump_verify;
 
 use std::collections::BTreeSet;
