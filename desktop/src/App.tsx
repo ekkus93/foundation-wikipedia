@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OnlineReader from "./OnlineReader";
-import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab } from "./readerTabs";
+import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
@@ -118,9 +118,9 @@ export default function App() {
               <div className="reader-tab" key={tab.id}>
                 <button type="button" aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
                   onClick={() => setReaderTabs((state) => selectReaderTab(state, tab.id))}>
-                  Tab {tab.id}
+                  {tab.title}
                 </button>
-                <button type="button" aria-label={`Close tab ${tab.id}`}
+                <button type="button" aria-label={`Close tab ${tab.id}: ${tab.title}`}
                   disabled={readerTabs.tabs.length === 1}
                   onClick={() => setReaderTabs((state) => closeReaderTab(state, tab.id))}>×</button>
               </div>
@@ -131,7 +131,9 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader />
+              <OnlineReader onArticleChange={(title) => {
+                setReaderTabs((state) => titleReaderTab(state, tab.id, title));
+              }} />
             </section>
           ))}
           <h2 id="roadmap">Under development</h2>

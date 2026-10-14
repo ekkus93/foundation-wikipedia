@@ -29,7 +29,7 @@ function isolatedDocument(html: string): string {
   ].join("");
 }
 
-export default function OnlineReader() {
+export default function OnlineReader({ onArticleChange }: { onArticleChange?: (title: string | null) => void }) {
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("enwiki");
   const [offline, setOffline] = useState(false);
@@ -38,6 +38,9 @@ export default function OnlineReader() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
+  useEffect(() => {
+    onArticleChange?.(article?.title ?? null);
+  }, [article?.title, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 

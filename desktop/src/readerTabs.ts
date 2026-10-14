@@ -3,6 +3,7 @@ export const MAX_READER_TABS = 4;
 
 export interface ReaderTab {
   id: number;
+  title: string;
 }
 
 export interface ReaderTabsState {
@@ -12,13 +13,13 @@ export interface ReaderTabsState {
 }
 
 export function initialReaderTabs(): ReaderTabsState {
-  return { tabs: [{ id: 1 }], activeId: 1, nextId: 2 };
+  return { tabs: [{ id: 1, title: "New tab" }], activeId: 1, nextId: 2 };
 }
 
 export function addReaderTab(state: ReaderTabsState): ReaderTabsState {
   if (state.tabs.length >= MAX_READER_TABS) return state;
   const id = state.nextId;
-  return { tabs: [...state.tabs, { id }], activeId: id, nextId: id + 1 };
+  return { tabs: [...state.tabs, { id, title: "New tab" }], activeId: id, nextId: id + 1 };
 }
 
 export function selectReaderTab(state: ReaderTabsState, id: number): ReaderTabsState {
@@ -35,4 +36,12 @@ export function closeReaderTab(state: ReaderTabsState, id: number): ReaderTabsSt
     ? remaining[Math.min(index, remaining.length - 1)].id
     : state.activeId;
   return { ...state, tabs: remaining, activeId };
+}
+
+/** Article labels are display-only; never interpret titles as URLs or HTML. */
+export function titleReaderTab(state: ReaderTabsState, id: number, articleTitle: string | null): ReaderTabsState {
+  const title = articleTitle?.trim().replace(/\s+/gu, " ").slice(0, 72) || "New tab";
+  const tab = state.tabs.find((candidate) => candidate.id === id);
+  if (!tab || tab.title === title) return state;
+  return { ...state, tabs: state.tabs.map((candidate) => candidate.id === id ? { ...candidate, title } : candidate) };
 }

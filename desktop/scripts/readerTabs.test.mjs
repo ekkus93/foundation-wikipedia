@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab,
+  MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab,
 } from "../src/readerTabs.ts";
 
 test("reader tabs are independent and IDs are never reused on close", () => {
   let state = initialReaderTabs();
-  assert.deepEqual(state, { tabs: [{ id: 1 }], activeId: 1, nextId: 2 });
+  assert.deepEqual(state, { tabs: [{ id: 1, title: "New tab" }], activeId: 1, nextId: 2 });
   state = addReaderTab(state);
   state = addReaderTab(state);
   assert.deepEqual(state.tabs.map((tab) => tab.id), [1, 2, 3]);
@@ -40,4 +40,15 @@ test("reader tab count is bounded without evicting existing reading sessions", (
   assert.equal(state.tabs.length, MAX_READER_TABS);
   assert.equal(state.activeId, MAX_READER_TABS);
   assert.equal(addReaderTab(state), state);
+});
+
+test("reader titles follow the current article without mutating other tabs", () => {
+  const state = addReaderTab(initialReaderTabs());
+  const renamed = titleReaderTab(state, 1, "  Article    with  spaces ");
+  assert.equal(renamed.tabs[0].title, "Article with spaces");
+  assert.equal(renamed.tabs[1].title, "New tab");
+  assert.equal(titleReaderTab(renamed, 1, "Article with spaces"), renamed);
+  assert.equal(titleReaderTab(renamed, 777, "Other"), renamed);
+  assert.equal(titleReaderTab(renamed, 1, "x".repeat(200)).tabs[0].title.length, 72);
+  assert.equal(titleReaderTab(renamed, 1, null).tabs[0].title, "New tab");
 });
