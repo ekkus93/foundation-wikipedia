@@ -44,6 +44,7 @@ pub struct StreamShardAudit<'a> {
     inventory: &'a PinnedInventory,
     next_member: usize,
     active: bool,
+    failed: bool,
     first: u64,
     last: u64,
     previous_id: u64,
@@ -57,6 +58,7 @@ impl<'a> StreamShardAudit<'a> {
             inventory,
             next_member: 0,
             active: false,
+            failed: false,
             first: 0,
             last: 0,
             previous_id: 0,
@@ -66,22 +68,35 @@ impl<'a> StreamShardAudit<'a> {
     }
 
     /// Start one already-verified member. The caller owns decoding and I/O.
+    /// A failed operation permanently invalidates this audit instance.
     pub fn begin_member(&mut self, relative_path: &str) -> Result<(), StreamAuditError> {
-        if self.active {
+        if self.failed || self.active {
+            self.failed = true;
             return Err(StreamAuditError::InvalidState);
         }
         let index = self.next_member;
-        let member = self
-            .inventory
-            .members()
-            .get(index)
-            .ok_or(StreamAuditError::MemberMismatch { index })?;
+        let member = match self.inventory.members().get(index) {
+            Some(member) => member,
+            None => {
+                self.failed = true;
+                return Err(StreamAuditError::MemberMismatch { index });
+            }
+        };
         if member.relative_path != relative_path {
+            self.failed = true;
             return Err(StreamAuditError::MemberMismatch { index });
         }
-        let (first, last) =
-            declared_member_page_range(member, self.inventory.project(), self.inventory.date())
-                .ok_or(StreamAuditError::InvalidRange { index })?;
+        let (first, last) = match declared_member_page_range(
+            member,
+            self.inventory.project(),
+            self.inventory.date(),
+        ) {
+            Some(range) => range,
+            None => {
+                self.failed = true;
+                return Err(StreamAuditError::InvalidRange { index });
+            }
+        };
         self.first = first;
         self.last = last;
         self.previous_id = 0;
@@ -91,15 +106,19 @@ impl<'a> StreamShardAudit<'a> {
     }
 
     /// Observe one outer page identity in decoded XML document order.
+    /// A rejected page must never be ignored by a caller that later finishes.
     pub fn push_page_id(&mut self, page_id: u64) -> Result<(), StreamAuditError> {
-        if !self.active {
+        if self.failed || !self.active {
+            self.failed = true;
             return Err(StreamAuditError::InvalidState);
         }
         let index = self.next_member;
         if page_id <= self.previous_id {
+            self.failed = true;
             return Err(StreamAuditError::UnsortedOrDuplicate { index, page_id });
         }
         if page_id < self.first || page_id > self.last {
+            self.failed = true;
             return Err(StreamAuditError::OutsideRange {
                 index,
                 page_id,
@@ -108,6 +127,7 @@ impl<'a> StreamShardAudit<'a> {
             });
         }
         if self.total_pages >= MAX_PAGES {
+            self.failed = true;
             return Err(StreamAuditError::TooManyPages);
         }
         self.member_pages += 1;
@@ -118,10 +138,12 @@ impl<'a> StreamShardAudit<'a> {
 
     /// Reject a shard that decoded no outer page records.
     pub fn end_member(&mut self) -> Result<(), StreamAuditError> {
-        if !self.active {
+        if self.failed || !self.active {
+            self.failed = true;
             return Err(StreamAuditError::InvalidState);
         }
         if self.member_pages == 0 {
+            self.failed = true;
             return Err(StreamAuditError::EmptyMember {
                 index: self.next_member,
             });
@@ -131,9 +153,10 @@ impl<'a> StreamShardAudit<'a> {
         Ok(())
     }
 
-    /// Require all pinned members to have been fully consumed.
+    /// Require all pinned members to have been fully consumed without ANY
+    /// preceding validation error, even if the caller discarded that error.
     pub fn finish(self) -> Result<usize, StreamAuditError> {
-        if self.active {
+        if self.failed || self.active {
             return Err(StreamAuditError::InvalidState);
         }
         if self.next_member != self.inventory.members().len() {
@@ -182,23 +205,38 @@ mod tests {
     #[test]
     fn rejects_missing_reordered_and_unfinished_members() {
         let inventory = fixture();
+        let first = &inventory.members()[0].relative_path;
+        let second = &inventory.members()[1].relative_path;
+
         let mut audit = StreamShardAudit::new(&inventory);
         assert_eq!(audit.push_page_id(1), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
+
+        let mut audit = StreamShardAudit::new(&inventory);
         assert_eq!(
-            audit.begin_member(&inventory.members()[1].relative_path),
+            audit.begin_member(second),
             Err(StreamAuditError::MemberMismatch { index: 0 })
         );
-        audit
-            .begin_member(&inventory.members()[0].relative_path)
-            .unwrap();
-        assert_eq!(
-            audit.begin_member("anything"),
-            Err(StreamAuditError::InvalidState)
-        );
+        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
+
+        let mut audit = StreamShardAudit::new(&inventory);
+        audit.begin_member(first).unwrap();
+        assert_eq!(audit.begin_member(first), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
+
+        let mut audit = StreamShardAudit::new(&inventory);
+        audit.begin_member(first).unwrap();
         assert_eq!(
             audit.end_member(),
             Err(StreamAuditError::EmptyMember { index: 0 })
         );
+        assert_eq!(audit.push_page_id(1), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
+
+        let mut audit = StreamShardAudit::new(&inventory);
+        audit.begin_member(first).unwrap();
         audit.push_page_id(1).unwrap();
         audit.end_member().unwrap();
         assert_eq!(
@@ -207,58 +245,79 @@ mod tests {
         );
 
         let mut audit = StreamShardAudit::new(&inventory);
-        audit
-            .begin_member(&inventory.members()[0].relative_path)
-            .unwrap();
+        audit.begin_member(first).unwrap();
         audit.push_page_id(1).unwrap();
         assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
     }
 
     #[test]
-    fn rejects_duplicate_unsorted_and_out_of_range_pages() {
+    fn invalid_page_permanently_poisoned_even_if_caller_ignores_error() {
+        let inventory = fixture();
+        let first = &inventory.members()[0].relative_path;
+        let cases = [
+            (
+                10,
+                10,
+                StreamAuditError::UnsortedOrDuplicate {
+                    index: 0,
+                    page_id: 10,
+                },
+            ),
+            (
+                10,
+                9,
+                StreamAuditError::UnsortedOrDuplicate {
+                    index: 0,
+                    page_id: 9,
+                },
+            ),
+            (
+                10,
+                101,
+                StreamAuditError::OutsideRange {
+                    index: 0,
+                    page_id: 101,
+                    first: 1,
+                    last: 100,
+                },
+            ),
+            (
+                10,
+                0,
+                StreamAuditError::UnsortedOrDuplicate {
+                    index: 0,
+                    page_id: 0,
+                },
+            ),
+        ];
+        for (first_page, bad_page, expected) in cases {
+            let mut audit = StreamShardAudit::new(&inventory);
+            audit.begin_member(first).unwrap();
+            audit.push_page_id(first_page).unwrap();
+            assert_eq!(audit.push_page_id(bad_page), Err(expected));
+            assert_eq!(audit.push_page_id(100), Err(StreamAuditError::InvalidState));
+            assert_eq!(audit.end_member(), Err(StreamAuditError::InvalidState));
+            assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
+        }
+    }
+
+    #[test]
+    fn duplicate_after_valid_first_shard_cannot_be_laundered_by_ending_second() {
         let inventory = fixture();
         let mut audit = StreamShardAudit::new(&inventory);
-        audit
-            .begin_member(&inventory.members()[0].relative_path)
-            .unwrap();
-        audit.push_page_id(10).unwrap();
-        assert_eq!(
-            audit.push_page_id(10),
-            Err(StreamAuditError::UnsortedOrDuplicate {
-                index: 0,
-                page_id: 10
-            })
-        );
-        assert_eq!(
-            audit.push_page_id(9),
-            Err(StreamAuditError::UnsortedOrDuplicate {
-                index: 0,
-                page_id: 9
-            })
-        );
-        assert_eq!(
-            audit.push_page_id(101),
-            Err(StreamAuditError::OutsideRange {
-                index: 0,
-                page_id: 101,
-                first: 1,
-                last: 100
-            })
-        );
-        audit.push_page_id(100).unwrap();
+        audit.begin_member(&inventory.members()[0].relative_path).unwrap();
+        audit.push_page_id(1).unwrap();
         audit.end_member().unwrap();
-        audit
-            .begin_member(&inventory.members()[1].relative_path)
-            .unwrap();
+        audit.begin_member(&inventory.members()[1].relative_path).unwrap();
+        audit.push_page_id(201).unwrap();
         assert_eq!(
-            audit.push_page_id(0),
+            audit.push_page_id(201),
             Err(StreamAuditError::UnsortedOrDuplicate {
                 index: 1,
-                page_id: 0
+                page_id: 201,
             })
         );
-        audit.push_page_id(201).unwrap();
-        audit.end_member().unwrap();
-        assert_eq!(audit.finish(), Ok(3));
+        assert_eq!(audit.end_member(), Err(StreamAuditError::InvalidState));
+        assert_eq!(audit.finish(), Err(StreamAuditError::InvalidState));
     }
 }
