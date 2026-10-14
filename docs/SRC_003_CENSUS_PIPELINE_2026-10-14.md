@@ -91,3 +91,14 @@ These changes harden the diagnostic parser but do not establish official source 
 - At `e15ddc08215a813c50852a17f500129a824b531e`, the diagnostic XML parser rejects nesting deeper than 128 elements, with a regression ensuring no census is published for excessively nested input. [Rust CI 38643834665](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643834665) and [Platform CI 38643834676](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643834676) passed at the exact head.
 
 Both are bounded diagnostic safety improvements, not evidence of official source authenticity, independent census completeness, renderer fidelity, a portable Rust importer, or an offline pack. SRC-003 remains unchecked.
+
+## Optional digest-pinned expected census gate (2026-10-14)
+
+The Python diagnostic importer now accepts `--expected-census PATH --expected-sha256 HEX` together. After all bzip2/XML members are validated and the observed census is fsynced, it reads the separately supplied expected census as bounded LF-terminated positive decimal page IDs. Both streams must agree exactly, with strict increasing order and no missing/extra IDs. The expected input must be a non-symlink regular file, must not alias the pending output, and must match its supplied SHA-256 and stable file metadata. An invalid comparison never publishes the pending file.
+
+- Implementation SHA: `007b16e023ce30e31851216ce147e2dc6c1c4dbc`.
+- [Rust workspace CI 38649085525](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38649085525) — passed, includes diagnostic Python regression discovery.
+- [Platform shells CI 38649085131](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38649085131) — passed, same exact SHA.
+- Regression cases include equal multi-page census, missing/extra IDs, reordered IDs, malformed records, digest mismatch, missing digest and symlinked expected census.
+
+**Crucial limit:** A checksum is only an integrity pin. Neither the expected census's independent origin nor its exact source-generation cutoff/namespace is established by the tool; the caller must separately authenticate both. Without the optional gate, the script still emits only an observed census. This does not qualify actual Wikimedia dump acquisition, a portable Rust XML importer, HTML rendering or mandatory offline media. `SRC-003` remains unchecked.
