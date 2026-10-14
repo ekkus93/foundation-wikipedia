@@ -175,7 +175,8 @@ impl Manifest {
                 return Err(ManifestError::DuplicateObject);
             }
             // One content digest must have one consistent byte length.
-            if digest_sizes.insert(object.sha256.to_ascii_lowercase(), object.bytes)
+            if digest_sizes
+                .insert(object.sha256.to_ascii_lowercase(), object.bytes)
                 .is_some_and(|previous| previous != object.bytes)
             {
                 return Err(ManifestError::ConflictingDigest);
@@ -324,7 +325,10 @@ mod transcript_tests {
         bad.objects[1].sha256 = bad.objects[0].sha256.to_ascii_lowercase();
         assert_eq!(bad.validate(), Err(ManifestError::ConflictingDigest));
         bad.objects.reverse();
-        assert_eq!(bad.identity_transcript(), Err(ManifestError::ConflictingDigest));
+        assert_eq!(
+            bad.identity_transcript(),
+            Err(ManifestError::ConflictingDigest)
+        );
         bad.objects[0].bytes = bad.objects[1].bytes;
         assert_eq!(bad.validate(), Ok(()));
     }
