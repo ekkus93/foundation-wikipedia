@@ -49,3 +49,12 @@ Exact source SHA: `581eeb2eb45ea080a58f24e9dce311a47f4094fd`. The staging API no
 - [Platform shells CI 38618062607](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38618062607) — passed at exact source SHA.
 
 `SRC-003` remains unchecked.
+
+## Public-dump staging permission boundary
+
+Qualified on exact master `a21ba192021a15302b62dcc73ceca1e98620b4d9`:
+
+- [Rust workspace CI 38631578259](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38631578259) — success.
+- [Platform shells CI 38631578520](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38631578520) — success.
+
+`public_dump_stage` now rejects Unix staging roots and nested member directories writable by group or other users (permission bits `0o022`) before accepting staged bytes or verifying a member tree. A deterministic regression covers rejection before writing, refusal to verify an unsafe root, rejection of a group-writable nested directory, and recovery after permissions are restricted. World-readable but non-writable directories are allowed because published dump bytes are public; source staging is still not safe against a privileged or same-owner concurrent writer. This closes a local path-substitution exposure, **not** the SRC-003 importer, upstream authentication, bzip2/XML parsing, independent census, renderer fidelity, or mandatory-media acceptance. `SRC-003` remains unchecked.
