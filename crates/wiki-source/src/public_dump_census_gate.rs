@@ -149,7 +149,6 @@ pub fn audit_pinned_census_files(
     Ok(delta)
 }
 
-
 #[derive(Debug)]
 pub enum VerifiedCensusStageError {
     UnsafePath,
