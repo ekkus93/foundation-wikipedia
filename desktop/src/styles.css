@@ -54,3 +54,12 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .theme-choice { border: 1px solid var(--reader-border); border-radius: 12px; padding: 16px; }
 .theme-choice label { display: flex; align-items: center; gap: 10px; padding: 10px; cursor: pointer; }
 .theme-choice input { width: 18px; height: 18px; }
+
+/* Multiple mounted reader panels preserve their own article, revision and Back/Forward stacks. */
+.reader-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0 20px; font: 14px system-ui, sans-serif; }
+.reader-tab { display: flex; border: 1px solid var(--reader-border); border-radius: 7px; overflow: hidden; }
+.reader-tabs button { padding: 8px 11px; min-height: 38px; cursor: pointer; background: var(--reader-surface); color: var(--reader-text); border: 1px solid var(--reader-border); border-radius: 7px; }
+.reader-tab button { border: 0; border-radius: 0; }
+.reader-tabs button[aria-current="page"] { font-weight: 700; text-decoration: underline; }
+.reader-tabs button:disabled { opacity: .5; cursor: not-allowed; }
+.reader-tabs button:focus-visible { outline: 3px solid var(--reader-link); outline-offset: 2px; }

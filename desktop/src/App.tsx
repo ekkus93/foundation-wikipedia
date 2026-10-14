@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OnlineReader from "./OnlineReader";
+import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
+  const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [message, setMessage] = useState<string | null>(null);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
@@ -111,7 +113,27 @@ export default function App() {
         <main>
           <p className="eyebrow">FOUNDATION WIKIPEDIA</p>
           <h1 id="overview">Wikipedia reader preview</h1>
-          <OnlineReader />
+          <nav className="reader-tabs" aria-label="Open article tabs">
+            {readerTabs.tabs.map((tab) => (
+              <div className="reader-tab" key={tab.id}>
+                <button type="button" aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
+                  onClick={() => setReaderTabs((state) => selectReaderTab(state, tab.id))}>
+                  Tab {tab.id}
+                </button>
+                <button type="button" aria-label={`Close tab ${tab.id}`}
+                  disabled={readerTabs.tabs.length === 1}
+                  onClick={() => setReaderTabs((state) => closeReaderTab(state, tab.id))}>×</button>
+              </div>
+            ))}
+            <button type="button" disabled={readerTabs.tabs.length >= MAX_READER_TABS}
+              onClick={() => setReaderTabs(addReaderTab)}>+ New tab</button>
+          </nav>
+          {readerTabs.tabs.map((tab) => (
+            <section key={tab.id} aria-label={`Article tab ${tab.id}`}
+              hidden={readerTabs.activeId !== tab.id}>
+              <OnlineReader />
+            </section>
+          ))}
           <h2 id="roadmap">Under development</h2>
           <p>Offline media, installed packs, grounded AI, bookmarks, and complete article navigation are still in development.</p>
         </main>
