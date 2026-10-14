@@ -45,8 +45,8 @@ pub fn audit_article_media(
         .map_err(MediaCoverageError::InvalidManifest)?;
     if article.key.project != manifest.project {
         return Err(MediaCoverageError::InvalidArticle(
-                ModelError::InvalidIdentity
-            ));
+            ModelError::InvalidIdentity,
+        ));
     }
 
     let mut media = BTreeMap::new();
@@ -180,7 +180,9 @@ mod tests {
         pack.project = "frwiki".into();
         assert_eq!(
             audit_article_media(&article(), &pack),
-            Err(MediaCoverageError::InvalidArticle(ModelError::InvalidIdentity))
+            Err(MediaCoverageError::InvalidArticle(
+                ModelError::InvalidIdentity
+            ))
         );
         pack = manifest();
         pack.objects[0].bytes = 0;
