@@ -127,13 +127,9 @@ mod tests {
             generation: "2026-10-14",
             namespace: 0,
         };
-        let delta = audit_page_coverage_text(
-            scope,
-            Cursor::new(b"1\n3\n"),
-            scope,
-            Cursor::new(bytes),
-        )
-        .unwrap();
+        let delta =
+            audit_page_coverage_text(scope, Cursor::new(b"1\n3\n"), scope, Cursor::new(bytes))
+                .unwrap();
         assert_eq!(delta.expected_count, 2);
         assert_eq!(delta.observed_count, 2);
     }
@@ -143,17 +139,35 @@ mod tests {
         for bad in [page(0, 0), page(i64::MAX as u64 + 1, 0), page(2, -1)] {
             let mut writer = ObservedCensusWriter::new(Vec::new(), 0).unwrap();
             assert!(writer.push(&bad).is_err());
-            assert!(matches!(writer.push(&page(3, 0)), Err(CensusExportError::InvalidState)));
-            assert!(matches!(writer.finish(), Err(CensusExportError::InvalidState)));
+            assert!(matches!(
+                writer.push(&page(3, 0)),
+                Err(CensusExportError::InvalidState)
+            ));
+            assert!(matches!(
+            writer.finish(),
+            Err(CensusExportError::InvalidState)
+        ));
         }
         let mut writer = ObservedCensusWriter::new(Vec::new(), 0).unwrap();
         writer.push(&page(2, 1)).unwrap();
-        assert!(matches!(writer.push(&page(1, 0)), Err(CensusExportError::UnsortedOrDuplicate(1))));
-        assert!(matches!(writer.finish(), Err(CensusExportError::InvalidState)));
+        assert!(matches!(
+            writer.push(&page(1, 0)),
+            Err(CensusExportError::UnsortedOrDuplicate(1))
+        ));
+        assert!(matches!(
+            writer.finish(),
+            Err(CensusExportError::InvalidState)
+        ));
         let mut writer = ObservedCensusWriter::new(Vec::new(), 0).unwrap();
         writer.push(&page(1, 0)).unwrap();
-        assert!(matches!(writer.push(&page(1, 1)), Err(CensusExportError::UnsortedOrDuplicate(1))));
-        assert!(matches!(writer.finish(), Err(CensusExportError::InvalidState)));
+        assert!(matches!(
+            writer.push(&page(1, 1)),
+            Err(CensusExportError::UnsortedOrDuplicate(1))
+        ));
+        assert!(matches!(
+            writer.finish(),
+            Err(CensusExportError::InvalidState)
+        ));
     }
 
     #[test]
@@ -164,13 +178,19 @@ mod tests {
         ));
         let mut writer = ObservedCensusWriter::new(Vec::new(), 0).unwrap();
         writer.push(&page(1, 1)).unwrap();
-        assert!(matches!(writer.finish(), Err(CensusExportError::EmptyCensus)));
+        assert!(matches!(
+            writer.finish(),
+            Err(CensusExportError::EmptyCensus)
+        ));
     }
 
     struct BrokenOutput;
     impl Write for BrokenOutput {
         fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::BrokenPipe, "simulated write failure"))
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "simulated write failure",
+            ))
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -181,8 +201,17 @@ mod tests {
     #[test]
     fn write_failure_poisoning_prevents_publication() {
         let mut writer = ObservedCensusWriter::new(BrokenOutput, 0).unwrap();
-        assert!(matches!(writer.push(&page(1, 0)), Err(CensusExportError::Write(_))));
-        assert!(matches!(writer.push(&page(2, 0)), Err(CensusExportError::InvalidState)));
-        assert!(matches!(writer.finish(), Err(CensusExportError::InvalidState)));
+        assert!(matches!(
+            writer.push(&page(1, 0)),
+            Err(CensusExportError::Write(_))
+        ));
+        assert!(matches!(
+            writer.push(&page(2, 0)),
+            Err(CensusExportError::InvalidState)
+        ));
+        assert!(matches!(
+            writer.finish(),
+            Err(CensusExportError::InvalidState)
+        ));
     }
 }
