@@ -89,6 +89,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Index page ID/title/revision/redirect/Wikidata; bounded single-article decompression.
   - [ ] Verify bytes/hashes and handle missing/corrupt shard read.
   - **Accept:** random lookup doesn't decompress an entire full-Wikipedia archive.
+  - **Progress (2026-10-14):** Shard path hardening and regression tests landed at `5af57b9e8304d0515868d295a3ccabb4cb7ce552`; Rust, Platform and Android ABI checks passed. Emulator codec probe remains pending; full acceptance is not claimed.
 - [ ] **STORE-002** Implement content-addressed media storage and owners. **Depends:** STORE-001.  
   - [ ] Hash/store media variants plus author/license metadata; dedupe across pack boundaries.
   - [ ] Reference accounting/GC, separate cached and user-pinned content ownership.
