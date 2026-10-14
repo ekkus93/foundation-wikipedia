@@ -144,9 +144,9 @@ mod tests {
                 Err(CensusExportError::InvalidState)
             ));
             assert!(matches!(
-            writer.finish(),
-            Err(CensusExportError::InvalidState)
-        ));
+                writer.finish(),
+                Err(CensusExportError::InvalidState)
+            ));
         }
         let mut writer = ObservedCensusWriter::new(Vec::new(), 0).unwrap();
         writer.push(&page(2, 1)).unwrap();
