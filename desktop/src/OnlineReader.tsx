@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RequestEpoch } from "./requestEpoch";
 
 type SearchHit = [pageId: number, title: string];
 type ArticleResponse = [pageId: number, revisionId: number, title: string, html: string];
@@ -30,7 +31,7 @@ export default function OnlineReader() {
   const [project, setProject] = useState("enwiki");
   const [offline, setOffline] = useState(false);
   const [connected, setConnected] = useState(() => navigator.onLine);
-  const requestEpoch = useRef(0);
+  const requestEpoch = useRef(new RequestEpoch());
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [article, setArticle] = useState<ArticlePreview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +39,7 @@ export default function OnlineReader() {
 
   useEffect(() => {
     const disconnected = () => {
-      requestEpoch.current += 1;
+      requestEpoch.current.invalidate();
       setConnected(false);
       setBusy(false);
       setHits([]);
@@ -57,28 +58,28 @@ export default function OnlineReader() {
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!query.trim() || busy) return;
-    const epoch = ++requestEpoch.current;
+    const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
     setArticle(null);
     try {
       const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine });
-      if (epoch !== requestEpoch.current) return;
+      if (!requestEpoch.current.matches(epoch)) return;
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
-      if (epoch === requestEpoch.current) {
+      if (requestEpoch.current.matches(epoch)) {
         setHits([]);
         setNotice(`Search unavailable: ${String(error)}`);
       }
     } finally {
-      if (epoch === requestEpoch.current) setBusy(false);
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
     }
   }
 
   async function openTitle(title: string) {
     if (busy) return;
-    const epoch = ++requestEpoch.current;
+    const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
     setArticle(null);
@@ -87,12 +88,12 @@ export default function OnlineReader() {
         "open_wikipedia_title",
         { title, project, offline: offline || !connected || !navigator.onLine },
       );
-      if (epoch !== requestEpoch.current) return;
+      if (!requestEpoch.current.matches(epoch)) return;
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
     } catch (error) {
-      if (epoch === requestEpoch.current) setNotice(`Article unavailable: ${String(error)}`);
+      if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
-      if (epoch === requestEpoch.current) setBusy(false);
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
     }
   }
 
