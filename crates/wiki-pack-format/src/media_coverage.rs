@@ -175,6 +175,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ambiguous_manifest_digest_lengths_before_media_accounting() {
+        let mut pack = manifest();
+        pack.objects.push(Object {
+            path: "media/copy.svg".into(),
+            sha256: "B".repeat(64),
+            bytes: 2048,
+        });
+        assert_eq!(
+            audit_article_media(&article(), &pack),
+            Err(MediaCoverageError::InvalidManifest(
+                ManifestError::ConflictingDigest
+            ))
+        );
+    }
+
+    #[test]
     fn rejects_cross_project_and_invalid_manifest_without_trust_claim() {
         let mut pack = manifest();
         pack.project = "frwiki".into();
