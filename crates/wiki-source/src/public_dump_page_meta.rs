@@ -80,7 +80,10 @@ impl PageMetadataCollector {
         }
     }
 
-    fn invalid(&mut self, error: PageMetadataError) -> Result<Option<PublicDumpPage>, PageMetadataError> {
+    fn invalid(
+        &mut self,
+        error: PageMetadataError,
+    ) -> Result<Option<PublicDumpPage>, PageMetadataError> {
         self.failed = true;
         Err(error)
     }
@@ -174,9 +177,18 @@ impl PageMetadataCollector {
                 let result = PublicDumpPage {
                     page_id: self.page_id.take().ok_or(PageMetadataError::MissingField)?,
                     title: self.title.take().ok_or(PageMetadataError::MissingField)?,
-                    namespace: self.namespace.take().ok_or(PageMetadataError::MissingField)?,
-                    revision_id: self.revision_id.take().ok_or(PageMetadataError::MissingField)?,
-                    timestamp: self.timestamp.take().ok_or(PageMetadataError::MissingField)?,
+                    namespace: self
+                        .namespace
+                        .take()
+                        .ok_or(PageMetadataError::MissingField)?,
+                    revision_id: self
+                        .revision_id
+                        .take()
+                        .ok_or(PageMetadataError::MissingField)?,
+                    timestamp: self
+                        .timestamp
+                        .take()
+                        .ok_or(PageMetadataError::MissingField)?,
                     redirect_target: self.redirect.take(),
                 };
                 self.state = State::Outside;
@@ -215,7 +227,10 @@ mod tests {
         assert_eq!(collector.push(PageEvent::PageId(42)), Ok(None));
         assert_eq!(collector.push(PageEvent::BeginRevision), Ok(None));
         assert_eq!(collector.push(PageEvent::RevisionId(333)), Ok(None));
-        assert_eq!(collector.push(PageEvent::Timestamp("2026-10-13T12:00:00Z")), Ok(None));
+        assert_eq!(
+            collector.push(PageEvent::Timestamp("2026-10-13T12:00:00Z")),
+            Ok(None)
+        );
         assert_eq!(collector.push(PageEvent::EndRevision), Ok(None));
         collector.push(PageEvent::EndPage).unwrap().unwrap()
     }
@@ -233,13 +248,23 @@ mod tests {
         assert_eq!(collector.push(PageEvent::Title("Gravity")), Ok(None));
         assert_eq!(collector.push(PageEvent::Namespace(0)), Ok(None));
         assert_eq!(collector.push(PageEvent::PageId(43)), Ok(None));
-        assert_eq!(collector.push(PageEvent::RedirectTarget("Physics")), Ok(None));
+        assert_eq!(
+            collector.push(PageEvent::RedirectTarget("Physics")),
+            Ok(None)
+        );
         assert_eq!(collector.push(PageEvent::BeginRevision), Ok(None));
         assert_eq!(collector.push(PageEvent::RevisionId(334)), Ok(None));
-        assert_eq!(collector.push(PageEvent::Timestamp("2026-10-13T12:01:00Z")), Ok(None));
+        assert_eq!(
+            collector.push(PageEvent::Timestamp("2026-10-13T12:01:00Z")),
+            Ok(None)
+        );
         assert_eq!(collector.push(PageEvent::EndRevision), Ok(None));
         assert_eq!(
-            collector.push(PageEvent::EndPage).unwrap().unwrap().redirect_target,
+            collector
+                .push(PageEvent::EndPage)
+                .unwrap()
+                .unwrap()
+                .redirect_target,
             Some("Physics".to_owned())
         );
         assert_eq!(collector.finish(), Ok(()));
@@ -325,7 +350,9 @@ mod tests {
         collector.push(PageEvent::PageId(42)).unwrap();
         collector.push(PageEvent::BeginRevision).unwrap();
         collector.push(PageEvent::RevisionId(100)).unwrap();
-        collector.push(PageEvent::Timestamp("2026-10-13T00:00:00Z")).unwrap();
+        collector
+            .push(PageEvent::Timestamp("2026-10-13T00:00:00Z"))
+            .unwrap();
         collector.push(PageEvent::EndRevision).unwrap();
         assert_eq!(
             collector.push(PageEvent::BeginRevision),
