@@ -84,3 +84,10 @@ These results establish **synthetic fixture regression qualification**, not succ
 - At `1af4d7bb1dcc0fe767d4cd3827a992b96db24453`, the decoder accepts the MediaWiki export XML namespace while rejecting foreign root/page namespaces and requiring identity children in the correct namespace. [Rust CI 38642919102](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642919102) and [Platform CI 38642919205](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642919205) passed at this exact SHA. An intermediate test failure from an incorrect expected newline was fixed before qualification.
 
 These changes harden the diagnostic parser but do not establish official source authenticity, independent census completeness, portable Rust importer support, rendering fidelity, or offline-pack acceptance. SRC-003 remains unchecked.
+
+## Revision timestamp and XML nesting qualification (2026-10-14)
+
+- At `4f58ee1b5e71861b2c1472129e11dbb11fa975e7`, revision timestamps are checked as real UTC calendar dates, not merely as matching a date/time string shape. Synthetic invalid day, month and hour fixtures must fail without publishing output. [Rust CI 38643722732](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643722732) and [Platform CI 38643722810](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643722810) passed.
+- At `e15ddc08215a813c50852a17f500129a824b531e`, the diagnostic XML parser rejects nesting deeper than 128 elements, with a regression ensuring no census is published for excessively nested input. [Rust CI 38643834665](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643834665) and [Platform CI 38643834676](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38643834676) passed at the exact head.
+
+Both are bounded diagnostic safety improvements, not evidence of official source authenticity, independent census completeness, renderer fidelity, a portable Rust importer, or an offline pack. SRC-003 remains unchecked.
