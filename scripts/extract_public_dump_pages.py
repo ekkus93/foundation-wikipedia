@@ -169,6 +169,11 @@ def _content_model(parent, *, allow_legacy=False):
             or not re.fullmatch(r"[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+",
                                 content_format)):
         raise DumpExtractionError("invalid revision content model or format")
+    # A claimed wikitext body must have the MediaWiki wikitext MIME type;
+    # accepting mismatched declarations would corrupt the renderer and citation
+    # provenance. Non-wikitext slot models retain their original source text.
+    if (model == "wikitext") != (content_format == "text/x-wiki"):
+        raise DumpExtractionError("inconsistent revision content model and format")
     return model, content_format
 
 

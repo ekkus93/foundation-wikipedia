@@ -141,6 +141,34 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(first["source_text"], "Energy = mc^2")
         self.assertIsNone(first["wikitext"])
 
+    def test_rejects_inconsistent_content_model_and_format(self):
+        # Never label non-wikitext payloads as renderable wikitext, or
+        # silently accept a declared wikitext model with a different MIME type.
+        for metadata in (
+            b"<model>wikitext</model><format>application/json</format>",
+            b"<model>Scribunto</model><format>text/x-wiki</format>",
+        ):
+            with self.subTest(metadata=metadata):
+                self.write_xml(XML.replace(b"<text xml:space", metadata + b"<text xml:space", 1))
+                with self.assertRaisesRegex(DumpExtractionError, "inconsistent revision content"):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
+        for model, content_format in (
+            (b"wikitext", b"application/json"),
+            (b"Scribunto", b"text/x-wiki"),
+        ):
+            slot = (b"<content><role>auxiliary</role><origin>50</origin>"
+                    + b"<model>" + model + b"</model><format>" + content_format
+                    + b"</format><text>payload</text></content>")
+            self.write_xml(XML.replace(b"</text></revision>",
+                                       b"</text>" + slot + b"</revision>", 1))
+            with self.assertRaisesRegex(DumpExtractionError, "inconsistent revision content"):
+                self.extract()
+            self.assertFalse(self.output.exists())
+            self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
+
     def test_missing_or_duplicate_mcr_roles_reject_entire_shard(self):
         cases = (
             b"<content><role>main</role><origin>50</origin>"
