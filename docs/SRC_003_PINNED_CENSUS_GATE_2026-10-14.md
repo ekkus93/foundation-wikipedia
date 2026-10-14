@@ -19,3 +19,11 @@ The integration regression constructs the observed file through `stage_pinned_ob
 A matching caller-provided digest is **not publisher authentication**. Neither identical scope labels nor different file inodes prove that the expected census was independently sourced or represents the same publication cutoff. Synthetic semantic events do not establish actual XML/bzip2 integration. The file-metadata checks do not eliminate malicious same-user concurrent mutation of writable files; staging must be controlled.
 
 Next: obtain an independently authenticated and cutoff-compatible expected census; verify actual compressed members, decode bzip2/XML into pinned semantic events, audit every shard, then qualify renderer fidelity and mandatory offline media. **SRC-003 remains unchecked.**
+
+
+## Audited no-overwrite publication
+
+The follow-up `stage_and_audit_pinned_census` connects the private pinned-event staging API to the digest-pinned expected-census gate and only promotes a final filename after a successful audit. It uses an internal pending name, rejects unsafe final filenames, hard-links the qualified bytes to a no-overwrite destination, removes pending files on mismatch/failure, and syncs the containing directory on Unix. Tests cover a complete staged publication, existing-destination refusal, mismatched independent census and pending-file cleanup. The source remains an untrusted intermediate until both event ingestion and expected-census reconciliation succeed.
+
+- Exact source SHA **`f88ae7fd74edfaaeea22d0600e1f7c75e560624d`** passed [Rust workspace CI 38627603898](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38627603898) (format, strict Clippy and workspace tests) and [Platform shells CI 38627603589](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38627603589). An initial rustfmt-only failure was corrected.
+- **Not yet complete:** the independently authenticated expected census and real verified bzip2/XML-to-events feed still must be provided; this API alone cannot qualify Wikimedia completeness or offline reader fidelity.
