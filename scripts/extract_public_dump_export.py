@@ -234,6 +234,80 @@ def _validate_staged_publication_receipt(root, checksum_file, records, project, 
         raise DumpExtractionError("staged publication inventory digest mismatch")
 
 
+
+def _validate_decoded_payload(record):
+    """Check renderer-critical fields at the independent JSONL trust boundary.
+
+    This checks shape and internal consistency, NOT equality to upstream XML,
+    publisher authenticity, or whether wikitext has been faithfully rendered.
+    """
+    namespace = record.get("namespace")
+    if type(namespace) is not int or not -(2**31) <= namespace < 2**31:
+        raise DumpExtractionError("invalid decoded namespace")
+    title = record.get("title")
+    if (not isinstance(title, str) or not title or title != title.strip()
+            or len(title.encode("utf-8")) > 4096
+            or any(ord(char) < 32 or ord(char) == 127 for char in title)):
+        raise DumpExtractionError("invalid decoded title")
+    timestamp = record.get("timestamp")
+    if (not isinstance(timestamp, str)
+            or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+                                timestamp)):
+        raise DumpExtractionError("invalid decoded timestamp")
+    try:
+        if datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ").strftime(
+                "%Y-%m-%dT%H:%M:%SZ") != timestamp:
+            raise ValueError("noncanonical timestamp")
+    except ValueError:
+        raise DumpExtractionError("invalid decoded timestamp") from None
+    model, mime = record.get("content_model"), record.get("content_format")
+    if (not isinstance(model, str) or not isinstance(mime, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}", model)
+            or not re.fullmatch(r"[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+", mime)
+            or (model == "wikitext") != (mime == "text/x-wiki")):
+        raise DumpExtractionError("invalid decoded content model/format")
+    body = record.get("source_text")
+    if not isinstance(body, str) or len(body.encode("utf-8")) > 8 * 1024 * 1024:
+        raise DumpExtractionError("invalid decoded source text")
+    if (record.get("wikitext") != body if model == "wikitext"
+            else record.get("wikitext") is not None):
+        raise DumpExtractionError("inconsistent decoded wikitext")
+    target = record.get("redirect_target")
+    if target is not None and (not isinstance(target, str) or not target.strip()
+                               or len(target.encode("utf-8")) > 4096):
+        raise DumpExtractionError("invalid decoded redirect")
+    for field in ("parent_revision_id", "main_origin_revision_id"):
+        value = record.get(field)
+        if value is not None and (type(value) is not int or not 0 < value <= 2**63 - 1):
+            raise DumpExtractionError("invalid decoded revision ancestry")
+    slots = record.get("additional_slots")
+    if not isinstance(slots, list) or len(slots) > 128:
+        raise DumpExtractionError("invalid decoded additional slots")
+    seen_roles = {"main"}
+    aggregate_bytes = len(body.encode("utf-8"))
+    for slot in slots:
+        if not isinstance(slot, dict):
+            raise DumpExtractionError("invalid decoded additional slot")
+        role = slot.get("role")
+        origin = slot.get("origin_revision_id")
+        slot_model, slot_mime = slot.get("content_model"), slot.get("content_format")
+        slot_text = slot.get("source_text")
+        if (not isinstance(role, str)
+                or not re.fullmatch(r"[A-Za-z][-+./A-Za-z0-9]*", role)
+                or role in seen_roles
+                or type(origin) is not int or not 0 < origin <= 2**63 - 1
+                or not isinstance(slot_model, str) or not isinstance(slot_mime, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}", slot_model)
+                or not re.fullmatch(r"[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+", slot_mime)
+                or (slot_model == "wikitext") != (slot_mime == "text/x-wiki")
+                or not isinstance(slot_text, str)):
+            raise DumpExtractionError("invalid decoded additional slot")
+        seen_roles.add(role)
+        aggregate_bytes += len(slot_text.encode("utf-8"))
+        if aggregate_bytes > 8 * 1024 * 1024:
+            raise DumpExtractionError("oversized decoded combined content")
+
+
 def extract_current_export(staging_dir, checksum_file, project, date, output,
                            *, max_member_bytes=MAX_MEMBER_BYTES,
                            max_total_bytes=MAX_TOTAL_BYTES,
@@ -311,6 +385,7 @@ def extract_current_export(staging_dir, checksum_file, project, date, output,
                             if (type(revision_id) is not int
                                     or not 0 < revision_id <= 2**63 - 1):
                                 raise DumpExtractionError("invalid decoded revision ID")
+                            _validate_decoded_payload(record)
                             if (record.get("project") != project
                                     or record.get("source_sha256") != digest):
                                 raise DumpExtractionError(

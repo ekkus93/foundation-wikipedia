@@ -156,6 +156,37 @@ class ExportTests(unittest.TestCase):
                 self.extract()
         self.assert_no_publication()
 
+    def test_rejects_forged_decoded_render_identity_and_content(self):
+        from extract_public_dump_pages import extract_current_dump as real_extract
+
+        for field, value, diagnostic in (
+            ("namespace", True, "decoded namespace"),
+            ("namespace", 2**31, "decoded namespace"),
+            ("title", " bad title ", "decoded title"),
+            ("title", "bad\\ncontrol", "decoded title"),
+            ("timestamp", "2026-02-30T00:00:00Z", "decoded timestamp"),
+            ("content_format", "application/json", "decoded content model"),
+            ("source_text", [], "decoded source text"),
+            ("wikitext", "forged evidence", "decoded wikitext"),
+            ("redirect_target", "", "decoded redirect"),
+            ("parent_revision_id", True, "decoded revision ancestry"),
+            ("additional_slots", [123], "decoded additional slot"),
+        ):
+            with self.subTest(field=field, value=value):
+                def forged_decoder(path, digest, project, output, **kwargs):
+                    count = real_extract(path, digest, project, output, **kwargs)
+                    if path.name == self.first:
+                        rows = [json.loads(line) for line in output.read_text().splitlines()]
+                        rows[0][field] = value
+                        output.write_text("".join(json.dumps(row) + "\\n" for row in rows))
+                    return count
+
+                with patch("extract_public_dump_export.extract_current_dump",
+                           side_effect=forged_decoder):
+                    with self.assertRaisesRegex(DumpExtractionError, diagnostic):
+                        self.extract()
+                self.assert_no_publication()
+
     def test_rejects_duplicate_revision_id_across_distinct_shards(self):
         # Page partitions do not overlap, but revision identity still must.
         collision = xml(110).replace(b"<revision><id>1110</id>",
