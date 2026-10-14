@@ -1,5 +1,5 @@
 //! Versioned pack manifest structure; no signature verification yet.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const FORMAT_VERSION: u32 = 1;
 /// Provisional safeguards until archive framing and mobile benchmarks are final.
@@ -40,6 +40,7 @@ pub enum ManifestError {
     UnsafeMetadata,
     UnsafeObject,
     DuplicateObject,
+    ConflictingDigest,
     ResourceBudget,
 }
 
@@ -150,6 +151,7 @@ impl Manifest {
             return Err(ManifestError::ResourceBudget);
         }
         let mut paths = BTreeSet::new();
+        let mut digest_sizes = BTreeMap::new();
         let mut declared_bytes = 0_u64;
         for object in &self.objects {
             if object.bytes == 0
@@ -171,6 +173,12 @@ impl Manifest {
             }
             if !paths.insert(object.path.to_ascii_lowercase()) {
                 return Err(ManifestError::DuplicateObject);
+            }
+            // One content digest must have one consistent byte length.
+            if digest_sizes.insert(object.sha256.to_ascii_lowercase(), object.bytes)
+                .is_some_and(|previous| previous != object.bytes)
+            {
+                return Err(ManifestError::ConflictingDigest);
             }
             if object.bytes > MAX_OBJECT_BYTES {
                 return Err(ManifestError::ResourceBudget);
