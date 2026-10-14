@@ -244,6 +244,7 @@ fn valid_media_mime(value: &str) -> bool {
 impl ArticleKey {
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.page_id == 0
+            || self.page_id > i64::MAX as u64
             || self.project.is_empty()
             || !self
                 .project
@@ -332,7 +333,10 @@ impl Article {
             return Err(ModelError::UnsupportedSchema(self.schema_version));
         }
         self.key.validate()?;
-        if self.revision.revision_id == 0 || self.revision.timestamp.trim().is_empty() {
+        if self.revision.revision_id == 0
+            || self.revision.revision_id > i64::MAX as u64
+            || self.revision.timestamp.trim().is_empty()
+        {
             return Err(ModelError::InvalidRevision);
         }
         if !valid_hash(&self.revision.content_sha256) {
@@ -547,6 +551,29 @@ mod tests {
             rendered_html: "<article>Gravité 🌍</article>".into(),
             is_disambiguation: false,
         }
+    }
+
+    #[test]
+    fn canonical_ids_fit_the_signed_sqlite_catalog_range() {
+        let mut a = article();
+        a.key.page_id = i64::MAX as u64;
+        a.revision.revision_id = i64::MAX as u64;
+        assert_eq!(a.validate(), Ok(()));
+        a.key.page_id += 1;
+        assert_eq!(a.validate(), Err(ModelError::InvalidIdentity));
+        a = article();
+        a.revision.revision_id = i64::MAX as u64 + 1;
+        assert_eq!(a.validate(), Err(ModelError::InvalidRevision));
+        a = article();
+        a.links.push(ArticleLink {
+            label: "Too large".into(),
+            target: ArticleKey {
+                project: "enwiki".into(),
+                page_id: u64::MAX,
+            },
+            fragment: None,
+        });
+        assert_eq!(a.validate(), Err(ModelError::InvalidIdentity));
     }
 
     #[test]
