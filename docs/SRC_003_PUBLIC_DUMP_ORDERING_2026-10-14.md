@@ -22,3 +22,10 @@ Regression fixtures include two valid pages reordered in the source XML and deco
 A digest-matching caller-supplied inventory does not authenticate Wikimedia publication or establish independently complete source coverage. Raw wikitext is not rendered by Parsoid/MediaWiki, and required images/math/CSS, attribution, signed pack trust, offline installation and real-device acceptance remain unqualified. SRC-003 must stay unchecked until all acceptance criteria are evidenced.
 
 **Canonical TODO note:** This evidence file supplements `docs/WIKIPEDIA_AI_READER_TODO.md`; the large TODO could not be atomically upserted through the current bounded source-write interface during this run. No checklist item has been marked completed.
+
+## Follow-up: bounded decoded JSONL and count reconciliation
+
+- Code SHA: `15f1e299fd51e43edaf939572815d80cd1e37bf1`.
+- `extract_current_export` now reads each decoded JSONL line with a 64 MiB hard cap (including JSON escaping overhead), rejects a partial/un-terminated line, rejects a non-object record, and reconciles the decoder-reported page count with the number of records actually consumed before publishing.
+- Regression fixtures simulate an inflated decoder count, a missing JSONL line terminator and an over-budget decoded line; all fail without a published output.
+- Exact-head CI: [Rust workspace 38551634771](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38551634771) and [Platform shells 38551634783](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38551634783), both successful on the code SHA. These tests exercise synthetic boundaries, not independently authenticated real Wikimedia dumps or a Parsoid renderer.
