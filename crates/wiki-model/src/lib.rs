@@ -11,6 +11,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 pub const ARTICLE_SCHEMA_VERSION: u32 = 1;
+const MAX_SECTION_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArticleKey {
@@ -134,6 +135,7 @@ pub enum ModelError {
     MissingTitle,
     MissingRenderedHtml,
     InvalidSectionHeading,
+    SectionDepthExceeded,
     InvalidBlockContent,
     InvalidReferenceLabel,
     InvalidReferenceUrl(String),
@@ -404,7 +406,7 @@ impl Article {
         }
         let mut footnote_ids = HashSet::new();
         check_blocks(&self.lead, self.media.len(), &refs, &mut footnote_ids)?;
-        check_sections(&self.sections, self.media.len(), &refs, &mut footnote_ids)?;
+        check_sections(&self.sections, self.media.len(), &refs, &mut footnote_ids, 0)?;
         Ok(())
     }
 
@@ -488,7 +490,11 @@ fn check_sections<'a>(
     media_len: usize,
     references: &HashSet<&str>,
     footnote_ids: &mut HashSet<&'a str>,
+    depth: usize,
 ) -> Result<(), ModelError> {
+    if !sections.is_empty() && depth >= MAX_SECTION_DEPTH {
+        return Err(ModelError::SectionDepthExceeded);
+    }
     let mut ordinals = HashSet::new();
     for section in sections {
         if section.heading.trim().is_empty() {
@@ -498,7 +504,7 @@ fn check_sections<'a>(
             return Err(ModelError::DuplicateOrdinal);
         }
         check_blocks(&section.blocks, media_len, references, footnote_ids)?;
-        check_sections(&section.subsections, media_len, references, footnote_ids)?;
+        check_sections(&section.subsections, media_len, references, footnote_ids, depth + 1)?;
     }
     Ok(())
 }
