@@ -135,12 +135,18 @@ where
             return Err(CensusStageError::UnsafePath);
         }
     }
-    if !fs::symlink_metadata(root)
-        .map_err(CensusStageError::Io)?
-        .file_type()
-        .is_dir()
-    {
+    let metadata = fs::symlink_metadata(root).map_err(CensusStageError::Io)?;
+    if !metadata.file_type().is_dir() {
         return Err(CensusStageError::UnsafePath);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // The caller-controlled staging root must not expose partial census
+        // bytes to other users or permit directory-entry substitution.
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(CensusStageError::UnsafePath);
+        }
     }
     let target = root.join(filename);
     let (temporary, output) = loop {
@@ -386,6 +392,11 @@ mod tests {
             NEXT_DIR.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let pinned = inventory();
         let complete = |pipeline: &mut PinnedObservedCensus<'_, fs::File>| {
             for (index, member) in pinned.members().iter().enumerate() {
@@ -426,6 +437,11 @@ mod tests {
             std::thread::current().name().unwrap_or("unnamed")
         ));
         fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let pinned = inventory();
         assert!(matches!(
             stage_pinned_observed_census(&root, "incomplete.ids", &pinned, 0, |pipeline| {
@@ -468,6 +484,25 @@ mod tests {
         ));
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_file(linked).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_staging_directory_is_rejected_before_writing() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-public-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "observed.ids", &inventory(), 0, |_| Ok(())),
+            Err(CensusStageError::UnsafePath)
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 }
