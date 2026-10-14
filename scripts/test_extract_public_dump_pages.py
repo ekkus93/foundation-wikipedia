@@ -90,6 +90,37 @@ class ExtractTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob(".dump-revisions.*")))
         self.assertFalse(list(self.root.glob(".dump-pages.*.tmp")))
 
+    def test_rejects_noncanonical_titles_redirects_and_excess_slots(self):
+        cases = (
+            (XML.replace(b"<title>Physics</title>",
+                         b"<title> Physics </title>", 1), "invalid page title"),
+            (XML.replace(b"<title>Physics</title>",
+                         b"<title>Physics&#10;other</title>", 1), "invalid page title"),
+            (XML.replace(b'<redirect title="New title"/>',
+                         b'<redirect title=" New title "/>', 1), "invalid redirect target"),
+            (XML.replace(b'<redirect title="New title"/>',
+                         b'<redirect title="New&#10;title"/>', 1), "invalid redirect target"),
+        )
+        for source, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic):
+                self.write_xml(source)
+                with self.assertRaisesRegex(DumpExtractionError, diagnostic):
+                    self.extract()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".dump-revisions.*")))
+        slots = b"".join(
+            b"<content><role>aux" + str(index).encode() + b"</role>"
+            b"<origin>50</origin><model>wikitext</model>"
+            b"<format>text/x-wiki</format><text></text></content>"
+            for index in range(129)
+        )
+        self.write_xml(XML.replace(b"</text></revision>",
+                                   b"</text>" + slots + b"</revision>", 1))
+        with self.assertRaisesRegex(DumpExtractionError, "too many revision content slots"):
+            self.extract()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(list(self.root.glob(".dump-revisions.*")))
+
     def test_invalid_parent_or_main_slot_origin_fail_before_output(self):
         for element in ("parentid", "origin"):
             for invalid in ("0", "-1", "01", "bad", "9223372036854775808"):

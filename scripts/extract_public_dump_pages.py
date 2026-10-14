@@ -196,6 +196,9 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     except ValueError:
         raise DumpExtractionError("invalid revision timestamp") from None
     body, body_bytes = _validated_content_text(text_node, max_text_bytes)
+    if (title != title.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in title)):
+        raise DumpExtractionError("invalid page title")
     if len(title.encode("utf-8")) > 4096:
         raise DumpExtractionError("oversized page title or wikitext")
     model, content_format = _content_model(revision, allow_legacy=True)
@@ -209,6 +212,8 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     extra_slots = []
     seen_roles = {"main"}
     for content in revision.findall("{*}content"):
+        if len(extra_slots) >= 128:
+            raise DumpExtractionError("too many revision content slots")
         role = _text(content, "role")
         if role is None or not re.fullmatch(r"[A-Za-z][-+./A-Za-z0-9]*", role):
             raise DumpExtractionError("invalid content slot role")
@@ -241,6 +246,10 @@ def _page_record(page, project, source_sha256, max_text_bytes):
     target = redirect.get("title") if redirect is not None else None
     if redirect is not None and (not target or not target.strip()):
         raise DumpExtractionError("redirect missing target")
+    if (target is not None and
+            (target != target.strip() or len(target.encode("utf-8")) > 4096
+             or any(ord(char) < 32 or ord(char) == 127 for char in target))):
+        raise DumpExtractionError("invalid redirect target")
     return {
         "project": project,
         "page_id": _positive_id(_text(page, "id")),
