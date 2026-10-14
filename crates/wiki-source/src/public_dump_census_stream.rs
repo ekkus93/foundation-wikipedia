@@ -8,7 +8,9 @@
 
 use std::io;
 
-use crate::public_dump_coverage::{PageCoverageDelta, PageCoverageError};
+use crate::public_dump_coverage::PageCoverageDelta;
+#[cfg(test)]
+use crate::public_dump_coverage::PageCoverageError;
 
 const MAX_IDS: usize = 100_000_000;
 const MAX_EXAMPLES: usize = 12;
