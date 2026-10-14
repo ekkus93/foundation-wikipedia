@@ -77,3 +77,10 @@ The diagnostic decoder now opens each staged member with no-follow semantics, re
 - Same-descriptor source revalidation commit `2557eb055f212a7511d56657e50e2035081ad278`: [Rust workspace CI 38633971602](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633971602) and [Platform shells CI 38633971483](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38633971483) both passed. The Rust workflow runs Python unittest discovery, including seven diagnostic XML tests.
 
 These results establish **synthetic fixture regression qualification**, not successful parsing of an official dump generation or complete public-dump fallback acceptance.
+
+## XML page-size and namespace hardening (2026-10-14)
+
+- At `12add970c0606972d80d12e97b28557c31da2d48`, the diagnostic XML decoder limits each open page subtree to approximately 32 MiB of decompressed input. A synthetic oversized page is rejected without publishing a census. [Rust CI 38642126162](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642126162) and [Platform CI 38642126013](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642126013) passed at this exact SHA. The bound allows one read buffer of overshoot and is not a formal peak-RSS guarantee.
+- At `1af4d7bb1dcc0fe767d4cd3827a992b96db24453`, the decoder accepts the MediaWiki export XML namespace while rejecting foreign root/page namespaces and requiring identity children in the correct namespace. [Rust CI 38642919102](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642919102) and [Platform CI 38642919205](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38642919205) passed at this exact SHA. An intermediate test failure from an incorrect expected newline was fixed before qualification.
+
+These changes harden the diagnostic parser but do not establish official source authenticity, independent census completeness, portable Rust importer support, rendering fidelity, or offline-pack acceptance. SRC-003 remains unchecked.
