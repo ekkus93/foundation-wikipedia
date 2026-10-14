@@ -235,6 +235,13 @@ pub fn stage_verified_member<R: Read>(
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return Err(StageWriteError::UnsafeStagingPath);
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o022 != 0 {
+                return Err(StageWriteError::UnsafeStagingPath);
+            }
+        }
     }
     let target = root.join(&member.relative_path);
     let (temp, mut output) = loop {
