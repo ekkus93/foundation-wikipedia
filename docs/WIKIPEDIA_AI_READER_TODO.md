@@ -1508,3 +1508,9 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** Canonical `ArticleKey::validate` rejects page IDs above signed 64-bit maximum, and `Article::validate` rejects out-of-range revision IDs. This aligns article/link/redirect identities with SQLite catalog keys and revision storage. Boundary, oversized page/revision and link-target regression tests pass.
 - **Exact-head qualification:** `14fcb41b1946edc55e77e1fb0440743f8a79c358` passed Rust workspace CI 38541053484, Platform shells CI 38541053461, and Android Rust ABI CI 38541053416. The Rust gate includes formatting, strict Clippy and workspace tests.
 - **Remaining:** Official source integration, authenticated snapshots, offline visuals and real-device qualification remain open. MOD-001 remains checked from prior evidence; STORE-001 remains unchecked.
+
+### 2026-10-14 — MOD-001 / SEC-001 bounded canonical section nesting (partial)
+
+- **Implementation:** Canonical `Article::validate` now rejects nonempty section trees deeper than 64 levels before recursion can grow without bound. The guard applies to nested canonical sections, not just the beta source parser; a synthetic 65-level tree is rejected. Empty child lists at the supported depth remain valid.
+- **Exact-head qualification:** Code `4f178040807af0eb5857d85449a8f877b305c0b9` passed Rust workspace CI 38541651897, Platform shells CI 38541651754 and Android Rust ABI CI 38541651744. An earlier rustfmt-only failure was corrected before qualification.
+- **Remaining:** Full renderer dependency discovery, canonical source fidelity, byte-verified offline media and desktop/Android device acceptance are still required. This is one defensive bound, not complete SEC-001 acceptance; MOD-001 was already checked and SEC-001 remains unchecked.
