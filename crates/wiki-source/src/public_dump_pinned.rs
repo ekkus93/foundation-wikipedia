@@ -1,7 +1,8 @@
 //! Digest-pinned public-dump inventory. A caller-supplied digest is NOT
 //! evidence of Wikimedia publisher authenticity or source completeness.
 use crate::public_dump::{
-    matches_current_export, parse_sha256sums, DumpChecksum, DumpChecksumError,
+    declared_member_page_range, matches_current_export, parse_sha256sums, DumpChecksum,
+    DumpChecksumError,
 };
 use crate::public_dump_origin::is_official_checksum_url;
 use sha2::{Digest, Sha256};
@@ -55,10 +56,16 @@ pub fn parse_pinned_inventory(
         return Err(PinnedInventoryError::InvalidDigest);
     }
     let text = std::str::from_utf8(raw).map_err(|_| PinnedInventoryError::InvalidUtf8)?;
-    let members = parse_sha256sums(text).map_err(PinnedInventoryError::InvalidInventory)?;
+    let mut members = parse_sha256sums(text).map_err(PinnedInventoryError::InvalidInventory)?;
     if !matches_current_export(&members, project, date) {
         return Err(PinnedInventoryError::WrongGeneration);
     }
+    // Numbered shards sort lexically as 1, 10, 2; audit in numeric range order.
+    members.sort_by_key(|member| {
+        declared_member_page_range(member, project, date)
+            .expect("validated generation must contain valid page ranges")
+            .0
+    });
     let actual = format!("{:x}", Sha256::digest(raw));
     if !actual.eq_ignore_ascii_case(expected_sha256) {
         return Err(PinnedInventoryError::DigestMismatch);
