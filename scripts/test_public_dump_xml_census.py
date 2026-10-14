@@ -53,6 +53,24 @@ class DumpXmlTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), b"1\n201\n")
         self.assertEqual(sorted(p.name for p in self.output.iterdir()), ["observed.ids"])
 
+    def test_official_xml_namespace_accepted_and_foreign_namespace_rejected(self):
+        official = "http://www.mediawiki.org/xml/export-0.11/"
+        self.add(1, 100, f'<mediawiki xmlns="{official}">{page(1)}</mediawiki>')
+        path, count = self.run_census()
+        self.assertEqual((count, path.read_bytes()), (1, b"1\\n"))
+        path.unlink()
+        self.manifest["files"].clear()
+        self.add(1, 100, f'<mediawiki xmlns="urn:untrusted">{page(1)}</mediawiki>')
+        with self.assertRaisesRegex(DumpDecodeError, "official mediawiki"):
+            self.run_census()
+        self.manifest["files"].clear()
+        self.add(1, 100, f'<mediawiki xmlns="{official}" xmlns:bad="urn:untrusted">'
+                             f'<bad:page><bad:title>Page 1</bad:title><bad:ns>0</bad:ns>'
+                             f'<bad:id>1</bad:id></bad:page></mediawiki>')
+        with self.assertRaisesRegex(DumpDecodeError, "root namespace"):
+            self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_corrupt_compressed_member_rejected_before_decode(self):
         path = self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
         path.write_bytes(path.read_bytes() + b"tamper")

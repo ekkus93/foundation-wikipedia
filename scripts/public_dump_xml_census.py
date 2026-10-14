@@ -17,6 +17,7 @@ from pathlib import Path
 
 from verify_source_staging import SourceVerificationError, verify_source_bytes
 
+EXPORT_NS = re.compile(r"^http://www\.mediawiki\.org/xml/export-[0-9]+\.[0-9]+/$")
 NAME = re.compile(r"^(?P<project>[a-z0-9_]+)-(?P<date>\d{4}-\d{2}-\d{2})-p(?P<first>[1-9]\d*)p(?P<last>[1-9]\d*)\.xml\.bz2$")
 MAX_XML_BYTES = 16 * 1024**3
 # Bound the ElementTree subtree retained for any one page (including wikitext).
@@ -32,8 +33,14 @@ def _tag(tag):
     return tag.rsplit("}", 1)[-1]
 
 
+def _namespace(tag):
+    return tag[1:].split("}", 1)[0] if tag.startswith("{") else ""
+
+
 def _one(parent, name):
-    found = [child for child in parent if _tag(child.tag) == name]
+    namespace = _namespace(parent.tag)
+    expected = f"{{{namespace}}}{name}" if namespace else name
+    found = [child for child in parent if child.tag == expected]
     if len(found) != 1:
         raise DumpDecodeError(f"expected exactly one {name}")
     return found[0]
@@ -125,12 +132,13 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                     if event == "start":
                         depth += 1
                         if depth == 1:
-                            if _tag(elem.tag) != "mediawiki":
-                                raise DumpDecodeError("expected mediawiki XML root")
+                            if (_tag(elem.tag) != "mediawiki"
+                                    or (_namespace(elem.tag) and not EXPORT_NS.fullmatch(_namespace(elem.tag)))):
+                                raise DumpDecodeError("expected official mediawiki XML root")
                             root = elem
                         if _tag(elem.tag) == "page":
-                            if depth != 2:
-                                raise DumpDecodeError("page outside mediawiki root")
+                            if depth != 2 or _namespace(elem.tag) != _namespace(root.tag):
+                                raise DumpDecodeError("page outside mediawiki root namespace")
                             bounded.page_start = bounded.total
                         continue
                     if _tag(elem.tag) == "page" and depth != 2:
