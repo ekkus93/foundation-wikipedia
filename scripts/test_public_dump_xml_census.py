@@ -57,7 +57,7 @@ class DumpXmlTests(unittest.TestCase):
         official = "http://www.mediawiki.org/xml/export-0.11/"
         self.add(1, 100, f'<mediawiki xmlns="{official}">{page(1)}</mediawiki>')
         path, count = self.run_census()
-        self.assertEqual((count, path.read_bytes()), (1, b"1\\n"))
+        self.assertEqual((count, path.read_bytes()), (1, b"1\n"))
         path.unlink()
         self.manifest["files"].clear()
         self.add(1, 100, f'<mediawiki xmlns="urn:untrusted">{page(1)}</mediawiki>')
