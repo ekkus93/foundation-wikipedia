@@ -119,6 +119,13 @@ class DumpXmlTests(unittest.TestCase):
                 self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_excessive_xml_nesting_rejected_without_publication(self):
+        nested = "<siteinfo>" + "<nested>" * 140 + "</nested>" * 140 + "</siteinfo>"
+        self.add(1, 100, f"<mediawiki>{nested}{page(1)}</mediawiki>")
+        with self.assertRaisesRegex(DumpDecodeError, "depth limit"):
+            self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_invalid_calendar_revision_timestamp_rejected(self):
         for invalid in ("2026-02-30", "2026-13-01", "2026-10-01T25:00:00"):
             self.manifest["files"].clear()

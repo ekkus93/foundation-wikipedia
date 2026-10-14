@@ -23,6 +23,7 @@ NAME = re.compile(r"^(?P<project>[a-z0-9_]+)-(?P<date>\d{4}-\d{2}-\d{2})-p(?P<fi
 MAX_XML_BYTES = 16 * 1024**3
 # Bound the ElementTree subtree retained for any one page (including wikitext).
 MAX_PAGE_XML_BYTES = 32 * 1024**2
+MAX_XML_DEPTH = 128
 MAX_PAGE_ID = 2**63 - 1
 
 
@@ -136,6 +137,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                 for event, elem in events:
                     if event == "start":
                         depth += 1
+                        if depth > MAX_XML_DEPTH:
+                            raise DumpDecodeError("XML nesting exceeds depth limit")
                         if depth == 1:
                             if (_tag(elem.tag) != "mediawiki"
                                     or (_namespace(elem.tag) and not EXPORT_NS.fullmatch(_namespace(elem.tag)))):
