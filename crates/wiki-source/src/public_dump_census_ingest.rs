@@ -97,7 +97,6 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
     }
 }
 
-
 /// Publish an observed census from validated semantic events using a private,
 /// no-overwrite staging file. The callback must feed *all* pinned members and
 /// must only emit events from independently checksum-verified, well-formed XML.
@@ -164,8 +163,8 @@ where
         }
     };
     let result = (|| -> Result<usize, CensusStageError> {
-        let mut pipeline =
-            PinnedObservedCensus::new(inventory, output, namespace).map_err(CensusStageError::Census)?;
+        let mut pipeline = PinnedObservedCensus::new(inventory, output, namespace)
+            .map_err(CensusStageError::Census)?;
         feed(&mut pipeline).map_err(CensusStageError::Census)?;
         let (output, count) = pipeline.finish().map_err(CensusStageError::Census)?;
         output.sync_all().map_err(CensusStageError::Io)?;
@@ -403,7 +402,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&published).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                fs::metadata(&published).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         assert!(matches!(
             stage_pinned_observed_census(&root, "observed.ids", &pinned, 0, complete),
@@ -456,10 +458,7 @@ mod tests {
     fn symlinked_staging_root_is_rejected_before_file_creation() {
         use std::fs;
         use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!(
-            "wiki-census-link-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("wiki-census-link-{}", std::process::id()));
         let linked = root.with_extension("link");
         fs::create_dir(&root).unwrap();
         symlink(&root, &linked).unwrap();
@@ -471,5 +470,4 @@ mod tests {
         fs::remove_file(linked).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
-
 }
