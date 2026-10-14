@@ -196,6 +196,13 @@ pub fn stage_verified_member<R: Read>(
     if !metadata.file_type().is_dir() {
         return Err(StageWriteError::UnsafeStagingPath);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(StageWriteError::UnsafeStagingPath);
+        }
+    }
     let mut parent = root.to_path_buf();
     let mut parts = member.relative_path.split('/').peekable();
     while let Some(part) = parts.next() {
