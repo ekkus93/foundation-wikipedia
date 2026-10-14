@@ -62,9 +62,7 @@ impl<R: BufRead> Iterator for PageIdLines<R> {
             }
             let newline_at = chunk.iter().position(|byte| *byte == b'\n');
             let count = newline_at.unwrap_or(chunk.len());
-            if count > MAX_DIGITS - len
-                || !chunk[..count].iter().all(u8::is_ascii_digit)
-            {
+            if count > MAX_DIGITS - len || !chunk[..count].iter().all(u8::is_ascii_digit) {
                 return self.invalid(io::ErrorKind::InvalidData);
             }
             digits[len..len + count].copy_from_slice(&chunk[..count]);
@@ -75,11 +73,12 @@ impl<R: BufRead> Iterator for PageIdLines<R> {
                 if len == 0 || (len > 1 && digits[0] == b'0') {
                     return self.invalid(io::ErrorKind::InvalidData);
                 }
-                let text = std::str::from_utf8(&digits[..len])
-                    .expect("ASCII digits were validated above");
-                let value = text.parse::<u64>().ok().filter(|id| {
-                    *id != 0 && *id <= i64::MAX as u64
-                });
+                let text =
+                    std::str::from_utf8(&digits[..len]).expect("ASCII digits were validated above");
+                let value = text
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|id| *id != 0 && *id <= i64::MAX as u64);
                 return match value {
                     Some(id) => Some(Ok(id)),
                     None => self.invalid(io::ErrorKind::InvalidData),
@@ -121,7 +120,9 @@ mod tests {
     #[test]
     fn reads_valid_records_across_tiny_buffers() {
         let reader = io::BufReader::with_capacity(2, Cursor::new(b"1\n42\n9223372036854775807\n"));
-        let values = PageIdLines::new(reader).collect::<io::Result<Vec<_>>>().unwrap();
+        let values = PageIdLines::new(reader)
+            .collect::<io::Result<Vec<_>>>()
+            .unwrap();
         assert_eq!(values, [1, 42, i64::MAX as u64]);
     }
 
@@ -157,7 +158,8 @@ mod tests {
             Cursor::new(b"1\n3\n5\n"),
             scope(),
             Cursor::new(b"1\n3\n5\n"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(equal.expected_count, 3);
         assert_eq!(equal.observed_count, 3);
 
@@ -167,7 +169,10 @@ mod tests {
             scope(),
             Cursor::new(b"1\n4\n5\n"),
         );
-        assert!(matches!(mismatch, Err(StreamCoverageError::MissingOrUnexpected(_))));
+        assert!(matches!(
+            mismatch,
+            Err(StreamCoverageError::MissingOrUnexpected(_))
+        ));
         let truncated = audit_page_coverage_text(
             scope(),
             Cursor::new(b"1\n3\n"),
