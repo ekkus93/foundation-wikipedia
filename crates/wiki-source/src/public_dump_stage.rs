@@ -118,6 +118,13 @@ pub fn verify_staged_export(
     if !metadata.file_type().is_dir() {
         return Err(StagedDumpError::UnsafeStagingPath);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(StagedDumpError::UnsafeStagingPath);
+        }
+    }
     let mut total = 0u64;
     for member in members {
         let mut path = PathBuf::from(root);
@@ -314,6 +321,11 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("wiki-staged-dump-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         root
     }
 
