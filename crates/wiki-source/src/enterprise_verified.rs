@@ -93,14 +93,8 @@ pub fn import_canonical_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     deleted: Vec<DeletionMarker>,
 ) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalImportError> {
     let joined =
-        join_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
-            .map_err(VerifiedImportError::Batch)
+        import_verified_enterprise_ndjson_scoped(structured, regular, project, generation_id, deleted)
             .map_err(CanonicalImportError::Import)?;
-    for article in &joined {
-        validate_joined_evidence(article)
-            .map_err(VerifiedImportError::Integrity)
-            .map_err(CanonicalImportError::Import)?;
-    }
     enterprise_normalize_article::normalize_enterprise_batch(&joined)
         .map_err(CanonicalImportError::Normalize)
 }
