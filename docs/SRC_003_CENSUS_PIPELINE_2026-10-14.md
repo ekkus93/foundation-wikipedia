@@ -28,3 +28,15 @@ Exact source SHA `ce48afe4a9f04434f1f761f5af30b43c1c6711bf` adds integration reg
 - [Platform shells CI 38610955599](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38610955599) — passed, exact source SHA.
 
 These tests qualify fail-closed completion behavior only; staged files still require caller-managed deletion/atomic promotion and independently authenticated source data.
+
+
+## Private staged observed-census publication
+
+Exact source SHA: `43f17e9fe80edb07ea74ded8792db7c3182b60d6`.
+
+- [Rust workspace CI 38616793402](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38616793402) — success (format, Clippy, unit tests), exact SHA.
+- [Platform shells CI 38616793052](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38616793052) — success, exact SHA.
+
+`public_dump_census_ingest::stage_pinned_observed_census` writes to a private, restrictive-permission temporary file, requires all pinned semantic events and a successful final flush, syncs the output, and atomically hard-links it to a no-overwrite destination. Failure removes the temporary file; an existing published census is not replaced. Tests cover successful multi-member output, duplicate destination, incomplete/duplicate source events, invalid filenames, and symlink staging root rejection.
+
+**Limits:** the caller must use a private directory that cannot be concurrently modified by an adversary. The callback is responsible for supplying semantic events decoded from independently checksum-verified compressed XML members. The function does not authenticate Wikimedia, decode bzip2/XML, compare an independently sourced expected census, render HTML or publish a qualified offline pack. SRC-003 stays unchecked.
