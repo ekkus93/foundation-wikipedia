@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type SearchHit = [pageId: number, title: string];
@@ -29,10 +29,30 @@ export default function OnlineReader() {
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("enwiki");
   const [offline, setOffline] = useState(false);
+  const [connected, setConnected] = useState(() => navigator.onLine);
+  const requestEpoch = useRef(0);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [article, setArticle] = useState<ArticlePreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const disconnected = () => {
+      requestEpoch.current += 1;
+      setConnected(false);
+      setBusy(false);
+      setHits([]);
+      setArticle(null);
+      setNotice("Connection lost. This preview has no installed offline articles.");
+    };
+    const reconnected = () => setConnected(true);
+    window.addEventListener("offline", disconnected);
+    window.addEventListener("online", reconnected);
+    return () => {
+      window.removeEventListener("offline", disconnected);
+      window.removeEventListener("online", reconnected);
+    };
+  }, []);
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,7 +61,7 @@ export default function OnlineReader() {
     setNotice(null);
     setArticle(null);
     try {
-      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !navigator.onLine });
+      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected });
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
@@ -60,7 +80,7 @@ export default function OnlineReader() {
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
         "open_wikipedia_title",
-        { title, project, offline: offline || !navigator.onLine },
+        { title, project, offline: offline || !connected },
       );
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
     } catch (error) {
@@ -112,7 +132,7 @@ export default function OnlineReader() {
         }
       }} /> Work offline (no network requests)</label>
       <p className="preview-warning">
-        {offline || !navigator.onLine ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
+        {offline || !connected ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;
         this page is not offline-ready. Links inside the isolated preview are disabled.
       </p>
