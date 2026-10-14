@@ -142,7 +142,10 @@ pub fn fetch_page_id<T: MediaWikiTransport>(
     page_id: u64,
     network: NetworkState,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
-    let key = ArticleKey { project: project.to_owned(), page_id };
+    let key = ArticleKey {
+        project: project.to_owned(),
+        page_id,
+    };
     fetch_article(client, &key, network, &[])
 }
 
@@ -289,11 +292,15 @@ mod tests {
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
         let result = fetch_page_id(&mut client, "enwiki", 42, NetworkState::Online).unwrap();
-        let FetchOutcome::Rendered(article) = result else { panic!("expected revision"); };
+        let FetchOutcome::Rendered(article) = result else {
+            panic!("expected revision");
+        };
         assert_eq!(article.revision.key.page_id, 42);
         assert_eq!(article.revision.revision_id, 333);
         assert_eq!(client.requests.len(), 2);
-        assert!(Url::parse(&client.requests[0]).unwrap().query_pairs()
+        assert!(Url::parse(&client.requests[0])
+            .unwrap()
+            .query_pairs()
             .any(|(key, value)| key == "pageids" && value == "42"));
         assert!(!client.requests[0].contains("titles="));
         assert_eq!(
