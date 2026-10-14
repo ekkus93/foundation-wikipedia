@@ -418,7 +418,10 @@ mod tests {
             normalize_enterprise_article_with_link_index(&source, false, &index).unwrap();
         assert_eq!(normalized.article.links.len(), 2);
         assert_eq!(normalized.article.links[0].target.page_id, 43);
-        assert_eq!(normalized.article.links[0].fragment.as_deref(), Some("History"));
+        assert_eq!(
+            normalized.article.links[0].fragment.as_deref(),
+            Some("History")
+        );
         assert_eq!(normalized.article.links[1].target.page_id, 43);
     }
 
