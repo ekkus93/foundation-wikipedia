@@ -56,3 +56,21 @@ export function forwardReaderArticle<T extends { html: string }>(state: ReaderNa
     forward: rest,
   };
 }
+
+/** Keep only nearby frames mounted across Back/Forward to preserve browser-owned
+ * in-iframe scroll where supported, without granting iframe scripts or origin access.
+ * Older history stays navigable but its DOM/scroll is allowed to be evicted.
+ */
+export function mountedReaderFrames<T extends { frameId: number }>(state: ReaderNavigation<T>): T[] {
+  const nearby = [
+    ...state.back.slice(-2),
+    ...(state.current ? [state.current] : []),
+    ...state.forward.slice(-2),
+  ];
+  const seen = new Set<number>();
+  return nearby.filter((item) => {
+    if (seen.has(item.frameId)) return false;
+    seen.add(item.frameId);
+    return true;
+  });
+}

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
-import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
+import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 
 type SearchHit = [pageId: number, title: string];
 type ArticleResponse = [pageId: number, revisionId: number, title: string, html: string];
 
 interface ArticlePreview {
+  frameId: number;
   pageId: number;
   revisionId: number;
   title: string;
@@ -35,9 +36,11 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   const [offline, setOffline] = useState(false);
   const [connected, setConnected] = useState(() => navigator.onLine);
   const requestEpoch = useRef(new RequestEpoch());
+  const nextFrameId = useRef(1);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
+  const mountedFrames = mountedReaderFrames(navigation);
   useEffect(() => {
     onArticleChange?.(article?.title ?? null);
   }, [article?.title, onArticleChange]);
@@ -96,7 +99,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
         { ...args, project, offline: offline || !connected || !navigator.onLine },
       );
       if (!requestEpoch.current.matches(epoch)) return;
-      setNavigation((state) => openReaderArticle(state, { pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) }));
+      setNavigation((state) => openReaderArticle(state, { frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) }));
     } catch (error) {
       if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
@@ -165,7 +168,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Loading Wikipedia…</p>}
       {!article && navigation.forward.length > 0 && <button type="button" disabled={busy} onClick={() => setNavigation(forwardReaderArticle)}>→ Forward to article</button>}
-      {article ? (
+      {article && (
         <div className="online-article">
           <button type="button" disabled={busy} onClick={() => {
             setNavigation(backReaderArticle);
@@ -177,29 +180,38 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
           }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
           <p>Online revision {article.revisionId} · page ID {article.pageId}</p>
+        </div>
+      )}
+      {/* Hidden sandboxed iframes remain mounted for nearby navigation history.
+          Never add allow-same-origin/allow-scripts just to read their scroll. */}
+      <div className="article-preview-frames" hidden={!article}>
+        {mountedFrames.map((snapshot) => (
           <iframe
-            title={`Sanitized Wikipedia article: ${article.title}`}
+            key={snapshot.frameId}
+            title={`Sanitized Wikipedia article: ${snapshot.title}`}
+            hidden={!article || snapshot.frameId !== article.frameId}
             sandbox=""
             referrerPolicy="no-referrer"
             className="article-preview-frame"
-            srcDoc={isolatedDocument(article.html)}
+            srcDoc={isolatedDocument(snapshot.html)}
           />
-          {article.links.length > 0 && (
-            <nav aria-label="Internal Wikipedia article links">
-              <h3>Article links</h3>
-              <ul>
-                {article.links.map((link) => (
-                  <li key={link.title}>
-                    <button type="button" disabled={busy || offline || !connected} onClick={() => void openTitle(link.title)}>
-                      {link.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          )}
-        </div>
-      ) : hits.length > 0 ? (
+        ))}
+      </div>
+      {article && article.links.length > 0 && (
+        <nav aria-label="Internal Wikipedia article links">
+          <h3>Article links</h3>
+          <ul>
+            {article.links.map((link) => (
+              <li key={link.title}>
+                <button type="button" disabled={busy || offline || !connected} onClick={() => void openTitle(link.title)}>
+                  {link.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+      {!article && hits.length > 0 && (
         <div className="online-results">
           <h2>Search results</h2>
           <ul>
@@ -212,7 +224,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
             ))}
           </ul>
         </div>
-      ) : null}
+      )}
     </section>
   );
 }

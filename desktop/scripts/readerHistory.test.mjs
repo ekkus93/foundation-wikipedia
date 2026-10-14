@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   appendReaderHistory, backReaderArticle, emptyReaderNavigation,
-  forwardReaderArticle, openReaderArticle, popReaderHistory,
+  forwardReaderArticle, mountedReaderFrames, openReaderArticle, popReaderHistory,
 } from "../src/readerHistory.ts";
 
 const article = (pageId, revisionId = pageId * 10) => ({
@@ -62,4 +62,21 @@ test("history drops old snapshots before exceeding the HTML memory budget", () =
   const stack = appendReaderHistory(appendReaderHistory([], entry(1, 3_000_000)), entry(2, 2_000_000));
   assert.deepEqual(stack.map((item) => item.id), [2]);
   assert.deepEqual(appendReaderHistory(stack, entry(3, 4_000_001)), []);
+});
+
+test("nearby revision frame identities survive Back, Forward and search-result return", () => {
+  const withFrame = (id) => ({ ...article(id, id * 100), frameId: id });
+  let state = openReaderArticle(emptyReaderNavigation(), withFrame(1));
+  state = openReaderArticle(state, withFrame(2));
+  state = openReaderArticle(state, withFrame(3));
+  state = openReaderArticle(state, withFrame(4));
+  assert.deepEqual(mountedReaderFrames(state).map((a) => a.frameId), [2, 3, 4]);
+  state = backReaderArticle(state);
+  assert.deepEqual(mountedReaderFrames(state).map((a) => a.frameId), [1, 2, 3, 4]);
+  state = forwardReaderArticle(state);
+  assert.deepEqual(mountedReaderFrames(state).map((a) => a.frameId), [2, 3, 4]);
+  const first = backReaderArticle(openReaderArticle(emptyReaderNavigation(), withFrame(5)));
+  assert.equal(first.current, null);
+  assert.deepEqual(mountedReaderFrames(first).map((a) => a.frameId), [5]);
+  assert.deepEqual(mountedReaderFrames(emptyReaderNavigation()), []);
 });
