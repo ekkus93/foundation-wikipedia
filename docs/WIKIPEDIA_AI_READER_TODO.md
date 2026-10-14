@@ -73,6 +73,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Record source fidelity and hosting/availability tradeoffs; implement defensible fallback.
   - **Accept:** representative public-dump articles render/read and can be packed without mandatory paid API access.
   - **Progress (2026-10-14):** [Renderer evaluation](SRC_003_RENDERER_EVALUATION_2026-10-14.md) and source-census identity validation are implemented/evaluated; renderer fidelity, independent completeness and mandatory media remain outstanding.
+  - **Progress (2026-10-14):** [Pinned-ingest census export integration](SRC_003_CENSUS_PIPELINE_2026-10-14.md) passed exact-head Rust and Platform CI. Authentication, independent expected census, actual XML/bzip2 decoding and renderer fidelity remain outstanding.
 - [ ] **SRC-004** Implement online article/search and revision-aware caches. **Depends:** SRC-002 or SRC-003, MOD-002.  
   - [ ] Fetch search results and article by title/page ID, normalize redirects, capture exact revision.
   - [ ] Distinguish online current version, installed offline version and temporary cached version.
