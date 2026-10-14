@@ -62,7 +62,14 @@ mod tests {
             );
             assert!(is_official_checksum_url(&daily, "enwiki", date));
         }
-        for date in ["2026-02-29", "1900-02-29", "2026-04-31", "2026-10-00", "0000-01-01", "2026-1-01"] {
+        for date in [
+            "2026-02-29",
+            "1900-02-29",
+            "2026-04-31",
+            "2026-10-00",
+            "0000-01-01",
+            "2026-1-01",
+        ] {
             let invalid = format!(
                 "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/{date}/xml/bzip2/SHA256SUMS"
             );
