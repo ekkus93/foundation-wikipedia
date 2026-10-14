@@ -40,7 +40,10 @@ pub enum StreamCoverageError {
 fn valid_scope(scope: CensusScope<'_>) -> bool {
     !scope.project.is_empty()
         && scope.project.len() <= 255
-        && scope.project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && scope
+            .project
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
         && !scope.generation.is_empty()
         && scope.generation.len() <= 255
         && !scope.generation.starts_with('.')
@@ -214,12 +217,8 @@ mod tests {
 
     #[test]
     fn diagnoses_missing_and_unexpected_ids_with_bounded_examples() {
-        let result = audit_page_coverage_stream(
-            scope(),
-            ids(&[1, 3, 5, 7]),
-            scope(),
-            ids(&[1, 2, 7, 8]),
-        );
+        let result =
+            audit_page_coverage_stream(scope(), ids(&[1, 3, 5, 7]), scope(), ids(&[1, 2, 7, 8]));
         let Err(StreamCoverageError::MissingOrUnexpected(delta)) = result else {
             panic!("must reject an incomplete census");
         };
@@ -245,12 +244,18 @@ mod tests {
 
     #[test]
     fn rejects_incompatible_invalid_and_empty_censuses() {
-        let other = CensusScope { namespace: 1, ..scope() };
+        let other = CensusScope {
+            namespace: 1,
+            ..scope()
+        };
         assert!(matches!(
             audit_page_coverage_stream(scope(), ids(&[1]), other, ids(&[1])),
             Err(StreamCoverageError::IncompatibleCensus)
         ));
-        let bad = CensusScope { generation: "../wrong", ..scope() };
+        let bad = CensusScope {
+            generation: "../wrong",
+            ..scope()
+        };
         assert!(matches!(
             audit_page_coverage_stream(bad, ids(&[1]), bad, ids(&[1])),
             Err(StreamCoverageError::InvalidCensus)
@@ -289,19 +294,22 @@ mod tests {
 
     #[test]
     fn read_failure_is_never_mistaken_for_normal_eof() {
-        let broken = [
+        let broken = || [
             Ok(1),
-            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated census")),
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated census",
+            )),
         ];
         assert!(matches!(
-            audit_page_coverage_stream(scope(), broken, scope(), ids(&[1])),
+            audit_page_coverage_stream(scope(), broken(), scope(), ids(&[1])),
             Err(StreamCoverageError::Read {
                 side: CensusSide::Expected,
                 ..
             })
         ));
         assert!(matches!(
-            audit_page_coverage_stream(scope(), ids(&[1]), scope(), broken),
+            audit_page_coverage_stream(scope(), ids(&[1]), scope(), broken()),
             Err(StreamCoverageError::Read {
                 side: CensusSide::Observed,
                 ..
@@ -315,8 +323,18 @@ mod tests {
         let expected = [1, 3, 5, 7, 9];
         let observed = [1, 2, 7, 10];
         let slice = audit_page_coverage(
-            PageCensus { project: scope().project, generation: scope().generation, namespace: 0, page_ids: &expected },
-            PageCensus { project: scope().project, generation: scope().generation, namespace: 0, page_ids: &observed },
+            PageCensus {
+                project: scope().project,
+                generation: scope().generation,
+                namespace: 0,
+                page_ids: &expected,
+            },
+            PageCensus {
+                project: scope().project,
+                generation: scope().generation,
+                namespace: 0,
+                page_ids: &observed,
+            },
         );
         let stream = audit_page_coverage_stream(scope(), ids(&expected), scope(), ids(&observed));
         let Err(PageCoverageError::MissingOrUnexpected(a)) = slice else {
