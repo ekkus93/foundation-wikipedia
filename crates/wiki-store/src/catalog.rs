@@ -11,7 +11,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use wiki_model::{ArticleKey, ModelError, PageRecord};
+use wiki_model::{wikipedia_title_key, ArticleKey, ModelError, PageRecord};
 
 use crate::record_codec::{decode_record_at, RecordCodecError, MAX_COMPRESSED_RECORD_BYTES};
 
@@ -102,15 +102,11 @@ fn valid_shard_name(name: &str) -> bool {
 /// Underscores are spaces; the rest of the title remains case-sensitive.
 /// Avoid guessing Unicode characters with multi-scalar uppercase expansions.
 fn title_key(title: &str) -> Result<String, CatalogError> {
-    let normalized = title.trim().replace('_', " ");
-    let mut chars = normalized.chars();
-    let first = chars.next().ok_or(CatalogError::InvalidCatalogEntry)?;
-    let mut upper = first.to_uppercase();
-    let initial = upper.next().ok_or(CatalogError::InvalidCatalogEntry)?;
-    if upper.next().is_some() {
-        return Ok(normalized);
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err(CatalogError::InvalidCatalogEntry);
     }
-    Ok(format!("{initial}{}", chars.as_str()))
+    Ok(wikipedia_title_key(trimmed))
 }
 
 fn as_i64(value: u64) -> Result<i64, CatalogError> {
