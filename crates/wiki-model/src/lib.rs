@@ -15,6 +15,10 @@ const MAX_SECTION_DEPTH: usize = 64;
 const MAX_SECTIONS: usize = 10_000;
 // A deep-but-valid tree must not bypass a per-article total block budget.
 const MAX_BLOCKS: usize = 100_000;
+// Bound nested collection fan-out even when the outer block count is small.
+const MAX_NESTED_ITEMS_PER_BLOCK: usize = 4_096;
+const MAX_NESTED_ITEMS_PER_ARTICLE: usize = 100_000;
+const MAX_TABLE_COLUMNS: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArticleKey {
@@ -141,6 +145,7 @@ pub enum ModelError {
     SectionDepthExceeded,
     SectionCountExceeded,
     BlockCountExceeded,
+    NestedItemCountExceeded,
     InvalidBlockContent,
     InvalidReferenceLabel,
     InvalidReferenceUrl(String),
@@ -411,12 +416,14 @@ impl Article {
         }
         let mut footnote_ids = HashSet::new();
         let mut block_count = 0;
+        let mut nested_count = 0;
         check_blocks(
             &self.lead,
             self.media.len(),
             &refs,
             &mut footnote_ids,
             &mut block_count,
+            &mut nested_count,
         )?;
         let mut section_count = 0;
         check_sections(
@@ -427,6 +434,7 @@ impl Article {
             0,
             &mut section_count,
             &mut block_count,
+            &mut nested_count,
         )?;
         Ok(())
     }
@@ -439,12 +447,27 @@ impl Article {
     }
 }
 
+/// The same article-wide budget is shared by all nested list entries, table
+/// rows/cells, infobox fields, and footnote reference IDs. Fail before scanning
+/// attacker-controlled child items when an individual collection is excessive.
+fn count_nested_items(count: usize, total: &mut usize) -> Result<(), ModelError> {
+    if count > MAX_NESTED_ITEMS_PER_BLOCK {
+        return Err(ModelError::NestedItemCountExceeded);
+    }
+    *total = total
+        .checked_add(count)
+        .filter(|count| *count <= MAX_NESTED_ITEMS_PER_ARTICLE)
+        .ok_or(ModelError::NestedItemCountExceeded)?;
+    Ok(())
+}
+
 fn check_blocks<'a>(
     blocks: &'a [Block],
     media_len: usize,
     references: &HashSet<&str>,
     footnote_ids: &mut HashSet<&'a str>,
     total_blocks: &mut usize,
+    total_nested_items: &mut usize,
 ) -> Result<(), ModelError> {
     *total_blocks = total_blocks
         .checked_add(blocks.len())
@@ -469,13 +492,24 @@ fn check_blocks<'a>(
                 }
             }
             BlockContent::List(items) => {
+                count_nested_items(items.len(), total_nested_items)?;
                 if items.is_empty() || items.iter().any(|item| item.trim().is_empty()) {
                     return Err(ModelError::InvalidBlockContent);
                 }
             }
             BlockContent::Table(rows) => {
-                if rows.is_empty() || rows.iter().any(Vec::is_empty) {
+                count_nested_items(rows.len(), total_nested_items)?;
+                if rows.is_empty() {
                     return Err(ModelError::InvalidBlockContent);
+                }
+                for row in rows {
+                    if row.is_empty() {
+                        return Err(ModelError::InvalidBlockContent);
+                    }
+                    if row.len() > MAX_TABLE_COLUMNS {
+                        return Err(ModelError::NestedItemCountExceeded);
+                    }
+                    count_nested_items(row.len(), total_nested_items)?;
                 }
             }
             BlockContent::Math { source, html } => {
@@ -484,6 +518,7 @@ fn check_blocks<'a>(
                 }
             }
             BlockContent::Infobox(fields) => {
+                count_nested_items(fields.len(), total_nested_items)?;
                 if fields.is_empty() || fields.iter().any(|(name, _)| name.trim().is_empty()) {
                     return Err(ModelError::InvalidBlockContent);
                 }
@@ -496,6 +531,7 @@ fn check_blocks<'a>(
                 {
                     return Err(ModelError::InvalidFootnote(footnote.source_id.clone()));
                 }
+                count_nested_items(footnote.reference_ids.len(), total_nested_items)?;
                 let mut linked = HashSet::new();
                 for reference_id in &footnote.reference_ids {
                     if reference_id.trim().is_empty()
@@ -519,6 +555,7 @@ fn check_sections<'a>(
     depth: usize,
     visited: &mut usize,
     total_blocks: &mut usize,
+    total_nested_items: &mut usize,
 ) -> Result<(), ModelError> {
     if !sections.is_empty() && depth >= MAX_SECTION_DEPTH {
         return Err(ModelError::SectionDepthExceeded);
@@ -541,6 +578,7 @@ fn check_sections<'a>(
             references,
             footnote_ids,
             total_blocks,
+            total_nested_items,
         )?;
         check_sections(
             &section.subsections,
@@ -550,6 +588,7 @@ fn check_sections<'a>(
             depth + 1,
             visited,
             total_blocks,
+            total_nested_items,
         )?;
     }
     Ok(())
@@ -675,6 +714,51 @@ mod tests {
         // duplicate ordinals, bounding validation work for hostile input.
         a.lead = vec![a.lead[0].clone(); MAX_BLOCKS + 1];
         assert_eq!(a.validate(), Err(ModelError::BlockCountExceeded));
+    }
+
+    #[test]
+    fn nested_collections_enforce_per_block_bounds() {
+        let mut a = article();
+        a.lead[0].content = BlockContent::List(vec!["entry".into(); MAX_NESTED_ITEMS_PER_BLOCK]);
+        assert_eq!(a.validate(), Ok(()));
+        a.lead[0].content =
+            BlockContent::List(vec!["entry".into(); MAX_NESTED_ITEMS_PER_BLOCK + 1]);
+        assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
+
+        a.lead[0].content = BlockContent::Table(vec![vec!["x".into(); MAX_TABLE_COLUMNS]]);
+        assert_eq!(a.validate(), Ok(()));
+        a.lead[0].content = BlockContent::Table(vec![vec!["x".into(); MAX_TABLE_COLUMNS + 1]]);
+        assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
+
+        a.lead[0].content =
+            BlockContent::Infobox(vec![("field".into(), "value".into()); MAX_NESTED_ITEMS_PER_BLOCK + 1]);
+        assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
+
+        a.lead[0].content = BlockContent::Footnote(Footnote {
+            source_id: "note".into(),
+            label: "1".into(),
+            text: "text".into(),
+            reference_ids: vec!["ref1".into(); MAX_NESTED_ITEMS_PER_BLOCK + 1],
+        });
+        assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
+    }
+
+    #[test]
+    fn nested_collections_share_one_article_wide_budget() {
+        let mut a = article();
+        a.sections.clear();
+        a.lead = (0..24)
+            .map(|ordinal| Block {
+                ordinal,
+                content: BlockContent::List(vec!["item".into(); MAX_NESTED_ITEMS_PER_BLOCK]),
+            })
+            .collect();
+        assert_eq!(a.validate(), Ok(()));
+        a.lead.push(Block {
+            ordinal: 24,
+            content: BlockContent::List(vec!["item".into(); MAX_NESTED_ITEMS_PER_BLOCK]),
+        });
+        assert_eq!(a.validate(), Err(ModelError::NestedItemCountExceeded));
     }
 
     #[test]
