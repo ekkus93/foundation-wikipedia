@@ -98,12 +98,19 @@ fn valid_shard_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
 }
 
+/// Match MediaWiki's first-letter title behavior for snapshot navigation.
+/// Underscores are spaces; the rest of the title remains case-sensitive.
+/// Avoid guessing Unicode characters with multi-scalar uppercase expansions.
 fn title_key(title: &str) -> Result<String, CatalogError> {
-    let normalized = title.trim().replace('_', " ").to_lowercase();
-    if normalized.is_empty() {
-        return Err(CatalogError::InvalidCatalogEntry);
+    let normalized = title.trim().replace('_', " ");
+    let mut chars = normalized.chars();
+    let first = chars.next().ok_or(CatalogError::InvalidCatalogEntry)?;
+    let mut upper = first.to_uppercase();
+    let initial = upper.next().ok_or(CatalogError::InvalidCatalogEntry)?;
+    if upper.next().is_some() {
+        return Ok(normalized);
     }
-    Ok(normalized)
+    Ok(format!("{initial}{}", chars.as_str()))
 }
 
 fn as_i64(value: u64) -> Result<i64, CatalogError> {
@@ -763,9 +770,10 @@ mod tests {
             Some(first_key.clone())
         );
         assert_eq!(
-            catalog.lookup_key("enwiki", "PLANET EARTH").unwrap(),
+            catalog.lookup_key("enwiki", "planet Earth").unwrap(),
             Some(second_key.clone())
         );
+        assert_eq!(catalog.lookup_key("enwiki", "PLANET EARTH").unwrap(), None);
         assert_eq!(
             catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
             vec![first_key.clone()]
@@ -806,13 +814,22 @@ mod tests {
     }
 
     #[test]
+    fn title_keys_only_fold_initial_character() {
+        assert_eq!(title_key("gravity_waves").unwrap(), "Gravity waves");
+        assert_eq!(title_key("énergie").unwrap(), "Énergie");
+        assert_eq!(title_key("gRAVITY").unwrap(), "GRAVITY");
+        assert_ne!(title_key("Gravity").unwrap(), title_key("GRAVITY").unwrap());
+        assert!(matches!(title_key("  "), Err(CatalogError::InvalidCatalogEntry)));
+    }
+
+    #[test]
     fn insertion_is_atomic_on_colliding_titles_and_rejects_unsafe_paths() {
         let root = temp_root();
         let mut shard = Vec::new();
         let n = append_record_frame(&mut shard, &article(10, "Earth")).unwrap();
         assert_eq!(n, 0);
         let next = shard.len() as u64;
-        append_record_frame(&mut shard, &article(11, "Earth")).unwrap();
+        append_record_frame(&mut shard, &article(11, "earth")).unwrap();
         fs::write(root.join("shard-1.bin"), &shard).unwrap();
         let mut catalog = SnapshotCatalog::in_memory().unwrap();
         catalog
