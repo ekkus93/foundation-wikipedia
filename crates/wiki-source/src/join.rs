@@ -47,7 +47,9 @@ fn collect(
     let mut result = BTreeMap::new();
     for item in items {
         if item.page.page_id == 0
+            || item.page.page_id > i64::MAX as u64
             || item.revision_id == 0
+            || item.revision_id > i64::MAX as u64
             || item.page.project.is_empty()
             || item.page.project.len() > 255
             || !item
@@ -151,6 +153,7 @@ pub fn join_pages_with_tombstones(
     let mut project: Option<String> = None;
     for key in deleted {
         if key.page_id == 0
+            || key.page_id > i64::MAX as u64
             || key.project.is_empty()
             || key.project.len() > 255
             || !key
@@ -208,6 +211,7 @@ pub fn join_pages_with_generation_tombstones(
         let key = marker.page;
         let id = marker.generation_id;
         if key.page_id == 0
+            || key.page_id > i64::MAX as u64
             || key.project.is_empty()
             || key.project.len() > 255
             || !key
@@ -560,6 +564,51 @@ mod tests {
             join_pages_with_generation_tombstones(vec![], vec![], vec![], vec![first],)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_page_and_revision_ids_in_all_join_paths() {
+        // The canonical article/catalog model stores identities in SQLite
+        // signed 64-bit columns. An unchecked u64 must never be joined as
+        // apparently valid provenance and later overflow during persistence.
+        let overflow = i64::MAX as u64 + 1;
+        for mutate_page in [true, false] {
+            let mut source = part(1, "structured");
+            if mutate_page {
+                source.page.page_id = overflow;
+            } else {
+                source.revision_id = overflow;
+            }
+            let mut html = source.clone();
+            html.payload = "rendered".into();
+            let mut categories = source.clone();
+            categories.payload.clear();
+            assert_eq!(
+                join_pages(vec![source], vec![html], vec![categories]),
+                Err(JoinError::InvalidIdentity)
+            );
+        }
+
+        let invalid = PageKey {
+            project: "enwiki".into(),
+            page_id: overflow,
+        };
+        assert_eq!(
+            join_pages_with_tombstones(vec![], vec![], vec![], vec![invalid.clone()]),
+            Err(JoinError::InvalidIdentity)
+        );
+        assert_eq!(
+            join_pages_with_generation_tombstones(
+                vec![],
+                vec![],
+                vec![],
+                vec![DeletionMarker {
+                    page: invalid,
+                    generation_id: "20261009".into(),
+                }]
+            ),
+            Err(JoinError::InvalidIdentity)
         );
     }
 }
