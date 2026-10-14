@@ -339,6 +339,26 @@ impl PageRecord {
     }
 }
 
+/// Canonical first-letter title lookup key for Wikipedia snapshot navigation.
+/// Only the initial Unicode scalar is uppercased (when it has a one-scalar
+/// uppercase mapping); underscores become spaces and all other case remains.
+/// This is not full locale-aware MediaWiki title normalization.
+pub fn wikipedia_title_key(value: &str) -> String {
+    let spaced = value.replace('_', " ");
+    let mut chars = spaced.chars();
+    let Some(first) = chars.next() else {
+        return spaced;
+    };
+    let mut upper = first.to_uppercase();
+    let Some(initial) = upper.next() else {
+        return spaced;
+    };
+    if upper.next().is_some() {
+        return spaced;
+    }
+    format!("{initial}{}", chars.as_str())
+}
+
 impl Article {
     pub fn validate(&self) -> Result<(), ModelError> {
         if self.schema_version != ARTICLE_SCHEMA_VERSION {
@@ -365,7 +385,10 @@ impl Article {
         }
         let mut aliases = HashSet::new();
         for alias in &self.aliases {
-            if alias.trim().is_empty() || !aliases.insert(alias.trim().to_lowercase()) {
+            if alias.trim().is_empty()
+                || alias != alias.trim()
+                || !aliases.insert(wikipedia_title_key(alias))
+            {
                 return Err(ModelError::InvalidAlias);
             }
         }
@@ -987,9 +1010,11 @@ mod tests {
     #[test]
     fn aliases_preserve_unicode_and_reject_blanks_and_collisions() {
         let mut a = article();
-        a.aliases = vec!["Gravité".into(), "引力".into()];
+        a.aliases = vec!["Gravité".into(), "GRAVITÉ".into(), "引力".into()];
         assert_eq!(a.validate(), Ok(()));
-        a.aliases.push(" GRAVITÉ ".into());
+        a.aliases.push("gravité".into());
+        assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
+        a.aliases = vec!["Gravité".into(), " GRAVITÉ ".into()];
         assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
         a.aliases = vec!["  ".into()];
         assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
