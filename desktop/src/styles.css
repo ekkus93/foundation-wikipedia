@@ -65,3 +65,9 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .reader-tabs button:focus-visible { outline: 3px solid var(--reader-link); outline-offset: 2px; }
 
 .reader-tab button:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Keep the preview readable without granting article HTML privileged DOM access. */
+.article-preview-frames { margin: 12px 0 24px; }
+.article-preview-frame { display: block; width: 100%; min-height: 68vh; border: 1px solid var(--reader-border); border-radius: 6px; background: #fff; }
+.article-preview-frame[hidden] { display: none; }
+@media (max-width: 800px) { .article-preview-frame { min-height: 62vh; } }
