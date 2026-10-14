@@ -294,13 +294,15 @@ mod tests {
 
     #[test]
     fn read_failure_is_never_mistaken_for_normal_eof() {
-        let broken = || [
-            Ok(1),
-            Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "truncated census",
-            )),
-        ];
+        let broken = || {
+            [
+                Ok(1),
+                Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated census",
+                )),
+            ]
+        };
         assert!(matches!(
             audit_page_coverage_stream(scope(), broken(), scope(), ids(&[1])),
             Err(StreamCoverageError::Read {
