@@ -47,7 +47,7 @@ fn validate(census: PageCensus<'_>) -> Result<(), PageCoverageError> {
     }
     let mut previous = 0;
     for &id in census.page_ids {
-        if id <= previous {
+        if id <= previous || id > i64::MAX as u64 {
             return Err(PageCoverageError::UnsortedOrDuplicate);
         }
         previous = id;
@@ -157,7 +157,7 @@ pub fn audit_shard_page_ids(
     }
     let mut previous = 0;
     for &id in page_ids {
-        if id <= previous {
+        if id <= previous || id > i64::MAX as u64 {
             return Err(ShardPageError::UnsortedOrDuplicate);
         }
         if id < first || id > last {
@@ -299,6 +299,26 @@ mod tests {
         assert_eq!(
             audit_shard_page_ids(&member, "frwiki", "2026-10-01", &[101]),
             Err(ShardPageError::InvalidMember)
+        );
+    }
+
+    #[test]
+    fn rejects_page_ids_outside_signed_catalog_range() {
+        let too_large = i64::MAX as u64 + 1;
+        assert_eq!(
+            audit_page_coverage(census(&[1]), census(&[too_large])),
+            Err(PageCoverageError::UnsortedOrDuplicate)
+        );
+        use crate::public_dump::parse_sha256sums;
+        let member = parse_sha256sums(&format!(
+            "{}  enwiki-2026-10-01-p1p100.xml.bz2",
+            "a".repeat(64)
+        ))
+        .unwrap()
+        .remove(0);
+        assert_eq!(
+            audit_shard_page_ids(&member, "enwiki", "2026-10-01", &[too_large]),
+            Err(ShardPageError::UnsortedOrDuplicate)
         );
     }
 
