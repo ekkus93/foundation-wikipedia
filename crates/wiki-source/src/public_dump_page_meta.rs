@@ -162,7 +162,9 @@ impl PageMetadataCollector {
                 if self.timestamp.is_some() {
                     return self.invalid(PageMetadataError::DuplicateField);
                 }
-                if value.len() > MAX_TIMESTAMP_BYTES || !crate::online_article::valid_utc_timestamp(value) {
+                if value.len() > MAX_TIMESTAMP_BYTES
+                    || !crate::online_article::valid_utc_timestamp(value)
+                {
                     return self.invalid(PageMetadataError::InvalidField);
                 }
                 self.timestamp = Some(value.to_owned());
