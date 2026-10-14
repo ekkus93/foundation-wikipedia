@@ -62,7 +62,7 @@ export default function OnlineReader() {
     setNotice(null);
     setArticle(null);
     try {
-      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected });
+      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine });
       if (epoch !== requestEpoch.current) return;
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
@@ -85,7 +85,7 @@ export default function OnlineReader() {
     try {
       const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
         "open_wikipedia_title",
-        { title, project, offline: offline || !connected },
+        { title, project, offline: offline || !connected || !navigator.onLine },
       );
       if (epoch !== requestEpoch.current) return;
       setArticle({ pageId, revisionId, title: canonicalTitle, html });
