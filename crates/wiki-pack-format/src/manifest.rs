@@ -330,7 +330,7 @@ mod transcript_tests {
     }
 
     #[test]
-    fn invalid_manifest_never_produce_transcript() {
+    fn invalid_manifest_never_produces_transcript() {
         let mut invalid = sample();
         invalid.objects[0].path = "../escape".into();
         assert_eq!(
