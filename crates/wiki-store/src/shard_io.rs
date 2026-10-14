@@ -132,10 +132,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-shard-path-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-shard-path-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let mut bytes = Vec::new();
         append_record_frame(&mut bytes, &record(10)).unwrap();
