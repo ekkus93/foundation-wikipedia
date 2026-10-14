@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 use wiki_source::public_dump::declared_member_page_range;
 use wiki_source::public_dump_pinned::parse_pinned_inventory;
+use wiki_source::public_dump_stream::StreamShardAudit;
 
 #[test]
 fn legacy_shard_ten_follows_shard_two() {
@@ -29,4 +30,11 @@ fn legacy_shard_ten_follows_shard_two() {
         })
         .collect();
     assert_eq!(starts, (0..10_u64).map(|i| i * 100 + 1).collect::<Vec<_>>());
+    let mut audit = StreamShardAudit::new(&inventory);
+    for (member, page_id) in inventory.members().iter().zip(starts) {
+        audit.begin_member(&member.relative_path).unwrap();
+        audit.push_page_id(page_id).unwrap();
+        audit.end_member().unwrap();
+    }
+    assert_eq!(audit.finish(), Ok(10));
 }
