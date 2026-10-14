@@ -140,6 +140,13 @@ pub fn verify_staged_export(
                 return Err(StagedDumpError::UnsafeStagingPath);
             }
             #[cfg(unix)]
+            if !is_last {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(StagedDumpError::UnsafeStagingPath);
+                }
+            }
+            #[cfg(unix)]
             if is_last {
                 use std::os::unix::fs::MetadataExt;
                 // A checksum-valid hard link into a mutable outside location
