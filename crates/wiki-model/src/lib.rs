@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub const ARTICLE_SCHEMA_VERSION: u32 = 1;
 const MAX_SECTION_DEPTH: usize = 64;
 const MAX_SECTIONS: usize = 10_000;
+// A deep-but-valid tree must not bypass a per-article total block budget.
+const MAX_BLOCKS: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArticleKey {
@@ -138,6 +140,7 @@ pub enum ModelError {
     InvalidSectionHeading,
     SectionDepthExceeded,
     SectionCountExceeded,
+    BlockCountExceeded,
     InvalidBlockContent,
     InvalidReferenceLabel,
     InvalidReferenceUrl(String),
@@ -407,7 +410,14 @@ impl Article {
             }
         }
         let mut footnote_ids = HashSet::new();
-        check_blocks(&self.lead, self.media.len(), &refs, &mut footnote_ids)?;
+        let mut block_count = 0;
+        check_blocks(
+            &self.lead,
+            self.media.len(),
+            &refs,
+            &mut footnote_ids,
+            &mut block_count,
+        )?;
         let mut section_count = 0;
         check_sections(
             &self.sections,
@@ -416,6 +426,7 @@ impl Article {
             &mut footnote_ids,
             0,
             &mut section_count,
+            &mut block_count,
         )?;
         Ok(())
     }
@@ -433,7 +444,12 @@ fn check_blocks<'a>(
     media_len: usize,
     references: &HashSet<&str>,
     footnote_ids: &mut HashSet<&'a str>,
+    total_blocks: &mut usize,
 ) -> Result<(), ModelError> {
+    *total_blocks = total_blocks
+        .checked_add(blocks.len())
+        .filter(|count| *count <= MAX_BLOCKS)
+        .ok_or(ModelError::BlockCountExceeded)?;
     let mut ordinals = HashSet::new();
     for block in blocks {
         if !ordinals.insert(block.ordinal) {
@@ -502,6 +518,7 @@ fn check_sections<'a>(
     footnote_ids: &mut HashSet<&'a str>,
     depth: usize,
     visited: &mut usize,
+    total_blocks: &mut usize,
 ) -> Result<(), ModelError> {
     if !sections.is_empty() && depth >= MAX_SECTION_DEPTH {
         return Err(ModelError::SectionDepthExceeded);
@@ -518,7 +535,13 @@ fn check_sections<'a>(
         if !ordinals.insert(section.ordinal) {
             return Err(ModelError::DuplicateOrdinal);
         }
-        check_blocks(&section.blocks, media_len, references, footnote_ids)?;
+        check_blocks(
+            &section.blocks,
+            media_len,
+            references,
+            footnote_ids,
+            total_blocks,
+        )?;
         check_sections(
             &section.subsections,
             media_len,
@@ -526,6 +549,7 @@ fn check_sections<'a>(
             footnote_ids,
             depth + 1,
             visited,
+            total_blocks,
         )?;
     }
     Ok(())
@@ -623,6 +647,34 @@ mod tests {
         let mut a = article();
         a.sections = vec![section];
         assert_eq!(a.validate(), Err(ModelError::SectionDepthExceeded));
+    }
+
+    #[test]
+    fn canonical_block_budget_is_global_across_lead_and_nested_sections() {
+        let mut a = article();
+        a.lead = (0..MAX_BLOCKS as u32)
+            .map(|ordinal| Block {
+                ordinal,
+                content: BlockContent::Paragraph("text".into()),
+            })
+            .collect();
+        a.sections[0].blocks.clear();
+        // Exactly the budget is allowed, including nested sections.
+        assert_eq!(a.validate(), Ok(()));
+        a.sections[0].subsections.push(Section {
+            ordinal: 1,
+            heading: "Nested".into(),
+            blocks: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("one more".into()),
+            }],
+            subsections: vec![],
+        });
+        assert_eq!(a.validate(), Err(ModelError::BlockCountExceeded));
+        // A single oversized list of blocks is rejected before scanning
+        // duplicate ordinals, bounding validation work for hostile input.
+        a.lead = vec![a.lead[0].clone(); MAX_BLOCKS + 1];
+        assert_eq!(a.validate(), Err(ModelError::BlockCountExceeded));
     }
 
     #[test]
