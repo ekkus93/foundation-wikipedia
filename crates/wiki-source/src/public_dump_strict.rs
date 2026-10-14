@@ -14,7 +14,14 @@ pub fn verify_pinned_staged_export_exact(
     inventory: &PinnedInventory,
     max_member_bytes: u64,
 ) -> Result<u64, StagedDumpError> {
-    let bytes = verify_pinned_staged_export(root, inventory, max_member_bytes)?;
+    // Inspect the complete tree BEFORE opening any staged member or sidecar.
+    // The digest verifier alone cannot prevent following an unexpected link.
+    let root_kind = fs::symlink_metadata(root)
+        .map_err(StagedDumpError::Io)?
+        .file_type();
+    if !root_kind.is_dir() {
+        return Err(StagedDumpError::UnsafeStagingPath);
+    }
     let files: BTreeSet<&str> = inventory
         .members()
         .iter()
@@ -71,7 +78,7 @@ pub fn verify_pinned_staged_export_exact(
             }
         }
     }
-    Ok(bytes)
+    verify_pinned_staged_export(root, inventory, max_member_bytes)
 }
 
 #[cfg(test)]
@@ -111,6 +118,26 @@ mod tests {
         );
         fs::write(root.join("rogue.txt"), b"unexpected").unwrap();
         assert!(verify_pinned_staged_export_exact(&root, &inventory, 4096).is_err());
+        fs::remove_file(root.join("rogue.txt")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = root.join("outside-link");
+            symlink(&root, &link).unwrap();
+            assert!(matches!(
+                verify_pinned_staged_export_exact(&root, &inventory, 4096),
+                Err(StagedDumpError::UnsafeStagingPath)
+            ));
+            fs::remove_file(link).unwrap();
+
+            let root_link = root.with_extension("symlink");
+            symlink(&root, &root_link).unwrap();
+            assert!(matches!(
+                verify_pinned_staged_export_exact(&root_link, &inventory, 4096),
+                Err(StagedDumpError::UnsafeStagingPath)
+            ));
+            fs::remove_file(root_link).unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }
