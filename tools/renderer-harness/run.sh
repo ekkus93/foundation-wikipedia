@@ -5,7 +5,8 @@
 set -euo pipefail
 
 OUT="${1:?usage: run.sh OUT_DIR}"
-IMAGE="${MW_IMAGE:-mediawiki:1.43}"
+# Digest of mediawiki:1.43 (MediaWiki 1.43.11, PHP 8.3.35) accepted in CI run 38799628018.
+IMAGE="${MW_IMAGE:-mediawiki@sha256:76b3d47b50c4e4a78f82e814917421cb62c49b0c56b4a0f981cd74e2bddd10ac}"
 NAME="fwr-harness-$$"
 PORT="${MW_PORT:-8080}"
 BASE="http://127.0.0.1:${PORT}"
