@@ -214,3 +214,13 @@ At exact code SHA **`beb9c11d2b4290cec402c4c1082f65b8c99d09a1`**, `stage_observe
 - [Platform shells CI 38674391936](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38674391936) — **passed** at the same SHA.
 
 These checks establish consistency of the diagnostic output with the declared source manifest, **not** independent Wikimedia authenticity or generation completeness. Wikitext still requires a production Rust importer, revision-pinned Parsoid/MediaWiki rendering, mandatory offline media/attribution and full pack acceptance. **SRC-003 remains unchecked.**
+
+## Independent expected-ID census gate for diagnostic revision exports (2026-10-14)
+
+At exact source SHA **`601d2b1f3f0fcf143f2bb8cfa07397ad0ccc1147`**, the optional digest-pinned expected page-ID census gate now applies to **all three** diagnostic export modes: `ids`, `revision-jsonl`, and `revision-content-jsonl`. For JSONL modes, the generated revision records are self-audited first; then the separately supplied LF-delimited, strictly increasing expected page-ID census is compared record-by-record against the JSONL page identities **before** no-overwrite publication. Invalid, missing or extra IDs and digest mismatches leave no published artifact. The existing source-member digest and scope checks remain mandatory.
+
+- [Rust workspace CI 38678104016](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38678104016) — **passed** on exact source SHA, including Python regression discovery.
+- [Platform shells CI 38678103940](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38678103940) — **passed** on the same source SHA.
+- Deterministic fixtures exercise both revision JSONL modes, exact census agreement, missing/extra/different expected IDs, and expected-digest mismatch.
+
+**Limitations:** The expected census is caller-provided and digest-pinned, not independently authenticated or proven to describe the same Wikimedia publication generation and namespace. This extends the optional local completeness comparison to revision-bearing diagnostic exports; it does not establish publisher authenticity, a portable Rust XML importer, Parsoid/MediaWiki rendering fidelity, mandatory offline visuals, or pack acceptance. **SRC-003 remains unchecked.**
