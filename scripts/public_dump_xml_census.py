@@ -377,6 +377,13 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
         raise DumpDecodeError("invalid diagnostic output format")
     if (expected_census is None) != (expected_sha256 is None):
         raise DumpDecodeError("expected census and SHA-256 must be supplied together")
+    generation = manifest.get("generation_id") if isinstance(manifest, dict) else None
+    if not isinstance(generation, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", generation):
+        raise DumpDecodeError("invalid current-content generation calendar date")
+    try:
+        datetime.strptime(generation, "%Y-%m-%d")
+    except ValueError as exc:
+        raise DumpDecodeError("invalid current-content generation calendar date") from exc
     if type(namespace) is not int or not 0 <= namespace <= MAX_NAMESPACE_ID:
         raise DumpDecodeError("invalid namespace")
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", filename) or filename.endswith("."):
