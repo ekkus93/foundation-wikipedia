@@ -377,7 +377,7 @@ class DumpXmlTests(unittest.TestCase):
         earlier = page(1).replace("2026-10-01T00:00:00Z", "2026-09-30T23:59:59Z")
         self.add(1, 100, f"<mediawiki>{earlier}</mediawiki>")
         path, count = self.run_census()
-        self.assertEqual((count, path.read_bytes()), (1, b"1\\n"))
+        self.assertEqual((count, path.read_bytes()), (1, b"1\n"))
 
     def test_future_dated_revision_in_excluded_namespace_is_rejected(self):
         future = page(1, ns=1).replace("2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z")
@@ -386,7 +386,7 @@ class DumpXmlTests(unittest.TestCase):
             self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
-        def test_revision_and_contributor_ids_never_become_page_ids(self):
+    def test_revision_and_contributor_ids_never_become_page_ids(self):
         self.add(1, 100, f"<mediawiki>{page(42, revision=9000)}</mediawiki>")
         path, count = self.run_census()
         self.assertEqual((count, path.read_bytes()), (1, b"42\n"))
