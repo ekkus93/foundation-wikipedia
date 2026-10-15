@@ -325,8 +325,7 @@ mod tests {
     #[test]
     fn rejects_revisions_dated_after_the_pinned_publication_day() {
         for future in ["2026-10-02T00:00:00Z", "2027-01-01T00:00:00Z"] {
-            let input = record(1, "Valid")
-                .replace("2026-10-01T12:30:00Z", future);
+            let input = record(1, "Valid").replace("2026-10-01T12:30:00Z", future);
             let mut lines = DiagnosticRevisionLines::new(
                 Cursor::new(input.as_bytes()),
                 "enwiki",
@@ -341,8 +340,7 @@ mod tests {
             assert!(lines.next().is_none());
         }
 
-        let earlier = record(1, "Valid")
-            .replace("2026-10-01T12:30:00Z", "2026-09-30T23:59:59Z");
+        let earlier = record(1, "Valid").replace("2026-10-01T12:30:00Z", "2026-09-30T23:59:59Z");
         assert_eq!(parse(earlier.as_bytes()).unwrap().len(), 1);
         assert_eq!(parse(record(1, "Valid").as_bytes()).unwrap().len(), 1);
     }
