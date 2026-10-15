@@ -1,4 +1,5 @@
 import io
+import hashlib
 import sys
 import unittest
 from pathlib import Path
@@ -69,6 +70,20 @@ class FilterTests(unittest.TestCase):
             sample_min_bytes=30,
         )
         self.assertEqual(["Good"], [s["title"] for s in summary["sample"]])
+
+    def test_sample_hashes_decoded_unicode_wikitext_not_escaped_xml(self):
+        source_text = ARTICLE + " München <math>x</math>"
+        summary, _ = run([page("Mathematics", 0, 7, 17, source_text)], sample_min_bytes=10)
+        sample = summary["sample"][0]
+        self.assertEqual(hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+                         sample["source_wikitext_sha256"])
+        self.assertEqual(len(source_text.encode("utf-8")), sample["bytes"])
+
+    def test_rejects_declared_wikitext_byte_mismatch_for_sample(self):
+        source = page("Bad", 0, 7, 17, ARTICLE)
+        source = source.replace(f'bytes="{len(ARTICLE.encode())}"', 'bytes="1"')
+        with self.assertRaisesRegex(f.DumpFormatError, "byte length mismatch"):
+            run([source], sample_min_bytes=1)
 
     def test_titles_are_unescaped_in_the_sample(self):
         summary, _ = run([page("A &amp; B", 0, 1, 11, ARTICLE)], sample_min_bytes=10)

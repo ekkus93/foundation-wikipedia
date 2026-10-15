@@ -13,6 +13,7 @@ import html
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 
 KEEP_NAMESPACES = (8, 10, 828)
 SAMPLE_LIMIT = 25
@@ -28,6 +29,37 @@ _TEXT_BYTES = re.compile(r'^      <text bytes="(\d+)"')
 
 class DumpFormatError(ValueError):
     pass
+
+
+MAX_SAMPLE_PAGE_XML_BYTES = 64 * 1024 * 1024
+
+
+def _sample_wikitext_sha256(block, declared_bytes):
+    """Decode a sampled original XML revision and hash its actual UTF-8 text.
+
+    The standalone page XML is extracted from the already verified source
+    member; the whole-block bound prevents parser memory growth.
+    """
+    markup = "".join(block)
+    if len(markup.encode("utf-8")) > MAX_SAMPLE_PAGE_XML_BYTES:
+        raise DumpFormatError("sample page XML exceeds bounded decode limit")
+    try:
+        page = ET.fromstring(markup)
+    except ET.ParseError as error:
+        raise DumpFormatError("malformed sampled page XML") from error
+    if page.tag != "page":
+        raise DumpFormatError("unexpected sampled XML root")
+    revisions = page.findall("revision")
+    if len(revisions) != 1:
+        raise DumpFormatError("ambiguous sampled revision")
+    texts = revisions[0].findall("text")
+    if len(texts) != 1 or len(texts[0]):
+        raise DumpFormatError("missing or nested sampled wikitext")
+    wikitext = texts[0].text or ""
+    encoded = wikitext.encode("utf-8")
+    if len(encoded) != declared_bytes:
+        raise DumpFormatError("sampled wikitext declared byte length mismatch")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _page_record(block):
@@ -99,7 +131,9 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
                 key = str(record["ns"])
                 summary["kept_by_namespace"][key] = summary["kept_by_namespace"].get(key, 0) + 1
             if is_sample:
-                summary["sample"].append({k: record[k] for k in ("title", "page_id", "revision_id", "timestamp", "bytes")})
+                sample = {k: record[k] for k in ("title", "page_id", "revision_id", "timestamp", "bytes")}
+                sample["source_wikitext_sha256"] = _sample_wikitext_sha256(block, record["bytes"])
+                summary["sample"].append(sample)
             block = None
         elif block is None:
             if line == "  <page>\n":
