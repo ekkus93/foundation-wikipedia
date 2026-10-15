@@ -8,6 +8,8 @@ on:
       - 'scripts/test_filter_dump_for_render.py'
       - 'scripts/compare_rendered_html.py'
       - 'scripts/test_compare_rendered_html.py'
+      - 'scripts/inventory_rendered_visuals.py'
+      - 'scripts/test_inventory_rendered_visuals.py'
       - '.github/workflows/renderer-dump-qualification.yml'
   workflow_dispatch:
 
@@ -22,7 +24,7 @@ jobs:
       - name: Checkout exact head
         uses: actions/checkout@v4
       - name: Unit tests
-        run: python3 -m unittest scripts/test_filter_dump_for_render.py scripts/test_compare_rendered_html.py
+        run: python3 -m unittest scripts/test_filter_dump_for_render.py scripts/test_compare_rendered_html.py scripts/test_inventory_rendered_visuals.py
       - name: Discover and stage the official angwiki export (SHA-256 verified)
         run: |
           set -euo pipefail
