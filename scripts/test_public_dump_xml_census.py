@@ -87,14 +87,25 @@ class DumpXmlTests(unittest.TestCase):
         records = [json.loads(line) for line in result.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(count, 2)
         self.assertEqual(records, [
-            {"page_id": 1, "namespace": 0, "title": "München",
+            {"schema_version": 1, "project": "enwiki", "generation_id": "2026-10-01",
+             "page_id": 1, "namespace": 0, "title": "München",
              "revision_id": 300, "timestamp": "2026-10-01T00:00:00Z",
              "redirect_target": None},
-            {"page_id": 2, "namespace": 0, "title": "Page 2",
+            {"schema_version": 1, "project": "enwiki", "generation_id": "2026-10-01",
+             "page_id": 2, "namespace": 0, "title": "Page 2",
              "revision_id": 777, "timestamp": "2026-10-01T00:00:00Z",
              "redirect_target": "Physics"},
         ])
         self.assertEqual(result.read_bytes().count(b"\n"), 2)
+
+    def test_titles_with_control_characters_rejected_for_all_formats(self):
+        for title in ("Bad\\nTitle", "Bad\\tTitle", "Bad\\rTitle"):
+            self.manifest["files"].clear()
+            xml = page(1).replace("Page 1", title)
+            self.add(1, 100, f"<mediawiki>{xml}</mediawiki>")
+            with self.assertRaisesRegex(DumpDecodeError, "page title"):
+                stage_observed_census(self.manifest, self.staging, self.output, "observed.ids")
+            self.assertEqual(list(self.output.iterdir()), [])
 
     def test_revision_content_jsonl_retains_legacy_and_main_slot_wikitext(self):
         first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\\nSecond line")
@@ -110,6 +121,8 @@ class DumpXmlTests(unittest.TestCase):
         self.assertEqual(records[0]["wikitext"], "MediaWiki & Unicode: München\\nSecond line")
         self.assertEqual(records[1]["wikitext"], "== Heading == & detail")
         for record in records:
+            self.assertEqual((record["schema_version"], record["project"],
+                              record["generation_id"]), (1, "enwiki", "2026-10-01"))
             self.assertEqual(record["wikitext_sha256"],
                              hashlib.sha256(record["wikitext"].encode("utf-8")).hexdigest())
             self.assertEqual(record["timestamp"], "2026-10-01T00:00:00Z")
@@ -120,6 +133,7 @@ class DumpXmlTests(unittest.TestCase):
             "",
             "<text>one</text><text>two</text>",
             '<text deleted="deleted"/>',
+            '<text><nested/></text>',
             '<slots><slot role="other"><text>wrong</text></slot></slots>',
             '<slots><slot role="main"><text>one</text></slot>'
             '<slot role="main"><text>two</text></slot></slots>',

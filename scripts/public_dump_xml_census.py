@@ -62,7 +62,8 @@ def _positive(text):
 
 def _page_identity(page):
     title = _one(page, "title").text
-    if not title or len(title.encode("utf-8")) > 4096 or title != title.strip():
+    if (not title or len(title.encode("utf-8")) > 4096 or title != title.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in title)):
         raise DumpDecodeError("invalid page title")
     namespace = _one(page, "ns").text
     if namespace is None or len(namespace) > 10 or not re.fullmatch(r"0|[1-9][0-9]*", namespace):
@@ -122,7 +123,7 @@ def _revision_wikitext(revision):
         text = _one(candidates[0], "text")
     else:
         raise DumpDecodeError("missing or ambiguous revision wikitext")
-    if "deleted" in text.attrib or any(child for child in text):
+    if "deleted" in text.attrib or len(text):
         raise DumpDecodeError("unavailable or invalid revision wikitext")
     return text.text or ""
 
@@ -171,7 +172,7 @@ class HashingCompressed:
 
 
 def decode_member(path, first, last, output, namespace, expected_sha256, expected_size,
-                  output_format="ids"):
+                  output_format="ids", project=None, generation=None):
     """Stream a complete, well-formed bzip2 XML member to a pending sink."""
     previous = first - 1
     pages = 0
@@ -229,6 +230,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                                 output.write(f"{page_id}\n".encode("ascii"))
                             else:
                                 record = {
+                                    "schema_version": 1, "project": project,
+                                    "generation_id": generation,
                                     "page_id": page_id, "namespace": ns,
                                     "title": title, "revision_id": revision_id,
                                     "timestamp": timestamp, "redirect_target": redirect,
@@ -361,7 +364,8 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
             for first, last, name in shards:
                 item = metadata[name]
                 selected += decode_member(Path(staging) / name, first, last, sink, namespace,
-                                          item["sha256"], item["bytes"], output_format)
+                                          item["sha256"], item["bytes"], output_format,
+                                          manifest["project"], manifest["generation_id"])
             if not selected:
                 raise DumpDecodeError("selected namespace has no pages")
             sink.flush()
