@@ -112,3 +112,12 @@ The Python diagnostic importer now accepts `--expected-census PATH --expected-sh
 - [Platform shells CI 38657955492](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38657955492) — success at the same SHA.
 
 **Limitations:** This protects a diagnostic importer from unbounded non-page XML accumulation; it does not establish independently authenticated Wikimedia source generation, an independent complete census, portable Rust importer integration, full renderer fidelity, mandatory offline media or end-to-end pack acceptance. **SRC-003 remains unchecked**. The canonical TODO was restored on master at `f80a53a32918eeb7de74c6885a87a689bdc13ec1` using the original `007b16e023ce30e31851216ce147e2dc6c1c4dbc` file blob, retaining all 1,536 lines.
+
+## Diagnostic source staging inventory qualification
+
+At code SHA `4ceeebc6f5d3311266046748feab05e9ae2af894`, source staging rejects undeclared files, symlinks, subdirectories, symlinked ancestor paths, and Unix staging directories writable by other users. Regression tests cover each rejection and verify normal pinned members still pass. This is a local diagnostic safety improvement, not proof of source authenticity or complete Wikimedia coverage.
+
+- Rust workspace CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/38660466535 (passed).
+- Platform shells CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/38660466246 (passed).
+
+SRC-003 remains unchecked pending independent publication authentication, completeness verification, portable Rust importing, rendering fidelity, and required offline media.
