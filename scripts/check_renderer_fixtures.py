@@ -8,6 +8,7 @@ non-repeatable render never counts as success.
 """
 import argparse
 import hashlib
+import html.parser
 import json
 import sys
 import urllib.error
@@ -71,6 +72,35 @@ def load_manifest(path):
     return manifest
 
 
+class _TextExtractor(html.parser.HTMLParser):
+    """Collect rendered text; attributes (including data-mw) are never text."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def visible_text(markup):
+    """Whitespace-normalized text content, so inline spans don't split phrases."""
+    extractor = _TextExtractor()
+    extractor.feed(markup)
+    extractor.close()
+    return " ".join("".join(extractor.parts).split())
+
+
 def _html_of(result):
     payload = result.get("payload")
     html = payload.get("html") if isinstance(payload, dict) else None
@@ -85,7 +115,7 @@ def check_page(result, expect):
     html = _html_of(result)
     target = expect.get("redirect_to")
     if target is not None:
-        location = result.get("location") or ""
+        location = urllib.parse.unquote(result.get("location") or "")
         redirected = status in (301, 302, 303, 307, 308) and target in location
         in_body = status == 200 and html is not None and "mw:PageProp/redirect" in html and target in html
         if not (redirected or in_body):
@@ -103,6 +133,10 @@ def check_page(result, expect):
         return failures + [f"{title}: empty rendered HTML"]
     for needle in expect.get("contains", []):
         if needle not in html:
+            failures.append(f"{title}: missing expected markup {needle!r}")
+    text = visible_text(html)
+    for needle in expect.get("text_contains", []):
+        if needle not in text:
             failures.append(f"{title}: missing expected content {needle!r}")
     for needle in FORBIDDEN_DEFAULT + tuple(expect.get("not_contains", [])):
         if needle in html:

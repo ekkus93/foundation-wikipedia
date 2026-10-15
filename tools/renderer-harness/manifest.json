@@ -14,15 +14,17 @@
       "title": "Gravity (fixture)",
       "expect": {
         "contains": [
+          "wikitable",
+          "mw:Extension/ref",
+          "mw:Extension/references"
+        ],
+        "text_contains": [
           "Hello, Wikipedia!",
           "RENDERED (8)",
           "yes / 2",
-          "wikitable",
           "Earth",
           "5.97e24",
           "1687",
-          "mw:Extension/ref",
-          "mw:Extension/references",
           "Fixture source one."
         ]
       },
@@ -30,11 +32,11 @@
     },
     {
       "title": "Gravedad (fixture)",
-      "expect": {"contains": ["Hello, mundo!", "niño, camión, año"]}
+      "expect": {"text_contains": ["Hello, mundo!", "niño, camión, año"]}
     },
     {
       "title": "重力 (fixture)",
-      "expect": {"contains": ["重力", "Hello, 世界!"]}
+      "expect": {"text_contains": ["重力", "Hello, 世界!"]}
     },
     {
       "title": "Fixture gravity",

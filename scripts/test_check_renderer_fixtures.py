@@ -26,10 +26,23 @@ class CheckPageTests(unittest.TestCase):
     def test_passes_when_expected_content_is_present(self):
         self.assertEqual([], crf.check_page(page("T"), {"contains": ["Hello, Wikipedia!"]}))
 
-    def test_reports_missing_expected_content(self):
-        failures = crf.check_page(page("T", "<p>nothing</p>"), {"contains": ["RENDERED (8)"]})
+    def test_reports_missing_expected_markup_and_text(self):
+        failures = crf.check_page(page("T", "<p>nothing</p>"), {"contains": ["mw:Extension/ref"]})
+        self.assertEqual(1, len(failures))
+        self.assertIn("missing expected markup", failures[0])
+        failures = crf.check_page(page("T", "<p>nothing</p>"), {"text_contains": ["RENDERED (8)"]})
         self.assertEqual(1, len(failures))
         self.assertIn("missing expected content", failures[0])
+
+    def test_text_matching_spans_inline_markup_but_ignores_attributes(self):
+        # Parsoid wraps each parser-function result in its own span.
+        spanned = '<p>Parser functions: <span typeof="mw:Transclusion">yes</span> / <span>2</span></p>'
+        self.assertEqual([], crf.check_page(page("T", spanned), {"text_contains": ["yes / 2"]}))
+        hidden = "<p><span data-mw='{\"wt\":\"secret\"}'>shown</span></p>"
+        self.assertTrue(crf.check_page(page("T", hidden), {"text_contains": ["secret"]}))
+        scripted = "<p>shown</p><script>var secret = 1;</script>"
+        self.assertTrue(crf.check_page(page("T", scripted), {"text_contains": ["secret"]}))
+        self.assertEqual("a b &", crf.visible_text("<p>a</p>\n<p> b &amp; </p>"))
 
     def test_unexpanded_template_or_lua_error_is_forbidden(self):
         for bad in ("<p>{{Greet|x}}</p>", '<p>Script error: No such module "Words".</p>'):
@@ -55,6 +68,10 @@ class CheckPageTests(unittest.TestCase):
         expect = {"redirect_to": "Gravity_(fixture)"}
         by_header = {"title": "R", "status": 307, "location": "/rest.php/v1/page/Gravity_(fixture)/with_html", "payload": None}
         self.assertEqual([], crf.check_page(by_header, expect))
+        encoded = dict(by_header, location="/rest.php/v1/page/Gravity_%28fixture%29/with_html")
+        self.assertEqual([], crf.check_page(encoded, expect))
+        wrong = dict(by_header, location="/rest.php/v1/page/Other/with_html")
+        self.assertTrue(crf.check_page(wrong, expect))
         body = '<link rel="mw:PageProp/redirect" href="./Gravity_(fixture)"/>'
         self.assertEqual([], crf.check_page(page("R", body), expect))
         self.assertTrue(crf.check_page(page("R", "<p>plain</p>"), expect))
