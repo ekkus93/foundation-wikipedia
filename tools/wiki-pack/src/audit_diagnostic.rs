@@ -185,7 +185,9 @@ mod tests {
                    generation: &str,
                    namespace: i32,
                    expected: &str| {
-            super::run(revisions, census, project, generation, namespace, expected, None)
+            super::run(
+                revisions, census, project, generation, namespace, expected, None,
+            )
         };
         assert_eq!(
             run(&revisions, &census, "enwiki", "2026-10-01", 0, &good_digest),
