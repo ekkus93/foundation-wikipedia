@@ -19,15 +19,11 @@ const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
 /// A failed exec with ETXTBSY starts no child and is safe to retry. Keep
 /// retries bounded; permission errors and missing executables fail immediately.
-fn retry_executable_busy<T>(
-    mut spawn: impl FnMut() -> std::io::Result<T>,
-) -> std::io::Result<T> {
+fn retry_executable_busy<T>(mut spawn: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
     let mut retries = 0;
     loop {
         match spawn() {
-            Err(error)
-                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 3 =>
-            {
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 3 => {
                 retries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(20 * retries));
             }
@@ -96,46 +92,46 @@ impl MediaWikiTransport for CurlTransport {
         // Even when Content-Length is absent, stdout is capped while reading.
         let mut child = retry_executable_busy(|| {
             Command::new(&self.executable)
-            .args([
-                "-q",
-                "--silent",
-                "--show-error",
-                "--globoff",
-                "--user-agent",
-                "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)",
-                "--header",
-                "Accept: application/json",
-                "--proto",
-                "=https",
-                "--max-time",
-                "15",
-                "--connect-timeout",
-                "5",
-                "--max-redirs",
-                "0",
-                "--max-filesize",
-                &max_bytes.to_string(),
-                "--output",
-                "-",
-                "--write-out",
-                "%{stderr}\\nFW_HTTP_CODE:%{http_code}\\n",
-                "--",
-                url,
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+                .args([
+                    "-q",
+                    "--silent",
+                    "--show-error",
+                    "--globoff",
+                    "--user-agent",
+                    "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)",
+                    "--header",
+                    "Accept: application/json",
+                    "--proto",
+                    "=https",
+                    "--max-time",
+                    "15",
+                    "--connect-timeout",
+                    "5",
+                    "--max-redirs",
+                    "0",
+                    "--max-filesize",
+                    &max_bytes.to_string(),
+                    "--output",
+                    "-",
+                    "--write-out",
+                    "%{stderr}\\nFW_HTTP_CODE:%{http_code}\\n",
+                    "--",
+                    url,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
         })
-            .map_err(|error| {
-                // Keep the public error stable, but retain a safe OS-level
-                // diagnostic for intermittent runner spawn failures.
-                eprintln!(
-                    "wiki-source curl spawn failed: kind={:?}, raw_os_error={:?}",
-                    error.kind(),
-                    error.raw_os_error()
-                );
-                CurlTransportError::SpawnFailed
-            })?;
+        .map_err(|error| {
+            // Keep the public error stable, but retain a safe OS-level
+            // diagnostic for intermittent runner spawn failures.
+            eprintln!(
+                "wiki-source curl spawn failed: kind={:?}, raw_os_error={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+            CurlTransportError::SpawnFailed
+        })?;
 
         // Read both subprocess pipes concurrently to avoid stderr pipe deadlock.
         // Keep only the last 64 KiB, including the final HTTP status marker.
@@ -329,7 +325,10 @@ done
             denied += 1;
             Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
         });
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
         assert_eq!(denied, 1);
     }
 
