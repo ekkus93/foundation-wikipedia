@@ -22,6 +22,7 @@ MAX_MEMBERS = 100000
 # aggregate bound applies across all members, not separately per shard.
 MAX_MEMBER_BYTES = 64 * 1024**3
 MAX_TOTAL_BYTES = 4 * 1024**4
+MAX_MANIFEST_BYTES = 32 * 1024**2
 CHUNK = 1024 * 1024
 
 
@@ -170,12 +171,40 @@ def verify_source_bytes(manifest, directory):
     return len(members)
 
 
+def load_source_manifest(path):
+    """Read one bounded, stable, regular manifest without following symlinks."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        with os.fdopen(os.open(path, flags), "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or not 0 < before.st_size <= MAX_MANIFEST_BYTES):
+                raise SourceVerificationError("unsafe or oversized source manifest")
+            data = handle.read(MAX_MANIFEST_BYTES + 1)
+            after = os.fstat(handle.fileno())
+            if (len(data) != before.st_size
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                        before.st_ctime_ns, before.st_nlink)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                        after.st_ctime_ns, after.st_nlink)):
+                raise SourceVerificationError("source manifest changed during reading")
+    except OSError as exc:
+        raise SourceVerificationError("unsafe or unreadable source manifest") from exc
+    try:
+        result = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise SourceVerificationError("malformed source manifest") from exc
+    if not isinstance(result, dict):
+        raise SourceVerificationError("source manifest must be a JSON object")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
     parser.add_argument("directory", type=Path)
     args = parser.parse_args()
-    metadata = json.loads(args.manifest.read_text(encoding="utf-8"))
+    metadata = load_source_manifest(args.manifest)
     verified = verify_source_bytes(metadata, args.directory)
     print(f"Verified {verified} staged source file(s). Upstream authenticity not established.")
 

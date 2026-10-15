@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from verify_source_staging import SourceVerificationError, verify_source_bytes
+from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
 
 class SourceStagingTests(unittest.TestCase):
@@ -33,6 +33,29 @@ class SourceStagingTests(unittest.TestCase):
     def reject(self, phrase):
         with self.assertRaisesRegex(SourceVerificationError, phrase):
             verify_source_bytes(self.manifest, self.dir)
+
+    def test_bounded_cli_manifest_loader(self):
+        manifest_file = Path(self.tempdir.name) / "manifest.json"
+        manifest_file.write_text('{"project": "enwiki", "files": []}', encoding="utf-8")
+        self.assertEqual(load_source_manifest(manifest_file)["project"], "enwiki")
+        with patch("verify_source_staging.MAX_MANIFEST_BYTES", 10):
+            with self.assertRaisesRegex(SourceVerificationError, "oversized"):
+                load_source_manifest(manifest_file)
+        manifest_file.write_bytes(b"not json")
+        with self.assertRaisesRegex(SourceVerificationError, "malformed"):
+            load_source_manifest(manifest_file)
+        manifest_file.write_bytes(b"[]")
+        with self.assertRaisesRegex(SourceVerificationError, "JSON object"):
+            load_source_manifest(manifest_file)
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow open")
+    def test_cli_manifest_loader_rejects_symlink(self):
+        manifest_file = Path(self.tempdir.name) / "manifest.json"
+        manifest_file.write_text('{"project": "enwiki"}', encoding="utf-8")
+        alias = Path(self.tempdir.name) / "manifest-link.json"
+        alias.symlink_to(manifest_file)
+        with self.assertRaisesRegex(SourceVerificationError, "unsafe"):
+            load_source_manifest(alias)
 
     def test_matching_staged_bytes_pass(self):
         self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
