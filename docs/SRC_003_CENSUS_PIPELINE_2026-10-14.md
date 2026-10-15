@@ -121,3 +121,12 @@ At code SHA `4ceeebc6f5d3311266046748feab05e9ae2af894`, source staging rejects u
 - Platform shells CI: https://github.com/ekkus93/foundation-wikipedia/actions/runs/38660466246 (passed).
 
 SRC-003 remains unchecked pending independent publication authentication, completeness verification, portable Rust importing, rendering fidelity, and required offline media.
+
+## Compressed-source declaration byte budgets (2026-10-14)
+
+At code SHA `c258fe8f314625ea4fb03760516245b9d857beaa`, the Python diagnostic staging verifier rejects manifest-declared compressed members exceeding 64 GiB each or a cumulative 4 TiB across members. The check occurs before hashing the offending member. Synthetic tests lower each budget to exercise individual and aggregate rejection and confirm that valid pinned input still passes. These are **diagnostic safety ceilings**, not evidence of Wikimedia publication authenticity or full-dump completeness.
+
+- [Rust workspace CI 38666223461](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666223461) — passed at the exact code SHA, including Python unittest discovery.
+- [Platform shells CI 38666223418](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666223418) — passed at the same SHA.
+
+The byte ceilings do not establish a source-generation cutoff, independent expected census, portable Rust XML importer, renderer fidelity or required offline media. **SRC-003 remains unchecked.**
