@@ -16,6 +16,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from audit_public_dump_revision_jsonl import RevisionAuditError, audit_revision_jsonl
 from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
 EXPORT_NS = re.compile(r"^http://www\.mediawiki\.org/xml/export-[0-9]+\.[0-9]+/$")
@@ -372,6 +373,15 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
             os.fsync(sink.fileno())
         if expected_census is not None:
             _audit_expected_census(expected_census, expected_sha256, pending, selected)
+        if output_format != "ids":
+            try:
+                audited, _ = audit_revision_jsonl(
+                    pending, manifest["project"], manifest["generation_id"],
+                    namespace, output_format == "revision-content-jsonl")
+            except RevisionAuditError as exc:
+                raise DumpDecodeError("revision record self-audit failed") from exc
+            if audited != selected:
+                raise DumpDecodeError("revision record self-audit count mismatch")
         os.link(pending, destination)  # no-overwrite, same filesystem
         published = True
         os.unlink(pending)

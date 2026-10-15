@@ -10,6 +10,7 @@ from contextlib import redirect_stdout
 import unittest
 from unittest.mock import patch
 
+from audit_public_dump_revision_jsonl import RevisionAuditError
 from public_dump_xml_census import DumpDecodeError, main, stage_observed_census
 from verify_source_staging import SourceVerificationError
 
@@ -173,6 +174,23 @@ class DumpXmlTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpDecodeError, "redirect"):
             stage_observed_census(self.manifest, self.staging, self.output,
                                   "revisions.jsonl", output_format="revision-jsonl")
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_revision_jsonl_self_audit_rejection_never_publishes(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        with patch("public_dump_xml_census.audit_revision_jsonl",
+                   side_effect=RevisionAuditError("synthetic audit failure")):
+            with self.assertRaisesRegex(DumpDecodeError, "self-audit failed"):
+                stage_observed_census(
+                    self.manifest, self.staging, self.output, "metadata.jsonl",
+                    output_format="revision-jsonl")
+        self.assertEqual(list(self.output.iterdir()), [])
+        with patch("public_dump_xml_census.audit_revision_jsonl",
+                   return_value=(0, "0" * 64)):
+            with self.assertRaisesRegex(DumpDecodeError, "count mismatch"):
+                stage_observed_census(
+                    self.manifest, self.staging, self.output, "metadata.jsonl",
+                    output_format="revision-jsonl")
         self.assertEqual(list(self.output.iterdir()), [])
 
     def test_corrupt_compressed_member_rejected_before_decode(self):
