@@ -173,6 +173,12 @@ pub fn check_declared_staged_media(
     verify_manifest_directory(manifest, root).map_err(StagedMediaError::Objects)?;
     let mut verified = BTreeMap::new();
     for object in &manifest.objects {
+        // A verified article, index or arbitrary object is not an installable
+        // media asset, even when its bytes happen to have the requested hash.
+        // Keep this in sync with wiki-pack-format::media_coverage.
+        if !object.path.starts_with("media/") {
+            continue;
+        }
         let hash = object.sha256.to_ascii_lowercase();
         match verified.insert(hash.clone(), object.bytes) {
             Some(previous) if previous != object.bytes => {
@@ -202,6 +208,44 @@ mod staged_tests {
             license: "CC BY-SA 4.0".into(),
             attribution: "Diagram by Contributor".into(),
         }
+    }
+
+    #[test]
+    fn non_media_manifest_object_cannot_satisfy_visual_requirement() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-media-namespace-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("articles")).unwrap();
+        let bytes = b"same bytes as expected diagram";
+        fs::write(root.join("articles/page.cbor"), bytes).unwrap();
+        let manifest =
+            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let digest = manifest.objects[0].sha256.clone();
+        let expected = media(
+            "diagram",
+            ResourceKind::Diagram,
+            Some(digest),
+            Some(bytes.len() as u64),
+        );
+        assert!(matches!(
+            check_declared_staged_media(&manifest, &root, &[expected.clone()]),
+            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(_)))
+        ));
+
+        fs::create_dir(root.join("media")).unwrap();
+        fs::write(root.join("media/diagram.svg"), bytes).unwrap();
+        let with_media =
+            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let result = check_declared_staged_media(&with_media, &root, &[expected]).unwrap();
+        assert_eq!(result.required_objects, 1);
+        assert_eq!(result.unique_verified_bytes, bytes.len() as u64);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
