@@ -69,7 +69,7 @@ class CompareTests(unittest.TestCase):
                     "title": "Test"}
         local = {"status": 200, "payload": {"id": 1, "latest": {
             "id": 1, "timestamp": "2026-10-01T12:00:00Z"}, "html": PAGE}}
-        with patch.object(c.crf, "fetch_page", return_value=local), \\
+        with patch.object(c.crf, "fetch_page", return_value=local), \
              patch.object(c, "fetch_live", return_value=PAGE):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         row = report["pages"][0]
@@ -80,7 +80,7 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(1, report["aggregate"]["pages_with_local_revision_id_difference"])
         self.assertEqual(0, report["aggregate"]["pages_with_source_timestamp_mismatch"])
         local["payload"]["latest"]["timestamp"] = "2026-10-02T12:00:00Z"
-        with patch.object(c.crf, "fetch_page", return_value=local), \\
+        with patch.object(c.crf, "fetch_page", return_value=local), \
              patch.object(c, "fetch_live", return_value=PAGE):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         self.assertFalse(report["pages"][0]["source_timestamp_match"])
