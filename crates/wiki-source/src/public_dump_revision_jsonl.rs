@@ -9,6 +9,12 @@ use std::io::{self, BufRead};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::public_dump_census_stream::{
+    audit_page_coverage_stream, CensusScope, StreamCoverageError,
+};
+use crate::public_dump_census_text::PageIdLines;
+use crate::public_dump_coverage::PageCoverageDelta;
+
 const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECORDS: u64 = 100_000_000;
@@ -214,6 +220,43 @@ impl<R: BufRead> Iterator for DiagnosticRevisionLines<R> {
     }
 }
 
+/// Compare page IDs from verified diagnostic revision records against an
+/// independently supplied LF-delimited census of the same project, generation
+/// and namespace. The caller must separately authenticate that independence.
+/// A corrupt revision record, malformed expected line or different set of IDs
+/// fails closed without producing a publishable completeness receipt.
+#[derive(Debug)]
+pub enum DiagnosticCensusError {
+    Record(RevisionRecordError),
+    Coverage(StreamCoverageError),
+}
+
+pub fn audit_revision_content_census<E: BufRead, O: BufRead>(
+    expected: E,
+    observed: O,
+    scope: CensusScope<'_>,
+) -> Result<PageCoverageDelta, DiagnosticCensusError> {
+    let observed_records = DiagnosticRevisionLines::new(
+        observed,
+        scope.project,
+        scope.generation,
+        scope.namespace,
+    )
+    .map_err(DiagnosticCensusError::Record)?;
+    let observed_ids = observed_records.map(|item| {
+        item.map(|record| record.page_id).map_err(|error| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}"))
+        })
+    });
+    audit_page_coverage_stream(
+        scope,
+        PageIdLines::new(expected),
+        scope,
+        observed_ids,
+    )
+    .map_err(DiagnosticCensusError::Coverage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +317,39 @@ mod tests {
             .unwrap();
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
+    }
+
+    #[test]
+    fn reconciles_revision_records_with_an_independently_supplied_id_stream() {
+        let observed = record(1, "First") + &record(42, "Second");
+        let scope = CensusScope {
+            project: "enwiki",
+            generation: "2026-10-01",
+            namespace: 0,
+        };
+        let equal = audit_revision_content_census(
+            Cursor::new(b"1\n42\n"),
+            Cursor::new(observed.as_bytes()),
+            scope,
+        )
+        .unwrap();
+        assert_eq!((equal.expected_count, equal.observed_count), (2, 2));
+
+        for expected in [&b"1\n41\n"[..], b"1\n", b"1\n42", b"42\n1\n"] {
+            assert!(audit_revision_content_census(
+                Cursor::new(expected),
+                Cursor::new(observed.as_bytes()),
+                scope,
+            )
+            .is_err());
+        }
+        let corrupted = observed.replace("\"wikitext\":\"Second\"", "\"wikitext\":\"Changed\"");
+        assert!(audit_revision_content_census(
+            Cursor::new(b"1\n42\n"),
+            Cursor::new(corrupted.as_bytes()),
+            scope,
+        )
+        .is_err());
     }
 
     #[test]
