@@ -25,6 +25,7 @@ pub mod public_dump_coverage;
 pub mod public_dump_ingest;
 pub mod public_dump_origin;
 pub mod public_dump_page_meta;
+pub mod public_dump_revision_jsonl;
 pub mod public_dump_pinned;
 pub mod public_dump_shards;
 pub mod public_dump_stage;

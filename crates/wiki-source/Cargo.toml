@@ -12,6 +12,7 @@ workspace = true
 wiki-model = { path = "../wiki-model" }
 wiki-core = { path = "../wiki-core" }
 serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
 ammonia = "4.1"
 # The root Cargo.lock keeps url 2.4.1 for Rust 1.85.1, while the separate

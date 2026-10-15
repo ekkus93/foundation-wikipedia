@@ -776,6 +776,7 @@ name = "wiki-source"
 version = "0.1.0"
 dependencies = [
  "ammonia",
+ "serde",
  "serde_json",
  "sha2",
  "url",
