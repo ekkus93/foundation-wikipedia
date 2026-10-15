@@ -97,6 +97,36 @@ def _page_identity(page):
     return page_id, namespace_id, title, revision_id, timestamp, redirect_target
 
 
+def _revision_wikitext(revision):
+    """Extract one available main-slot wikitext body, not rendered HTML.
+
+    Modern dumps may wrap content under a role=main slot, while older
+    current-content exports use revision/text directly. Do not concatenate
+    other content slots or claim exact original XML byte equivalence.
+    """
+    namespace = _namespace(revision.tag)
+    def child_name(name):
+        return f"{{{namespace}}}{name}" if namespace else name
+
+    direct = [item for item in revision if item.tag == child_name("text")]
+    slots = [item for item in revision if item.tag == child_name("slots")]
+    if len(direct) == 1 and not slots:
+        text = direct[0]
+    elif not direct and len(slots) == 1:
+        candidates = [
+            item for item in slots[0]
+            if item.tag == child_name("slot") and item.attrib.get("role") == "main"
+        ]
+        if len(candidates) != 1:
+            raise DumpDecodeError("missing or duplicate main revision slot")
+        text = _one(candidates[0], "text")
+    else:
+        raise DumpDecodeError("missing or ambiguous revision wikitext")
+    if "deleted" in text.attrib or any(child for child in text):
+        raise DumpDecodeError("unavailable or invalid revision wikitext")
+    return text.text or ""
+
+
 class BoundedDecompressed:
     """Limit decompressed input and reject XML DTD/entity declarations."""
     def __init__(self, stream):
@@ -203,6 +233,11 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                                     "title": title, "revision_id": revision_id,
                                     "timestamp": timestamp, "redirect_target": redirect,
                                 }
+                                if output_format == "revision-content-jsonl":
+                                    wikitext = _revision_wikitext(_one(elem, "revision"))
+                                    record["wikitext"] = wikitext
+                                    record["wikitext_sha256"] = hashlib.sha256(
+                                        wikitext.encode("utf-8")).hexdigest()
                                 output.write((json.dumps(
                                     record, ensure_ascii=False, sort_keys=True,
                                     separators=(",", ":")) + "\n").encode("utf-8"))
@@ -281,7 +316,7 @@ def _audit_expected_census(expected_path, expected_sha256, observed_path, select
 def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
                           expected_census=None, expected_sha256=None, output_format="ids"):
     """Verify all staged digests, decode all shards, then publish atomically."""
-    if output_format not in ("ids", "revision-jsonl"):
+    if output_format not in ("ids", "revision-jsonl", "revision-content-jsonl"):
         raise DumpDecodeError("invalid diagnostic output format")
     if output_format != "ids" and (expected_census is not None or expected_sha256 is not None):
         raise DumpDecodeError("expected census comparison requires ID format")
@@ -363,7 +398,7 @@ def main():
     parser.add_argument("--namespace", type=int, default=0)
     parser.add_argument("--expected-census", type=Path)
     parser.add_argument("--expected-sha256")
-    parser.add_argument("--format", choices=("ids", "revision-jsonl"), default="ids")
+    parser.add_argument("--format", choices=("ids", "revision-jsonl", "revision-content-jsonl"), default="ids")
     args = parser.parse_args()
     result, count = stage_observed_census(load_source_manifest(args.manifest), args.staging, args.output_dir, args.filename, args.namespace,
                                           args.expected_census, args.expected_sha256,

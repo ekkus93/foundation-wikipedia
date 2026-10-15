@@ -96,6 +96,46 @@ class DumpXmlTests(unittest.TestCase):
         ])
         self.assertEqual(result.read_bytes().count(b"\n"), 2)
 
+    def test_revision_content_jsonl_retains_legacy_and_main_slot_wikitext(self):
+        first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\\nSecond line")
+        second = page(2).replace("<text>Sample</text>",
+                                  '<slots><slot role="main"><model>wikitext</model>'
+                                  '<text>== Heading == &amp; detail</text></slot></slots>')
+        self.add(1, 100, f"<mediawiki>{first}{second}</mediawiki>")
+        path, count = stage_observed_census(
+            self.manifest, self.staging, self.output, "content.jsonl",
+            output_format="revision-content-jsonl")
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(count, 2)
+        self.assertEqual(records[0]["wikitext"], "MediaWiki & Unicode: München\\nSecond line")
+        self.assertEqual(records[1]["wikitext"], "== Heading == & detail")
+        for record in records:
+            self.assertEqual(record["wikitext_sha256"],
+                             hashlib.sha256(record["wikitext"].encode("utf-8")).hexdigest())
+            self.assertEqual(record["timestamp"], "2026-10-01T00:00:00Z")
+        self.assertEqual(sorted(p.name for p in self.output.iterdir()), ["content.jsonl"])
+
+    def test_revision_content_jsonl_rejects_missing_or_ambiguous_main_text(self):
+        bad_texts = (
+            "",
+            "<text>one</text><text>two</text>",
+            '<text deleted="deleted"/>',
+            '<slots><slot role="other"><text>wrong</text></slot></slots>',
+            '<slots><slot role="main"><text>one</text></slot>'
+            '<slot role="main"><text>two</text></slot></slots>',
+            '<text>one</text><slots><slot role="main"><text>two</text></slot></slots>',
+        )
+        for replacement in bad_texts:
+            self.manifest["files"].clear()
+            bad = page(1).replace("<text>Sample</text>", replacement)
+            self.add(1, 100, f"<mediawiki>{bad}</mediawiki>")
+            with self.subTest(replacement=replacement):
+                with self.assertRaisesRegex(DumpDecodeError, "revision|wikitext"):
+                    stage_observed_census(
+                        self.manifest, self.staging, self.output, "content.jsonl",
+                        output_format="revision-content-jsonl")
+                self.assertEqual(list(self.output.iterdir()), [])
+
     def test_revision_jsonl_rejects_unsafe_redirect_and_incompatible_census_gate(self):
         self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
         with self.assertRaisesRegex(DumpDecodeError, "requires ID format"):
