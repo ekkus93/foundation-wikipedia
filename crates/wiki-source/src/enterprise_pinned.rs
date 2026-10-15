@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::enterprise::JoinedEnterpriseArticle;
 use crate::enterprise_ndjson::InputKind;
 use crate::enterprise_verified::{
-    enterprise_normalize, enterprise_normalize_article,
-    import_verified_enterprise_ndjson_scoped, VerifiedImportError,
+    enterprise_normalize, enterprise_normalize_article, import_verified_enterprise_ndjson_scoped,
+    VerifiedImportError,
 };
 use crate::join::DeletionMarker;
 
@@ -193,10 +193,7 @@ mod tests {
 
     #[test]
     fn rejects_revision_mismatch_even_when_digests_match() {
-        let different = REGULAR.replace(
-            r#""identifier":17"#,
-            r#""identifier":18"#,
-        );
+        let different = REGULAR.replace(r#""identifier":17"#, r#""identifier":18"#);
         assert!(matches!(
             import_pinned_enterprise_ndjson_scoped(
                 Cursor::new(STRUCTURED),
