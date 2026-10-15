@@ -331,7 +331,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(lines.next().unwrap().unwrap().page_id, 42);
-        assert!(matches!(lines.next(), Some(Err(RevisionRecordError::InvalidOrder))));
+        assert!(matches!(
+            lines.next(),
+            Some(Err(RevisionRecordError::InvalidOrder))
+        ));
         assert!(lines.next().is_none());
 
         let input = record(42, "First") + &record(42, "Duplicate");
