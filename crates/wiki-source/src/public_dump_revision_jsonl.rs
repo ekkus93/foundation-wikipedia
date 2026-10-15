@@ -139,11 +139,14 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
     }
 
     fn validate(&self, record: &DiagnosticContentRevision) -> Result<(), RevisionRecordError> {
+        if record.page_id != 0 && record.page_id <= self.previous {
+            return Err(RevisionRecordError::InvalidOrder);
+        }
         if record.schema_version != 1
             || record.project != self.project
             || record.generation_id != self.generation
             || record.namespace != self.namespace
-            || record.page_id <= self.previous
+            || record.page_id == 0
             || record.page_id > i64::MAX as u64
             || record.revision_id == 0
             || record.revision_id > i64::MAX as u64
@@ -315,6 +318,33 @@ mod tests {
             .unwrap();
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
+    }
+
+    #[test]
+    fn classifies_out_of_order_records_and_poisoned_iteration() {
+        let input = record(42, "First") + &record(41, "Out of order") + &record(43, "Later");
+        let mut lines = DiagnosticRevisionLines::new(
+            BufReader::with_capacity(3, Cursor::new(input.as_bytes())),
+            "enwiki",
+            "2026-10-01",
+            0,
+        )
+        .unwrap();
+        assert_eq!(lines.next().unwrap().unwrap().page_id, 42);
+        assert!(matches!(lines.next(), Some(Err(RevisionRecordError::InvalidOrder))));
+        assert!(lines.next().is_none());
+
+        let input = record(42, "First") + &record(42, "Duplicate");
+        let mut lines = DiagnosticRevisionLines::new(
+            Cursor::new(input.as_bytes()),
+            "enwiki",
+            "2026-10-01",
+            0,
+        )
+        .unwrap();
+        assert!(lines.next().unwrap().is_ok());
+        assert!(matches!(lines.next(), Some(Err(RevisionRecordError::InvalidOrder))));
+        assert!(lines.next().is_none());
     }
 
     #[test]
