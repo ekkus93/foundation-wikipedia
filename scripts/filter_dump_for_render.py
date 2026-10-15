@@ -35,6 +35,8 @@ MAX_SAMPLE_PAGE_XML_BYTES = 64 * 1024 * 1024
 # Bound *every* page, including non-sampled template/module pages, before
 # retaining a potentially huge XML block for diagnostic rendering.
 MAX_PAGE_XML_BYTES = 64 * 1024 * 1024
+# Limit preamble/siteinfo allocation independently of individual page size.
+MAX_HEADER_XML_BYTES = 8 * 1024 * 1024
 
 
 def _sample_wikitext_sha256(block, declared_bytes):
@@ -97,17 +99,26 @@ def _page_record(block):
 
 
 def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE_LIMIT,
-                sample_min_bytes=SAMPLE_MIN_BYTES, max_page_xml_bytes=MAX_PAGE_XML_BYTES):
+                sample_min_bytes=SAMPLE_MIN_BYTES, max_page_xml_bytes=MAX_PAGE_XML_BYTES,
+                max_header_xml_bytes=MAX_HEADER_XML_BYTES):
     """Stream ``lines`` to ``out``; return a summary with the article sample."""
     if not isinstance(max_page_xml_bytes, int) or max_page_xml_bytes < 1:
         raise DumpFormatError("invalid page XML byte cap")
+    if not isinstance(max_header_xml_bytes, int) or max_header_xml_bytes < 1:
+        raise DumpFormatError("invalid header XML byte cap")
     keep = set(keep_namespaces)
     iterator = iter(lines)
     seen_root = False
+    header_bytes = 0
     for line in iterator:
         if line == "  <page>\n":
             break
+        header_bytes += len(line.encode("utf-8"))
+        if header_bytes > max_header_xml_bytes:
+            raise DumpFormatError("header XML exceeds byte cap")
         if line.startswith("<mediawiki "):
+            if seen_root:
+                raise DumpFormatError("duplicate mediawiki root")
             seen_root = True
         out.write(line)
     else:
@@ -148,6 +159,8 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
             block = None
             block_bytes = 0
         elif block is None:
+            if footer_seen:
+                raise DumpFormatError("content after closing mediawiki root")
             if line == "  <page>\n":
                 block = [line]
                 block_bytes = len(line.encode("utf-8"))

@@ -105,6 +105,26 @@ class FilterTests(unittest.TestCase):
                         max_page_xml_bytes=10240)
         self.assertEqual(2, report["source_pages"])
 
+    def test_rejects_duplicate_xml_roots_and_oversized_header(self):
+        good = page("Article", 0, 1, 11, ARTICLE)
+        header = HEADER + "<mediawiki duplicate='1'>\n"
+        with self.assertRaisesRegex(f.DumpFormatError, "duplicate mediawiki root"):
+            f.filter_dump((header + good + "</mediawiki>\n").splitlines(keepends=True),
+                          io.StringIO(), sample_min_bytes=10)
+        with self.assertRaisesRegex(f.DumpFormatError, "header XML exceeds byte cap"):
+            f.filter_dump((HEADER + good + "</mediawiki>\n").splitlines(keepends=True),
+                          io.StringIO(), sample_min_bytes=10, max_header_xml_bytes=30)
+        with self.assertRaisesRegex(f.DumpFormatError, "invalid header XML byte cap"):
+            run([good], sample_min_bytes=10, max_header_xml_bytes=0)
+
+    def test_rejects_any_content_after_closing_xml_root(self):
+        good = HEADER + page("Article", 0, 1, 11, ARTICLE) + "</mediawiki>\n"
+        for tail in ("<page>\n", "</mediawiki>\n", "junk\n", "  \n"):
+            with self.subTest(tail=tail):
+                with self.assertRaisesRegex(f.DumpFormatError, "after closing mediawiki root"):
+                    f.filter_dump((good + tail).splitlines(keepends=True),
+                                  io.StringIO(), sample_min_bytes=10)
+
     def test_fails_closed_on_malformed_exports(self):
         good = page("Article", 0, 1, 11, ARTICLE)
         cases = {
