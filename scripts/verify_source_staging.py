@@ -190,6 +190,33 @@ def _reject_nonstandard_json_constant(value):
     raise SourceVerificationError(f"nonstandard JSON number: {value}")
 
 
+MAX_MANIFEST_NESTING = 128
+
+
+def _bound_json_nesting(data):
+    """Bound collection nesting before JSON decoding; ignore delimiters in strings."""
+    depth = 0
+    quoted = False
+    escaped = False
+    for byte in data:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:  # backslash
+                escaped = True
+            elif byte == 34:  # quote
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):  # [ and {
+            depth += 1
+            if depth > MAX_MANIFEST_NESTING:
+                raise SourceVerificationError("source manifest nesting exceeds limit")
+        elif byte in (93, 125):  # ] and }
+            depth -= 1
+    # The JSON decoder itself verifies quote/escape and bracket correctness.
+
+
 def load_source_manifest(path):
     """Read one bounded, stable, regular manifest without following symlinks."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -209,6 +236,7 @@ def load_source_manifest(path):
                 raise SourceVerificationError("source manifest changed during reading")
     except OSError as exc:
         raise SourceVerificationError("unsafe or unreadable source manifest") from exc
+    _bound_json_nesting(data)
     try:
         result = json.loads(
             data.decode("utf-8"),

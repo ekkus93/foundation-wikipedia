@@ -73,8 +73,10 @@ class SourceStagingTests(unittest.TestCase):
                 with self.assertRaisesRegex(SourceVerificationError, "nonstandard JSON number"):
                     load_source_manifest(manifest_file)
         manifest_file.write_bytes(b"[" * 2000 + b"0" + b"]" * 2000)
-        with self.assertRaisesRegex(SourceVerificationError, "malformed source manifest"):
+        with self.assertRaisesRegex(SourceVerificationError, "nesting exceeds limit"):
             load_source_manifest(manifest_file)
+        manifest_file.write_bytes(b'{"note":"' + b"[" * 200 + b"]" * 200 + b'"}')
+        self.assertEqual(len(load_source_manifest(manifest_file)["note"]), 400)
 
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow open")
     def test_cli_manifest_loader_rejects_symlink(self):
