@@ -90,3 +90,17 @@ fn public_reader_refuses_ambiguous_terminators_and_trailing_content() {
         );
     }
 }
+
+#[test]
+fn public_decoder_rejects_repeated_page_ids_even_with_matching_digest() {
+    let repeated = format!("{RECORD}{RECORD}");
+    assert_eq!(
+        decode_pinned_deletions(
+            Cursor::new(repeated.as_bytes()),
+            "enwiki",
+            "20261010",
+            &digest(repeated.as_bytes()),
+        ),
+        Err(DeletionPinnedImportError::DuplicateRecord)
+    );
+}
