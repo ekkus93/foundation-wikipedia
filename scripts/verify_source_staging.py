@@ -74,8 +74,11 @@ def _valid_name(name):
 def verify_source_bytes(manifest, directory):
     """Return verified member count, raising for any unsafe or mismatched bytes."""
     directory = Path(directory)
-    if directory.is_symlink() or not directory.is_dir():
+    if (directory.is_symlink() or not directory.is_dir()
+            or any(parent.is_symlink() for parent in directory.parents)):
         raise SourceVerificationError("staging directory is missing or unsafe")
+    if os.name == "posix" and directory.stat().st_mode & 0o022:
+        raise SourceVerificationError("staging directory is writable by other users")
     if not isinstance(manifest, dict):
         raise SourceVerificationError("manifest must be a JSON object")
     if (
@@ -93,6 +96,7 @@ def verify_source_bytes(manifest, directory):
     if not isinstance(members, list) or not (0 < len(members) <= MAX_MEMBERS):
         raise SourceVerificationError("manifest must declare a bounded nonempty file set")
     seen = set()
+    declared = set()
     for item in members:
         if not isinstance(item, dict):
             raise SourceVerificationError("invalid file metadata")
@@ -110,6 +114,7 @@ def verify_source_bytes(manifest, directory):
         if name.lower() in seen:
             raise SourceVerificationError("duplicate or case-colliding source member")
         seen.add(name.lower())
+        declared.add(name)
         path = directory / name
         if path.is_symlink() or not path.is_file():
             raise SourceVerificationError(f"missing or unsafe staged member: {name}")
@@ -147,6 +152,13 @@ def verify_source_bytes(manifest, directory):
             raise SourceVerificationError(f"missing or unsafe staged member: {name}") from error
         if actual.hexdigest() != digest:
             raise SourceVerificationError(f"sha256 mismatch: {name}")
+    # The complete staging directory must match the pinned manifest, not
+    # merely contain its listed members. A private directory prevents untrusted
+    # entry replacement while this final inventory check runs.
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if entry.name not in declared or not entry.is_file(follow_symlinks=False):
+                raise SourceVerificationError(f"undeclared or unsafe staged entry: {entry.name}")
     return len(members)
 
 

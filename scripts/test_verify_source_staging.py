@@ -163,6 +163,35 @@ class SourceStagingTests(unittest.TestCase):
         with patch("verify_source_staging.hashlib.sha256", side_effect=ChangingDigest):
             self.reject("changed during hashing")
 
+    def test_undeclared_files_symlinks_and_directories_fail_closed(self):
+        extra = self.dir / "unexpected.txt"
+        extra.write_bytes(b"not pinned")
+        self.reject("undeclared or unsafe staged entry")
+        extra.unlink()
+        outside = Path(self.tempdir.name) / "outside"
+        outside.write_bytes(b"external")
+        extra.symlink_to(outside)
+        self.reject("undeclared or unsafe staged entry")
+        extra.unlink()
+        extra.mkdir()
+        self.reject("undeclared or unsafe staged entry")
+        extra.rmdir()
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permissions required")
+    def test_group_writable_staging_root_rejected(self):
+        self.dir.chmod(0o775)
+        self.reject("writable by other users")
+        self.dir.chmod(0o700)
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+
+    def test_symlinked_staging_ancestor_rejected(self):
+        alias = Path(self.tempdir.name) / "alias"
+        alias.symlink_to(Path(self.tempdir.name), target_is_directory=True)
+        with self.assertRaisesRegex(SourceVerificationError, "directory"):
+            verify_source_bytes(self.manifest, alias / "staging")
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+
     def test_empty_manifest_and_root_symlink_rejected(self):
         self.manifest["files"] = []
         self.reject("bounded nonempty")
