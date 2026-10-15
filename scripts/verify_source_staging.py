@@ -175,6 +175,16 @@ def verify_source_bytes(manifest, directory):
     return len(members)
 
 
+def _reject_duplicate_json_fields(pairs):
+    """Reject ambiguous JSON objects before inspecting pinned source metadata."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise SourceVerificationError(f"duplicate source manifest field: {key}")
+        result[key] = value
+    return result
+
+
 def load_source_manifest(path):
     """Read one bounded, stable, regular manifest without following symlinks."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -195,7 +205,7 @@ def load_source_manifest(path):
     except OSError as exc:
         raise SourceVerificationError("unsafe or unreadable source manifest") from exc
     try:
-        result = json.loads(data.decode("utf-8"))
+        result = json.loads(data.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_fields)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise SourceVerificationError("malformed source manifest") from exc
     if not isinstance(result, dict):

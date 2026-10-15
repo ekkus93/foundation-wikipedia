@@ -48,6 +48,19 @@ class SourceStagingTests(unittest.TestCase):
         with self.assertRaisesRegex(SourceVerificationError, "JSON object"):
             load_source_manifest(manifest_file)
 
+    def test_cli_manifest_loader_rejects_duplicate_fields_at_every_depth(self):
+        manifest_file = Path(self.tempdir.name) / "manifest.json"
+        for data in (
+            b'{"project":"enwiki","project":"frwiki"}',
+            b'{"project":"enwiki","files":[{"name":"articles.xml","name":"other.xml"}]}',
+            b'{"project":"enwiki","files":[{"bytes":1,"bytes":2}]}',
+        ):
+            with self.subTest(data=data):
+                manifest_file.write_bytes(data)
+                with self.assertRaisesRegex(
+                        SourceVerificationError, "duplicate source manifest field"):
+                    load_source_manifest(manifest_file)
+
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow open")
     def test_cli_manifest_loader_rejects_symlink(self):
         manifest_file = Path(self.tempdir.name) / "manifest.json"
