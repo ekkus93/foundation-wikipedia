@@ -37,6 +37,10 @@ wfLoadExtension( 'Cite' );
 wfLoadExtension( 'ParserFunctions' );
 wfLoadExtension( 'Scribunto' );
 $wgScribuntoDefaultEngine = 'luastandalone';
+# Math in PHP-only "native" mode: MathML without Mathoid or any remote service.
+wfLoadExtension( 'Math' );
+$wgMathValidModes = [ 'native', 'source' ];
+$wgDefaultUserOptions['math'] = 'native';
 PHP
 
 python3 - "$HERE/manifest.json" >"$OUT/pages.tsv" <<'PY'

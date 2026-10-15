@@ -16,8 +16,10 @@
         "contains": [
           "wikitable",
           "mw:Extension/ref",
-          "mw:Extension/references"
+          "mw:Extension/references",
+          "<math"
         ],
+        "not_contains": ["Failed to parse"],
         "text_contains": [
           "Hello, Wikipedia!",
           "RENDERED (8)",
