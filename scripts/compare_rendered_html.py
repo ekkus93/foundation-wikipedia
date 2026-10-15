@@ -9,6 +9,7 @@ a page could not be fetched at all.
 """
 import argparse
 import difflib
+import hashlib
 import html
 import html.parser
 import re
@@ -24,6 +25,7 @@ import check_renderer_fixtures as crf
 USER_AGENT = "foundation-wikipedia-renderer-harness (https://github.com/ekkus93/foundation-wikipedia)"
 ERROR_MARKERS = ("Script error", "Lua error", "Template loop detected", 'class="error', "Lua timeout")
 MAX_LIVE_BYTES = 16 * 1024 * 1024
+MAX_LOCAL_RAW_BYTES = 64 * 1024 * 1024
 
 
 class _Structure(html.parser.HTMLParser):
@@ -141,6 +143,10 @@ def aggregate(rows):
             1 for r in rows if r.get("local_id_comparison", {}).get("revision_id_equal") is False),
         "pages_with_source_timestamp_mismatch": sum(
             1 for r in rows if r.get("source_timestamp_match") is False),
+        "pages_with_source_wikitext_mismatch": sum(
+            1 for r in rows if r.get("source_wikitext_match") is False),
+        "pages_without_source_wikitext_digest": sum(
+            1 for r in rows if r.get("source_wikitext_match") is None),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
@@ -178,6 +184,50 @@ def fetch_live(host, revision_id, timeout=60):
     return payload["html"]
 
 
+
+def fetch_local_wikitext_sha256(base_url, title, local_page_id, local_revision_id, timeout=30):
+    """Hash exact local main-slot raw text; reject ambiguous API identities.
+
+    Do not emit raw article text in the report or CI logs. This measures
+    whether the remapped local revision preserves its original source bytes.
+    """
+    query = urllib.parse.urlencode({
+        "action": "query", "prop": "revisions", "rvprop": "ids|content",
+        "rvslots": "main", "rvlimit": "1", "titles": title,
+        "format": "json", "formatversion": "2",
+    })
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api.php?{query}", headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read(MAX_LOCAL_RAW_BYTES + 1)
+    if len(raw) > MAX_LOCAL_RAW_BYTES:
+        raise ValueError("local raw revision response exceeds byte cap")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise ValueError("invalid local raw revision response")
+    query_result = payload.get("query")
+    pages = query_result.get("pages") if isinstance(query_result, dict) else None
+    if not isinstance(pages, list) or len(pages) != 1:
+        raise ValueError("ambiguous local raw page response")
+    page = pages[0]
+    if not isinstance(page, dict) or page.get("pageid") != local_page_id:
+        raise ValueError("local raw page identity mismatch")
+    revisions = page.get("revisions")
+    if not isinstance(revisions, list) or len(revisions) != 1:
+        raise ValueError("ambiguous local raw revision")
+    revision = revisions[0]
+    if not isinstance(revision, dict) or revision.get("revid") != local_revision_id:
+        raise ValueError("local raw revision identity mismatch")
+    slots = revision.get("slots")
+    main = slots.get("main") if isinstance(slots, dict) else None
+    if not isinstance(main, dict) or main.get("contentmodel") not in (None, "wikitext"):
+        raise ValueError("local revision is not main-slot wikitext")
+    wikitext = main.get("content")
+    if not isinstance(wikitext, str):
+        raise ValueError("missing local main-slot wikitext")
+    return hashlib.sha256(wikitext.encode("utf-8")).hexdigest()
+
+
 def build_report(sample, local_base, live_host, pause=1.0):
     rows, failures = [], []
     for entry in sample:
@@ -208,6 +258,18 @@ def build_report(sample, local_base, live_host, pause=1.0):
                 "revision_id_equal": local_identity["revision_id"] == entry["revision_id"],
             }
             row["source_timestamp_match"] = local_identity["timestamp"] == entry["timestamp"]
+            source_digest = entry.get("source_wikitext_sha256")
+            if source_digest is not None:
+                if (not isinstance(source_digest, str) or len(source_digest) != 64
+                        or any(c not in "0123456789abcdef" for c in source_digest)):
+                    raise ValueError("invalid original source wikitext digest")
+                local_digest = fetch_local_wikitext_sha256(
+                    local_base, entry["title"], local_identity["page_id"],
+                    local_identity["revision_id"])
+                row["local_wikitext_sha256"] = local_digest
+                row["source_wikitext_match"] = local_digest == source_digest
+            else:
+                row["source_wikitext_match"] = None
             if local_summary["error_markers"]:
                 row["local_error_details"] = local_summary["error_markers"]
                 row["local_error_excerpt"] = _error_excerpt(local_html)
@@ -246,7 +308,8 @@ def _main(argv):
         metrics = row["metrics"]
         if (metrics["local_error_markers"] or metrics["live_error_markers"]
                 or metrics["link_jaccard"] < 0.5
-                or row.get("source_timestamp_match") is False):
+                or row.get("source_timestamp_match") is False
+                or row.get("source_wikitext_match") is not True):
             print("FIDELITY-WARNING:", json.dumps({
                 "title": row["title"], "source_revision_id": row["source_revision_id"],
                 "link_jaccard": metrics["link_jaccard"],
@@ -262,6 +325,8 @@ def _main(argv):
                 "source_timestamp_match": row.get("source_timestamp_match"),
                 "local_id_comparison": row.get("local_id_comparison", {}),
                 "source_page_id": row.get("source_page_id"),
+                "source_wikitext_match": row.get("source_wikitext_match"),
+                "local_wikitext_sha256": row.get("local_wikitext_sha256"),
                 "local_identity": row.get("local_identity", {}),
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)

@@ -1,4 +1,7 @@
 import sys
+import io
+import json
+import hashlib
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -64,25 +67,44 @@ class CompareTests(unittest.TestCase):
         self.assertEqual([{"title": "Revision test", "source_revision_id": 777,
                            "markers": {"Script error": 1}}], report["local_error_page_samples"])
 
+    def test_local_raw_mediawiki_revision_hash_uses_exact_main_slot(self):
+        source = "UTF-8 München <ref>source</ref>"
+        payload = {"query": {"pages": [{"pageid": 1, "revisions": [
+            {"revid": 2, "slots": {"main": {
+                "contentmodel": "wikitext", "content": source}}}
+        ]}]}}
+        encoded = json.dumps(payload).encode("utf-8")
+        with patch.object(c.urllib.request, "urlopen", return_value=io.BytesIO(encoded)):
+            digest = c.fetch_local_wikitext_sha256("http://127.0.0.1:8081", "Sample", 1, 2)
+        self.assertEqual(hashlib.sha256(source.encode("utf-8")).hexdigest(), digest)
+        payload["query"]["pages"][0]["revisions"][0]["revid"] = 999
+        with patch.object(c.urllib.request, "urlopen",
+                          return_value=io.BytesIO(json.dumps(payload).encode("utf-8"))):
+            with self.assertRaisesRegex(ValueError, "revision identity mismatch"):
+                c.fetch_local_wikitext_sha256("http://127.0.0.1:8081", "Sample", 1, 2)
+
     def test_import_local_ids_are_distinct_from_source_timestamp(self):
         original = {"page_id": 5, "revision_id": 100, "timestamp": "2026-10-01T12:00:00Z",
-                    "title": "Test"}
+                    "title": "Test", "source_wikitext_sha256": "a" * 64}
         local = {"status": 200, "payload": {"id": 1, "latest": {
             "id": 1, "timestamp": "2026-10-01T12:00:00Z"}, "html": PAGE}}
         with patch.object(c.crf, "fetch_page", return_value=local), \
-             patch.object(c, "fetch_live", return_value=PAGE):
+             patch.object(c, "fetch_live", return_value=PAGE), \
+             patch.object(c, "fetch_local_wikitext_sha256", return_value="a" * 64):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         row = report["pages"][0]
         self.assertEqual(5, row["source_page_id"])
         self.assertEqual({"page_id_equal": False, "revision_id_equal": False},
                          row["local_id_comparison"])
         self.assertTrue(row["source_timestamp_match"])
+        self.assertTrue(row["source_wikitext_match"])
         self.assertEqual(1, report["aggregate"]["pages_with_local_page_id_difference"])
         self.assertEqual(1, report["aggregate"]["pages_with_local_revision_id_difference"])
         self.assertEqual(0, report["aggregate"]["pages_with_source_timestamp_mismatch"])
         local["payload"]["latest"]["timestamp"] = "2026-10-02T12:00:00Z"
         with patch.object(c.crf, "fetch_page", return_value=local), \
-             patch.object(c, "fetch_live", return_value=PAGE):
+             patch.object(c, "fetch_live", return_value=PAGE), \
+             patch.object(c, "fetch_local_wikitext_sha256", return_value="a" * 64):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         self.assertFalse(report["pages"][0]["source_timestamp_match"])
         self.assertEqual(1, report["aggregate"]["pages_with_source_timestamp_mismatch"])
