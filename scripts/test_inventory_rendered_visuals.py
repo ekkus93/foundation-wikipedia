@@ -1,3 +1,5 @@
+import hashlib
+import json
 import unittest
 
 import inventory_rendered_visuals as vis
@@ -37,6 +39,12 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(first["inventory_sha256"], second["inventory_sha256"])
         self.assertNotEqual(first["inventory_sha256"], different["inventory_sha256"])
         self.assertEqual(64, len(first["inventory_sha256"]))
+        canonical = json.dumps(first["candidates"], ensure_ascii=True,
+                               sort_keys=True, separators=(",", ":")).encode("utf-8")
+        expected = hashlib.sha256(
+            b"foundation-wikipedia/visual-url-candidates/v1\0" + canonical
+        ).hexdigest()
+        self.assertEqual(expected, first["inventory_sha256"])
 
     def test_rejects_excessive_and_unsafe_references(self):
         with self.assertRaisesRegex(vis.InventoryError, "budget"):

@@ -106,7 +106,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
     canonical = json.dumps(candidates, ensure_ascii=True,
                            sort_keys=True, separators=(",", ":")).encode("utf-8")
     fingerprint = hashlib.sha256(
-        b"foundation-wikipedia/visual-url-candidates/v1\\0" + canonical
+        b"foundation-wikipedia/visual-url-candidates/v1\0" + canonical
     ).hexdigest()
     return {
         "count": len(parser.urls),
