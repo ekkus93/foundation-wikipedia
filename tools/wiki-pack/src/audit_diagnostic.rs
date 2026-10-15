@@ -61,14 +61,14 @@ fn unchanged(file: &File, before: &Metadata) -> Result<bool, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return Ok(stable
+        Ok(stable
             && before.dev() == after.dev()
             && before.ino() == after.ino()
             && before.ctime() == after.ctime()
             && before.ctime_nsec() == after.ctime_nsec()
             && before.mtime_nsec() == after.mtime_nsec()
             && before.nlink() == 1
-            && after.nlink() == 1);
+            && after.nlink() == 1)
     }
     #[cfg(not(unix))]
     {
