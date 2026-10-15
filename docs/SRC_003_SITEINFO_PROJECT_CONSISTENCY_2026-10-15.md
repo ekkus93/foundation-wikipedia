@@ -1,7 +1,7 @@
 # SRC-003 — Public-dump siteinfo project consistency audit
 
 Date: 2026-10-15
-Status: Identified source-consistency gap; not implemented or qualified.
+Status: Implemented and exact-head CI qualified as a partial SRC-003 safeguard.
 
 ## Evidence at inspected master
 
@@ -31,3 +31,24 @@ This check does not authenticate the dump publisher, prove an independent
 complete census, provide a production Rust XML importer, render Parsoid HTML,
 or satisfy mandatory offline media and device acceptance. Keep SRC-003
 unchecked until those requirements are qualified.
+
+## Implemented and qualified
+
+- Diagnostic decoder implementation: `scripts/public_dump_xml_census.py` now
+  checks any present `siteinfo/dbname` against the declared source project
+  before discarding siteinfo and before publishing the census. Duplicates,
+  foreign-namespace lookalikes, nested values and mismatches fail closed.
+- Regression suite: `scripts/test_public_dump_siteinfo_project.py` exercises
+  matching, absent and malformed declarations using compressed XML members,
+  verified staging and the actual no-overwrite publication path.
+- Qualified exact source SHA: `2cb11bc558247d26fab07eabe8732b685eeb5f84`.
+- Rust workspace CI (including Python unittest discovery):
+  https://github.com/ekkus93/foundation-wikipedia/actions/runs/38701582900
+  — passed on the exact source SHA.
+- Platform shells CI:
+  https://github.com/ekkus93/foundation-wikipedia/actions/runs/38701583003
+  — passed on the same exact source SHA.
+
+This qualifies only optional local siteinfo identity consistency; it does
+not authenticate the publication or satisfy the remaining SRC-003 criteria.
+The authoritative TODO remains unchecked and unmodified.
