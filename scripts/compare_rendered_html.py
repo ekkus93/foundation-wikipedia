@@ -181,7 +181,8 @@ def fetch_live(host, revision_id, timeout=60):
 def build_report(sample, local_base, live_host, pause=1.0):
     rows, failures = [], []
     for entry in sample:
-        row = {"title": entry["title"], "source_revision_id": entry["revision_id"]}
+        row = {"title": entry["title"], "source_page_id": entry["page_id"],
+               "source_revision_id": entry["revision_id"]}
         try:
             started = time.monotonic()
             local = crf.fetch_page(local_base, entry["title"])
@@ -260,6 +261,7 @@ def _main(argv):
                 "error_marker_delta": metrics["error_marker_delta"],
                 "source_timestamp_match": row.get("source_timestamp_match"),
                 "local_id_comparison": row.get("local_id_comparison", {}),
+                "source_page_id": row.get("source_page_id"),
                 "local_identity": row.get("local_identity", {}),
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)

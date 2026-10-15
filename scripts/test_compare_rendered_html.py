@@ -73,6 +73,7 @@ class CompareTests(unittest.TestCase):
              patch.object(c, "fetch_live", return_value=PAGE):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         row = report["pages"][0]
+        self.assertEqual(5, row["source_page_id"])
         self.assertEqual({"page_id_equal": False, "revision_id_equal": False},
                          row["local_id_comparison"])
         self.assertTrue(row["source_timestamp_match"])
