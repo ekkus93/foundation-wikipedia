@@ -17,6 +17,25 @@ use crate::online_requests::WikipediaRequests;
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 
+/// A failed exec with ETXTBSY starts no child and is safe to retry. Keep
+/// retries bounded; permission errors and missing executables fail immediately.
+fn retry_executable_busy<T>(
+    mut spawn: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let mut retries = 0;
+    loop {
+        match spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 3 =>
+            {
+                retries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * retries));
+            }
+            result => return result,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CurlTransportError {
     InvalidRequest,
@@ -75,7 +94,8 @@ impl MediaWikiTransport for CurlTransport {
         // -q must be the first curl option to disable user .curlrc settings.
         // Never pass -L/--location, -k/--insecure, or arbitrary headers.
         // Even when Content-Length is absent, stdout is capped while reading.
-        let mut child = Command::new(&self.executable)
+        let mut child = retry_executable_busy(|| {
+            Command::new(&self.executable)
             .args([
                 "-q",
                 "--silent",
@@ -104,7 +124,8 @@ impl MediaWikiTransport for CurlTransport {
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+                .spawn()
+        })
             .map_err(|error| {
                 // Keep the public error stable, but retain a safe OS-level
                 // diagnostic for intermittent runner spawn failures.
@@ -278,6 +299,38 @@ done
             Err(CurlTransportError::HttpStatus(503))
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retries_executable_busy_only_and_never_retries_permission_denied() {
+        let mut attempts = 0;
+        let result = retry_executable_busy(|| {
+            attempts += 1;
+            if attempts <= 2 {
+                Err(std::io::Error::from_raw_os_error(26))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts, 3);
+
+        let mut exhausted = 0;
+        let result: std::io::Result<()> = retry_executable_busy(|| {
+            exhausted += 1;
+            Err(std::io::Error::from_raw_os_error(26))
+        });
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(26));
+        assert_eq!(exhausted, 4);
+
+        let mut denied = 0;
+        let result: std::io::Result<()> = retry_executable_busy(|| {
+            denied += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(denied, 1);
     }
 
     #[test]
