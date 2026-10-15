@@ -4,6 +4,7 @@
 //! deletion-feed parser. Matching caller-supplied digests cannot establish
 //! upstream publisher authenticity, missing deletions, or source completeness.
 
+use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read};
 
 use serde::Deserialize;
@@ -22,6 +23,7 @@ const MAX_DELETION_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 pub enum DeletionPinnedImportError {
     InvalidDigestPin,
     InvalidRecord,
+    DuplicateRecord,
     InvalidTerminator,
     OversizedRecord,
     TooManyRecords,
@@ -75,6 +77,7 @@ pub fn decode_pinned_deletions<D: BufRead>(
         sha: Sha256::new(),
     });
     let mut markers = Vec::new();
+    let mut seen_page_ids = HashSet::new();
     let mut bytes_read = 0usize;
     loop {
         let mut line = Vec::new();
@@ -109,6 +112,9 @@ pub fn decode_pinned_deletions<D: BufRead>(
             || record.page_id > i64::MAX as u64
         {
             return Err(DeletionPinnedImportError::InvalidRecord);
+        }
+        if !seen_page_ids.insert(record.page_id) {
+            return Err(DeletionPinnedImportError::DuplicateRecord);
         }
         markers.push(DeletionMarker {
             page: PageKey {
@@ -291,13 +297,27 @@ mod tests {
                 &(DELETION.to_owned() + DELETION),
                 &pin(&(DELETION.to_owned() + DELETION))
             ),
-            Err(DeletionPinnedImportError::Import(_))
+            Err(DeletionPinnedImportError::DuplicateRecord)
         ));
         let conflict = DELETION.replace("\"page_id\":2", "\"page_id\":1");
         assert!(matches!(
             import(&conflict, &pin(&conflict)),
             Err(DeletionPinnedImportError::Import(_))
         ));
+    }
+
+    #[test]
+    fn decoder_rejects_duplicate_page_ids_before_join() {
+        let duplicate = format!("{DELETION}{DELETION}");
+        assert_eq!(
+            decode_pinned_deletions(
+                Cursor::new(duplicate.as_bytes()),
+                "enwiki",
+                "20261010",
+                &pin(&duplicate),
+            ),
+            Err(DeletionPinnedImportError::DuplicateRecord)
+        );
     }
 
     #[test]
