@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::enterprise::JoinedEnterpriseArticle;
 use crate::enterprise_ndjson::MAX_BATCH_TOMBSTONES;
 use crate::enterprise_pinned::{import_pinned_enterprise_ndjson_scoped, PinnedImportError};
+use crate::enterprise_verified::{enterprise_normalize, enterprise_normalize_article};
 use crate::join::{DeletionMarker, PageKey};
 
 const MAX_DELETION_LINE_BYTES: usize = 4096;
@@ -162,6 +163,31 @@ pub fn import_pinned_enterprise_with_deletions<S: BufRead, R: BufRead, D: BufRea
     .map_err(DeletionPinnedImportError::Import)
 }
 
+/// Canonicalize the full deletion-aware, digest-pinned batch only after all
+/// three integrity and revision-consistency checks have passed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalDeletionPinnedError {
+    Import(DeletionPinnedImportError),
+    Normalize(enterprise_normalize::NormalizeError),
+}
+
+pub fn import_pinned_canonical_enterprise_with_deletions<S: BufRead, R: BufRead, D: BufRead>(
+    structured: S,
+    regular: R,
+    deletion_ndjson: D,
+    pins: PinnedEnterpriseInputs<'_>,
+) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalDeletionPinnedError> {
+    let joined = import_pinned_enterprise_with_deletions(
+        structured,
+        regular,
+        deletion_ndjson,
+        pins,
+    )
+    .map_err(CanonicalDeletionPinnedError::Import)?;
+    enterprise_normalize_article::normalize_enterprise_batch(&joined)
+        .map_err(CanonicalDeletionPinnedError::Normalize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +228,47 @@ mod tests {
         // An empty feed has a distinct valid pin but is NOT proof of deletion
         // completeness or a valid official publisher receipt.
         assert_eq!(import("", &pin("")).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn canonical_import_requires_all_three_scoped_pins() {
+        let structured_pin = pin(STRUCTURED);
+        let regular_pin = pin(REGULAR);
+        let deletion_pin = pin(DELETION);
+        let canonical = import_pinned_canonical_enterprise_with_deletions(
+            Cursor::new(STRUCTURED),
+            Cursor::new(REGULAR),
+            Cursor::new(DELETION),
+            PinnedEnterpriseInputs {
+                project: "enwiki",
+                generation: "20261010",
+                structured_sha256: &structured_pin,
+                regular_sha256: &regular_pin,
+                deletion_sha256: &deletion_pin,
+            },
+        )
+        .unwrap();
+        assert_eq!(canonical.len(), 1);
+        assert_eq!(canonical[0].article.key.page_id, 1);
+        assert_eq!(canonical[0].article.revision.revision_id, 17);
+        assert_eq!(canonical[0].categories, ["Science"]);
+
+        let wrong_digest = "0".repeat(64);
+        assert!(matches!(
+            import_pinned_canonical_enterprise_with_deletions(
+                Cursor::new(STRUCTURED),
+                Cursor::new(REGULAR),
+                Cursor::new(DELETION),
+                PinnedEnterpriseInputs {
+                    project: "enwiki",
+                    generation: "20261010",
+                    structured_sha256: &structured_pin,
+                    regular_sha256: &regular_pin,
+                    deletion_sha256: &wrong_digest,
+                },
+            ),
+            Err(CanonicalDeletionPinnedError::Import(_))
+        ));
     }
 
     #[test]
