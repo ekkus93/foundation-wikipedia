@@ -5,6 +5,8 @@ No downloads, redirects, browser execution, publisher trust, or licensing
 claims are made by this diagnostic extractor. A complete CSS and HTML resource
 dependency graph will require a separate verified renderer/media pipeline.
 """
+import hashlib
+import json
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -97,10 +99,19 @@ def inventory(markup, max_references=MAX_REFERENCES):
     parser = _Collector(max_references)
     parser.feed(markup)
     parser.close()
+    candidates = [{"kind": kind, "url": url}
+                  for kind, url in sorted(parser.urls)]
+    # Stable measurement identity only. Neither source authenticity nor the
+    # bytes at these URLs is established by this diagnostic digest.
+    canonical = json.dumps(candidates, ensure_ascii=True,
+                           sort_keys=True, separators=(",", ":")).encode("utf-8")
+    fingerprint = hashlib.sha256(
+        b"foundation-wikipedia/visual-url-candidates/v1\\0" + canonical
+    ).hexdigest()
     return {
         "count": len(parser.urls),
-        "candidates": [{"kind": kind, "url": url}
-                       for kind, url in sorted(parser.urls)],
+        "candidates": candidates,
+        "inventory_sha256": fingerprint,
         "inline_styles": parser.inline_styles,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,

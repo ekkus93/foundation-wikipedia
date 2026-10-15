@@ -29,6 +29,15 @@ class InventoryTests(unittest.TestCase):
         self.assertNotIn(("av_preview", "//cdn.example/movie.mp4"), entries)
         self.assertNotIn(("svg_use", "#local"), entries)
 
+    def test_inventory_digest_is_order_independent_but_revision_content_sensitive(self):
+        first = vis.inventory('<img src="a.png"><img src="b.png"><img src="a.png">')
+        second = vis.inventory('<img src="b.png"><img src="a.png">')
+        different = vis.inventory('<img src="b.png"><img src="c.png">')
+        self.assertEqual(first["candidates"], second["candidates"])
+        self.assertEqual(first["inventory_sha256"], second["inventory_sha256"])
+        self.assertNotEqual(first["inventory_sha256"], different["inventory_sha256"])
+        self.assertEqual(64, len(first["inventory_sha256"]))
+
     def test_rejects_excessive_and_unsafe_references(self):
         with self.assertRaisesRegex(vis.InventoryError, "budget"):
             vis.inventory('<img src="one"><img src="two">', max_references=1)

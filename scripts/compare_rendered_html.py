@@ -198,6 +198,15 @@ def compare(local, live):
     }
 
 
+def _unique_visual_candidates(rows, side):
+    """Count distinct (kind, URL) candidates across the bounded page sample."""
+    return len({
+        (candidate["kind"], candidate["url"])
+        for row in rows
+        for candidate in row.get("visual_asset_candidates", {}).get(side, {}).get("candidates", [])
+    })
+
+
 def aggregate(rows):
     """Summary across pages; every figure is a measurement, not a verdict."""
     n = len(rows)
@@ -240,6 +249,8 @@ def aggregate(rows):
         "total_live_visual_asset_candidates": sum(
             r.get("visual_asset_candidates", {}).get("live", {}).get("count", 0)
             for r in rows),
+        "unique_live_visual_asset_candidates": _unique_visual_candidates(rows, "live"),
+        "unique_local_visual_asset_candidates": _unique_visual_candidates(rows, "local"),
         "total_local_visual_asset_candidates": sum(
             r.get("visual_asset_candidates", {}).get("local", {}).get("count", 0)
             for r in rows),
