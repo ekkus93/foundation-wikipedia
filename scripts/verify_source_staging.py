@@ -102,6 +102,7 @@ def verify_source_bytes(manifest, directory):
         raise SourceVerificationError("manifest must declare a bounded nonempty file set")
     seen = set()
     declared = set()
+    validated = []
     total_bytes = 0
     for item in members:
         if not isinstance(item, dict):
@@ -124,6 +125,9 @@ def verify_source_bytes(manifest, directory):
             raise SourceVerificationError("duplicate or case-colliding source member")
         seen.add(name.lower())
         declared.add(name)
+        validated.append((name, digest, size))
+    # Validate the entire manifest before hashing potentially large members.
+    for name, digest, size in validated:
         path = directory / name
         if path.is_symlink() or not path.is_file():
             raise SourceVerificationError(f"missing or unsafe staged member: {name}")
