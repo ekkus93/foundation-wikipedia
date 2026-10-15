@@ -185,6 +185,11 @@ def _reject_duplicate_json_fields(pairs):
     return result
 
 
+def _reject_nonstandard_json_constant(value):
+    """JSON NaN/Infinity extensions cannot appear in pinned source metadata."""
+    raise SourceVerificationError(f"nonstandard JSON number: {value}")
+
+
 def load_source_manifest(path):
     """Read one bounded, stable, regular manifest without following symlinks."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -205,8 +210,12 @@ def load_source_manifest(path):
     except OSError as exc:
         raise SourceVerificationError("unsafe or unreadable source manifest") from exc
     try:
-        result = json.loads(data.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_fields)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        result = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_fields,
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise SourceVerificationError("malformed source manifest") from exc
     if not isinstance(result, dict):
         raise SourceVerificationError("source manifest must be a JSON object")

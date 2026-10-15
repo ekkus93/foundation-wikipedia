@@ -61,6 +61,21 @@ class SourceStagingTests(unittest.TestCase):
                         SourceVerificationError, "duplicate source manifest field"):
                     load_source_manifest(manifest_file)
 
+    def test_cli_manifest_loader_rejects_nonstandard_numbers_and_excessive_depth(self):
+        manifest_file = Path(self.tempdir.name) / "manifest.json"
+        for data in (
+            b'{"project":"enwiki","untrusted":NaN}',
+            b'{"project":"enwiki","files":[{"bytes":Infinity}]}',
+            b'{"project":"enwiki","files":[{"bytes":-Infinity}]}',
+        ):
+            with self.subTest(data=data):
+                manifest_file.write_bytes(data)
+                with self.assertRaisesRegex(SourceVerificationError, "nonstandard JSON number"):
+                    load_source_manifest(manifest_file)
+        manifest_file.write_bytes(b"[" * 2000 + b"0" + b"]" * 2000)
+        with self.assertRaisesRegex(SourceVerificationError, "malformed source manifest"):
+            load_source_manifest(manifest_file)
+
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "requires POSIX no-follow open")
     def test_cli_manifest_loader_rejects_symlink(self):
         manifest_file = Path(self.tempdir.name) / "manifest.json"
