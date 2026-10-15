@@ -139,3 +139,13 @@ At code SHA `9a28b097f321dda58bc74f87f78a68c854931e27`, the diagnostic source-ve
 - [Platform shells CI 38666449757](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666449757) — passed at the same SHA.
 
 These controls apply to the diagnostic CLI input boundary, not to independently authenticated source publication, complete page census, portable Rust XML decoding, Parsoid rendering or mandatory offline media. **SRC-003 remains unchecked.**
+
+## Bounded decimal identity parsing (2026-10-14)
+
+Code SHA `d3811b8099110aa7716e75eb527e00a2a3a188c6` rejects XML page/revision IDs longer than 19 decimal digits, namespace IDs longer than 10 digits or beyond the signed 32-bit range, and shard range identifiers longer than 19 digits before attempting Python integer conversion. This prevents untrusted multi-thousand-digit values from surfacing interpreter-specific integer-conversion errors outside the diagnostic importer's expected `DumpDecodeError` contract. Tests exercise all three XML identity fields, oversized shard names, and invalid namespace selection, requiring no partial census publication.
+
+- [Rust workspace CI 38666706953](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666706953) — passed at exact code SHA, including Python regression tests.
+- [Platform shells CI 38666706916](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666706916) — passed at the same SHA.
+- The preceding documentation-only SHA `55fcd1e365376078e0310e4203a81818b54db976` had a failing Rust CI run 38666642949 in an unrelated `online_curl::tests::caps_streamed_body_without_trusting_content_length` subprocess test (`SpawnFailed` versus expected `ResponseTooLarge`). The next exact-head Rust run above passed without modifying that transport code. This is recorded as a potentially transient test failure, not evidence that the earlier SHA qualified.
+
+The diagnostic importer's bounds are not a substitute for independent publisher authentication, complete source coverage, portable Rust bzip2/XML parsing, Parsoid rendering fidelity, or required offline media. **SRC-003 remains unchecked.**
