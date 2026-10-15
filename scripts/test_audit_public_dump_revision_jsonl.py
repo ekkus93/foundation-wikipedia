@@ -60,6 +60,7 @@ class RevisionJsonlAuditTests(unittest.TestCase):
             ("revision_id", 0), ("revision_id", True),
             ("title", " Bad "), ("title", "Bad\nTitle"),
             ("timestamp", "2026-02-30T00:00:00Z"),
+            ("timestamp", "2026-10-02T00:00:00Z"),
             ("redirect_target", " Bad "),
         ]
         for key, bad in cases:
@@ -75,6 +76,26 @@ class RevisionJsonlAuditTests(unittest.TestCase):
         self.write(self.record(1), self.record(1))
         with self.assertRaisesRegex(RevisionAuditError, "unordered"):
             self.audit()
+
+    def test_generation_cutoff_and_lf_contract_for_both_revision_modes(self):
+        for content in (False, True):
+            with self.subTest(content=content):
+                prior = self.record(content=content)
+                prior["timestamp"] = "2026-09-30T23:59:59Z"
+                self.write(prior)
+                self.assertEqual(self.audit(content)[0], 1)
+
+                future = self.record(content=content)
+                future["timestamp"] = "2026-10-02T00:00:00Z"
+                self.write(future)
+                with self.assertRaisesRegex(RevisionAuditError, "timestamp"):
+                    self.audit(content)
+
+                self.write(self.record(content=content))
+                raw = self.path.read_bytes()
+                self.path.write_bytes(raw.replace(b", ", b",\\r ", 1))
+                with self.assertRaisesRegex(RevisionAuditError, "unterminated"):
+                    self.audit(content)
 
     def test_invalid_wikitext_digest_and_extra_keys_rejected(self):
         good = self.record(content=True)

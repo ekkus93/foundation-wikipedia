@@ -80,7 +80,8 @@ def _audit_record(line, project, generation, namespace, content, previous):
             or type(revision_id) is not int or not 0 < revision_id <= MAX_ID):
         raise RevisionAuditError("invalid or unordered page/revision ID")
     if (not _valid_title(value["title"])
-            or not _valid_timestamp(value["timestamp"])):
+            or not _valid_timestamp(value["timestamp"])
+            or value["timestamp"][:10] > generation):
         raise RevisionAuditError("invalid title or revision timestamp")
     redirect = value["redirect_target"]
     if redirect is not None and not _valid_title(redirect):
@@ -131,7 +132,7 @@ def audit_revision_jsonl(path, project, generation, namespace, content=False):
                 if not line:
                     break
                 if (len(line) > MAX_RECORD_BYTES or not line.endswith(b"\n")
-                        or line.endswith(b"\r\n")):
+                        or b"\r" in line):
                     raise RevisionAuditError("oversized or unterminated JSONL record")
                 digest.update(line)
                 previous = _audit_record(
