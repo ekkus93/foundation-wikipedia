@@ -11,6 +11,10 @@ use wiki_source::public_dump_revision_jsonl::audit_revision_content_census;
 
 const MAX_INPUT_BYTES: u64 = 2_000_000_000;
 
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 struct HashedReader<R> {
     inner: R,
     digest: Sha256,
@@ -83,10 +87,15 @@ pub fn run(
     generation: &str,
     namespace: i32,
     expected_sha256: &str,
+    revision_sha256: Option<&str>,
 ) -> Result<usize, String> {
-    if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if !valid_sha256(expected_sha256) {
         return Err("expected census digest must contain 64 hexadecimal characters".into());
+    }
+    if let Some(pin) = revision_sha256 {
+        if !valid_sha256(pin) {
+            return Err("revision-content digest must contain 64 hexadecimal characters".into());
+        }
     }
     let (mut records, record_meta) = open_input(revision_path)?;
     let (census, census_meta) = open_input(census_path)?;
@@ -106,8 +115,21 @@ pub fn run(
         generation,
         namespace,
     };
-    let counts = audit_revision_content_census(&mut expected, BufReader::new(&mut records), scope)
-        .map_err(|error| format!("diagnostic census reconciliation failed: {error:?}"))?;
+    let (counts, consumed_revision_digest) = {
+        let mut observed = BufReader::new(HashedReader {
+            inner: &mut records,
+            digest: Sha256::new(),
+        });
+        let counts = audit_revision_content_census(&mut expected, &mut observed, scope)
+            .map_err(|error| format!("diagnostic census reconciliation failed: {error:?}"))?;
+        let digest = format!("{:x}", observed.into_inner().digest.finalize());
+        (counts, digest)
+    };
+    if let Some(pin) = revision_sha256 {
+        if consumed_revision_digest != pin.to_ascii_lowercase() {
+            return Err("revision-content digest differs from consumed bytes".into());
+        }
+    }
     let hashed = expected.into_inner();
     if format!("{:x}", hashed.digest.finalize()) != expected_sha256.to_ascii_lowercase() {
         return Err("expected census digest differs from consumed bytes".into());
@@ -157,10 +179,69 @@ mod tests {
         fs::write(&revisions, format!("{row}\n")).unwrap();
         fs::write(&census, b"1\n").unwrap();
         let good_digest = format!("{:x}", Sha256::digest(b"1\n"));
+        let run = |revisions: &Path,
+                   census: &Path,
+                   project: &str,
+                   generation: &str,
+                   namespace: i32,
+                   expected: &str| {
+            super::run(revisions, census, project, generation, namespace, expected, None)
+        };
         assert_eq!(
             run(&revisions, &census, "enwiki", "2026-10-01", 0, &good_digest),
             Ok(1)
         );
+        let record_digest = format!("{:x}", Sha256::digest(format!("{row}\n").as_bytes()));
+        assert_eq!(
+            super::run(
+                &revisions,
+                &census,
+                "enwiki",
+                "2026-10-01",
+                0,
+                &good_digest,
+                Some(&record_digest),
+            ),
+            Ok(1)
+        );
+        assert!(super::run(
+            &revisions,
+            &census,
+            "enwiki",
+            "2026-10-01",
+            0,
+            &good_digest,
+            Some(&"0".repeat(64)),
+        )
+        .is_err());
+        assert!(super::run(
+            &revisions,
+            &census,
+            "enwiki",
+            "2026-10-01",
+            0,
+            &good_digest,
+            Some("invalid"),
+        )
+        .is_err());
+        let mut changed = row.clone();
+        changed["title"] = serde_json::json!("Different title");
+        fs::write(&revisions, format!("{changed}\n")).unwrap();
+        assert_eq!(
+            run(&revisions, &census, "enwiki", "2026-10-01", 0, &good_digest),
+            Ok(1)
+        );
+        assert!(super::run(
+            &revisions,
+            &census,
+            "enwiki",
+            "2026-10-01",
+            0,
+            &good_digest,
+            Some(&record_digest),
+        )
+        .is_err());
+        fs::write(&revisions, format!("{row}\n")).unwrap();
         assert!(run(
             &revisions,
             &census,

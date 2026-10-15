@@ -22,7 +22,7 @@ fn usage() {
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
-    println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256>");
+    println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack --help");
@@ -184,12 +184,12 @@ fn main() {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
         Some("audit-diagnostic") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 6 {
-                eprintln!("audit-diagnostic requires exactly six arguments");
+            if fields.len() != 6 && fields.len() != 7 {
+                eprintln!("audit-diagnostic requires six arguments and an optional revision digest");
                 usage();
                 std::process::exit(2);
             }
-            let parsed = fields[2..6]
+            let parsed = fields[2..]
                 .iter()
                 .map(|value| value.to_str())
                 .collect::<Option<Vec<_>>>();
@@ -211,6 +211,7 @@ fn main() {
                 parsed[1],
                 namespace,
                 parsed[3],
+                parsed.get(4).copied(),
             ) {
                 eprintln!("{error}");
                 std::process::exit(1);
