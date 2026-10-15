@@ -1,0 +1,51 @@
+name: Renderer dump qualification
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/renderer-harness/run_dump.sh'
+      - 'scripts/filter_dump_for_render.py'
+      - 'scripts/test_filter_dump_for_render.py'
+      - 'scripts/compare_rendered_html.py'
+      - 'scripts/test_compare_rendered_html.py'
+      - '.github/workflows/renderer-dump-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dump-import-render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest scripts/test_filter_dump_for_render.py scripts/test_compare_rendered_html.py
+      - name: Discover and stage the official angwiki export (SHA-256 verified)
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/dump"
+          mkdir -p "$work"
+          python3 scripts/discover_current_content_export.py angwiki --months 1 > "$work/report.json"
+          python3 scripts/stage_current_content_export.py "$work/report.json" "$work/staging" "$work/source_manifest.json"
+          cp "$work/report.json" "$work/source_manifest.json" "$work/../"
+      - name: Import into pinned MediaWiki, render sample, compare with live wiki
+        run: |
+          set -euo pipefail
+          member="$(ls "$RUNNER_TEMP"/dump/staging/*.xml.bz2)"
+          tools/renderer-harness/run_dump.sh "$RUNNER_TEMP/dump-evidence" "$member" ang ang.wikipedia.org
+      - name: Preserve dump render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-dump-evidence
+          path: |
+            ${{ runner.temp }}/dump-evidence
+            ${{ runner.temp }}/report.json
+            ${{ runner.temp }}/source_manifest.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"

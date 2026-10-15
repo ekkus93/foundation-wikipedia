@@ -1,0 +1,60 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import compare_rendered_html as c  # noqa: E402
+
+PAGE = (
+    "<h2>Early life</h2><p>Text "
+    '<sup typeof="mw:Extension/ref" class="mw-ref"><a href="#cite_note-1">[1]</a></sup> '
+    '<a rel="mw:WikiLink" href="./Alpha">Alpha</a> '
+    '<a rel="mw:WikiLink" href="./Beta%20Two">Beta</a> '
+    '<a rel="mw:WikiLink" href="./Gamma#Sec">skip</a></p>'
+    '<table class="wikitable"><tr><td>x</td></tr></table><h3>Later</h3>'
+)
+
+
+class SummaryTests(unittest.TestCase):
+    def test_extracts_structure(self):
+        s = c.summarize(PAGE)
+        self.assertEqual([(2, "Early life"), (3, "Later")], s["headings"])
+        self.assertEqual(1, s["tables"])
+        self.assertEqual(1, s["refs"])
+        self.assertEqual(["Alpha", "Beta Two"], s["links"])
+        self.assertEqual({}, s["error_markers"])
+
+    def test_counts_error_markers(self):
+        s = c.summarize('<p>Script error: bad</p><span class="error">x</span><p>Script error</p>')
+        self.assertEqual({"Script error": 2, 'class="error': 1}, s["error_markers"])
+
+
+class CompareTests(unittest.TestCase):
+    def test_identical_pages_score_perfectly(self):
+        m = c.compare(c.summarize(PAGE), c.summarize(PAGE))
+        self.assertEqual(1.0, m["heading_similarity"])
+        self.assertEqual(1.0, m["link_jaccard"])
+        self.assertEqual((0, 0, 0, 0), (m["table_delta"], m["ref_delta"], m["local_error_markers"], m["live_error_markers"]))
+
+    def test_differences_are_measured(self):
+        local = c.summarize(PAGE.replace("Alpha", "Delta").replace("<table", "<p").replace("</table>", "</p>"))
+        m = c.compare(local, c.summarize(PAGE))
+        self.assertLess(m["link_jaccard"], 1.0)
+        self.assertEqual(-1, m["table_delta"])
+
+    def test_empty_pages_do_not_divide_by_zero(self):
+        m = c.compare(c.summarize(""), c.summarize(""))
+        self.assertEqual(1.0, m["link_jaccard"])
+
+    def test_aggregate_counts_pages_with_problems(self):
+        good = {"metrics": c.compare(c.summarize(PAGE), c.summarize(PAGE))}
+        bad = {"metrics": c.compare(c.summarize("<p>Script error</p>"), c.summarize(PAGE))}
+        agg = c.aggregate([good, bad])
+        self.assertEqual(2, agg["pages"])
+        self.assertEqual(1, agg["pages_with_local_errors"])
+        self.assertEqual(1, agg["pages_with_ref_mismatch"])
+        self.assertEqual({"pages": 0}, c.aggregate([]))
+
+
+if __name__ == "__main__":
+    unittest.main()
