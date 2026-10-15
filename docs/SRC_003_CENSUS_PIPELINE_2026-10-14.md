@@ -302,3 +302,45 @@ independent namespace-aware census; implement the production portable Rust
 bzip2/XML importer and complete Parsoid-fidelity article/media normalization;
 build and qualify complete offline packs on desktop and Android.
 **SRC-003 remains unchecked**.
+
+## Digest-pinned revision-content census CLI (2026-10-14)
+
+The provisional `wiki-pack audit-diagnostic` command now invokes the portable
+Rust `wiki-source::public_dump_revision_jsonl::audit_revision_content_census`
+pipeline using two caller-supplied, bounded local regular files: diagnostic
+`revision-content-jsonl` and a separately obtained LF page-ID census. Usage:
+
+```text
+wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256>
+```
+
+The expected ID stream's SHA-256 is computed **from the exact bytes consumed**
+by the Rust streaming auditor and compared with the caller's 64-digit pin.
+The CLI verifies project/generation/namespace, decoded wikitext digests,
+record order and metadata, and page-ID agreement; rejects malformed and
+truncated input; checks bounded regular-file identity and metadata before
+claiming diagnostic agreement; and does not publish an artifact or install a
+pack. CLI tests exercise successful Unicode-scoped input, bad expected
+digests, different namespaces/IDs, truncated JSONL and symlink rejection on
+Unix. This is still only a local consistency gate. A matching caller-supplied
+digest is **not** proof that the census came independently from Wikimedia or
+corresponds to the correct authoritative generation.
+
+**Code and correction history:** Implementation
+`63c269f014e8acf8f88fbc4995942de4e1963078`
+failed [Rust CI 38683792273](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38683792273)
+at formatting. Following repository-concurrent revisions, the CLI formatting
+was corrected at `4f86990a5febfac319d091abb8d3c0f63393e0d6`;
+[Rust CI 38684075687](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38684075687)
+then found an ordinary strict Clippy warning. The final qualified
+implementation is **`09cd0f0efe75c3784f30a653b7615e3987db5d85`**:
+
+- [Rust workspace CI 38684486671](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38684486671) — passed at the exact implementation SHA, including the diagnostic CLI regression.
+- [Platform shells CI 38684486655](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38684486655) — passed at the same exact SHA.
+
+**Remaining:** independent publication authentication, real official-source
+generation and namespace completeness, production portable Rust bzip2/XML
+decoding, revision-matched MediaWiki/Parsoid rendering, mandatory offline
+media/attribution, and desktop/Android pack acceptance. **SRC-003 remains
+unchecked**. These tests use synthetic fixtures, not a qualified official
+Wikimedia dataset.
