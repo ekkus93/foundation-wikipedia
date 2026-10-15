@@ -177,3 +177,14 @@ Code SHA `7290668e63bea18952c6e981ded8fc87fdcd6568` makes `load_source_manifest`
 - [Platform shells CI 38668294054](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668294054) — passed on the same exact SHA.
 
 This is input-ambiguity hardening only; it does not authenticate an official dump, prove independent census completeness, qualify a portable Rust importer, produce Parsoid-grade HTML or include required offline media. **SRC-003 remains unchecked.**
+
+## Fail-closed manifest JSON constants and structural depth (2026-10-14)
+
+The shared diagnostic manifest loader rejects Python's non-RFC JSON extensions `NaN`, `Infinity` and `-Infinity` anywhere in a source manifest. It also deterministically limits JSON array/object nesting to **128 levels**, scanning before decoding while correctly ignoring brackets inside quoted strings and escaped quotes. Overly nested manifests fail with a typed `SourceVerificationError` rather than depending on interpreter recursion limits. Both the checksum-verifier and XML-census CLIs reuse this loader.
+
+- Initial code SHA `778aeac58a001a7a4352059a0d30731325eef06d` failed [Rust CI 38668631337](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668631337), because a test assumed Python would reject a 2,000-level array with a recursion error, whereas that interpreter decoded the array before rejecting its non-object top level. This SHA is **not** qualified.
+- Corrected code SHA **`bc038b5e8af6800b67a751fc3ad3278a536ddb4c`** adds a deterministic pre-parse depth bound and a test proving that long bracket sequences inside a JSON string remain accepted.
+- [Rust workspace CI 38668982354](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668982354) — **passed** on the corrected exact SHA, including Python regression discovery.
+- [Platform shells CI 38668982370](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668982370) — **passed** on the same SHA.
+
+This is strict diagnostic input handling, not independently authenticated Wikimedia acquisition, independent page-ID completeness, production Rust bzip2/XML import, renderer fidelity or required offline-media acceptance. **SRC-003 remains unchecked.**
