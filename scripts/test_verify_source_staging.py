@@ -71,6 +71,20 @@ class SourceStagingTests(unittest.TestCase):
             self.reject("exceeds byte budget")
         self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
 
+    def test_late_invalid_declaration_precedes_staged_file_access(self):
+        # The first declared member is missing, but the second has invalid
+        # metadata: complete declaration preflight must report the latter.
+        self.member.unlink()
+        self.manifest["files"].append({
+            "name": "../unsafe",
+            "bytes": 1,
+            "sha256": "0" * 64,
+        })
+        self.reject("unsafe or incomplete")
+        self.manifest["files"][-1]["name"] = "late.xml"
+        self.manifest["files"][-1]["bytes"] = 65 * 1024**3
+        self.reject("exceeds byte budget")
+
     def test_aggregate_member_byte_budget_rejected(self):
         second = self.dir / "second.xml"
         second.write_bytes(b"another verified member")
