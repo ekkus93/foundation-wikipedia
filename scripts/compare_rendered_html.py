@@ -9,7 +9,9 @@ a page could not be fetched at all.
 """
 import argparse
 import difflib
+import html
 import html.parser
+import re
 import json
 import sys
 import time
@@ -31,6 +33,7 @@ class _Structure(html.parser.HTMLParser):
         self.tables = 0
         self.refs = 0
         self.links = set()
+        self.redlinks = set()
         self._heading = None
 
     def handle_starttag(self, tag, attrs):
@@ -43,8 +46,19 @@ class _Structure(html.parser.HTMLParser):
             self.refs += 1
         elif tag == "a":
             href = attrs.get("href") or ""
-            if href.startswith("./") and "#" not in href and "rel" in attrs and "mw:WikiLink" in attrs["rel"]:
-                self.links.add(urllib.parse.unquote(href[2:]))
+            if href.startswith("./") and "rel" in attrs and "mw:WikiLink" in attrs["rel"]:
+                parts = urllib.parse.urlsplit(href)
+                if parts.fragment:
+                    return  # Section anchors are not page-level targets.
+                redlink = sorted(urllib.parse.parse_qsl(parts.query)) == [
+                    ("action", "edit"), ("redlink", "1")]
+                if parts.query and not redlink:
+                    return  # Do not erase arbitrary meaningful query strings.
+                title = urllib.parse.unquote(parts.path[2:])
+                if title:
+                    self.links.add(title)
+                    if redlink:
+                        self.redlinks.add(title)
 
     def handle_endtag(self, tag):
         if self._heading is not None and tag == f"h{self._heading[0]}":
@@ -65,6 +79,7 @@ def summarize(markup):
         "tables": parser.tables,
         "refs": parser.refs,
         "links": sorted(parser.links),
+        "redlinks": sorted(parser.redlinks),
         "error_markers": {m: markup.count(m) for m in ERROR_MARKERS if m in markup},
     }
 
@@ -85,6 +100,8 @@ def compare(local, live):
     return {
         "heading_similarity": difflib.SequenceMatcher(None, local["headings"], live["headings"]).ratio(),
         "link_jaccard": _jaccard(local["links"], live["links"]),
+        "redlink_status_drift_count": len(
+            set(local.get("redlinks", [])) ^ set(live.get("redlinks", []))),
         "missing_link_count": len(missing),
         "unexpected_link_count": len(unexpected),
         "missing_links_sample": missing[:10],
@@ -109,12 +126,25 @@ def aggregate(rows):
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
+        "pages_with_redlink_status_drift": sum(
+            1 for r in rows if r["metrics"]["redlink_status_drift_count"] > 0),
         "local_error_page_samples": [
             {"title": r.get("title"), "source_revision_id": r.get("source_revision_id"),
              "markers": r.get("local_error_details", {})}
             for r in rows if r["metrics"]["local_error_markers"] > 0
         ][:10],
     }
+
+
+def _error_excerpt(markup):
+    """Bounded human-readable context; never dump full rendered HTML to CI."""
+    hits = [markup.find(marker) for marker in ERROR_MARKERS]
+    hits = [hit for hit in hits if hit >= 0]
+    if not hits:
+        return ""
+    at = min(hits)
+    fragment = markup[max(0, at - 30):at + 210]
+    return " ".join(html.unescape(re.sub(r"<[^>]*>", " ", fragment)).split())[:180]
 
 
 def fetch_live(host, revision_id, timeout=60):
@@ -146,6 +176,7 @@ def build_report(sample, local_base, live_host, pause=1.0):
             row["metrics"] = compare(local_summary, live_summary)
             if local_summary["error_markers"]:
                 row["local_error_details"] = local_summary["error_markers"]
+                row["local_error_excerpt"] = _error_excerpt(local_html)
             row["local_html_bytes"] = len(local_html.encode("utf-8"))
             row["live_html_bytes"] = len(live_html.encode("utf-8"))
         except (OSError, ValueError, urllib.error.URLError) as error:
@@ -185,6 +216,8 @@ def _main(argv):
                 "missing_links_sample": metrics["missing_links_sample"],
                 "unexpected_links_sample": metrics["unexpected_links_sample"],
                 "local_error_details": row.get("local_error_details", {}),
+                "local_error_excerpt": row.get("local_error_excerpt", ""),
+                "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:
         print("FAIL:", failure, file=sys.stderr)

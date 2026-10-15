@@ -63,6 +63,29 @@ class CompareTests(unittest.TestCase):
         self.assertEqual([{"title": "Revision test", "source_revision_id": 777,
                            "markers": {"Script error": 1}}], report["local_error_page_samples"])
 
+    def test_redlink_action_does_not_change_target_identity(self):
+        local = c.summarize('<a rel="mw:WikiLink" href="./Alpha?action=edit&amp;redlink=1">A</a>')
+        live = c.summarize('<a rel="mw:WikiLink" href="./Alpha">A</a>')
+        self.assertEqual(["Alpha"], local["links"])
+        self.assertEqual(["Alpha"], local["redlinks"])
+        metric = c.compare(local, live)
+        self.assertEqual(1.0, metric["link_jaccard"])
+        self.assertEqual(1, metric["redlink_status_drift_count"])
+        self.assertEqual(0, metric["missing_link_count"])
+        self.assertEqual(0, metric["unexpected_link_count"])
+
+    def test_arbitrary_queries_and_section_fragments_do_not_alias_targets(self):
+        content = ('<a rel="mw:WikiLink" href="./Alpha?diff=42">A</a>'
+                   '<a rel="mw:WikiLink" href="./Bravo#Sec">B</a>'
+                   '<a rel="mw:WikiLink" href="./Charlie">C</a>')
+        self.assertEqual(["Charlie"], c.summarize(content)["links"])
+
+    def test_renderer_error_excerpt_is_bounded_and_readable(self):
+        markup = ('<p>before</p><span class="error">Lua error: missing module X' + 'x' * 500 + '</span>')
+        excerpt = c._error_excerpt(markup)
+        self.assertIn("Lua error: missing module X", excerpt)
+        self.assertLessEqual(len(excerpt), 180)
+
     def test_empty_pages_do_not_divide_by_zero(self):
         m = c.compare(c.summarize(""), c.summarize(""))
         self.assertEqual(1.0, m["link_jaccard"])
