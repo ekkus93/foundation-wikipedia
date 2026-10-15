@@ -28,6 +28,19 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(["Alpha", "Beta Two"], s["links"])
         self.assertEqual({}, s["error_markers"])
 
+    def test_visual_reference_counts_do_not_imply_offline_assets(self):
+        markup = ('<figure><img src="//upload.wikimedia.org/picture.png" srcset="a 1x">'
+                  '<figcaption>Caption</figcaption></figure>'
+                  '<math><mi>x</mi></math><svg></svg>'
+                  '<img alt="missing src"><video></video><audio></audio>')
+        visual = c.summarize(markup)["visuals"]
+        self.assertEqual(2, visual["images"])
+        self.assertEqual(1, visual["remote_image_refs"])
+        self.assertEqual(1, visual["images_without_src"])
+        self.assertEqual(1, visual["images_with_srcset"])
+        self.assertEqual((1, 1, 1), (visual["mathml"], visual["inline_svg"], visual["captions"]))
+        self.assertEqual((1, 1), (visual["video"], visual["audio"]))
+
     def test_counts_error_markers(self):
         s = c.summarize('<p>Script error: bad</p><span class="error">x</span><p>Script error</p>')
         self.assertEqual({"Script error": 2, 'class="error': 1}, s["error_markers"])
@@ -146,6 +159,18 @@ class CompareTests(unittest.TestCase):
         excerpt = c._error_excerpt(markup)
         self.assertIn("Lua error: missing module X", excerpt)
         self.assertLessEqual(len(excerpt), 180)
+
+    def test_differences_in_image_and_math_counts_are_measured(self):
+        local = c.summarize('<img src="//upload.wikimedia.org/one.png"><math>x</math>')
+        live = c.summarize('<img src="one.png"><img src="two.png">')
+        metrics = c.compare(local, live)
+        self.assertEqual(-1, metrics["image_count_delta"])
+        self.assertEqual(1, metrics["mathml_count_delta"])
+        summary = c.aggregate([{"metrics": metrics}])
+        self.assertEqual(1, summary["pages_with_image_count_mismatch"])
+        self.assertEqual(1, summary["pages_with_mathml_count_mismatch"])
+        self.assertEqual(1, summary["pages_with_remote_image_references"])
+        self.assertEqual(1, summary["total_local_image_references"])
 
     def test_empty_pages_do_not_divide_by_zero(self):
         m = c.compare(c.summarize(""), c.summarize(""))

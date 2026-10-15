@@ -37,6 +37,16 @@ class _Structure(html.parser.HTMLParser):
         self.links = set()
         self.redlinks = set()
         self._heading = None
+        # These are reference counts, NOT downloaded/verified offline assets.
+        self.images = 0
+        self.images_without_src = 0
+        self.images_with_srcset = 0
+        self.remote_image_refs = 0
+        self.mathml = 0
+        self.svg = 0
+        self.captions = 0
+        self.video = 0
+        self.audio = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -44,6 +54,25 @@ class _Structure(html.parser.HTMLParser):
             self._heading = [int(tag[1]), []]
         elif tag == "table":
             self.tables += 1
+        elif tag == "img":
+            self.images += 1
+            source = attrs.get("src") or ""
+            if not source:
+                self.images_without_src += 1
+            elif source.startswith(("https://", "http://", "//")):
+                self.remote_image_refs += 1
+            if attrs.get("srcset"):
+                self.images_with_srcset += 1
+        elif tag == "math":
+            self.mathml += 1
+        elif tag == "svg":
+            self.svg += 1
+        elif tag == "figcaption":
+            self.captions += 1
+        elif tag == "video":
+            self.video += 1
+        elif tag == "audio":
+            self.audio += 1
         elif tag == "sup" and "mw:Extension/ref" in (attrs.get("typeof") or ""):
             self.refs += 1
         elif tag == "a":
@@ -82,6 +111,17 @@ def summarize(markup):
         "refs": parser.refs,
         "links": sorted(parser.links),
         "redlinks": sorted(parser.redlinks),
+        "visuals": {
+            "images": parser.images,
+            "images_without_src": parser.images_without_src,
+            "images_with_srcset": parser.images_with_srcset,
+            "remote_image_refs": parser.remote_image_refs,
+            "mathml": parser.mathml,
+            "inline_svg": parser.svg,
+            "captions": parser.captions,
+            "video": parser.video,
+            "audio": parser.audio,
+        },
         "error_markers": {m: markup.count(m) for m in ERROR_MARKERS if m in markup},
     }
 
@@ -110,6 +150,12 @@ def compare(local, live):
         "unexpected_links_sample": unexpected[:10],
         "table_delta": local["tables"] - live["tables"],
         "ref_delta": local["refs"] - live["refs"],
+        "image_count_delta": (local.get("visuals", {}).get("images", 0)
+                              - live.get("visuals", {}).get("images", 0)),
+        "mathml_count_delta": (local.get("visuals", {}).get("mathml", 0)
+                               - live.get("visuals", {}).get("mathml", 0)),
+        "local_visuals": local.get("visuals", {}),
+        "live_visuals": live.get("visuals", {}),
         "local_error_markers": sum(local["error_markers"].values()),
         "live_error_markers": sum(live["error_markers"].values()),
         "error_marker_delta": {
@@ -149,6 +195,14 @@ def aggregate(rows):
             1 for r in rows if r.get("source_wikitext_match") is None),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
+        "pages_with_image_count_mismatch": sum(
+            1 for r in rows if r["metrics"]["image_count_delta"] != 0),
+        "pages_with_mathml_count_mismatch": sum(
+            1 for r in rows if r["metrics"]["mathml_count_delta"] != 0),
+        "pages_with_remote_image_references": sum(
+            1 for r in rows if r["metrics"]["local_visuals"].get("remote_image_refs", 0) > 0),
+        "total_local_image_references": sum(
+            r["metrics"]["local_visuals"].get("images", 0) for r in rows),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
         "pages_with_redlink_status_drift": sum(
             1 for r in rows if r["metrics"]["redlink_status_drift_count"] > 0),
@@ -329,6 +383,9 @@ def _main(argv):
                 "local_wikitext_sha256": row.get("local_wikitext_sha256"),
                 "local_identity": row.get("local_identity", {}),
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
+                "image_count_delta": metrics["image_count_delta"],
+                "mathml_count_delta": metrics["mathml_count_delta"],
+                "local_visuals": metrics["local_visuals"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:
         print("FAIL:", failure, file=sys.stderr)

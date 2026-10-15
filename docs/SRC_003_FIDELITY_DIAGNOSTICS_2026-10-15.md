@@ -95,3 +95,9 @@ The renderer report for 25 sampled public-dump articles records:
 - `pages_with_local_only_errors=0` and `pages_with_error_marker_drift=0`; the sampled original `Wiht (īeg)` error `Module:Convert` line 2164 appears in both local and live revision HTML.
 
 **Qualification boundary:** the sampled revisions are now shown byte-identical at the raw main-slot wikitext level; this is a substantial SRC-003 input-fidelity milestone, **not** proof that all upstream pages/members are present, that template/module dependencies are generation-consistent, that rendered HTML is completely correct, or that required offline media/attribution and installable packs are provided. SRC-003 remains unchecked.
+
+## Offline-required visual dependency census — diagnostic only
+
+The sampled Parsoid HTML comparison now counts rendered `img` elements, missing `src`, `srcset` variants, externally referenced image URLs, inline MathML, inline SVG, figure captions and the separately optional `video`/`audio` elements. It records local-vs-live image and MathML count differences and aggregate pages containing external image references. Tests exercise synthetic images, captions, inline equations and the separate A/V categories.
+
+These counts are **NOT a downloaded-media inventory**: they do not prove each image/diagram/map/math resource is locally available, verify Commons license/author attribution, follow CSS or `srcset` dependencies, or distinguish essential visuals from decorative ones. They make missing visual acquisition work visible in the renderer qualification report without reclassifying a green public-dump import as an offline-ready pack. The `PACK-003` and `SRC-003` acceptance gates remain unchecked.
