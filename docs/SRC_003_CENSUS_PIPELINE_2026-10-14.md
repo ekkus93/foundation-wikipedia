@@ -102,3 +102,13 @@ The Python diagnostic importer now accepts `--expected-census PATH --expected-sh
 - Regression cases include equal multi-page census, missing/extra IDs, reordered IDs, malformed records, digest mismatch, missing digest and symlinked expected census.
 
 **Crucial limit:** A checksum is only an integrity pin. Neither the expected census's independent origin nor its exact source-generation cutoff/namespace is established by the tool; the caller must separately authenticate both. Without the optional gate, the script still emits only an observed census. This does not qualify actual Wikimedia dump acquisition, a portable Rust XML importer, HTML rendering or mandatory offline media. `SRC-003` remains unchecked.
+
+## Non-page XML memory bound and root structure (2026-10-14)
+
+- The Python diagnostic decoder now enforces an 8 MiB cap on decompressed XML accumulated between page elements (notably untrusted `siteinfo` metadata), refuses unknown root-level XML elements, and rejects duplicate or misplaced `siteinfo` elements. It releases processed `siteinfo` subtrees to avoid retaining metadata in the root. The existing 32 MiB per-page bound and 128-level nesting bound still apply.
+- Deterministic regression coverage includes valid `siteinfo`, duplicate/misplaced metadata, unrecognized root children, and oversized metadata with no census published.
+- Initial SHA `9d40610d8a24ad4df7603a0812f6b51c13d87e05` failed Python regression tests because one byte-literal newline assertion and one pre-existing error-message expectation were inconsistent. Both were fixed in exact code SHA **`57187f08ad681e9555aa3fee62b85ed6abe856e5`**.
+- [Rust workspace CI 38657955558](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38657955558) — success at the corrected SHA, including diagnostic Python tests.
+- [Platform shells CI 38657955492](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38657955492) — success at the same SHA.
+
+**Limitations:** This protects a diagnostic importer from unbounded non-page XML accumulation; it does not establish independently authenticated Wikimedia source generation, an independent complete census, portable Rust importer integration, full renderer fidelity, mandatory offline media or end-to-end pack acceptance. **SRC-003 remains unchecked**. The canonical TODO was restored on master at `f80a53a32918eeb7de74c6885a87a689bdc13ec1` using the original `007b16e023ce30e31851216ce147e2dc6c1c4dbc` file blob, retaining all 1,536 lines.
