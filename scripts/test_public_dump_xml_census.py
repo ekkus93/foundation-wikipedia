@@ -129,6 +129,48 @@ class DumpXmlTests(unittest.TestCase):
             self.assertEqual(record["timestamp"], "2026-10-01T00:00:00Z")
         self.assertEqual(sorted(p.name for p in self.output.iterdir()), ["content.jsonl"])
 
+    def test_revision_content_jsonl_rejects_non_wikitext_models_and_formats(self):
+        original = page(1)
+        invalid = (
+            "<model>json</model><text>Sample</text>",
+            "<model>wikitext</model><model>wikitext</model><text>Sample</text>",
+            "<format>application/json</format><text>Sample</text>",
+            '<slots><slot role="main"><model>Scribunto</model>'
+            '<text>Sample</text></slot></slots>',
+            '<slots><slot role="main" model="json"><text>Sample</text></slot></slots>',
+            '<slots><slot role="main"><format>application/json</format>'
+            '<text>Sample</text></slot></slots>',
+        )
+        for replacement in invalid:
+            with self.subTest(replacement=replacement):
+                self.manifest["files"].clear()
+                self.add(1, 100, "<mediawiki>" +
+                         original.replace("<text>Sample</text>", replacement) +
+                         "</mediawiki>")
+                with self.assertRaisesRegex(DumpDecodeError, "wikitext declaration"):
+                    stage_observed_census(
+                        self.manifest, self.staging, self.output, "content.jsonl",
+                        output_format="revision-content-jsonl")
+                self.assertEqual(list(self.output.iterdir()), [])
+
+        self.manifest["files"].clear()
+        legacy = original.replace("<text>Sample</text>",
+                                  "<model>wikitext</model><format>text/x-wiki</format>"
+                                  "<text>Sample</text>")
+        slotted = page(2).replace(
+            "<text>Sample</text>",
+            '<slots><slot role="main" model="wikitext">'
+            '<model>wikitext</model><format>text/x-wiki</format>'
+            '<text>Sample</text></slot></slots>')
+        self.add(1, 100, f"<mediawiki>{legacy}{slotted}</mediawiki>")
+        result, count = stage_observed_census(
+            self.manifest, self.staging, self.output, "content.jsonl",
+            output_format="revision-content-jsonl")
+        self.assertEqual(count, 2)
+        self.assertEqual([json.loads(line)["wikitext"] for line in
+                          result.read_text(encoding="utf-8").splitlines()],
+                         ["Sample", "Sample"])
+
     def test_revision_content_jsonl_rejects_missing_or_ambiguous_main_text(self):
         bad_texts = (
             "",

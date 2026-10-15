@@ -110,6 +110,18 @@ def _revision_wikitext(revision):
     def child_name(name):
         return f"{{{namespace}}}{name}" if namespace else name
 
+    def require_wikitext(parent):
+        # Older exports may omit model/format; an explicit non-wikitext
+        # declaration must never be mislabeled as article wikitext.
+        for name, allowed in (("model", "wikitext"), ("format", "text/x-wiki")):
+            declarations = [item for item in parent if item.tag == child_name(name)]
+            if (len(declarations) > 1 or
+                    (declarations and (declarations[0].text != allowed or len(declarations[0])))):
+                raise DumpDecodeError("unsupported or ambiguous revision wikitext declaration")
+            if name in parent.attrib and parent.attrib[name] != allowed:
+                raise DumpDecodeError("unsupported revision wikitext declaration")
+
+    require_wikitext(revision)
     direct = [item for item in revision if item.tag == child_name("text")]
     slots = [item for item in revision if item.tag == child_name("slots")]
     if len(direct) == 1 and not slots:
@@ -121,6 +133,7 @@ def _revision_wikitext(revision):
         ]
         if len(candidates) != 1:
             raise DumpDecodeError("missing or duplicate main revision slot")
+        require_wikitext(candidates[0])
         text = _one(candidates[0], "text")
     else:
         raise DumpDecodeError("missing or ambiguous revision wikitext")
