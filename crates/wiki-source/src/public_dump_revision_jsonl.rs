@@ -44,13 +44,14 @@ fn valid_date(value: &str) -> bool {
     if bytes.len() != 10
         || bytes[4] != b'-'
         || bytes[7] != b'-'
-        || !bytes.iter().enumerate().all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
     {
         return false;
     }
-    let number = |from: usize, to: usize| -> u32 {
-        value[from..to].parse::<u32>().unwrap_or(0)
-    };
+    let number = |from: usize, to: usize| -> u32 { value[from..to].parse::<u32>().unwrap_or(0) };
     let year = number(0, 4);
     let month = number(5, 7);
     let day = number(8, 10);
@@ -75,9 +76,9 @@ fn valid_timestamp(value: &str) -> bool {
         && bytes[16] == b':'
         && bytes[19] == b'Z'
         && valid_date(&value[..10])
-        && [11..13, 14..16, 17..19].iter().all(|r| {
-            bytes[r.clone()].iter().all(u8::is_ascii_digit)
-        })
+        && [11..13, 14..16, 17..19]
+            .iter()
+            .all(|r| bytes[r.clone()].iter().all(u8::is_ascii_digit))
         && value[11..13].parse::<u32>().is_ok_and(|n| n <= 23)
         && value[14..16].parse::<u32>().is_ok_and(|n| n <= 59)
         && value[17..19].parse::<u32>().is_ok_and(|n| n <= 59)
@@ -104,10 +105,17 @@ pub struct DiagnosticRevisionLines<R> {
 }
 
 impl<R: BufRead> DiagnosticRevisionLines<R> {
-    pub fn new(reader: R, project: &str, generation: &str, namespace: i32) -> Result<Self, RevisionRecordError> {
+    pub fn new(
+        reader: R,
+        project: &str,
+        generation: &str,
+        namespace: i32,
+    ) -> Result<Self, RevisionRecordError> {
         if project.is_empty()
             || project.len() > 255
-            || !project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            || !project
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
             || !valid_date(generation)
             || namespace < 0
         {
@@ -135,7 +143,10 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
             || record.revision_id > i64::MAX as u64
             || !valid_title(&record.title)
             || !valid_timestamp(&record.timestamp)
-            || record.redirect_target.as_ref().is_some_and(|s| !valid_title(s))
+            || record
+                .redirect_target
+                .as_ref()
+                .is_some_and(|s| !valid_title(s))
             || record.wikitext.len() > MAX_TEXT_BYTES
             || record.wikitext_sha256.len() != 64
             || format!("{:x}", Sha256::digest(record.wikitext.as_bytes())) != record.wikitext_sha256
@@ -227,8 +238,7 @@ mod tests {
 
     fn parse(bytes: &[u8]) -> Result<Vec<DiagnosticContentRevision>, RevisionRecordError> {
         let input = BufReader::with_capacity(3, Cursor::new(bytes));
-        DiagnosticRevisionLines::new(input, "enwiki", "2026-10-01", 0)?
-            .collect()
+        DiagnosticRevisionLines::new(input, "enwiki", "2026-10-01", 0)?.collect()
     }
 
     #[test]
@@ -256,8 +266,12 @@ mod tests {
             valid.trim_end_matches('\n').into(),
         ] {
             let mut reader = DiagnosticRevisionLines::new(
-                BufReader::new(Cursor::new(bad.as_bytes())), "enwiki", "2026-10-01", 0
-            ).unwrap();
+                BufReader::new(Cursor::new(bad.as_bytes())),
+                "enwiki",
+                "2026-10-01",
+                0,
+            )
+            .unwrap();
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
     }
@@ -266,10 +280,16 @@ mod tests {
     fn rejects_invalid_expected_scope_and_trailing_record() {
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "ENwiki", "2026-10-01", 0).is_err());
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-02-30", 0).is_err());
-        assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-10-01", -1).is_err());
+        assert!(
+            DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-10-01", -1).is_err()
+        );
         let mut lines = DiagnosticRevisionLines::new(
-            Cursor::new(record(1, "Valid").as_bytes().to_vec()), "enwiki", "2026-10-01", 0
-        ).unwrap();
+            Cursor::new(record(1, "Valid").as_bytes().to_vec()),
+            "enwiki",
+            "2026-10-01",
+            0,
+        )
+        .unwrap();
         assert!(lines.next().unwrap().is_ok());
         assert!(lines.next().is_none());
     }
