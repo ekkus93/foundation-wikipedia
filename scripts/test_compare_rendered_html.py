@@ -41,6 +41,20 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual((1, 1, 1), (visual["mathml"], visual["inline_svg"], visual["captions"]))
         self.assertEqual((1, 1), (visual["video"], visual["audio"]))
 
+    def test_picture_source_variants_and_stylesheets_are_separate_from_av(self):
+        markup = ('<link rel="alternate stylesheet" href="//cdn.example/styles.css">'
+                  '<picture><source srcset="//cdn.example/p.webp 1x, '
+                  'https://cdn.example/p2.webp 2x">'
+                  '<img src="/local.png" srcset="/local2.png 2x"></picture>'
+                  '<video><source srcset="//cdn.example/movie.mp4 1x"></video>')
+        visual = c.summarize(markup)["visuals"]
+        self.assertEqual(1, visual["picture_sources"])
+        self.assertEqual(3, visual["srcset_variant_candidates"])
+        self.assertEqual(2, visual["external_srcset_variant_candidates"])
+        self.assertEqual(1, visual["external_stylesheet_links"])
+        self.assertEqual(1, visual["images"])
+        self.assertEqual(0, visual["remote_image_refs"])
+
     def test_counts_error_markers(self):
         s = c.summarize('<p>Script error: bad</p><span class="error">x</span><p>Script error</p>')
         self.assertEqual({"Script error": 2, 'class="error': 1}, s["error_markers"])
@@ -171,6 +185,11 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(1, summary["pages_with_mathml_count_mismatch"])
         self.assertEqual(1, summary["pages_with_remote_image_references"])
         self.assertEqual(1, summary["total_local_image_references"])
+        self.assertEqual(2, summary["total_live_image_references"])
+        self.assertEqual(1, summary["missing_local_image_references"])
+        self.assertEqual(1, summary["pages_with_missing_local_image_references"])
+        self.assertEqual(0, summary["pages_with_live_remote_image_references"])
+        self.assertEqual(0, summary["total_local_external_srcset_candidates"])
 
     def test_empty_pages_do_not_divide_by_zero(self):
         m = c.compare(c.summarize(""), c.summarize(""))

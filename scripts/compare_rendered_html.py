@@ -42,11 +42,27 @@ class _Structure(html.parser.HTMLParser):
         self.images_without_src = 0
         self.images_with_srcset = 0
         self.remote_image_refs = 0
+        self.srcset_variants = 0
+        self.external_srcset_variants = 0
+        self.picture_sources = 0
+        self.external_stylesheets = 0
+        self._picture_depth = 0
         self.mathml = 0
         self.svg = 0
         self.captions = 0
         self.video = 0
         self.audio = 0
+
+    def _record_srcset(self, srcset):
+        # Diagnostic candidate counter, not a full HTML srcset parser or asset
+        # downloader. Wikimedia responsive URLs normally use comma-separated
+        # URL + density/width descriptors. Never serialize full remote URLs.
+        for candidate in (srcset or "").split(","):
+            url = candidate.strip().split(maxsplit=1)[0] if candidate.strip() else ""
+            if url:
+                self.srcset_variants += 1
+                if url.startswith(("https://", "http://", "//")):
+                    self.external_srcset_variants += 1
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -54,6 +70,14 @@ class _Structure(html.parser.HTMLParser):
             self._heading = [int(tag[1]), []]
         elif tag == "table":
             self.tables += 1
+        elif tag == "picture":
+            self._picture_depth += 1
+        elif tag == "source" and self._picture_depth:
+            self.picture_sources += 1
+            self._record_srcset(attrs.get("srcset"))
+        elif tag == "link" and "stylesheet" in (attrs.get("rel") or "").lower().split():
+            if (attrs.get("href") or "").startswith(("https://", "http://", "//")):
+                self.external_stylesheets += 1
         elif tag == "img":
             self.images += 1
             source = attrs.get("src") or ""
@@ -63,6 +87,7 @@ class _Structure(html.parser.HTMLParser):
                 self.remote_image_refs += 1
             if attrs.get("srcset"):
                 self.images_with_srcset += 1
+                self._record_srcset(attrs["srcset"])
         elif tag == "math":
             self.mathml += 1
         elif tag == "svg":
@@ -92,6 +117,8 @@ class _Structure(html.parser.HTMLParser):
                         self.redlinks.add(title)
 
     def handle_endtag(self, tag):
+        if tag == "picture":
+            self._picture_depth = max(0, self._picture_depth - 1)
         if self._heading is not None and tag == f"h{self._heading[0]}":
             self.headings.append((self._heading[0], " ".join("".join(self._heading[1]).split())))
             self._heading = None
@@ -116,6 +143,10 @@ def summarize(markup):
             "images_without_src": parser.images_without_src,
             "images_with_srcset": parser.images_with_srcset,
             "remote_image_refs": parser.remote_image_refs,
+            "srcset_variant_candidates": parser.srcset_variants,
+            "external_srcset_variant_candidates": parser.external_srcset_variants,
+            "picture_sources": parser.picture_sources,
+            "external_stylesheet_links": parser.external_stylesheets,
             "mathml": parser.mathml,
             "inline_svg": parser.svg,
             "captions": parser.captions,
@@ -203,6 +234,23 @@ def aggregate(rows):
             1 for r in rows if r["metrics"]["local_visuals"].get("remote_image_refs", 0) > 0),
         "total_local_image_references": sum(
             r["metrics"]["local_visuals"].get("images", 0) for r in rows),
+        "total_live_image_references": sum(
+            r["metrics"]["live_visuals"].get("images", 0) for r in rows),
+        "missing_local_image_references": sum(
+            max(0, -r["metrics"]["image_count_delta"]) for r in rows),
+        "pages_with_missing_local_image_references": sum(
+            1 for r in rows if r["metrics"]["image_count_delta"] < 0),
+        "pages_with_live_remote_image_references": sum(
+            1 for r in rows if r["metrics"]["live_visuals"].get("remote_image_refs", 0) > 0),
+        "total_local_external_srcset_candidates": sum(
+            r["metrics"]["local_visuals"].get("external_srcset_variant_candidates", 0)
+            for r in rows),
+        "total_live_external_srcset_candidates": sum(
+            r["metrics"]["live_visuals"].get("external_srcset_variant_candidates", 0)
+            for r in rows),
+        "pages_with_external_local_stylesheets": sum(
+            1 for r in rows
+            if r["metrics"]["local_visuals"].get("external_stylesheet_links", 0) > 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
         "pages_with_redlink_status_drift": sum(
             1 for r in rows if r["metrics"]["redlink_status_drift_count"] > 0),
@@ -386,6 +434,7 @@ def _main(argv):
                 "image_count_delta": metrics["image_count_delta"],
                 "mathml_count_delta": metrics["mathml_count_delta"],
                 "local_visuals": metrics["local_visuals"],
+                "live_visuals": metrics["live_visuals"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:
         print("FAIL:", failure, file=sys.stderr)
