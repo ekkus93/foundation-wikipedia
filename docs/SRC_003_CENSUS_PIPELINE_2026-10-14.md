@@ -244,3 +244,34 @@ not independent publisher authentication, a qualified portable Rust
 bzip2/XML importer, complete page-census verification, Parsoid rendering,
 mandatory offline media, or end-to-end offline pack acceptance.
 **SRC-003 remains unchecked.**
+
+## Portable Rust diagnostic revision-content JSONL ingestion boundary (2026-10-14)
+
+New `wiki-source::public_dump_revision_jsonl::DiagnosticRevisionLines` consumes
+LF-terminated diagnostic `revision-content-jsonl` records incrementally through
+a caller-supplied `BufRead`. It has explicit 128 MiB encoded-record, 32 MiB
+decoded-wikitext and 100-million-record limits. Serde rejects duplicate,
+unknown, missing and mistyped JSON fields; Rust checks the declared project,
+generation, namespace, strict page-ID order, valid revision IDs and UTC
+calendar dates, bounded titles, optional redirect targets and the decoded
+UTF-8 wikitext SHA-256. Errors permanently poison the iterator, and
+truncated final records fail rather than becoming successful EOF. Callers
+must consume the iterator to EOF and handle any error before activating
+downstream content. Regression tests exercise Unicode, small buffered reads,
+wrong scope, duplicate fields, corrupted digest, date drift, ID order and
+truncated records.
+
+- First code commit `e8cc1089cb0bef02871ae0ae5c2b0e12b4f795cd` failed Rust format CI
+  [38681041180](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38681041180);
+  it is **not** qualified.
+- Corrected code SHA **`ef5d0a8697eea0bd50d7cf287341ea9530a5e66f`** passed
+  [Rust workspace CI 38681257988](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38681257988)
+  (format, Clippy, tests and configured checks) and
+  [Platform shells CI 38681258070](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38681258070).
+
+**Boundary:** This is a portable Rust **consumer of previously decoded diagnostic
+JSONL**, not the Rust bzip2/XML source decoder, a signed or independently
+authenticated Wikimedia publication, a cross-checked independent page census,
+a revision-pinned Parsoid renderer, required-media pack assembly, or an
+end-to-end Android/desktop qualification. No official/source-complete claim is
+made, and **SRC-003 stays unchecked**.
