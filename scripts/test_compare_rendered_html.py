@@ -42,6 +42,27 @@ class CompareTests(unittest.TestCase):
         self.assertLess(m["link_jaccard"], 1.0)
         self.assertEqual(-1, m["table_delta"])
 
+    def test_link_mismatch_samples_are_stable_and_bounded(self):
+        local = {"headings": [], "tables": 0, "refs": 0, "error_markers": {},
+                 "links": [f"P{i:02}" for i in range(15)]}
+        live = {"headings": [], "tables": 0, "refs": 0, "error_markers": {},
+                "links": [f"Q{i:02}" for i in range(16)]}
+        metrics = c.compare(local, live)
+        self.assertEqual(16, metrics["missing_link_count"])
+        self.assertEqual(15, metrics["unexpected_link_count"])
+        self.assertEqual([f"Q{i:02}" for i in range(10)], metrics["missing_links_sample"])
+        self.assertEqual([f"P{i:02}" for i in range(10)], metrics["unexpected_links_sample"])
+
+    def test_local_error_aggregate_identifies_page_and_revision(self):
+        metrics = c.compare(c.summarize("<p>Script error</p>"), c.summarize(PAGE))
+        report = c.aggregate([{
+            "title": "Revision test", "source_revision_id": 777,
+            "local_error_details": {"Script error": 1}, "metrics": metrics,
+        }])
+        self.assertEqual(1, report["pages_below_half_link_overlap"])
+        self.assertEqual([{"title": "Revision test", "source_revision_id": 777,
+                           "markers": {"Script error": 1}}], report["local_error_page_samples"])
+
     def test_empty_pages_do_not_divide_by_zero(self):
         m = c.compare(c.summarize(""), c.summarize(""))
         self.assertEqual(1.0, m["link_jaccard"])

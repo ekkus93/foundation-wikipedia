@@ -75,10 +75,20 @@ def _jaccard(a, b):
 
 
 def compare(local, live):
-    """Fidelity metrics for one page; 1.0 means structurally identical."""
+    """Fidelity metrics for one page; 1.0 means structurally identical.
+
+    Link differences are samples, not a claim that the live revision's
+    template/module dependency versions match the local dump's versions.
+    """
+    missing = sorted(set(live["links"]) - set(local["links"]))
+    unexpected = sorted(set(local["links"]) - set(live["links"]))
     return {
         "heading_similarity": difflib.SequenceMatcher(None, local["headings"], live["headings"]).ratio(),
         "link_jaccard": _jaccard(local["links"], live["links"]),
+        "missing_link_count": len(missing),
+        "unexpected_link_count": len(unexpected),
+        "missing_links_sample": missing[:10],
+        "unexpected_links_sample": unexpected[:10],
         "table_delta": local["tables"] - live["tables"],
         "ref_delta": local["refs"] - live["refs"],
         "local_error_markers": sum(local["error_markers"].values()),
@@ -98,6 +108,12 @@ def aggregate(rows):
         "pages_with_local_errors": sum(1 for r in rows if r["metrics"]["local_error_markers"] > 0),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
+        "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
+        "local_error_page_samples": [
+            {"title": r.get("title"), "source_revision_id": r.get("source_revision_id"),
+             "markers": r.get("local_error_details", {})}
+            for r in rows if r["metrics"]["local_error_markers"] > 0
+        ][:10],
     }
 
 
@@ -126,7 +142,10 @@ def build_report(sample, local_base, live_host, pause=1.0):
             if local["status"] != 200 or local_html is None:
                 raise ValueError(f"local render status {local['status']}")
             live_html = fetch_live(live_host, entry["revision_id"])
-            row["metrics"] = compare(summarize(local_html), summarize(live_html))
+            local_summary, live_summary = summarize(local_html), summarize(live_html)
+            row["metrics"] = compare(local_summary, live_summary)
+            if local_summary["error_markers"]:
+                row["local_error_details"] = local_summary["error_markers"]
             row["local_html_bytes"] = len(local_html.encode("utf-8"))
             row["live_html_bytes"] = len(live_html.encode("utf-8"))
         except (OSError, ValueError, urllib.error.URLError) as error:
@@ -152,6 +171,21 @@ def _main(argv):
         json.dump(report, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
     print(json.dumps(report["aggregate"], sort_keys=True))
+    # Keep the workflow's existing diagnostic-vs-acceptance distinction:
+    # only missing fetches fail here. Print bounded per-page evidence so a
+    # green import does not conceal missing templates/Lua or link drift.
+    for row in report["pages"][:50]:
+        metrics = row["metrics"]
+        if metrics["local_error_markers"] or metrics["link_jaccard"] < 0.5:
+            print("FIDELITY-WARNING:", json.dumps({
+                "title": row["title"], "source_revision_id": row["source_revision_id"],
+                "link_jaccard": metrics["link_jaccard"],
+                "missing_link_count": metrics["missing_link_count"],
+                "unexpected_link_count": metrics["unexpected_link_count"],
+                "missing_links_sample": metrics["missing_links_sample"],
+                "unexpected_links_sample": metrics["unexpected_links_sample"],
+                "local_error_details": row.get("local_error_details", {}),
+            }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:
         print("FAIL:", failure, file=sys.stderr)
     return 1 if report["failures"] else 0
