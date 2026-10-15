@@ -8,6 +8,7 @@ It publishes only after all declared members decode and validate successfully.
 import bz2
 from datetime import datetime
 import hashlib
+import json
 import os
 import re
 import stat
@@ -59,7 +60,7 @@ def _positive(text):
     return value
 
 
-def _page_id(page):
+def _page_identity(page):
     title = _one(page, "title").text
     if not title or len(title.encode("utf-8")) > 4096 or title != title.strip():
         raise DumpDecodeError("invalid page title")
@@ -71,7 +72,7 @@ def _page_id(page):
         raise DumpDecodeError("namespace exceeds supported range")
     page_id = _positive(_one(page, "id").text)
     revision = _one(page, "revision")
-    _positive(_one(revision, "id").text)
+    revision_id = _positive(_one(revision, "id").text)
     timestamp = _one(revision, "timestamp").text
     if not timestamp or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp):
         raise DumpDecodeError("invalid revision timestamp")
@@ -79,7 +80,21 @@ def _page_id(page):
         datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError as exc:
         raise DumpDecodeError("invalid revision calendar timestamp") from exc
-    return page_id, namespace_id
+    expected_redirect = f"{{{_namespace(page.tag)}}}redirect" if _namespace(page.tag) else "redirect"
+    redirects = [child for child in page if child.tag == expected_redirect]
+    if len(redirects) > 1:
+        raise DumpDecodeError("multiple redirect targets")
+    redirect_target = None
+    if redirects:
+        redirect = redirects[0]
+        if set(redirect.attrib) != {"title"}:
+            raise DumpDecodeError("invalid redirect attributes")
+        redirect_target = redirect.attrib["title"]
+        if (not redirect_target or redirect_target != redirect_target.strip()
+                or len(redirect_target.encode("utf-8")) > 4096
+                or any(ord(char) < 32 or ord(char) == 127 for char in redirect_target)):
+            raise DumpDecodeError("invalid redirect title")
+    return page_id, namespace_id, title, revision_id, timestamp, redirect_target
 
 
 class BoundedDecompressed:
@@ -125,7 +140,8 @@ class HashingCompressed:
         return data
 
 
-def decode_member(path, first, last, output, namespace, expected_sha256, expected_size):
+def decode_member(path, first, last, output, namespace, expected_sha256, expected_size,
+                  output_format="ids"):
     """Stream a complete, well-formed bzip2 XML member to a pending sink."""
     previous = first - 1
     pages = 0
@@ -173,13 +189,23 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                     if _tag(elem.tag) == "page" and depth != 2:
                         raise DumpDecodeError("page outside mediawiki root")
                     if depth == 2 and _tag(elem.tag) == "page":
-                        page_id, ns = _page_id(elem)
+                        page_id, ns, title, revision_id, timestamp, redirect = _page_identity(elem)
                         if not first <= page_id <= last or page_id <= previous:
                             raise DumpDecodeError("page ID out of shard range or not strictly increasing")
                         previous = page_id
                         pages += 1
                         if ns == namespace:
-                            output.write(f"{page_id}\n".encode("ascii"))
+                            if output_format == "ids":
+                                output.write(f"{page_id}\n".encode("ascii"))
+                            else:
+                                record = {
+                                    "page_id": page_id, "namespace": ns,
+                                    "title": title, "revision_id": revision_id,
+                                    "timestamp": timestamp, "redirect_target": redirect,
+                                }
+                                output.write((json.dumps(
+                                    record, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":")) + "\n").encode("utf-8"))
                             selected += 1
                         elem.clear()
                         root.clear()
@@ -253,8 +279,12 @@ def _audit_expected_census(expected_path, expected_sha256, observed_path, select
 
 
 def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
-                          expected_census=None, expected_sha256=None):
+                          expected_census=None, expected_sha256=None, output_format="ids"):
     """Verify all staged digests, decode all shards, then publish atomically."""
+    if output_format not in ("ids", "revision-jsonl"):
+        raise DumpDecodeError("invalid diagnostic output format")
+    if output_format != "ids" and (expected_census is not None or expected_sha256 is not None):
+        raise DumpDecodeError("expected census comparison requires ID format")
     if (expected_census is None) != (expected_sha256 is None):
         raise DumpDecodeError("expected census and SHA-256 must be supplied together")
     if type(namespace) is not int or not 0 <= namespace <= MAX_NAMESPACE_ID:
@@ -296,7 +326,7 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
             for first, last, name in shards:
                 item = metadata[name]
                 selected += decode_member(Path(staging) / name, first, last, sink, namespace,
-                                          item["sha256"], item["bytes"])
+                                          item["sha256"], item["bytes"], output_format)
             if not selected:
                 raise DumpDecodeError("selected namespace has no pages")
             sink.flush()
@@ -333,9 +363,11 @@ def main():
     parser.add_argument("--namespace", type=int, default=0)
     parser.add_argument("--expected-census", type=Path)
     parser.add_argument("--expected-sha256")
+    parser.add_argument("--format", choices=("ids", "revision-jsonl"), default="ids")
     args = parser.parse_args()
     result, count = stage_observed_census(load_source_manifest(args.manifest), args.staging, args.output_dir, args.filename, args.namespace,
-                                          args.expected_census, args.expected_sha256)
+                                          args.expected_census, args.expected_sha256,
+                                          args.format)
     status = "digest-pinned expected census matched; its authority/independence NOT established" if args.expected_census else "publisher authenticity and completeness NOT established"
     print(f"Observed {count} page IDs in {result}; {status}")
 

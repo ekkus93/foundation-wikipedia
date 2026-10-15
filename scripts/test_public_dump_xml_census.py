@@ -76,6 +76,51 @@ class DumpXmlTests(unittest.TestCase):
             self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_revision_jsonl_exports_pinned_identity_unicode_and_redirect(self):
+        first = page(1).replace("Page 1", "München")
+        second = page(2, revision=777).replace(
+            "<id>2</id>", '<id>2</id><redirect title="Physics"/>', 1)
+        self.add(1, 100, f"<mediawiki>{first}{second}{page(3, ns=1)}</mediawiki>")
+        result, count = stage_observed_census(
+            self.manifest, self.staging, self.output, "revisions.jsonl",
+            output_format="revision-jsonl")
+        records = [json.loads(line) for line in result.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(count, 2)
+        self.assertEqual(records, [
+            {"page_id": 1, "namespace": 0, "title": "München",
+             "revision_id": 300, "timestamp": "2026-10-01T00:00:00Z",
+             "redirect_target": None},
+            {"page_id": 2, "namespace": 0, "title": "Page 2",
+             "revision_id": 777, "timestamp": "2026-10-01T00:00:00Z",
+             "redirect_target": "Physics"},
+        ])
+        self.assertEqual(result.read_bytes().count(b"\n"), 2)
+
+    def test_revision_jsonl_rejects_unsafe_redirect_and_incompatible_census_gate(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        with self.assertRaisesRegex(DumpDecodeError, "requires ID format"):
+            stage_observed_census(self.manifest, self.staging, self.output,
+                                  "revisions.jsonl", output_format="revision-jsonl",
+                                  expected_census=self.root / "expected.ids",
+                                  expected_sha256="0" * 64)
+        self.assertEqual(list(self.output.iterdir()), [])
+        for attr in ('title=" "', 'title=" Bad "', 'title="Physics" other="a"'):
+            self.manifest["files"].clear()
+            bad = page(1).replace("<id>1</id>", f"<id>1</id><redirect {attr}/>", 1)
+            self.add(1, 100, f"<mediawiki>{bad}</mediawiki>")
+            with self.assertRaisesRegex(DumpDecodeError, "redirect"):
+                stage_observed_census(self.manifest, self.staging, self.output,
+                                      "revisions.jsonl", output_format="revision-jsonl")
+            self.assertEqual(list(self.output.iterdir()), [])
+        self.manifest["files"].clear()
+        bad = page(1).replace("<id>1</id>",
+                               '<id>1</id><redirect title="Physics"/><redirect title="Math"/>', 1)
+        self.add(1, 100, f"<mediawiki>{bad}</mediawiki>")
+        with self.assertRaisesRegex(DumpDecodeError, "redirect"):
+            stage_observed_census(self.manifest, self.staging, self.output,
+                                  "revisions.jsonl", output_format="revision-jsonl")
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_corrupt_compressed_member_rejected_before_decode(self):
         path = self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
         path.write_bytes(path.read_bytes() + b"tamper")
