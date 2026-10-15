@@ -89,6 +89,22 @@ class FilterTests(unittest.TestCase):
         summary, _ = run([page("A &amp; B", 0, 1, 11, ARTICLE)], sample_min_bytes=10)
         self.assertEqual("A & B", summary["sample"][0]["title"])
 
+    def test_refuses_oversized_template_and_article_page_before_buffering(self):
+        oversized = page("Template:Giant", 10, 1, 11, "x" * 300)
+        regular = page("Good", 0, 2, 12, ARTICLE)
+        # The non-sampled template must fail even if a sampled article follows.
+        with self.assertRaisesRegex(f.DumpFormatError, "page XML exceeds byte cap"):
+            run([oversized, regular], sample_min_bytes=10, max_page_xml_bytes=260)
+        # A sampled page must be equally bounded.
+        with self.assertRaisesRegex(f.DumpFormatError, "page XML exceeds byte cap"):
+            run([regular], sample_min_bytes=10, max_page_xml_bytes=64)
+        with self.assertRaisesRegex(f.DumpFormatError, "invalid page XML byte cap"):
+            run([regular], sample_min_bytes=10, max_page_xml_bytes=0)
+        # A comfortably sized limit preserves the previous page selection.
+        report, _ = run([oversized, regular], sample_min_bytes=10,
+                        max_page_xml_bytes=10240)
+        self.assertEqual(2, report["source_pages"])
+
     def test_fails_closed_on_malformed_exports(self):
         good = page("Article", 0, 1, 11, ARTICLE)
         cases = {

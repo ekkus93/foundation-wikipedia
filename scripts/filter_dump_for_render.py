@@ -32,6 +32,9 @@ class DumpFormatError(ValueError):
 
 
 MAX_SAMPLE_PAGE_XML_BYTES = 64 * 1024 * 1024
+# Bound *every* page, including non-sampled template/module pages, before
+# retaining a potentially huge XML block for diagnostic rendering.
+MAX_PAGE_XML_BYTES = 64 * 1024 * 1024
 
 
 def _sample_wikitext_sha256(block, declared_bytes):
@@ -94,8 +97,10 @@ def _page_record(block):
 
 
 def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE_LIMIT,
-                sample_min_bytes=SAMPLE_MIN_BYTES):
+                sample_min_bytes=SAMPLE_MIN_BYTES, max_page_xml_bytes=MAX_PAGE_XML_BYTES):
     """Stream ``lines`` to ``out``; return a summary with the article sample."""
+    if not isinstance(max_page_xml_bytes, int) or max_page_xml_bytes < 1:
+        raise DumpFormatError("invalid page XML byte cap")
     keep = set(keep_namespaces)
     iterator = iter(lines)
     seen_root = False
@@ -111,9 +116,15 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
         raise DumpFormatError("missing <mediawiki> root element")
     summary = {"source_pages": 0, "kept_by_namespace": {}, "sample": []}
     block = [line]
+    block_bytes = len(line.encode("utf-8"))
+    if block_bytes > max_page_xml_bytes:
+        raise DumpFormatError("page XML exceeds byte cap")
     footer_seen = False
     for line in iterator:
         if line == "  </page>\n":
+            block_bytes += len(line.encode("utf-8"))
+            if block_bytes > max_page_xml_bytes:
+                raise DumpFormatError("page XML exceeds byte cap")
             block.append(line)
             record = _page_record(block)
             summary["source_pages"] += 1
@@ -135,15 +146,22 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
                 sample["source_wikitext_sha256"] = _sample_wikitext_sha256(block, record["bytes"])
                 summary["sample"].append(sample)
             block = None
+            block_bytes = 0
         elif block is None:
             if line == "  <page>\n":
                 block = [line]
+                block_bytes = len(line.encode("utf-8"))
+                if block_bytes > max_page_xml_bytes:
+                    raise DumpFormatError("page XML exceeds byte cap")
             elif line == "</mediawiki>\n":
                 out.write(line)
                 footer_seen = True
             elif line.strip():
                 raise DumpFormatError(f"unexpected content between pages: {line[:60]!r}")
         else:
+            block_bytes += len(line.encode("utf-8"))
+            if block_bytes > max_page_xml_bytes:
+                raise DumpFormatError("page XML exceeds byte cap")
             block.append(line)
     if block is not None or not footer_seen:
         raise DumpFormatError("truncated export: missing closing </page> or </mediawiki>")
