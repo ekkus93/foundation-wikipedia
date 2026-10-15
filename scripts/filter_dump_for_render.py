@@ -184,6 +184,22 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
 
 
 HASH_CHUNK_BYTES = 1024 * 1024
+# The diagnostic importer is deliberately bounded to one reasonably sized
+# XML line. All UTF-8 page/header byte budgets are checked independently.
+MAX_INPUT_LINE_CHARS = 64 * 1024 * 1024
+
+
+def _bounded_lines(stream, max_line_chars=MAX_INPUT_LINE_CHARS):
+    """Avoid TextIO's unbounded line iterator on malformed huge XML lines."""
+    if not isinstance(max_line_chars, int) or max_line_chars < 1:
+        raise DumpFormatError("invalid input line character cap")
+    while True:
+        line = stream.readline(max_line_chars + 1)
+        if not line:
+            return
+        if len(line) > max_line_chars:
+            raise DumpFormatError("input XML line exceeds character cap")
+        yield line
 
 
 def _sha256_stream(stream):
@@ -204,7 +220,7 @@ def _main(argv):
     opener = bz2.open if source.endswith(".bz2") else open
     with opener(source, "rt", encoding="utf-8", newline="\n") as handle, \
             open(target, "w", encoding="utf-8", newline="\n") as out:
-        summary = filter_dump(handle, out)
+        summary = filter_dump(_bounded_lines(handle), out)
     with open(target, "rb") as handle:
         summary["filtered_sha256"] = _sha256_stream(handle)
     with open(sample_path, "w", encoding="utf-8") as handle:

@@ -144,6 +144,27 @@ class FilterTests(unittest.TestCase):
         with self.assertRaises(f.DumpFormatError):
             f.filter_dump(["<mediawiki>\n", "</mediawiki>\n"], io.StringIO())
 
+    def test_input_line_reader_never_requests_unbounded_line(self):
+        class BoundedText(io.StringIO):
+            def __init__(self, value):
+                super().__init__(value)
+                self.requested = []
+
+            def readline(self, limit=-1):
+                self.requested.append(limit)
+                if limit < 1 or limit > 13:
+                    raise AssertionError("unbounded text input read")
+                return super().readline(limit)
+
+        valid = BoundedText("a\nb\n")
+        self.assertEqual(["a\n", "b\n"], list(f._bounded_lines(valid, max_line_chars=12)))
+        self.assertTrue(valid.requested)
+        self.assertTrue(all(size == 13 for size in valid.requested))
+        with self.assertRaisesRegex(f.DumpFormatError, "input XML line exceeds character cap"):
+            list(f._bounded_lines(BoundedText("x" * 20 + "\n"), max_line_chars=12))
+        with self.assertRaisesRegex(f.DumpFormatError, "invalid input line character cap"):
+            list(f._bounded_lines(io.StringIO(""), max_line_chars=0))
+
     def test_filtered_xml_digest_reads_in_bounded_chunks(self):
         class BoundedReader(io.BytesIO):
             def __init__(self, content):
