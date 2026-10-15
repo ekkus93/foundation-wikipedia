@@ -77,3 +77,21 @@ The diagnostic renderer now requests the local MediaWiki Action API revision's *
 The workflow continues to report mismatches diagnostically rather than claiming an unqualified export/importer is release-ready. A fetch/identity error fails the render comparison request, while a content hash mismatch is preserved as an explicit metric for follow-up. Deterministic tests cover exact Unicode/markup hashing, rejection of an incorrect locally remapped revision ID, and the existing original-vs-local source timestamp tests.
 
 **Limit:** a successful digest match shows byte-equivalent wikitext for the sampled import, not comprehensive Wikimedia publisher authentication, independent source-page census completeness, dependency-stable expansion, offline media or full pack acceptance. `SRC-003` remains unchecked.
+
+## Sample-level original-to-local raw content verification — qualified
+
+Two implementation commits are now qualified: `6c0f93b1a475d46b1f26d02e62c665f7df7330dc` generated the source-original wikitext hash on the verified dump sample, and `877aaf7569a9cc5dbb9a62273c8150b909e54e72` added destination-side local MediaWiki Action API raw wikitext comparison using the imported **local** page/revision IDs. The latter exact head passed:
+
+- [Rust workspace CI 38812254322](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38812254322) — successful, including Python and Rust tests.
+- [Platform shells CI 38812254273](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38812254273) — successful.
+- [Renderer dump qualification CI 38812254377](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38812254377) — successful; evidence in job `116688095898`.
+
+The renderer report for 25 sampled public-dump articles records:
+- `pages_with_source_wikitext_mismatch=0`: **25/25** source-original decoded main-slot wikitext SHA-256 digests match local imported raw revision content byte-for-byte.
+- `pages_without_source_wikitext_digest=0`: every sample carried its verified source digest.
+- `pages_with_source_timestamp_mismatch=0`: **25/25** timestamps match.
+- `pages_with_local_page_id_difference=25`, `pages_with_local_revision_id_difference=25`: imported local MediaWiki IDs are **not** the original upstream IDs. Explicit source identity mapping must remain attached to downstream articles/citations.
+- Mean normalized page-target link overlap `0.9715623796617847` and zero pages below 0.5, but all 25 have redlink/existence-state differences due to partial local page import.
+- `pages_with_local_only_errors=0` and `pages_with_error_marker_drift=0`; the sampled original `Wiht (īeg)` error `Module:Convert` line 2164 appears in both local and live revision HTML.
+
+**Qualification boundary:** the sampled revisions are now shown byte-identical at the raw main-slot wikitext level; this is a substantial SRC-003 input-fidelity milestone, **not** proof that all upstream pages/members are present, that template/module dependencies are generation-consistent, that rendered HTML is completely correct, or that required offline media/attribution and installable packs are provided. SRC-003 remains unchecked.
