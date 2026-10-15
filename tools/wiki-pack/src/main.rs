@@ -1,5 +1,6 @@
 //! Verification and provisional custom export of unsigned FWPACK01 envelopes.
 //! These commands do not install packs or verify publisher signatures.
+mod audit_diagnostic;
 mod preview_topic;
 
 use std::env;
@@ -21,6 +22,7 @@ fn usage() {
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
+    println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256>");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack --help");
@@ -180,6 +182,40 @@ fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("audit-diagnostic") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 6 {
+                eprintln!("audit-diagnostic requires exactly six arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let parsed = fields[2..6]
+                .iter()
+                .map(|value| value.to_str())
+                .collect::<Option<Vec<_>>>();
+            let Some(parsed) = parsed else {
+                eprintln!("Diagnostic scope and digest must be UTF-8");
+                std::process::exit(2);
+            };
+            let namespace = match parsed[2].parse::<i32>() {
+                Ok(value) if value >= 0 => value,
+                _ => {
+                    eprintln!("Diagnostic namespace must be a nonnegative 32-bit integer");
+                    std::process::exit(2);
+                }
+            };
+            if let Err(error) = audit_diagnostic::run(
+                Path::new(&fields[0]),
+                Path::new(&fields[1]),
+                parsed[0],
+                parsed[1],
+                namespace,
+                parsed[3],
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("preview-topic") => {
             let fields: Vec<OsString> = args.collect();
             let (json_output, input) = match fields.as_slice() {
