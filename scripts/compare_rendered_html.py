@@ -134,12 +134,13 @@ def aggregate(rows):
             and r["metrics"]["live_error_markers"] == 0),
         "pages_with_error_marker_drift": sum(
             1 for r in rows if r["metrics"]["error_marker_delta"]),
-        "pages_with_source_page_id_mismatch": sum(
-            1 for r in rows if r.get("source_identity_match", {}).get("page_id") is False),
-        "pages_with_source_revision_mismatch": sum(
-            1 for r in rows if r.get("source_identity_match", {}).get("revision_id") is False),
+        # XML import can allocate new local IDs without source corruption.
+        "pages_with_local_page_id_difference": sum(
+            1 for r in rows if r.get("local_id_comparison", {}).get("page_id_equal") is False),
+        "pages_with_local_revision_id_difference": sum(
+            1 for r in rows if r.get("local_id_comparison", {}).get("revision_id_equal") is False),
         "pages_with_source_timestamp_mismatch": sum(
-            1 for r in rows if r.get("source_identity_match", {}).get("timestamp") is False),
+            1 for r in rows if r.get("source_timestamp_match") is False),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
@@ -200,11 +201,12 @@ def build_report(sample, local_base, live_host, pause=1.0):
                 "timestamp": latest.get("timestamp"),
             }
             row["local_identity"] = local_identity
-            row["source_identity_match"] = {
-                "page_id": local_identity["page_id"] == entry["page_id"],
-                "revision_id": local_identity["revision_id"] == entry["revision_id"],
-                "timestamp": local_identity["timestamp"] == entry["timestamp"],
+            # Numeric local import IDs are not stable upstream identifiers.
+            row["local_id_comparison"] = {
+                "page_id_equal": local_identity["page_id"] == entry["page_id"],
+                "revision_id_equal": local_identity["revision_id"] == entry["revision_id"],
             }
+            row["source_timestamp_match"] = local_identity["timestamp"] == entry["timestamp"]
             if local_summary["error_markers"]:
                 row["local_error_details"] = local_summary["error_markers"]
                 row["local_error_excerpt"] = _error_excerpt(local_html)
@@ -243,7 +245,7 @@ def _main(argv):
         metrics = row["metrics"]
         if (metrics["local_error_markers"] or metrics["live_error_markers"]
                 or metrics["link_jaccard"] < 0.5
-                or False in row.get("source_identity_match", {}).values()):
+                or row.get("source_timestamp_match") is False):
             print("FIDELITY-WARNING:", json.dumps({
                 "title": row["title"], "source_revision_id": row["source_revision_id"],
                 "link_jaccard": metrics["link_jaccard"],
@@ -256,7 +258,8 @@ def _main(argv):
                 "live_error_details": row.get("live_error_details", {}),
                 "live_error_excerpt": row.get("live_error_excerpt", ""),
                 "error_marker_delta": metrics["error_marker_delta"],
-                "source_identity_match": row.get("source_identity_match", {}),
+                "source_timestamp_match": row.get("source_timestamp_match"),
+                "local_id_comparison": row.get("local_id_comparison", {}),
                 "local_identity": row.get("local_identity", {}),
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)

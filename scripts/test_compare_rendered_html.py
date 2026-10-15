@@ -64,24 +64,27 @@ class CompareTests(unittest.TestCase):
         self.assertEqual([{"title": "Revision test", "source_revision_id": 777,
                            "markers": {"Script error": 1}}], report["local_error_page_samples"])
 
-    def test_local_dump_identity_is_checked_against_pinned_sample(self):
+    def test_import_local_ids_are_distinct_from_source_timestamp(self):
         original = {"page_id": 5, "revision_id": 100, "timestamp": "2026-10-01T12:00:00Z",
                     "title": "Test"}
-        local = {"status": 200, "payload": {"id": 5, "latest": {
-            "id": 100, "timestamp": "2026-10-01T12:00:00Z"}, "html": PAGE}}
-        with patch.object(c.crf, "fetch_page", return_value=local), \
+        local = {"status": 200, "payload": {"id": 1, "latest": {
+            "id": 1, "timestamp": "2026-10-01T12:00:00Z"}, "html": PAGE}}
+        with patch.object(c.crf, "fetch_page", return_value=local), \\
              patch.object(c, "fetch_live", return_value=PAGE):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
         row = report["pages"][0]
-        self.assertEqual({"page_id": True, "revision_id": True, "timestamp": True},
-                         row["source_identity_match"])
-        self.assertEqual(0, report["aggregate"]["pages_with_source_revision_mismatch"])
-        local["payload"]["latest"]["id"] = 999
-        with patch.object(c.crf, "fetch_page", return_value=local), \
+        self.assertEqual({"page_id_equal": False, "revision_id_equal": False},
+                         row["local_id_comparison"])
+        self.assertTrue(row["source_timestamp_match"])
+        self.assertEqual(1, report["aggregate"]["pages_with_local_page_id_difference"])
+        self.assertEqual(1, report["aggregate"]["pages_with_local_revision_id_difference"])
+        self.assertEqual(0, report["aggregate"]["pages_with_source_timestamp_mismatch"])
+        local["payload"]["latest"]["timestamp"] = "2026-10-02T12:00:00Z"
+        with patch.object(c.crf, "fetch_page", return_value=local), \\
              patch.object(c, "fetch_live", return_value=PAGE):
             report = c.build_report([original], "http://localhost:8081", "ang.wikipedia.org", pause=0)
-        self.assertEqual(1, report["aggregate"]["pages_with_source_revision_mismatch"])
-        self.assertEqual(False, report["pages"][0]["source_identity_match"]["revision_id"])
+        self.assertFalse(report["pages"][0]["source_timestamp_match"])
+        self.assertEqual(1, report["aggregate"]["pages_with_source_timestamp_mismatch"])
 
     def test_upstream_error_is_distinguished_from_local_regression(self):
         broken = c.summarize('<p>Lua error in Module:Convert</p>')
