@@ -39,3 +39,34 @@ Snapshot link indexing and lookup now share first-letter title normalization, pr
 ## Shared model normalization follow-up
 
 The model alias validator now distinguishes noninitial case and rejects duplicate first-letter-normalized aliases. Qualified model head `0a5855f5487bdb7dc0a85ebc589bf2638492da4a`: Rust CI 38582924419, Platform CI 38582924318, Android ABI CI 38582924191 (all success). The source link resolver delegates to the model's shared title-key function as of `3e99ba436d3cf4246ddec36cb214229d1da76a7b`: Rust CI 38583240914 and Platform CI 38583241117 (both success). Source authenticity and SRC-002 acceptance remain outstanding.
+
+## Digest-pinned scoped Structured Contents import (2026-10-14)
+
+Portable `wiki-source::enterprise_pinned` provides
+`import_pinned_enterprise_ndjson_scoped` and
+`import_pinned_canonical_enterprise_ndjson_scoped`. These compose the
+existing all-or-nothing project/generation/revision-scoped Enterprise
+component join and canonical normalization with a streaming SHA-256 check of
+**the exact structured and companion NDJSON bytes consumed by the import**.
+A matched pin for only one component is insufficient. Malformed pins, valid
+but modified payloads, source identity/revision mismatches, and failed
+normalization never return a partially accepted canonical batch.
+
+- First implementation SHA `d965958a9331fdb394e8dafe349340ca25f1e358`
+  failed [Rust workspace CI 38685143930](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38685143930)
+  at the formatting check and is not qualified.
+- Corrected implementation SHA **`4db23d42e6483abd1194ef9ceea61aa698d7ab01`**
+  passed [Rust workspace CI 38685284234](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38685284234)
+  (format, Clippy, tests and repository checks) and
+  [Platform shells CI 38685284239](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38685284239)
+  at that exact SHA.
+- Synthetic regression fixtures exercise accepted revision-matched scoped
+  components, both independently mismatched SHA-256 pins, malformed digests,
+  parseable altered bytes and revision drift despite matching checksums.
+
+**Qualification boundary:** the SHA-256 expectations are caller-supplied
+integrity pins. They are **not** independently authenticated Wikimedia
+publication receipts or a proof of complete source generation, deletion-feed
+coverage, required media or real offline snapshot acceptance. The library
+does not download authenticated Enterprise snapshots. No local tests imply
+publisher trust. **SRC-002 remains unchecked**.
