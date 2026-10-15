@@ -165,7 +165,7 @@ pub fn import_pinned_enterprise_with_deletions<S: BufRead, R: BufRead, D: BufRea
 
 /// Canonicalize the full deletion-aware, digest-pinned batch only after all
 /// three integrity and revision-consistency checks have passed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CanonicalDeletionPinnedError {
     Import(DeletionPinnedImportError),
     Normalize(enterprise_normalize::NormalizeError),
