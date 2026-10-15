@@ -31,3 +31,7 @@ controlled `DumpFormatError` rather than attempting to append to a missing
 page buffer. A stray closing page tag between legitimate pages is also
 reported as an explicit unmatched-page error. Both are covered by regression
 tests. This is input diagnostics, not source publication completeness.
+
+## Qualified implementation and exact-head CI
+
+The root/header guards were committed at `9e9e5f5b49ee17274823244464fe0d3648fe2a25` (Ralph `commit_files` operation `dc179286957147b49f52255b54514198`, `accepted=true`, `write_reconciled=false`) and passed [Rust 38825625430](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825625430), [Platform 38825625463](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825625463), and [Renderer 38825625462](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825625462) at that SHA. Unmatched-closing-element rejection was committed at `6b3232308b3cdb7d462c2ddbbb1d42c4abe8f331` (operation `fcdcac4b34fc4d82ae29efc53b3010ff`, accepted and no reconciliation ambiguity) and passed [Rust 38825854699](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825854699), [Platform 38825854723](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825854723) and [Renderer 38825854704](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825854704). These do not qualify SRC-003 completion.

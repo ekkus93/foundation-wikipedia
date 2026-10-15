@@ -25,3 +25,7 @@ offline-ready pack fidelity.
 
 **Qualification:** inspect Rust, Platform and renderer exact-head CI before
 calling this narrow memory guard successful.
+
+## Qualified implementation and exact-head CI
+
+The bounded decoded XML line reader at `057d1b75dd3ced3f9583c1f86e31b63d126a06f5` was accepted on master by Ralph Bridge operation `fd532263130a4666a0698bdbb6b80ac5`, `write_reconciled=false`. [Rust 38825732884](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825732884), [Platform 38825732814](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825732814) and [Renderer 38825732820](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38825732820) all passed at the exact same source SHA. This establishes only the diagnostic reader's line-cap behavior.
