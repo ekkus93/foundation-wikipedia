@@ -193,7 +193,7 @@ impl<R: BufRead> Iterator for DiagnosticRevisionLines<R> {
             let newline = chunk.iter().position(|b| *b == b'\n');
             let count = newline.unwrap_or(chunk.len());
             let size = count + usize::from(newline.is_some());
-            if line.len() + size > MAX_RECORD_BYTES {
+            if size > MAX_RECORD_BYTES - line.len() {
                 self.done = true;
                 return Some(Err(RevisionRecordError::OversizedRecord));
             }
@@ -202,6 +202,13 @@ impl<R: BufRead> Iterator for DiagnosticRevisionLines<R> {
             if newline.is_some() {
                 break;
             }
+        }
+        // The diagnostic export contract is LF-only JSONL. A raw CR is not
+        // a valid record separator and must not be accepted as JSON whitespace.
+        // An escaped \r within wikitext remains valid.
+        if line.contains(&b'\r') {
+            self.done = true;
+            return Some(Err(RevisionRecordError::InvalidRecord));
         }
         let record: DiagnosticContentRevision = match serde_json::from_slice(&line) {
             Ok(record) => record,
@@ -296,6 +303,7 @@ mod tests {
             valid.replace("\"namespace\":0", "\"namespace\":1"),
             valid.replace("\"title\":\"München\"", "\"title\":\"Bad\\nTitle\""),
             format!("{}{}", valid, record(1, "Again")),
+            valid.replace('\n', "\r\n"),
             valid.trim_end_matches('\n').into(),
         ] {
             let mut reader = DiagnosticRevisionLines::new(
