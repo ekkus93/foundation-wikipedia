@@ -99,7 +99,7 @@ class DumpXmlTests(unittest.TestCase):
         self.assertEqual(result.read_bytes().count(b"\n"), 2)
 
     def test_titles_with_control_characters_rejected_for_all_formats(self):
-        for title in ("Bad\\nTitle", "Bad\\tTitle", "Bad\\rTitle"):
+        for title in ("Bad\nTitle", "Bad\tTitle", "Bad\rTitle"):
             self.manifest["files"].clear()
             xml = page(1).replace("Page 1", title)
             self.add(1, 100, f"<mediawiki>{xml}</mediawiki>")
@@ -108,7 +108,7 @@ class DumpXmlTests(unittest.TestCase):
             self.assertEqual(list(self.output.iterdir()), [])
 
     def test_revision_content_jsonl_retains_legacy_and_main_slot_wikitext(self):
-        first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\\nSecond line")
+        first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\nSecond line")
         second = page(2).replace("<text>Sample</text>",
                                   '<slots><slot role="main"><model>wikitext</model>'
                                   '<text>== Heading == &amp; detail</text></slot></slots>')
@@ -118,7 +118,7 @@ class DumpXmlTests(unittest.TestCase):
             output_format="revision-content-jsonl")
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(count, 2)
-        self.assertEqual(records[0]["wikitext"], "MediaWiki & Unicode: München\\nSecond line")
+        self.assertEqual(records[0]["wikitext"], "MediaWiki & Unicode: München\nSecond line")
         self.assertEqual(records[1]["wikitext"], "== Heading == & detail")
         for record in records:
             self.assertEqual((record["schema_version"], record["project"],
