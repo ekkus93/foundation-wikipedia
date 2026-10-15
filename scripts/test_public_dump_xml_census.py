@@ -171,6 +171,43 @@ class DumpXmlTests(unittest.TestCase):
                           result.read_text(encoding="utf-8").splitlines()],
                          ["Sample", "Sample"])
 
+    def test_revision_content_jsonl_enforces_declared_utf8_text_bytes(self):
+        legacy = page(1).replace("<text>Sample</text>",
+                                 '<text bytes="6">Sample</text>')
+        modern = page(2).replace("<text>Sample</text>",
+                                 '<slots><slot role="main"><model>wikitext</model>'
+                                 '<text bytes="8">München</text></slot></slots>')
+        self.add(1, 100, f"<mediawiki>{legacy}{modern}</mediawiki>")
+        result, count = stage_observed_census(
+            self.manifest, self.staging, self.output, "content.jsonl",
+            output_format="revision-content-jsonl")
+        self.assertEqual(count, 2)
+        self.assertEqual([json.loads(line)["wikitext"] for line in
+                          result.read_text(encoding="utf-8").splitlines()],
+                         ["Sample", "München"])
+        result.unlink()
+
+        invalid = (
+            '<text bytes="5">Sample</text>',
+            '<text bytes="0">Sample</text>',
+            '<text bytes="-1">Sample</text>',
+            '<text bytes="06">Sample</text>',
+            '<text bytes="six">Sample</text>',
+            '<text bytes="99999999999999">Sample</text>',
+            '<slots><slot role="main"><text bytes="7">München</text></slot></slots>',
+        )
+        for replacement in invalid:
+            with self.subTest(replacement=replacement):
+                self.manifest["files"].clear()
+                self.add(1, 100, "<mediawiki>" +
+                         page(1).replace("<text>Sample</text>", replacement) +
+                         "</mediawiki>")
+                with self.assertRaisesRegex(DumpDecodeError, "wikitext byte length"):
+                    stage_observed_census(
+                        self.manifest, self.staging, self.output, "content.jsonl",
+                        output_format="revision-content-jsonl")
+                self.assertEqual(list(self.output.iterdir()), [])
+
     def test_revision_content_jsonl_rejects_missing_or_ambiguous_main_text(self):
         bad_texts = (
             "",

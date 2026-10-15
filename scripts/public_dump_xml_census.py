@@ -139,7 +139,16 @@ def _revision_wikitext(revision):
         raise DumpDecodeError("missing or ambiguous revision wikitext")
     if "deleted" in text.attrib or len(text):
         raise DumpDecodeError("unavailable or invalid revision wikitext")
-    return text.text or ""
+    decoded = text.text or ""
+    # MediaWiki XML optionally declares the UTF-8 byte length of the text.
+    # Fail closed on contradictory source metadata before exporting a hash.
+    if "bytes" in text.attrib:
+        declared = text.attrib["bytes"]
+        if len(declared) > 10 or not re.fullmatch(r"0|[1-9][0-9]*", declared):
+            raise DumpDecodeError("invalid declared revision wikitext byte length")
+        if int(declared) != len(decoded.encode("utf-8")):
+            raise DumpDecodeError("revision wikitext byte length mismatch")
+    return decoded
 
 
 class BoundedDecompressed:
