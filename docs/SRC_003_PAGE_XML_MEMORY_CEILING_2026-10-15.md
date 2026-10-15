@@ -24,3 +24,16 @@ offline HTML/CSS/font resolution or a qualified complete source fallback.
 Exact-head Rust, Platform and renderer CI are required before calling this
 particular byte-budget improvement qualified. All overarching TODO items
 remain unchecked.
+
+## Exact-head qualification
+
+The per-page XML-byte budget and fail-closed regression landed directly on
+`master` at `c90ec58d2e3d0ecef1fc6ecff79c961b3a1230f3`. Ralph Bridge
+operation `79301bdf5c3d4493a0ebaceb0e625771` accepted and post-write
+verified the precise head and three changed paths (`write_reconciled=false`).
+All matching workflows **passed**:
+[Rust 38820735877](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820735877),
+[Platform 38820735875](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820735875),
+[Renderer 38820736053](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820736053).
+This proves the scoped diagnostic guard compiled and qualified, not that no
+large source page will ever trigger the fail-closed cap.

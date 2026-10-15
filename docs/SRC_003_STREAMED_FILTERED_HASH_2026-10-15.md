@@ -30,3 +30,16 @@ or attribution or establish offline pack readiness.
 Run exact-head Rust workspace (Python fixture discovery) and Platform shells
 CI after the direct-master commit. No checklist item is marked complete on
 this narrow reliability change.
+
+## Exact-head qualification
+
+The bounded SHA-256 pass and its deterministic oversized-input fixture landed
+directly on `master` at `185aba301af87119be8623ddf440cc4aaa406b81`.
+Ralph Bridge write operation `a97959dc21d0406a8a30dd206f56533f` was
+accepted without write reconciliation ambiguity (`write_reconciled=false`).
+All matching GitHub Actions workflows **passed**:
+[Rust 38820565944](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820565944),
+[Platform 38820566113](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820566113),
+[Renderer 38820566076](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38820566076).
+These checks qualify only the streamed checksum implementation, not whole-source
+completeness or mandatory offline visuals.
