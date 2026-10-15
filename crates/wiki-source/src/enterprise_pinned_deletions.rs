@@ -177,13 +177,9 @@ pub fn import_pinned_canonical_enterprise_with_deletions<S: BufRead, R: BufRead,
     deletion_ndjson: D,
     pins: PinnedEnterpriseInputs<'_>,
 ) -> Result<Vec<enterprise_normalize::CanonicalEnterpriseArticle>, CanonicalDeletionPinnedError> {
-    let joined = import_pinned_enterprise_with_deletions(
-        structured,
-        regular,
-        deletion_ndjson,
-        pins,
-    )
-    .map_err(CanonicalDeletionPinnedError::Import)?;
+    let joined =
+        import_pinned_enterprise_with_deletions(structured, regular, deletion_ndjson, pins)
+            .map_err(CanonicalDeletionPinnedError::Import)?;
     enterprise_normalize_article::normalize_enterprise_batch(&joined)
         .map_err(CanonicalDeletionPinnedError::Normalize)
 }

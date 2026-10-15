@@ -24,7 +24,10 @@ struct FaultAfterPrefix {
 impl Read for FaultAfterPrefix {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.failed {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "source failed"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source failed",
+            ));
         }
         let count = out.len().min(self.bytes.len() - self.offset).min(7);
         out[..count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
