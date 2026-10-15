@@ -257,6 +257,10 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                         raise DumpDecodeError("page outside mediawiki root")
                     if depth == 2 and _tag(elem.tag) == "page":
                         page_id, ns, title, revision_id, timestamp, redirect = _page_identity(elem)
+                        # Every page, including excluded namespaces, must be
+                        # consistent with the declared source publication day.
+                        if generation is not None and timestamp[:10] > generation:
+                            raise DumpDecodeError("revision timestamp after declared generation")
                         if not first <= page_id <= last or page_id <= previous:
                             raise DumpDecodeError("page ID out of shard range or not strictly increasing")
                         previous = page_id
