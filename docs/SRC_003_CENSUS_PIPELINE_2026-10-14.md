@@ -168,3 +168,12 @@ At exact code SHA `afed681261efb2f987cf3fcd96e558025462b447`, the Python diagnos
 - [Platform shells CI 38667942367](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38667942367) — **passed** on the same SHA.
 
 This closes only a diagnostic CLI input boundary. Manifest fields and digests alone do not authenticate the upstream publisher or independent census, and the portable Rust importer, rendering fidelity, mandatory media and end-to-end pack acceptance remain outstanding. **SRC-003 remains unchecked.**
+
+## Reject duplicate JSON object fields in source manifests (2026-10-14)
+
+Code SHA `7290668e63bea18952c6e981ded8fc87fdcd6568` makes `load_source_manifest` reject duplicate JSON keys at **every object depth**, including nested source-member metadata. This prevents conflicting `project`, `name`, `bytes` or `sha256` values from being silently interpreted using JSON last-key-wins behavior. The loader raises the typed `SourceVerificationError`; tests cover root-level and nested conflicting declarations. Both the source-verification CLI and the XML census CLI use this shared loader.
+
+- [Rust workspace CI 38668294006](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668294006) — passed on exact code SHA, including Python regression tests.
+- [Platform shells CI 38668294054](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668294054) — passed on the same exact SHA.
+
+This is input-ambiguity hardening only; it does not authenticate an official dump, prove independent census completeness, qualify a portable Rust importer, produce Parsoid-grade HTML or include required offline media. **SRC-003 remains unchecked.**
