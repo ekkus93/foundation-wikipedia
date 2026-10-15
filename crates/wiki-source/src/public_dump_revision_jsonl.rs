@@ -152,6 +152,8 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
             || record.revision_id > i64::MAX as u64
             || !valid_title(&record.title)
             || !valid_timestamp(&record.timestamp)
+            // A published generation cannot contain a revision from a later day.
+            || &record.timestamp[..10] > self.generation.as_str()
             || record
                 .redirect_target
                 .as_ref()
@@ -318,6 +320,31 @@ mod tests {
             .unwrap();
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
+    }
+
+    #[test]
+    fn rejects_revisions_dated_after_the_pinned_publication_day() {
+        for future in ["2026-10-02T00:00:00Z", "2027-01-01T00:00:00Z"] {
+            let input = record(1, "Valid")
+                .replace("2026-10-01T12:30:00Z", future);
+            let mut lines = DiagnosticRevisionLines::new(
+                Cursor::new(input.as_bytes()),
+                "enwiki",
+                "2026-10-01",
+                0,
+            )
+            .unwrap();
+            assert!(matches!(
+                lines.next(),
+                Some(Err(RevisionRecordError::InvalidRecord))
+            ));
+            assert!(lines.next().is_none());
+        }
+
+        let earlier = record(1, "Valid")
+            .replace("2026-10-01T12:30:00Z", "2026-09-30T23:59:59Z");
+        assert_eq!(parse(earlier.as_bytes()).unwrap().len(), 1);
+        assert_eq!(parse(record(1, "Valid").as_bytes()).unwrap().len(), 1);
     }
 
     #[test]
