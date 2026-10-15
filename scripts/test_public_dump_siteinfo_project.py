@@ -18,7 +18,7 @@ class SiteinfoProjectTests(unittest.TestCase):
         self.staging.mkdir()
         self.output.mkdir(mode=0o700)
 
-    def run_member(self, siteinfo):
+    def run_member(self, siteinfo, generation="2026-10-01"):
         xml = (
             f"<mediawiki>{siteinfo}"
             "<page><title>Page 1</title><ns>0</ns><id>1</id>"
@@ -31,7 +31,7 @@ class SiteinfoProjectTests(unittest.TestCase):
         manifest = {
             "completed": True,
             "project": "enwiki",
-            "generation_id": "2026-10-01",
+            "generation_id": generation,
             "source_url": (
                 "https://dumps.wikimedia.org/other/mediawiki_content_current/"
                 "enwiki/2026-10-01/xml/bzip2/SHA256SUMS"
@@ -57,6 +57,13 @@ class SiteinfoProjectTests(unittest.TestCase):
                 self.assertEqual(count, 1)
                 self.assertEqual(path.read_bytes(), b"1\n")
                 path.unlink()
+
+    def test_invalid_calendar_generation_fails_closed(self):
+        for generation in ("2026-02-30", "2026-13-01", "0000-01-01", "2026-1-01"):
+            with self.subTest(generation=generation):
+                with self.assertRaisesRegex(DumpDecodeError, "generation calendar date"):
+                    self.run_member("", generation=generation)
+                self.assertEqual(list(self.output.iterdir()), [])
 
     def test_mismatch_duplicate_and_foreign_dbname_fail_closed(self):
         for siteinfo in (
