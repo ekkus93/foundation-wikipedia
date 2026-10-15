@@ -43,8 +43,14 @@ container log for 14 days.
 - Two render passes were byte-identical for every page. Revision identities
   recorded: pages 5, 6 and 7 (revisions 5, 6 and 7); the redirect returns 307
   to the target.
-- Observation: `mw:Extension/math` is absent from the Gravity page, as
-  expected with the Math extension unconfigured. Math remains unqualified.
+- Math, `47e59d083f67864d9889250bf861baf6fee47b38`:
+  [renderer harness run 38800179722](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38800179722),
+  [Rust workspace 38800180163](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38800180163) and
+  [Platform shells 38800179802](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38800179802) passed.
+  The Math extension in PHP-only `native` mode (no Mathoid, no remote service)
+  renders `<math>` as inline MathML (`mfrac`, `msub`, `msup`) with a
+  `typeof="mw:Extension/math"` marker, byte-identical across both passes. The
+  checker requires a `<math` element and rejects "Failed to parse".
 
 ## Limits
 
@@ -52,8 +58,11 @@ container log for 14 days.
   with `edit.php`, not from a public-dump XML file, so this does not yet prove
   that dump-imported revisions plus their template and module dependencies
   render identically.
-- Math is only *observed* (`mw:Extension/math` is recorded, never asserted):
-  the Math extension and its renderer are not configured.
+- Math covers one formula in `native` mode only. Native output is MathML with
+  no image fallback, so the desktop WebKitGTK and Android WebView readers must
+  be checked for MathML rendering (DUI-001/MOB-002); this harness does not
+  test any browser. Wikimedia production uses a different math pipeline
+  (Mathoid and SVG fallback), so fidelity against official output is unproven.
 - The image is pinned by digest; upgrading it requires a new accepted run.
 - Output is compared against content expectations, not against
   revision-pinned official Wikimedia output.
