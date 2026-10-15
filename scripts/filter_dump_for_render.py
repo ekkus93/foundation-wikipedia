@@ -132,7 +132,11 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
         raise DumpFormatError("page XML exceeds byte cap")
     footer_seen = False
     for line in iterator:
+        if footer_seen:
+            raise DumpFormatError("content after closing mediawiki root")
         if line == "  </page>\n":
+            if block is None:
+                raise DumpFormatError("unmatched closing page element")
             block_bytes += len(line.encode("utf-8"))
             if block_bytes > max_page_xml_bytes:
                 raise DumpFormatError("page XML exceeds byte cap")
@@ -159,8 +163,6 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
             block = None
             block_bytes = 0
         elif block is None:
-            if footer_seen:
-                raise DumpFormatError("content after closing mediawiki root")
             if line == "  <page>\n":
                 block = [line]
                 block_bytes = len(line.encode("utf-8"))

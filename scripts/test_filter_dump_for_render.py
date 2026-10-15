@@ -119,11 +119,18 @@ class FilterTests(unittest.TestCase):
 
     def test_rejects_any_content_after_closing_xml_root(self):
         good = HEADER + page("Article", 0, 1, 11, ARTICLE) + "</mediawiki>\n"
-        for tail in ("<page>\n", "</mediawiki>\n", "junk\n", "  \n"):
+        for tail in ("<page>\n", "  </page>\n", "</mediawiki>\n", "junk\n", "  \n"):
             with self.subTest(tail=tail):
                 with self.assertRaisesRegex(f.DumpFormatError, "after closing mediawiki root"):
                     f.filter_dump((good + tail).splitlines(keepends=True),
                                   io.StringIO(), sample_min_bytes=10)
+
+    def test_unmatched_page_close_is_a_diagnostic_error(self):
+        good = page("Article", 0, 1, 11, ARTICLE)
+        source = HEADER + good + "  </page>\n</mediawiki>\n"
+        with self.assertRaisesRegex(f.DumpFormatError, "unmatched closing page"):
+            f.filter_dump(source.splitlines(keepends=True), io.StringIO(),
+                          sample_min_bytes=10)
 
     def test_fails_closed_on_malformed_exports(self):
         good = page("Article", 0, 1, 11, ARTICLE)

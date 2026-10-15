@@ -22,3 +22,12 @@ and PACK-003 tasks remain unchecked.
 **Qualification:** exact-head Rust workflow (which runs Python fixture tests),
 Platform workflow and real-dump renderer workflow must be inspected before
 claiming this source slice passed.
+
+## Closing-page guard refinement
+
+The main loop now checks for an already-closed root *before* examining any
+kind of XML line. A stray closing `</page>` after the root is therefore a
+controlled `DumpFormatError` rather than attempting to append to a missing
+page buffer. A stray closing page tag between legitimate pages is also
+reported as an explicit unmatched-page error. Both are covered by regression
+tests. This is input diagnostics, not source publication completeness.
