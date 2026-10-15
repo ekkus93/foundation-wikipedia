@@ -188,3 +188,12 @@ The shared diagnostic manifest loader rejects Python's non-RFC JSON extensions `
 - [Platform shells CI 38668982370](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38668982370) — **passed** on the same SHA.
 
 This is strict diagnostic input handling, not independently authenticated Wikimedia acquisition, independent page-ID completeness, production Rust bzip2/XML import, renderer fidelity or required offline-media acceptance. **SRC-003 remains unchecked.**
+
+## Optional revision-scoped diagnostic metadata records (2026-10-14)
+
+Exact code SHA **`93395071509ccbabaa43895d9df8d62c83b88124`** adds an opt-in `--format revision-jsonl` mode to `scripts/public_dump_xml_census.py`; the prior LF-separated page-ID census remains the default (`--format ids`). For the selected namespace, the diagnostic XML decoder can now emit deterministic UTF-8 JSON Lines records with `page_id`, `namespace`, `title`, `revision_id`, `timestamp` and nullable `redirect_target` from the same checksum-verified compressed member consumed by the census path. Redirect target attributes are validated, and duplicate/invalid redirect entries fail closed before private no-overwrite publication. A caller cannot apply the independent expected-ID-census gate to JSONL records; it is explicitly restricted to the ID format.
+
+- [Rust workspace CI 38671295631](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38671295631) — **passed** at exact code SHA, including deterministic Python fixtures for Unicode titles, revision IDs, redirects and rejected malformed redirects.
+- [Platform shells CI 38671295656](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38671295656) — **passed** at the same SHA.
+
+**Scope:** These are outer XML identities only; they are not imported canonical article blocks, revision-pinned rendered HTML, the article's wikitext, authenticated source publication, an independent expected census, or required images/math and attribution. The production portable Rust importer and end-to-end offline packs remain unqualified. **SRC-003 remains unchecked.**
