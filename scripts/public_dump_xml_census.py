@@ -152,6 +152,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                                 raise DumpDecodeError("expected official mediawiki XML root")
                             root = elem
                         if depth == 2:
+                            if _tag(elem.tag) == "page" and _namespace(elem.tag) != _namespace(root.tag):
+                                raise DumpDecodeError("page outside mediawiki root namespace")
                             if (_namespace(elem.tag) != _namespace(root.tag)
                                     or _tag(elem.tag) not in ("page", "siteinfo")):
                                 raise DumpDecodeError("unexpected mediawiki root child")

@@ -185,7 +185,7 @@ class DumpXmlTests(unittest.TestCase):
     def test_siteinfo_is_accepted_but_unexpected_top_level_xml_fails(self):
         self.add(1, 100, f"<mediawiki><siteinfo><sitename>Test</sitename></siteinfo>{page(1)}</mediawiki>")
         result, count = self.run_census()
-        self.assertEqual((count, result.read_bytes()), (1, b"1\\n"))
+        self.assertEqual((count, result.read_bytes()), (1, b"1\n"))
         result.unlink()
         for xml in (
             f"<mediawiki><unknown/>{page(1)}</mediawiki>",
