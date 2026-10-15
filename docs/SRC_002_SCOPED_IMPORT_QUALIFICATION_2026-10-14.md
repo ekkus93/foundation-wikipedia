@@ -108,3 +108,27 @@ may have a valid empty digest but does **not** prove deletion completeness.
 publisher authentication, independently verified generation completeness,
 mandatory article media, full end-to-end import, or device acceptance.
 **SRC-002 remains unchecked.**
+
+## All-or-nothing canonical import with deletion evidence (2026-10-14)
+
+`wiki-source::enterprise_pinned_deletions::
+import_pinned_canonical_enterprise_with_deletions` now takes the
+three-stream `PinnedEnterpriseInputs` scope/digest descriptor and runs the
+existing checked deletion-aware join before canonical article normalization.
+It returns no canonical articles when deletion, source-byte, revision or
+normalization validation fails. Synthetic regression coverage includes a
+normalized article with the correct page/revision/categories and a rejected
+deletion-digest mismatch.
+
+Exact qualified implementation SHA **`06e3621c830b68063422f36b29ef0f782935e7a5`**
+passed [Rust workspace run 38690261981](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38690261981)
+and [Platform shells run 38690262046](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38690262046).
+The intermediate SHA `f66a761fc4e5dd620fce029d59a8755a1115cee2`
+failed formatting, and `f67d4b3d3f0c419b676815e309c73d6bef7e6a6c`
+failed the Rust compiler because its new error enum unnecessarily derived
+`Clone`. Both ordinary failures were fixed before qualification. An
+independently committed fault-injection deletion-feed test was preserved.
+
+These remain local source-integrity and canonical-normalization checks,
+not independently verified official source/authentication, completeness,
+required media, or end-to-end pack/device qualification. **SRC-002 remains unchecked.**
