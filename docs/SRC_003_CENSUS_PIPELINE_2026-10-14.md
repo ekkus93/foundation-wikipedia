@@ -224,3 +224,23 @@ At exact source SHA **`601d2b1f3f0fcf143f2bb8cfa07397ad0ccc1147`**, the optional
 - Deterministic fixtures exercise both revision JSONL modes, exact census agreement, missing/extra/different expected IDs, and expected-digest mismatch.
 
 **Limitations:** The expected census is caller-provided and digest-pinned, not independently authenticated or proven to describe the same Wikimedia publication generation and namespace. This extends the optional local completeness comparison to revision-bearing diagnostic exports; it does not establish publisher authenticity, a portable Rust XML importer, Parsoid/MediaWiki rendering fidelity, mandatory offline visuals, or pack acceptance. **SRC-003 remains unchecked.**
+
+## Diagnostic revision-text declared byte-length validation (2026-10-14)
+
+Source implementation SHA **`7b11a71dc24ff883ff0f630003386ee2bae747f9`** verifies
+the optional MediaWiki XML `<text bytes="...">` declaration against the
+actual UTF-8 byte length of decoded wikitext in `revision-content-jsonl`
+mode. A malformed or contradictory declaration aborts private staging before
+publication. Legacy `revision/text` and modern main-slot `slot/text` are
+both covered, including Unicode text, rejected leading-zero, negative,
+nonnumeric and oversized declarations, and no-overwrite failure behavior.
+Absent `bytes` is permitted for older XML exports.
+
+- [Rust workspace CI 38679774228](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38679774228) — passed on exact source SHA, including Python unittests.
+- [Platform shells CI 38679774230](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38679774230) — passed at the same exact SHA.
+
+This is internal metadata consistency for a **diagnostic Python export**,
+not independent publisher authentication, a qualified portable Rust
+bzip2/XML importer, complete page-census verification, Parsoid rendering,
+mandatory offline media, or end-to-end offline pack acceptance.
+**SRC-003 remains unchecked.**
