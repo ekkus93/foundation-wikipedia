@@ -138,12 +138,7 @@ pub fn import_pinned_enterprise_with_deletions<S: BufRead, R: BufRead, D: BufRea
     regular_sha256: &str,
     deletion_sha256: &str,
 ) -> Result<Vec<JoinedEnterpriseArticle>, DeletionPinnedImportError> {
-    let deleted = decode_pinned_deletions(
-        deletion_ndjson,
-        project,
-        generation,
-        deletion_sha256,
-    )?;
+    let deleted = decode_pinned_deletions(deletion_ndjson, project, generation, deletion_sha256)?;
     import_pinned_enterprise_ndjson_scoped(
         structured,
         regular,
@@ -170,7 +165,10 @@ mod tests {
         format!("{:x}", Sha256::digest(value.as_bytes()))
     }
 
-    fn import(deleted: &str, deleted_digest: &str) -> Result<Vec<JoinedEnterpriseArticle>, DeletionPinnedImportError> {
+    fn import(
+        deleted: &str,
+        deleted_digest: &str,
+    ) -> Result<Vec<JoinedEnterpriseArticle>, DeletionPinnedImportError> {
         import_pinned_enterprise_with_deletions(
             Cursor::new(STRUCTURED),
             Cursor::new(REGULAR),
@@ -213,7 +211,10 @@ mod tests {
     #[test]
     fn rejects_duplicate_deleted_pages_and_conflict_with_live_article() {
         assert!(matches!(
-            import(&(DELETION.to_owned() + DELETION), &pin(&(DELETION.to_owned() + DELETION))),
+            import(
+                &(DELETION.to_owned() + DELETION),
+                &pin(&(DELETION.to_owned() + DELETION))
+            ),
             Err(DeletionPinnedImportError::Import(_))
         ));
         let conflict = DELETION.replace("\"page_id\":2", "\"page_id\":1");
@@ -235,7 +236,10 @@ mod tests {
             DELETION.replace("\"page_id\":2", "\"page_id\":2,\"unexpected\":1"),
             format!("{}{}", "x".repeat(MAX_DELETION_LINE_BYTES + 1), "\n"),
         ] {
-            assert!(import(&bad, &pin(&bad)).is_err(), "unexpected acceptance: {bad}");
+            assert!(
+                import(&bad, &pin(&bad)).is_err(),
+                "unexpected acceptance: {bad}"
+            );
         }
     }
 }
