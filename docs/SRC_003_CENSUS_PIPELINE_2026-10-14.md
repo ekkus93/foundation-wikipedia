@@ -205,3 +205,12 @@ Exact code SHA **`93395071509ccbabaa43895d9df8d62c83b88124`** adds an opt-in `--
 - **Intermediate test failure:** SHA `4a1718d9c9e989222d0713ab60fc4db5ec196338` failed [Rust CI 38672279298](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38672279298) because the control-character test provided literal backslash escapes instead of actual newline, tab and carriage-return characters. The corrected fixtures are qualified only at the later SHA above; the failed SHA is not qualified.
 
 **Limitations:** The JSONL schema labels are caller-declared provenance, **not** independently authenticated Wikimedia publisher identity. Extracted text is XML-decoded and may not be byte-identical to raw wikitext; its SHA-256 is calculated over the decoded UTF-8 string. These records are not canonical Articles, template/Lua/math expansion, revision-matched Parsoid HTML, independent page-census completeness, mandatory media or offline packs. A production portable Rust XML/bzip2 importer remains outstanding. **SRC-003 remains unchecked.**
+
+## Pre-publication diagnostic revision JSONL self-audit (2026-10-14)
+
+At exact code SHA **`beb9c11d2b4290cec402c4c1082f65b8c99d09a1`**, `stage_observed_census` now calls the independently implemented `audit_public_dump_revision_jsonl.audit_revision_jsonl` for both `revision-jsonl` and `revision-content-jsonl` outputs **before** hard-link publication. The auditor validates schema version, declared project/generation scope, namespace, monotonically increasing page IDs, per-record revision/timestamp/redirect data and (for content records) the decoded-text digest. An audit exception or selected-record count mismatch aborts publication and removes the pending temporary file. The default LF page-ID census and its separately pinned expected-census gate remain unchanged.
+
+- [Rust workspace CI 38674391914](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38674391914) — **passed** at exact code SHA, including Python tests for simulated self-audit exceptions, wrong counts and no published output.
+- [Platform shells CI 38674391936](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38674391936) — **passed** at the same SHA.
+
+These checks establish consistency of the diagnostic output with the declared source manifest, **not** independent Wikimedia authenticity or generation completeness. Wikitext still requires a production Rust importer, revision-pinned Parsoid/MediaWiki rendering, mandatory offline media/attribution and full pack acceptance. **SRC-003 remains unchecked.**
