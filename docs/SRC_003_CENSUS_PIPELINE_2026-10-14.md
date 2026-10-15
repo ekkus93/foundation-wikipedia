@@ -275,3 +275,30 @@ authenticated Wikimedia publication, a cross-checked independent page census,
 a revision-pinned Parsoid renderer, required-media pack assembly, or an
 end-to-end Android/desktop qualification. No official/source-complete claim is
 made, and **SRC-003 stays unchecked**.
+
+## Rust revision-content records versus independent ID-census stream (2026-10-14)
+
+The portable Rust `wiki-source::public_dump_revision_jsonl::audit_revision_content_census`
+function now composes the validated diagnostic `revision-content-jsonl` record
+iterator with the existing bounded `PageIdLines` and
+`audit_page_coverage_stream` implementation. It rejects missing/extra
+page IDs, malformed/truncated or unordered expected census lines, corrupted
+revision-content digests, and invalid record provenance. It yields coverage
+evidence only after successful consumption of both streams. The function does
+**not** assert that a caller-supplied census is independently authenticated;
+official publisher and generation cutoff still require external verification.
+
+- Initial code SHA `2e2347005990cbe7a5aa6e32203dd1948b5de15c` failed Rust format CI
+  [38681773970](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38681773970);
+  do not treat it as qualified.
+- Corrected SHA **`43840888134c5a34641c00d2af5d7ab699edc48a`** passed
+  [Rust workspace CI 38682169467](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38682169467)
+  (format, Clippy, tests and configured gates) and
+  [Platform shells CI 38682169453](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38682169453)
+  at this exact source head.
+
+**Outstanding:** Authenticate a real upstream Wikimedia publication and
+independent namespace-aware census; implement the production portable Rust
+bzip2/XML importer and complete Parsoid-fidelity article/media normalization;
+build and qualify complete offline packs on desktop and Android.
+**SRC-003 remains unchecked**.
