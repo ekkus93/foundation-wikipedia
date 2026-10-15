@@ -27,6 +27,7 @@ MAX_PAGE_XML_BYTES = 32 * 1024**2
 MAX_NON_PAGE_XML_BYTES = 8 * 1024**2
 MAX_XML_DEPTH = 128
 MAX_PAGE_ID = 2**63 - 1
+MAX_NAMESPACE_ID = 2**31 - 1
 
 
 class DumpDecodeError(ValueError):
@@ -51,7 +52,7 @@ def _one(parent, name):
 
 
 def _positive(text):
-    if text is None or not re.fullmatch(r"[1-9][0-9]*", text):
+    if text is None or len(text) > 19 or not re.fullmatch(r"[1-9][0-9]*", text):
         raise DumpDecodeError("invalid positive page/revision ID")
     value = int(text)
     if value > MAX_PAGE_ID:
@@ -64,8 +65,11 @@ def _page_id(page):
     if not title or len(title.encode("utf-8")) > 4096 or title != title.strip():
         raise DumpDecodeError("invalid page title")
     namespace = _one(page, "ns").text
-    if namespace is None or not re.fullmatch(r"0|[1-9][0-9]*", namespace):
+    if namespace is None or len(namespace) > 10 or not re.fullmatch(r"0|[1-9][0-9]*", namespace):
         raise DumpDecodeError("invalid namespace")
+    namespace_id = int(namespace)
+    if namespace_id > MAX_NAMESPACE_ID:
+        raise DumpDecodeError("namespace exceeds supported range")
     page_id = _positive(_one(page, "id").text)
     revision = _one(page, "revision")
     _positive(_one(revision, "id").text)
@@ -76,7 +80,7 @@ def _page_id(page):
         datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError as exc:
         raise DumpDecodeError("invalid revision calendar timestamp") from exc
-    return page_id, int(namespace)
+    return page_id, namespace_id
 
 
 class BoundedDecompressed:
@@ -254,7 +258,7 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
     """Verify all staged digests, decode all shards, then publish atomically."""
     if (expected_census is None) != (expected_sha256 is None):
         raise DumpDecodeError("expected census and SHA-256 must be supplied together")
-    if type(namespace) is not int or namespace < 0:
+    if type(namespace) is not int or not 0 <= namespace <= MAX_NAMESPACE_ID:
         raise DumpDecodeError("invalid namespace")
     if not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", filename) or filename.endswith("."):
         raise DumpDecodeError("invalid output filename")
@@ -273,6 +277,8 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
         match = NAME.fullmatch(item["name"])
         if not match or match["project"] != manifest["project"] or match["date"] != manifest["generation_id"]:
             raise DumpDecodeError("unrecognized current-content member name")
+        if len(match["first"]) > 19 or len(match["last"]) > 19:
+            raise DumpDecodeError("invalid declared shard range")
         first, last = int(match["first"]), int(match["last"])
         if not 0 < first <= last <= MAX_PAGE_ID:
             raise DumpDecodeError("invalid declared shard range")

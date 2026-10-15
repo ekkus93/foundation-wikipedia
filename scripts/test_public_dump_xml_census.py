@@ -205,6 +205,31 @@ class DumpXmlTests(unittest.TestCase):
                 self.run_census()
         self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_extremely_long_decimal_identifiers_fail_closed(self):
+        valid = page(1)
+        for bad in (
+            valid.replace("<id>1</id>", "<id>" + "9" * 5000 + "</id>", 1),
+            valid.replace("<ns>0</ns>", "<ns>" + "9" * 5000 + "</ns>"),
+            valid.replace("<revision><id>300</id>",
+                          "<revision><id>" + "9" * 5000 + "</id>"),
+        ):
+            self.manifest["files"].clear()
+            self.add(1, 100, f"<mediawiki>{bad}</mediawiki>")
+            with self.assertRaises(DumpDecodeError):
+                self.run_census()
+            self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_extremely_long_shard_id_and_namespace_argument_fail_closed(self):
+        huge = "9" * 100
+        self.add(huge, huge, f"<mediawiki>{page(1)}</mediawiki>")
+        with self.assertRaisesRegex(DumpDecodeError, "shard range"):
+            self.run_census()
+        self.assertEqual(list(self.output.iterdir()), [])
+        with self.assertRaisesRegex(DumpDecodeError, "namespace"):
+            stage_observed_census(self.manifest, self.staging, self.output,
+                                  "observed.ids", namespace=2**31)
+        self.assertEqual(list(self.output.iterdir()), [])
+
     def test_namespace_absence_and_overlapping_ranges_fail_closed(self):
         self.add(1, 100, f"<mediawiki>{page(1, ns=1)}</mediawiki>")
         with self.assertRaisesRegex(DumpDecodeError, "no pages"):
