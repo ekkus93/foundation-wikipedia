@@ -99,6 +99,19 @@ def _page_identity(page):
     return page_id, namespace_id, title, revision_id, timestamp, redirect_target
 
 
+def _verify_siteinfo_project(siteinfo, project):
+    """Reject contradictory optional MediaWiki siteinfo database identity.
+
+    This checks local metadata consistency, not publisher authenticity.
+    Older diagnostic fixtures may omit siteinfo or dbname.
+    """
+    dbnames = [child for child in siteinfo if _tag(child.tag) == "dbname"]
+    if dbnames and (len(dbnames) != 1
+                    or _namespace(dbnames[0].tag) != _namespace(siteinfo.tag)
+                    or len(dbnames[0]) or dbnames[0].text != project):
+        raise DumpDecodeError("siteinfo database name does not match source project")
+
+
 def _revision_wikitext(revision):
     """Extract one available main-slot wikitext body, not rendered HTML.
 
@@ -273,6 +286,8 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
                         bounded.page_start = None
                         bounded.non_page_start = bounded.total
                     elif depth == 2 and _tag(elem.tag) == "siteinfo":
+                        if project is not None:
+                            _verify_siteinfo_project(elem, project)
                         elem.clear()
                     depth -= 1
                 if depth != 0 or root is None or pages == 0:
