@@ -108,6 +108,25 @@ class FilterTests(unittest.TestCase):
         with self.assertRaises(f.DumpFormatError):
             f.filter_dump(["<mediawiki>\n", "</mediawiki>\n"], io.StringIO())
 
+    def test_filtered_xml_digest_reads_in_bounded_chunks(self):
+        class BoundedReader(io.BytesIO):
+            def __init__(self, content):
+                super().__init__(content)
+                self.sizes = []
+
+            def read(self, size=-1):
+                self.sizes.append(size)
+                if size < 1 or size > f.HASH_CHUNK_BYTES:
+                    raise AssertionError("unbounded or oversized digest read")
+                return super().read(size)
+
+        content = b"x" * (2 * f.HASH_CHUNK_BYTES + 41)
+        stream = BoundedReader(content)
+        self.assertEqual(hashlib.sha256(content).hexdigest(), f._sha256_stream(stream))
+        self.assertGreaterEqual(len(stream.sizes), 4)
+        self.assertTrue(all(n == f.HASH_CHUNK_BYTES for n in stream.sizes))
+        self.assertEqual(hashlib.sha256(b"").hexdigest(), f._sha256_stream(BoundedReader(b"")))
+
     def test_requires_at_least_one_sample_article(self):
         with self.assertRaises(f.DumpFormatError):
             run([page("Template:A", 10, 1, 11, "t")])

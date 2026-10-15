@@ -152,19 +152,30 @@ def filter_dump(lines, out, keep_namespaces=KEEP_NAMESPACES, sample_limit=SAMPLE
     return summary
 
 
+HASH_CHUNK_BYTES = 1024 * 1024
+
+
+def _sha256_stream(stream):
+    """Bound filtered XML checksum memory regardless of dump export size."""
+    digest = hashlib.sha256()
+    while True:
+        block = stream.read(HASH_CHUNK_BYTES)
+        if not block:
+            return digest.hexdigest()
+        digest.update(block)
+
+
 def _main(argv):
     if len(argv) != 3:
         print("usage: filter_dump_for_render.py INPUT.xml[.bz2] OUTPUT.xml SAMPLE.json", file=sys.stderr)
         return 2
     source, target, sample_path = argv
     opener = bz2.open if source.endswith(".bz2") else open
-    digest = hashlib.sha256()
     with opener(source, "rt", encoding="utf-8", newline="\n") as handle, \
             open(target, "w", encoding="utf-8", newline="\n") as out:
         summary = filter_dump(handle, out)
     with open(target, "rb") as handle:
-        digest.update(handle.read())
-    summary["filtered_sha256"] = digest.hexdigest()
+        summary["filtered_sha256"] = _sha256_stream(handle)
     with open(sample_path, "w", encoding="utf-8") as handle:
         json.dump(summary, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
