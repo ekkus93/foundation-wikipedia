@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 
 import check_renderer_fixtures as crf
+import inventory_rendered_visuals as visual_inventory
 
 USER_AGENT = "foundation-wikipedia-renderer-harness (https://github.com/ekkus93/foundation-wikipedia)"
 ERROR_MARKERS = ("Script error", "Lua error", "Template loop detected", 'class="error', "Lua timeout")
@@ -236,6 +237,18 @@ def aggregate(rows):
             r["metrics"]["local_visuals"].get("images", 0) for r in rows),
         "total_live_image_references": sum(
             r["metrics"]["live_visuals"].get("images", 0) for r in rows),
+        "total_live_visual_asset_candidates": sum(
+            r.get("visual_asset_candidates", {}).get("live", {}).get("count", 0)
+            for r in rows),
+        "total_local_visual_asset_candidates": sum(
+            r.get("visual_asset_candidates", {}).get("local", {}).get("count", 0)
+            for r in rows),
+        "pages_with_live_inline_css": sum(
+            r.get("visual_asset_candidates", {}).get("live", {}).get("inline_styles", 0) > 0
+            for r in rows),
+        "pages_with_live_unsupported_visual_urls": sum(
+            r.get("visual_asset_candidates", {}).get("live", {}).get("unsupported_schemes", 0) > 0
+            for r in rows),
         "missing_local_image_references": sum(
             max(0, -r["metrics"]["image_count_delta"]) for r in rows),
         "pages_with_missing_local_image_references": sum(
@@ -345,6 +358,12 @@ def build_report(sample, local_base, live_host, pause=1.0):
             live_html = fetch_live(live_host, entry["revision_id"])
             local_summary, live_summary = summarize(local_html), summarize(live_html)
             row["metrics"] = compare(local_summary, live_summary)
+            # Candidate URLs are retained only in the bounded JSON artifact,
+            # never printed to CI logs. This is not an acquired-media manifest.
+            row["visual_asset_candidates"] = {
+                "local": visual_inventory.inventory(local_html),
+                "live": visual_inventory.inventory(live_html),
+            }
             # HTML structure does not prove exact source page/revision identity.
             payload = local.get("payload") if isinstance(local.get("payload"), dict) else {}
             latest = payload.get("latest") if isinstance(payload.get("latest"), dict) else {}

@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Bounded read-only visual-URL candidates from rendered HTML.
+
+No downloads, redirects, browser execution, publisher trust, or licensing
+claims are made by this diagnostic extractor. A complete CSS and HTML resource
+dependency graph will require a separate verified renderer/media pipeline.
+"""
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
+
+MAX_URL_CHARS = 4096
+MAX_REFERENCES = 10000
+
+
+class InventoryError(ValueError):
+    pass
+
+
+class _Collector(HTMLParser):
+    def __init__(self, limit):
+        super().__init__(convert_charrefs=True)
+        self.limit = limit
+        self.urls = set()
+        self.picture_depth = 0
+        self.svg_depth = 0
+        self.inline_styles = 0
+        self.unsupported_schemes = 0
+        self.missing_sources = 0
+
+    def _add(self, kind, source):
+        if not source:
+            self.missing_sources += 1
+            return
+        if (len(source) > MAX_URL_CHARS or source != source.strip()
+                or any(ch.isspace() or ord(ch) < 32 for ch in source)):
+            raise InventoryError("unsafe or oversized visual candidate URL")
+        if source.startswith("#"):
+            return  # Same-document SVG fragment; no separate transport URL.
+        if source.startswith("//"):
+            source = "https:" + source
+        try:
+            parsed = urlsplit(source)
+        except ValueError as error:
+            raise InventoryError("invalid visual candidate URL") from error
+        if parsed.scheme:
+            if parsed.scheme not in ("http", "https"):
+                self.unsupported_schemes += 1
+                return
+            if not parsed.netloc or "@" in parsed.netloc:
+                raise InventoryError("unsafe visual candidate authority")
+        elif parsed.netloc:
+            raise InventoryError("ambiguous visual candidate authority")
+        self.urls.add((kind, source))
+        if len(self.urls) > self.limit:
+            raise InventoryError("visual candidate count exceeds budget")
+
+    def _srcset(self, kind, value):
+        # Deliberately a diagnostic split: data URIs containing commas require
+        # a production-compliant parser before offline completeness approval.
+        for part in (value or "").split(","):
+            tokens = part.strip().split(maxsplit=1)
+            if tokens:
+                self._add(kind, tokens[0])
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "picture":
+            self.picture_depth += 1
+        elif tag == "svg":
+            self.svg_depth += 1
+        elif tag == "img":
+            self._add("image", attrs.get("src"))
+            self._srcset("responsive_image", attrs.get("srcset"))
+        elif tag == "source" and self.picture_depth:
+            self._srcset("picture_variant", attrs.get("srcset"))
+        elif tag == "link" and "stylesheet" in (attrs.get("rel") or "").lower().split():
+            self._add("stylesheet", attrs.get("href"))
+        elif tag == "video" and attrs.get("poster"):
+            self._add("av_preview", attrs["poster"])
+        elif tag == "image" and self.svg_depth:
+            self._add("svg_image", attrs.get("href") or attrs.get("xlink:href"))
+        elif tag == "use" and self.svg_depth:
+            self._add("svg_use", attrs.get("href") or attrs.get("xlink:href"))
+        elif tag == "style":
+            self.inline_styles += 1
+
+    def handle_endtag(self, tag):
+        if tag == "picture":
+            self.picture_depth = max(0, self.picture_depth - 1)
+        elif tag == "svg":
+            self.svg_depth = max(0, self.svg_depth - 1)
+
+
+def inventory(markup, max_references=MAX_REFERENCES):
+    if not isinstance(max_references, int) or max_references < 1:
+        raise InventoryError("invalid visual reference budget")
+    parser = _Collector(max_references)
+    parser.feed(markup)
+    parser.close()
+    return {
+        "count": len(parser.urls),
+        "candidates": [{"kind": kind, "url": url}
+                       for kind, url in sorted(parser.urls)],
+        "inline_styles": parser.inline_styles,
+        "unsupported_schemes": parser.unsupported_schemes,
+        "missing_sources": parser.missing_sources,
+        "css_and_font_dependencies_verified": False,
+        "required_media_verified": False,
+    }
