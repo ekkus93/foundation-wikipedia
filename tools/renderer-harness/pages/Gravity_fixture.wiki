@@ -1,0 +1,22 @@
+{{Infobox|name=Gravity|type=Force|year=1687}}
+'''Gravity''' is a synthetic fixture article.<ref name="a">Fixture source one.</ref> {{Greet|Wikipedia}}
+
+== Computed ==
+Lua: {{#invoke:Words|shout|rendered}}
+
+Parser functions: {{#if:x|yes|no}} / {{#switch:b|a=1|b=2|#default=0}}
+
+== Table ==
+{| class="wikitable"
+! Body !! Mass (kg)
+|-
+| Earth || 5.97e24
+|-
+| Moon || 7.35e22
+|}
+
+== Math ==
+<math>F = G\frac{m_1 m_2}{r^2}</math>
+
+== Notes ==
+<references />

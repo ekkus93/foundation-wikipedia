@@ -1,0 +1,9 @@
+<includeonly>{| class="infobox"
+|+ {{{name|Unnamed}}}
+|-
+! Type
+| {{{type|unknown}}}
+|-
+! Year
+| {{{year|n/a}}}
+|}</includeonly><noinclude>Synthetic fixture infobox authored for this repository (CC0-1.0).</noinclude>

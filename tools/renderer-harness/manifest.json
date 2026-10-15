@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "pages": [
+    {"title": "Template:Greet", "file": "pages/Template_Greet.wiki"},
+    {"title": "Template:Infobox", "file": "pages/Template_Infobox.wiki"},
+    {"title": "Module:Words", "file": "pages/Module_Words.lua"},
+    {"title": "Gravity (fixture)", "file": "pages/Gravity_fixture.wiki"},
+    {"title": "Gravedad (fixture)", "file": "pages/Gravedad_fixture.wiki"},
+    {"title": "重力 (fixture)", "file": "pages/Zhongli_fixture.wiki"},
+    {"title": "Fixture gravity", "file": "pages/Fixture_gravity.wiki"}
+  ],
+  "render": [
+    {
+      "title": "Gravity (fixture)",
+      "expect": {
+        "contains": [
+          "Hello, Wikipedia!",
+          "RENDERED (8)",
+          "yes / 2",
+          "wikitable",
+          "Earth",
+          "5.97e24",
+          "1687",
+          "mw:Extension/ref",
+          "mw:Extension/references",
+          "Fixture source one."
+        ]
+      },
+      "observe": ["mw:Extension/math", "mw:Transclusion"]
+    },
+    {
+      "title": "Gravedad (fixture)",
+      "expect": {"contains": ["Hello, mundo!", "niño, camión, año"]}
+    },
+    {
+      "title": "重力 (fixture)",
+      "expect": {"contains": ["重力", "Hello, 世界!"]}
+    },
+    {
+      "title": "Fixture gravity",
+      "expect": {"redirect_to": "Gravity_(fixture)"}
+    }
+  ]
+}

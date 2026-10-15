@@ -1,0 +1,35 @@
+name: Renderer fixture qualification
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'tools/renderer-harness/**'
+      - 'scripts/check_renderer_fixtures.py'
+      - 'scripts/test_check_renderer_fixtures.py'
+      - '.github/workflows/renderer-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mediawiki-parsoid-fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Checker unit tests
+        run: python3 -m unittest scripts/test_check_renderer_fixtures.py
+      - name: Render and check fixtures with pinned MediaWiki image
+        run: tools/renderer-harness/run.sh "$RUNNER_TEMP/renderer-evidence"
+      - name: Preserve renderer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-fixture-evidence
+          path: ${{ runner.temp }}/renderer-evidence
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Confirm exact head
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"

@@ -1,0 +1,1 @@
+<includeonly>Hello, {{{1|world}}}!</includeonly><noinclude>Synthetic fixture template authored for this repository (CC0-1.0).</noinclude>

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c 'import sys,json; d=json.load(sys.stdin); print((d.get(\"tool_response\") or {}).get(\"filePath\") or d[\"tool_input\"][\"file_path\"])' | { read -r f; case \"$f\" in *.rs) rustfmt --edition 2021 \"$f\";; esac; } 2>/dev/null || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
