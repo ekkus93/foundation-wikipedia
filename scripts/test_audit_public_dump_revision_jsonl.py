@@ -93,7 +93,9 @@ class RevisionJsonlAuditTests(unittest.TestCase):
 
                 self.write(self.record(content=content))
                 raw = self.path.read_bytes()
-                self.path.write_bytes(raw.replace(b", ", b",\\r ", 1))
+                modified = raw.replace(b", ", b"," + bytes([13]) + b" ", 1)
+                self.assertIn(bytes([13]), modified)
+                self.path.write_bytes(modified)
                 with self.assertRaisesRegex(RevisionAuditError, "unterminated"):
                     self.audit(content)
 
