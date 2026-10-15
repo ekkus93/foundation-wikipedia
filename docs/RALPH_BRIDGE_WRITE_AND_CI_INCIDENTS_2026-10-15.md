@@ -39,3 +39,11 @@ For any future write or test failure, preserve: UTC timestamp; bridge version/bu
 ## Outstanding limitations
 
 Full SRC-002/SRC-003 source authenticity, production Rust XML/bzip2 parsing, independent coverage and rendered/offline media acceptance remain open. This document is troubleshooting evidence, not completion of those TODOs.
+
+## Incident 4: intermediate XML regression-test syntax failure (confirmed; not a bridge failure)
+
+- Initial implementation SHA: `a354b18ff0dcd47ddd7cc912b95a1a6f8167fbed`; Ralph Bridge `commit_files` operation ID `89cafc347f174641b590b1d891c8d068`, accepted and exact-head verified at `2026-10-15T11:01:00.633641Z`.
+- Rust workflow [38724342118](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38724342118), job `116386365280`, step `Verify fixture provenance`, failed: Python 3.12 `unittest.loader` raised `IndentationError: expected an indented block after function definition on line 389` in `scripts/test_public_dump_xml_census.py` line 390; evidence was reported in bounded CI log excerpt lines 1534–1573. A doubled escape in an expected byte newline was also corrected proactively.
+- Repair: `create_or_update_file` operation ID `8c660969d8b64c5aad002308bc02544b`, accepted, from exact head `a354b18ff0dcd47ddd7cc912b95a1a6f8167fbed` to `f01c32a7a92d23d9b7aa18b43a3bb57d5949a46d`. No ambiguity warning was reported.
+- Final exact-head results: [Rust 38724445336](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38724445336) success; [Platform 38724445305](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38724445305) success.
+- **Classification:** authoring/test-insertion defect followed by a successful deterministic correction. No evidence of Ralph Bridge or GitHub malfunction. Useful pattern: a remote source commit can pass bridge acceptance and still fail Python discovery; commits must be separately tested on exact-head CI.
