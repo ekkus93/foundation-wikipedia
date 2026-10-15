@@ -149,3 +149,13 @@ Code SHA `d3811b8099110aa7716e75eb527e00a2a3a188c6` rejects XML page/revision ID
 - The preceding documentation-only SHA `55fcd1e365376078e0310e4203a81818b54db976` had a failing Rust CI run 38666642949 in an unrelated `online_curl::tests::caps_streamed_body_without_trusting_content_length` subprocess test (`SpawnFailed` versus expected `ResponseTooLarge`). The next exact-head Rust run above passed without modifying that transport code. This is recorded as a potentially transient test failure, not evidence that the earlier SHA qualified.
 
 The diagnostic importer's bounds are not a substitute for independent publisher authentication, complete source coverage, portable Rust bzip2/XML parsing, Parsoid rendering fidelity, or required offline media. **SRC-003 remains unchecked.**
+
+## Complete manifest preflight before member reads (2026-10-14)
+
+At source SHA `70cbc464dca92c918a9996e498d076825b0474c9`, the Python diagnostic staging verifier validates **all** declared member names, checksums, types, duplicate identities and byte budgets before opening or hashing any staged member. Regression SHA `0b23cea78aedae455a63ade31485252ef7f6f923` adds a late-invalid-member test: even when an earlier staged member is absent, invalid metadata in a later declaration is rejected first. This avoids avoidable expensive hashing before detecting a malformed or oversized manifest.
+
+- [Rust workspace CI 38667126349](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38667126349) — **passed on run attempt 2**, exact SHA `0b23cea78aedae455a63ade31485252ef7f6f923`, including Python tests.
+- [Platform shells CI 38667126285](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38667126285) — passed at the same exact SHA.
+- Initial Rust run attempt 1 failed in the unrelated `online_curl::tests::drains_large_stderr_and_preserves_final_http_status` fixture with `SpawnFailed`. Ralph Bridge reran failed jobs at the same SHA; attempt 2 passed. The subprocess test flake has **not** been fixed by this source-staging change.
+
+This remains a partial diagnostic-source safety improvement, not independently authenticated Wikimedia acquisition, completeness, portable Rust XML import, renderer fidelity, or mandatory offline-media acceptance. **SRC-003 remains unchecked.**
