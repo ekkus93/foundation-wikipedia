@@ -16,7 +16,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from audit_public_dump_revision_jsonl import RevisionAuditError, audit_revision_jsonl
+from audit_public_dump_revision_jsonl import MAX_RECORD_BYTES, RevisionAuditError, audit_revision_jsonl
 from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
 EXPORT_NS = re.compile(r"^http://www\.mediawiki\.org/xml/export-[0-9]+\.[0-9]+/$")
@@ -284,7 +284,7 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
 MAX_EXPECTED_CENSUS_BYTES = 2_000_000_000
 
 
-def _audit_expected_census(expected_path, expected_sha256, observed_path, selected):
+def _audit_expected_census(expected_path, expected_sha256, observed_path, selected, output_format):
     """Compare a separately supplied, digest-pinned expected census before publish.
 
     The expected census's publisher, independence, namespace and snapshot cutoff
@@ -316,7 +316,23 @@ def _audit_expected_census(expected_path, expected_sha256, observed_path, select
             if value > MAX_PAGE_ID or value <= previous:
                 raise DumpDecodeError("expected census is not strictly increasing")
             previous = value
-            if observed.readline(21) != line:
+            if output_format == "ids":
+                observed_id_line = observed.readline(21)
+            else:
+                # The JSONL was independently self-audited before this gate.
+                # Compare page identities, not raw JSON record bytes.
+                observed_record = observed.readline(MAX_RECORD_BYTES + 1)
+                if len(observed_record) > MAX_RECORD_BYTES or not observed_record.endswith(b"\n"):
+                    raise DumpDecodeError("invalid observed revision record")
+                try:
+                    decoded = json.loads(observed_record)
+                    observed_id = decoded["page_id"]
+                except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+                    raise DumpDecodeError("invalid observed revision record") from exc
+                if type(observed_id) is not int:
+                    raise DumpDecodeError("invalid observed revision page ID")
+                observed_id_line = f"{observed_id}\n".encode("ascii")
+            if observed_id_line != line:
                 raise DumpDecodeError("expected and observed page IDs differ")
             count += 1
         if count != selected or observed.read(1):
@@ -335,8 +351,6 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
     """Verify all staged digests, decode all shards, then publish atomically."""
     if output_format not in ("ids", "revision-jsonl", "revision-content-jsonl"):
         raise DumpDecodeError("invalid diagnostic output format")
-    if output_format != "ids" and (expected_census is not None or expected_sha256 is not None):
-        raise DumpDecodeError("expected census comparison requires ID format")
     if (expected_census is None) != (expected_sha256 is None):
         raise DumpDecodeError("expected census and SHA-256 must be supplied together")
     if type(namespace) is not int or not 0 <= namespace <= MAX_NAMESPACE_ID:
@@ -384,8 +398,6 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
                 raise DumpDecodeError("selected namespace has no pages")
             sink.flush()
             os.fsync(sink.fileno())
-        if expected_census is not None:
-            _audit_expected_census(expected_census, expected_sha256, pending, selected)
         if output_format != "ids":
             try:
                 audited, _ = audit_revision_jsonl(
@@ -395,6 +407,9 @@ def stage_observed_census(manifest, staging, output_dir, filename, namespace=0,
                 raise DumpDecodeError("revision record self-audit failed") from exc
             if audited != selected:
                 raise DumpDecodeError("revision record self-audit count mismatch")
+        if expected_census is not None:
+            _audit_expected_census(
+                expected_census, expected_sha256, pending, selected, output_format)
         os.link(pending, destination)  # no-overwrite, same filesystem
         published = True
         os.unlink(pending)

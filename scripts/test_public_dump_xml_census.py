@@ -193,14 +193,39 @@ class DumpXmlTests(unittest.TestCase):
                         output_format="revision-content-jsonl")
                 self.assertEqual(list(self.output.iterdir()), [])
 
-    def test_revision_jsonl_rejects_unsafe_redirect_and_incompatible_census_gate(self):
+    def test_independent_expected_id_gate_applies_to_both_revision_formats(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}{page(2)}</mediawiki>")
+        expected = self.root / "expected.ids"
+        for output_format in ("revision-jsonl", "revision-content-jsonl"):
+            with self.subTest(output_format=output_format):
+                expected.write_bytes(b"1\n2\n")
+                digest = hashlib.sha256(expected.read_bytes()).hexdigest()
+                result, count = stage_observed_census(
+                    self.manifest, self.staging, self.output, "revisions.jsonl",
+                    output_format=output_format, expected_census=expected,
+                    expected_sha256=digest)
+                self.assertEqual(count, 2)
+                self.assertEqual([json.loads(line)["page_id"] for line in
+                                  result.read_text(encoding="utf-8").splitlines()], [1, 2])
+                result.unlink()
+                for bad in (b"1\n3\n", b"1\n", b"1\n2\n3\n"):
+                    expected.write_bytes(bad)
+                    with self.assertRaises(DumpDecodeError):
+                        stage_observed_census(
+                            self.manifest, self.staging, self.output, "revisions.jsonl",
+                            output_format=output_format, expected_census=expected,
+                            expected_sha256=hashlib.sha256(bad).hexdigest())
+                    self.assertEqual(list(self.output.iterdir()), [])
+                expected.write_bytes(b"1\n2\n")
+                with self.assertRaisesRegex(DumpDecodeError, "digest"):
+                    stage_observed_census(
+                        self.manifest, self.staging, self.output, "revisions.jsonl",
+                        output_format=output_format, expected_census=expected,
+                        expected_sha256="0" * 64)
+                self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_revision_jsonl_rejects_unsafe_redirect(self):
         self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
-        with self.assertRaisesRegex(DumpDecodeError, "requires ID format"):
-            stage_observed_census(self.manifest, self.staging, self.output,
-                                  "revisions.jsonl", output_format="revision-jsonl",
-                                  expected_census=self.root / "expected.ids",
-                                  expected_sha256="0" * 64)
-        self.assertEqual(list(self.output.iterdir()), [])
         for attr in ('title=" "', 'title=" Bad "', 'title="Physics" other="a"'):
             self.manifest["files"].clear()
             bad = page(1).replace("<id>1</id>", f"<id>1</id><redirect {attr}/>", 1)
