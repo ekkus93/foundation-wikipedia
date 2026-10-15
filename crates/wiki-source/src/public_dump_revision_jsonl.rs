@@ -236,25 +236,15 @@ pub fn audit_revision_content_census<E: BufRead, O: BufRead>(
     observed: O,
     scope: CensusScope<'_>,
 ) -> Result<PageCoverageDelta, DiagnosticCensusError> {
-    let observed_records = DiagnosticRevisionLines::new(
-        observed,
-        scope.project,
-        scope.generation,
-        scope.namespace,
-    )
-    .map_err(DiagnosticCensusError::Record)?;
+    let observed_records =
+        DiagnosticRevisionLines::new(observed, scope.project, scope.generation, scope.namespace)
+            .map_err(DiagnosticCensusError::Record)?;
     let observed_ids = observed_records.map(|item| {
-        item.map(|record| record.page_id).map_err(|error| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}"))
-        })
+        item.map(|record| record.page_id)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{error:?}")))
     });
-    audit_page_coverage_stream(
-        scope,
-        PageIdLines::new(expected),
-        scope,
-        observed_ids,
-    )
-    .map_err(DiagnosticCensusError::Coverage)
+    audit_page_coverage_stream(scope, PageIdLines::new(expected), scope, observed_ids)
+        .map_err(DiagnosticCensusError::Coverage)
 }
 
 #[cfg(test)]
