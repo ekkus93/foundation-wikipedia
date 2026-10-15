@@ -235,7 +235,9 @@ mod staged_tests {
         );
         assert!(matches!(
             check_declared_staged_media(&manifest, &root, &[expected.clone()]),
-            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(_)))
+            Err(StagedMediaError::Media(MediaError::MissingVerifiedObject(
+                _
+            )))
         ));
 
         fs::create_dir(root.join("media")).unwrap();
