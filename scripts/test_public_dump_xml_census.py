@@ -1,12 +1,17 @@
 """Deterministic end-to-end bzip2/XML census decoding regressions."""
 import bz2
 import hashlib
+import io
+import json
 from pathlib import Path
 import tempfile
+import sys
+from contextlib import redirect_stdout
 import unittest
 from unittest.mock import patch
 
-from public_dump_xml_census import DumpDecodeError, stage_observed_census
+from public_dump_xml_census import DumpDecodeError, main, stage_observed_census
+from verify_source_staging import SourceVerificationError
 
 
 def page(pid, ns=0, revision=300):
@@ -228,6 +233,46 @@ class DumpXmlTests(unittest.TestCase):
         with self.assertRaisesRegex(DumpDecodeError, "namespace"):
             stage_observed_census(self.manifest, self.staging, self.output,
                                   "observed.ids", namespace=2**31)
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_cli_uses_bounded_manifest_loader_for_valid_input(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        manifest_file = self.root / "source.json"
+        manifest_file.write_text(json.dumps(self.manifest), encoding="utf-8")
+        argv = ["public_dump_xml_census.py", str(manifest_file),
+                str(self.staging), str(self.output), "observed.ids"]
+        with patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()) as output:
+            main()
+        self.assertEqual((self.output / "observed.ids").read_bytes(), b"1\n")
+        self.assertIn("authenticity and completeness NOT established", output.getvalue())
+
+    def test_cli_rejects_symlink_manifest_before_output(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        original = self.root / "source.json"
+        original.write_text(json.dumps(self.manifest), encoding="utf-8")
+        alias = self.root / "source-alias.json"
+        alias.symlink_to(original)
+        argv = ["public_dump_xml_census.py", str(alias),
+                str(self.staging), str(self.output), "observed.ids"]
+        with patch.object(sys, "argv", argv):
+            with self.assertRaises(SourceVerificationError):
+                main()
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_cli_rejects_oversized_and_malformed_manifest_before_output(self):
+        self.add(1, 100, f"<mediawiki>{page(1)}</mediawiki>")
+        manifest_file = self.root / "source.json"
+        argv = ["public_dump_xml_census.py", str(manifest_file),
+                str(self.staging), str(self.output), "observed.ids"]
+        manifest_file.write_text(json.dumps(self.manifest), encoding="utf-8")
+        with patch("verify_source_staging.MAX_MANIFEST_BYTES", 16):
+            with patch.object(sys, "argv", argv), self.assertRaisesRegex(
+                    SourceVerificationError, "oversized"):
+                main()
+        manifest_file.write_text("[]", encoding="utf-8")
+        with patch.object(sys, "argv", argv), self.assertRaisesRegex(
+                SourceVerificationError, "JSON object"):
+            main()
         self.assertEqual(list(self.output.iterdir()), [])
 
     def test_namespace_absence_and_overlapping_ranges_fail_closed(self):

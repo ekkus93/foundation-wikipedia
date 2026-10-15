@@ -8,7 +8,6 @@ It publishes only after all declared members decode and validate successfully.
 import bz2
 from datetime import datetime
 import hashlib
-import json
 import os
 import re
 import stat
@@ -16,7 +15,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from verify_source_staging import SourceVerificationError, verify_source_bytes
+from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
 EXPORT_NS = re.compile(r"^http://www\.mediawiki\.org/xml/export-[0-9]+\.[0-9]+/$")
 NAME = re.compile(r"^(?P<project>[a-z0-9_]+)-(?P<date>\d{4}-\d{2}-\d{2})-p(?P<first>[1-9]\d*)p(?P<last>[1-9]\d*)\.xml\.bz2$")
@@ -335,7 +334,7 @@ def main():
     parser.add_argument("--expected-census", type=Path)
     parser.add_argument("--expected-sha256")
     args = parser.parse_args()
-    result, count = stage_observed_census(json.loads(args.manifest.read_text()), args.staging, args.output_dir, args.filename, args.namespace,
+    result, count = stage_observed_census(load_source_manifest(args.manifest), args.staging, args.output_dir, args.filename, args.namespace,
                                           args.expected_census, args.expected_sha256)
     status = "digest-pinned expected census matched; its authority/independence NOT established" if args.expected_census else "publisher authenticity and completeness NOT established"
     print(f"Observed {count} page IDs in {result}; {status}")
