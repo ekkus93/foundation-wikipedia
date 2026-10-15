@@ -159,3 +159,12 @@ At source SHA `70cbc464dca92c918a9996e498d076825b0474c9`, the Python diagnostic 
 - Initial Rust run attempt 1 failed in the unrelated `online_curl::tests::drains_large_stderr_and_preserves_final_http_status` fixture with `SpawnFailed`. Ralph Bridge reran failed jobs at the same SHA; attempt 2 passed. The subprocess test flake has **not** been fixed by this source-staging change.
 
 This remains a partial diagnostic-source safety improvement, not independently authenticated Wikimedia acquisition, completeness, portable Rust XML import, renderer fidelity, or mandatory offline-media acceptance. **SRC-003 remains unchecked.**
+
+## Bounded manifest loading in XML census CLI (2026-10-14)
+
+At exact code SHA `afed681261efb2f987cf3fcd96e558025462b447`, the Python diagnostic XML/bzip2 census CLI now reuses `verify_source_staging.load_source_manifest` rather than unbounded `Path.read_text()` / `json.loads()`. The shared loader requires a stable, regular, single-linked descriptor opened without following symlinks where supported, bounds input to 32 MiB, and rejects malformed/non-object JSON. New CLI regressions exercise a valid manifest, symlinked input, oversized manifest and a non-object manifest; rejected inputs leave no published census.
+
+- [Rust workspace CI 38667942405](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38667942405) — **passed** on exact code SHA (including Python unittest discovery).
+- [Platform shells CI 38667942367](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38667942367) — **passed** on the same SHA.
+
+This closes only a diagnostic CLI input boundary. Manifest fields and digests alone do not authenticate the upstream publisher or independent census, and the portable Rust importer, rendering fidelity, mandatory media and end-to-end pack acceptance remain outstanding. **SRC-003 remains unchecked.**
