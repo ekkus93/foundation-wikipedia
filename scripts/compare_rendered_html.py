@@ -110,6 +110,11 @@ def compare(local, live):
         "ref_delta": local["refs"] - live["refs"],
         "local_error_markers": sum(local["error_markers"].values()),
         "live_error_markers": sum(live["error_markers"].values()),
+        "error_marker_delta": {
+            marker: local["error_markers"].get(marker, 0) - live["error_markers"].get(marker, 0)
+            for marker in ERROR_MARKERS
+            if local["error_markers"].get(marker, 0) != live["error_markers"].get(marker, 0)
+        },
     }
 
 
@@ -123,6 +128,12 @@ def aggregate(rows):
         "mean_heading_similarity": sum(r["metrics"]["heading_similarity"] for r in rows) / n,
         "mean_link_jaccard": sum(r["metrics"]["link_jaccard"] for r in rows) / n,
         "pages_with_local_errors": sum(1 for r in rows if r["metrics"]["local_error_markers"] > 0),
+        "pages_with_live_errors": sum(1 for r in rows if r["metrics"]["live_error_markers"] > 0),
+        "pages_with_local_only_errors": sum(
+            1 for r in rows if r["metrics"]["local_error_markers"] > 0
+            and r["metrics"]["live_error_markers"] == 0),
+        "pages_with_error_marker_drift": sum(
+            1 for r in rows if r["metrics"]["error_marker_delta"]),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
@@ -177,6 +188,9 @@ def build_report(sample, local_base, live_host, pause=1.0):
             if local_summary["error_markers"]:
                 row["local_error_details"] = local_summary["error_markers"]
                 row["local_error_excerpt"] = _error_excerpt(local_html)
+            if live_summary["error_markers"]:
+                row["live_error_details"] = live_summary["error_markers"]
+                row["live_error_excerpt"] = _error_excerpt(live_html)
             row["local_html_bytes"] = len(local_html.encode("utf-8"))
             row["live_html_bytes"] = len(live_html.encode("utf-8"))
         except (OSError, ValueError, urllib.error.URLError) as error:
@@ -207,7 +221,7 @@ def _main(argv):
     # green import does not conceal missing templates/Lua or link drift.
     for row in report["pages"][:50]:
         metrics = row["metrics"]
-        if metrics["local_error_markers"] or metrics["link_jaccard"] < 0.5:
+        if metrics["local_error_markers"] or metrics["live_error_markers"] or metrics["link_jaccard"] < 0.5:
             print("FIDELITY-WARNING:", json.dumps({
                 "title": row["title"], "source_revision_id": row["source_revision_id"],
                 "link_jaccard": metrics["link_jaccard"],
@@ -217,6 +231,9 @@ def _main(argv):
                 "unexpected_links_sample": metrics["unexpected_links_sample"],
                 "local_error_details": row.get("local_error_details", {}),
                 "local_error_excerpt": row.get("local_error_excerpt", ""),
+                "live_error_details": row.get("live_error_details", {}),
+                "live_error_excerpt": row.get("live_error_excerpt", ""),
+                "error_marker_delta": metrics["error_marker_delta"],
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:

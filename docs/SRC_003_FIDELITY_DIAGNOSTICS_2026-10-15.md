@@ -45,3 +45,13 @@ The exact-head normalized comparison at `6ed7aea0f1e0561e74f912bd071c0c0da0f337d
 The remaining real Lua error is in the sampled article `Wiht (īeg)`, source revision `204753`: `Module:Convert` line 2164 tries to index nil local `in_current`. That error must be investigated against the exact module/template revisions and MediaWiki/Scribunto configuration. No source page was dropped or a faulty Lua expansion silently accepted as qualified. Subsequent correction of the unrelated curl ETXTBSY test flake passed [Rust 38809250088](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38809250088) and [Platform 38809250425](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38809250425) at SHA `af5d3e15fb16579b979442377755ce669d9f618d`.
 
 **SRC-003 remains unchecked** pending full source/completeness independence, revision/dependency reconciliation, fidelity and mandatory media.
+
+## Upstream-error attribution refinement
+
+An independent public view of the live Anglish Wikipedia article `Wiht (īeg)` also displays `Lua error in Module:Convert at line 2164: attempt to index local 'in_current' (a nil value)`. This strongly suggests that the matching local message may originate in upstream wiki content or Lua module behavior, rather than being caused solely by the dump-import harness. It **does not yet establish exact-revision equivalence**, because the index view can reflect a different source revision or dependency state.
+
+To avoid misclassifying an upstream rendering error as a new local regression, the comparator now records the live page's error-marker types and bounded excerpt alongside the local ones. It emits marker-by-marker local-minus-live deltas, the number of pages with upstream errors, local-only errors and mismatched marker counts. The existing artifact and bounded CI warning include this context. Matching error-marker signatures alone cannot prove rendered text equivalence or required offline-media completeness.
+
+Local tests: 12 renderer-comparison tests and 6 dump-filter tests passed. Exact-head CI is still required before claiming qualification.
+
+Public reference: https://ang.wikipedia.org/wiki/Wiht_(%C4%ABeg) (live/wiki content can change).

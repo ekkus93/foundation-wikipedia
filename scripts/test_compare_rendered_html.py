@@ -63,6 +63,21 @@ class CompareTests(unittest.TestCase):
         self.assertEqual([{"title": "Revision test", "source_revision_id": 777,
                            "markers": {"Script error": 1}}], report["local_error_page_samples"])
 
+    def test_upstream_error_is_distinguished_from_local_regression(self):
+        broken = c.summarize('<p>Lua error in Module:Convert</p>')
+        clean = c.summarize('<p>ok</p>')
+        upstream = c.compare(broken, broken)
+        self.assertEqual(1, upstream["live_error_markers"])
+        self.assertEqual({}, upstream["error_marker_delta"])
+        regression = c.compare(broken, clean)
+        self.assertEqual({"Lua error": 1}, regression["error_marker_delta"])
+        records = [{"metrics": upstream}, {"metrics": regression}]
+        summary = c.aggregate(records)
+        self.assertEqual(2, summary["pages_with_local_errors"])
+        self.assertEqual(1, summary["pages_with_live_errors"])
+        self.assertEqual(1, summary["pages_with_local_only_errors"])
+        self.assertEqual(1, summary["pages_with_error_marker_drift"])
+
     def test_redlink_action_does_not_change_target_identity(self):
         local = c.summarize('<a rel="mw:WikiLink" href="./Alpha?action=edit&amp;redlink=1">A</a>')
         live = c.summarize('<a rel="mw:WikiLink" href="./Alpha">A</a>')
