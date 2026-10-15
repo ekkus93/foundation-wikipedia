@@ -124,6 +124,16 @@ pub fn decode_pinned_deletions<D: BufRead>(
     Ok(markers)
 }
 
+/// Typed local import scope and independently supplied SHA-256 pins.
+/// Upstream identity and digest authority must be proven by the caller.
+pub struct PinnedEnterpriseInputs<'a> {
+    pub project: &'a str,
+    pub generation: &'a str,
+    pub structured_sha256: &'a str,
+    pub regular_sha256: &'a str,
+    pub deletion_sha256: &'a str,
+}
+
 /// Only returns joined articles after all three independently pinned inputs
 /// pass their local byte-integrity and scoped revision/deletion checks.
 /// The three supplied hashes remain unauthenticated unless the caller separately
@@ -132,21 +142,22 @@ pub fn import_pinned_enterprise_with_deletions<S: BufRead, R: BufRead, D: BufRea
     structured: S,
     regular: R,
     deletion_ndjson: D,
-    project: &str,
-    generation: &str,
-    structured_sha256: &str,
-    regular_sha256: &str,
-    deletion_sha256: &str,
+    pins: PinnedEnterpriseInputs<'_>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, DeletionPinnedImportError> {
-    let deleted = decode_pinned_deletions(deletion_ndjson, project, generation, deletion_sha256)?;
+    let deleted = decode_pinned_deletions(
+        deletion_ndjson,
+        pins.project,
+        pins.generation,
+        pins.deletion_sha256,
+    )?;
     import_pinned_enterprise_ndjson_scoped(
         structured,
         regular,
-        project,
-        generation,
+        pins.project,
+        pins.generation,
         deleted,
-        structured_sha256,
-        regular_sha256,
+        pins.structured_sha256,
+        pins.regular_sha256,
     )
     .map_err(DeletionPinnedImportError::Import)
 }
@@ -173,11 +184,13 @@ mod tests {
             Cursor::new(STRUCTURED),
             Cursor::new(REGULAR),
             Cursor::new(deleted),
-            "enwiki",
-            "20261010",
-            &pin(STRUCTURED),
-            &pin(REGULAR),
-            deleted_digest,
+            PinnedEnterpriseInputs {
+                project: "enwiki",
+                generation: "20261010",
+                structured_sha256: &pin(STRUCTURED),
+                regular_sha256: &pin(REGULAR),
+                deletion_sha256: deleted_digest,
+            },
         )
     }
 
