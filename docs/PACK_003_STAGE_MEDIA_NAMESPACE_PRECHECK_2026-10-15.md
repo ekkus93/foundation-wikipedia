@@ -36,4 +36,14 @@ for mandatory visuals.
 
 ## Qualification
 
-Exact-head Rust and Platform CI verification is required after this change.
+The initial implementation at `22b20e86ca7fb6ba06bf1fe569c54cdec5d83ba2` failed
+[Rust CI 38819535208](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38819535208)
+solely in the `Format` step (one multiline match pattern), which was corrected.
+The final source and regression test at **exact commit**
+`8e72cfcd3c9825c611abc44f34154bb3803d9da0` passed
+[Rust workspace CI 38819719844](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38819719844)
+(fmt, clippy, tests) and
+[Platform shells CI 38819719909](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38819719909)
+(desktop/frontend, native Tauri and Android shell). No renderer dump workflow
+ran at the final code-only Rust change, as the public-dump harness was not
+modified. The pack does **not** thereby qualify as offline complete.
