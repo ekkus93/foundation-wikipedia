@@ -10,8 +10,9 @@ OUT="${1:?usage: run_dump.sh OUT_DIR STAGED_MEMBER LANG_CODE LIVE_HOST}"
 MEMBER="${2:?missing staged member}"
 LANG_CODE="${3:?missing wiki language code}"
 LIVE_HOST="${4:?missing live host}"
-# Same digest as run.sh (MediaWiki 1.43.11, PHP 8.3.35).
-IMAGE="${MW_IMAGE:-mediawiki@sha256:76b3d47b50c4e4a78f82e814917421cb62c49b0c56b4a0f981cd74e2bddd10ac}"
+# Pinned MediaWiki 1.44 release train includes bundled TemplateStyles (sanitized-css).
+# Separate from the 1.43 synthetic fixture harness pin; never silently skip CSS pages.
+IMAGE="${MW_IMAGE:-mediawiki@sha256:7bd97e0a6dd7d662e0cab93bb6a2e51b25c6a1d528f4e5ba88dc529dacf2224a}"
 NAME="fwr-dump-$$"
 PORT="${MW_PORT:-8081}"
 BASE="http://127.0.0.1:${PORT}"
@@ -38,8 +39,15 @@ docker exec -u www-data "$NAME" php maintenance/run.php install \
   --dbtype=sqlite --dbpath=/var/www/data --dbname=dumpwiki \
   --server="$BASE" --scriptpath= --lang="$LANG_CODE" --pass="$ADMIN_PASS" DumpWiki Admin
 
+# The dump includes sanitized-css pages; reject images missing TemplateStyles
+# before importing any page, rather than silently losing template CSS.
+if ! docker exec -u www-data "$NAME" test -f /var/www/html/extensions/TemplateStyles/extension.json; then
+  echo "Renderer image lacks bundled TemplateStyles (sanitized-css content model)" >&2
+  exit 1
+fi
+
 docker exec -u root -i "$NAME" sh -c 'cat >> /var/www/html/LocalSettings.php' <<'PHP'
-foreach ( [ 'Cite', 'ParserFunctions', 'Scribunto', 'Math', 'Poem', 'ImageMap' ] as $fwrExt ) {
+foreach ( [ 'Cite', 'ParserFunctions', 'Scribunto', 'Math', 'Poem', 'ImageMap', 'TemplateStyles' ] as $fwrExt ) {
 	if ( is_dir( "$IP/extensions/$fwrExt" ) ) {
 		wfLoadExtension( $fwrExt );
 	}
@@ -48,6 +56,24 @@ $wgScribuntoDefaultEngine = 'luastandalone';
 $wgMathValidModes = [ 'native', 'source' ];
 $wgDefaultUserOptions['math'] = 'native';
 PHP
+
+# Fail early if the configured wiki did not actually register the content model.
+curl -fsS "$BASE/api.php?action=query&meta=siteinfo&siprop=general%7Cextensions&format=json" >"$OUT/siteinfo.json"
+python3 - "$OUT/siteinfo.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    info = json.load(stream)
+query = info.get("query", {})
+generator = query.get("general", {}).get("generator", "")
+names = {item.get("name") for item in query.get("extensions", [])}
+if not generator.startswith("MediaWiki 1.44."):
+    raise SystemExit(f"unexpected pinned renderer version: {generator!r}")
+if "TemplateStyles" not in names:
+    raise SystemExit("TemplateStyles is not registered; refusing incomplete dump import")
+print(f"Renderer preflight: {generator}, TemplateStyles registered")
+PY
 
 START=$(date +%s)
 docker exec -i -u www-data "$NAME" php maintenance/run.php importDump \
