@@ -130,3 +130,12 @@ At code SHA `c258fe8f314625ea4fb03760516245b9d857beaa`, the Python diagnostic st
 - [Platform shells CI 38666223418](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666223418) — passed at the same SHA.
 
 The byte ceilings do not establish a source-generation cutoff, independent expected census, portable Rust XML importer, renderer fidelity or required offline media. **SRC-003 remains unchecked.**
+
+## Bounded CLI manifest loading (2026-10-14)
+
+At code SHA `9a28b097f321dda58bc74f87f78a68c854931e27`, the diagnostic source-verification CLI reads a manifest only from a regular, single-linked file descriptor opened with no-follow/nonblocking flags where supported. It rejects empty or over-32-MiB manifests before JSON decoding, rejects malformed/non-object JSON, and compares file identity, size and timestamps before/after its bounded read. Synthetic tests cover valid JSON, oversized files, malformed/non-object JSON, and symlinked manifests on platforms with `O_NOFOLLOW`.
+
+- [Rust workspace CI 38666449846](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666449846) — passed at exact code SHA, including diagnostic Python tests.
+- [Platform shells CI 38666449757](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38666449757) — passed at the same SHA.
+
+These controls apply to the diagnostic CLI input boundary, not to independently authenticated source publication, complete page census, portable Rust XML decoding, Parsoid rendering or mandatory offline media. **SRC-003 remains unchecked.**
