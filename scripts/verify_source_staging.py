@@ -18,6 +18,10 @@ IDENTITY = re.compile(r"^[a-z0-9_]+$")
 NAME = re.compile(r"^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$")
 GENERATION = re.compile(r"^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$")
 MAX_MEMBERS = 100000
+# Explicit budgets for untrusted manifest-declared compressed input. The
+# aggregate bound applies across all members, not separately per shard.
+MAX_MEMBER_BYTES = 64 * 1024**3
+MAX_TOTAL_BYTES = 4 * 1024**4
 CHUNK = 1024 * 1024
 
 
@@ -97,6 +101,7 @@ def verify_source_bytes(manifest, directory):
         raise SourceVerificationError("manifest must declare a bounded nonempty file set")
     seen = set()
     declared = set()
+    total_bytes = 0
     for item in members:
         if not isinstance(item, dict):
             raise SourceVerificationError("invalid file metadata")
@@ -111,6 +116,9 @@ def verify_source_bytes(manifest, directory):
             or size <= 0
         ):
             raise SourceVerificationError("unsafe or incomplete file metadata")
+        if size > MAX_MEMBER_BYTES or total_bytes + size > MAX_TOTAL_BYTES:
+            raise SourceVerificationError("declared compressed source exceeds byte budget")
+        total_bytes += size
         if name.lower() in seen:
             raise SourceVerificationError("duplicate or case-colliding source member")
         seen.add(name.lower())

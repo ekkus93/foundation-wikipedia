@@ -43,6 +43,24 @@ class SourceStagingTests(unittest.TestCase):
         self.manifest["files"][0]["bytes"] = self.member.stat().st_size
         self.reject("sha256 mismatch")
 
+    def test_declared_member_byte_budget_rejected_before_hashing(self):
+        with patch("verify_source_staging.MAX_MEMBER_BYTES", self.member.stat().st_size - 1):
+            self.reject("exceeds byte budget")
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 1)
+
+    def test_aggregate_member_byte_budget_rejected(self):
+        second = self.dir / "second.xml"
+        second.write_bytes(b"another verified member")
+        self.manifest["files"].append({
+            "name": second.name,
+            "bytes": second.stat().st_size,
+            "sha256": hashlib.sha256(second.read_bytes()).hexdigest(),
+        })
+        combined = self.member.stat().st_size + second.stat().st_size
+        with patch("verify_source_staging.MAX_TOTAL_BYTES", combined - 1):
+            self.reject("exceeds byte budget")
+        self.assertEqual(verify_source_bytes(self.manifest, self.dir), 2)
+
     def test_incomplete_or_untrusted_origin_rejected(self):
         self.manifest["completed"] = False
         self.reject("generation metadata")
