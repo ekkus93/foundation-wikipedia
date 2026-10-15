@@ -70,3 +70,41 @@ publication receipts or a proof of complete source generation, deletion-feed
 coverage, required media or real offline snapshot acceptance. The library
 does not download authenticated Enterprise snapshots. No local tests imply
 publisher trust. **SRC-002 remains unchecked**.
+
+## Digest-pinned local deletion evidence (2026-10-14)
+
+The portable `wiki-source::enterprise_pinned_deletions` module adds
+`decode_pinned_deletions` and `import_pinned_enterprise_with_deletions`.
+They accept a **local canonical, versioned** deletion NDJSON stream (not
+Wikimedia's raw deletion-feed format), with explicit `schema_version=1`,
+`project`, `generation_id`, and `page_id`. Every record must be bounded,
+well-formed JSON terminated by LF, with no duplicate fields, schema drift,
+truncation, oversized lines or mismatched scope. The entire stream must match
+its own caller-provided SHA-256 pin before any live pages can be returned.
+The importer passes those validated tombstones into the existing
+revision-scoped Structured Contents and regular companion import, where
+duplicates and live/deleted conflicts are rejected. An empty deletion stream
+may have a valid empty digest but does **not** prove deletion completeness.
+
+- Source SHA **`4f84b138ec3d8d4474e3b3988be9c1dbbffa3127`** passed
+  [Rust workspace 38688058871](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38688058871)
+  (format, strict Clippy and tests) and
+  [Platform shells 38688058814](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38688058814)
+  at this exact head.
+- Synthetic tests cover matching scoped live/deletion components, empty
+  deletion feed, mismatched digest, changed generation, duplicate deletion,
+  live-page deletion conflict, missing LF, CRLF, unknown/duplicate JSON fields,
+  wrong schema, invalid ID and oversized record.
+- During implementation a bounded `get_file` window was mistakenly written
+  as the full `crates/wiki-source/src/lib.rs`; CI identified the truncation.
+  The **complete original blob** was restored via Ralph Bridge from commit
+  `9b5b08f26d2e3cb5f018b52f9af6958bd55c72f8` at commit
+  `25914d116dbd09be6c435f2fd72c931ed1d3035c`. The module declaration
+  was then reapplied only after a complete three-window read at
+  `f8878863c08feb43387f89a5d241c715e22df9f8`.
+  No incomplete source file remains in the qualified head.
+
+**Not yet qualified:** official deletion-feed schema adaptation and upstream
+publisher authentication, independently verified generation completeness,
+mandatory article media, full end-to-end import, or device acceptance.
+**SRC-002 remains unchecked.**
