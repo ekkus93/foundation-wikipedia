@@ -185,7 +185,9 @@ fn main() {
         Some("audit-diagnostic") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 6 && fields.len() != 7 {
-                eprintln!("audit-diagnostic requires six arguments and an optional revision digest");
+                eprintln!(
+                    "audit-diagnostic requires six arguments and an optional revision digest"
+                );
                 usage();
                 std::process::exit(2);
             }
