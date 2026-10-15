@@ -105,7 +105,16 @@ impl MediaWikiTransport for CurlTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|_| CurlTransportError::SpawnFailed)?;
+            .map_err(|error| {
+                // Keep the public error stable, but retain a safe OS-level
+                // diagnostic for intermittent runner spawn failures.
+                eprintln!(
+                    "wiki-source curl spawn failed: kind={:?}, raw_os_error={:?}",
+                    error.kind(),
+                    error.raw_os_error()
+                );
+                CurlTransportError::SpawnFailed
+            })?;
 
         // Read both subprocess pipes concurrently to avoid stderr pipe deadlock.
         // Keep only the last 64 KiB, including the final HTTP status marker.
@@ -269,6 +278,20 @@ done
             Err(CurlTransportError::HttpStatus(503))
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn reports_nonexecutable_curl_as_spawn_failure() {
+        let url = WikipediaRequests::new("enwiki")
+            .unwrap()
+            .current_revision(42)
+            .unwrap();
+        // A directory cannot be executed. This exercises the spawn-error
+        // boundary without depending on process-resource exhaustion in CI.
+        let mut client = CurlTransport {
+            executable: "/".into(),
+        };
+        assert_eq!(client.get(&url, 128), Err(CurlTransportError::SpawnFailed));
     }
 
     #[test]
