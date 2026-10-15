@@ -134,6 +134,12 @@ def aggregate(rows):
             and r["metrics"]["live_error_markers"] == 0),
         "pages_with_error_marker_drift": sum(
             1 for r in rows if r["metrics"]["error_marker_delta"]),
+        "pages_with_source_page_id_mismatch": sum(
+            1 for r in rows if r.get("source_identity_match", {}).get("page_id") is False),
+        "pages_with_source_revision_mismatch": sum(
+            1 for r in rows if r.get("source_identity_match", {}).get("revision_id") is False),
+        "pages_with_source_timestamp_mismatch": sum(
+            1 for r in rows if r.get("source_identity_match", {}).get("timestamp") is False),
         "pages_with_ref_mismatch": sum(1 for r in rows if r["metrics"]["ref_delta"] != 0),
         "pages_with_table_mismatch": sum(1 for r in rows if r["metrics"]["table_delta"] != 0),
         "pages_below_half_link_overlap": sum(1 for r in rows if r["metrics"]["link_jaccard"] < 0.5),
@@ -185,6 +191,20 @@ def build_report(sample, local_base, live_host, pause=1.0):
             live_html = fetch_live(live_host, entry["revision_id"])
             local_summary, live_summary = summarize(local_html), summarize(live_html)
             row["metrics"] = compare(local_summary, live_summary)
+            # HTML structure does not prove exact source page/revision identity.
+            payload = local.get("payload") if isinstance(local.get("payload"), dict) else {}
+            latest = payload.get("latest") if isinstance(payload.get("latest"), dict) else {}
+            local_identity = {
+                "page_id": payload.get("id"),
+                "revision_id": latest.get("id"),
+                "timestamp": latest.get("timestamp"),
+            }
+            row["local_identity"] = local_identity
+            row["source_identity_match"] = {
+                "page_id": local_identity["page_id"] == entry["page_id"],
+                "revision_id": local_identity["revision_id"] == entry["revision_id"],
+                "timestamp": local_identity["timestamp"] == entry["timestamp"],
+            }
             if local_summary["error_markers"]:
                 row["local_error_details"] = local_summary["error_markers"]
                 row["local_error_excerpt"] = _error_excerpt(local_html)
@@ -221,7 +241,9 @@ def _main(argv):
     # green import does not conceal missing templates/Lua or link drift.
     for row in report["pages"][:50]:
         metrics = row["metrics"]
-        if metrics["local_error_markers"] or metrics["live_error_markers"] or metrics["link_jaccard"] < 0.5:
+        if (metrics["local_error_markers"] or metrics["live_error_markers"]
+                or metrics["link_jaccard"] < 0.5
+                or False in row.get("source_identity_match", {}).values()):
             print("FIDELITY-WARNING:", json.dumps({
                 "title": row["title"], "source_revision_id": row["source_revision_id"],
                 "link_jaccard": metrics["link_jaccard"],
@@ -234,6 +256,8 @@ def _main(argv):
                 "live_error_details": row.get("live_error_details", {}),
                 "live_error_excerpt": row.get("live_error_excerpt", ""),
                 "error_marker_delta": metrics["error_marker_delta"],
+                "source_identity_match": row.get("source_identity_match", {}),
+                "local_identity": row.get("local_identity", {}),
                 "redlink_status_drift_count": metrics["redlink_status_drift_count"],
             }, ensure_ascii=False, sort_keys=True), file=sys.stderr)
     for failure in report["failures"]:

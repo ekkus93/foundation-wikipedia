@@ -55,3 +55,9 @@ To avoid misclassifying an upstream rendering error as a new local regression, t
 Local tests: 12 renderer-comparison tests and 6 dump-filter tests passed. Exact-head CI is still required before claiming qualification.
 
 Public reference: https://ang.wikipedia.org/wiki/Wiht_(%C4%ABeg) (live/wiki content can change).
+
+## Exact-head upstream-error comparison qualified and revision identity under test
+
+At `dcc8ac371d29c50a5c9dda6061e520b8dd165d77`, [Rust 38809883530](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38809883530), [Platform 38809883541](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38809883541), and [Renderer dump 38809883538](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38809883538) passed. Rendered `Wiht (īeg)` source revision `204753` had exactly matching local/live error-marker counts (five `Lua error` and four `class="error"` each), and the same `Module:Convert` nil `in_current` text. Across 25 pages, live-only/local-only error differences and marker-count drifts were zero. This supersedes attributing that Lua defect solely to local rendering; identical errors do not make the page acceptable for all release goals.
+
+The next observation records each local imported page ID, revision ID and revision timestamp against those of the checksum-pinned source dump sample, separately from HTML similarity. Regression tests mock successful matching and a mismatched local revision. These initial mismatch counters do not yet claim a production revision-qualified public importer, independent source completeness or offline media.
