@@ -35,9 +35,10 @@ fn open_input(path: &Path) -> Result<(File, Metadata), String> {
             return Err("diagnostic input path contains a symlink".into());
         }
     }
-    let file = File::open(path)
-        .map_err(|error| format!("cannot open diagnostic input: {error}"))?;
-    let meta = file.metadata()
+    let file =
+        File::open(path).map_err(|error| format!("cannot open diagnostic input: {error}"))?;
+    let meta = file
+        .metadata()
         .map_err(|error| format!("cannot stat diagnostic input: {error}"))?;
     if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_INPUT_BYTES {
         return Err("diagnostic input is not a bounded nonempty regular file".into());
@@ -53,10 +54,10 @@ fn open_input(path: &Path) -> Result<(File, Metadata), String> {
 }
 
 fn unchanged(file: &File, before: &Metadata) -> Result<bool, String> {
-    let after = file.metadata()
+    let after = file
+        .metadata()
         .map_err(|error| format!("cannot recheck input: {error}"))?;
-    let stable = before.len() == after.len()
-        && before.modified().ok() == after.modified().ok();
+    let stable = before.len() == after.len() && before.modified().ok() == after.modified().ok();
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -83,8 +84,7 @@ pub fn run(
     namespace: i32,
     expected_sha256: &str,
 ) -> Result<usize, String> {
-    if expected_sha256.len() != 64
-        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err("expected census digest must contain 64 hexadecimal characters".into());
     }
@@ -93,9 +93,7 @@ pub fn run(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if record_meta.dev() == census_meta.dev()
-            && record_meta.ino() == census_meta.ino()
-        {
+        if record_meta.dev() == census_meta.dev() && record_meta.ino() == census_meta.ino() {
             return Err("record and expected census inputs alias".into());
         }
     }
@@ -108,19 +106,13 @@ pub fn run(
         generation,
         namespace,
     };
-    let counts = audit_revision_content_census(
-        &mut expected,
-        BufReader::new(&mut records),
-        scope,
-    )
-    .map_err(|error| format!("diagnostic census reconciliation failed: {error:?}"))?;
+    let counts = audit_revision_content_census(&mut expected, BufReader::new(&mut records), scope)
+        .map_err(|error| format!("diagnostic census reconciliation failed: {error:?}"))?;
     let hashed = expected.into_inner();
     if format!("{:x}", hashed.digest.finalize()) != expected_sha256.to_ascii_lowercase() {
         return Err("expected census digest differs from consumed bytes".into());
     }
-    if !unchanged(&records, &record_meta)?
-        || !unchanged(&hashed.inner, &census_meta)?
-    {
+    if !unchanged(&records, &record_meta)? || !unchanged(&hashed.inner, &census_meta)? {
         return Err("diagnostic input changed during validation".into());
     }
     println!(
@@ -169,11 +161,27 @@ mod tests {
             run(&revisions, &census, "enwiki", "2026-10-01", 0, &good_digest),
             Ok(1)
         );
-        assert!(run(&revisions, &census, "enwiki", "2026-10-01", 0, &"0".repeat(64)).is_err());
+        assert!(run(
+            &revisions,
+            &census,
+            "enwiki",
+            "2026-10-01",
+            0,
+            &"0".repeat(64)
+        )
+        .is_err());
         assert!(run(&revisions, &census, "enwiki", "2026-10-01", 1, &good_digest).is_err());
         fs::write(&census, b"2\n").unwrap();
         let wrong_digest = format!("{:x}", Sha256::digest(b"2\n"));
-        assert!(run(&revisions, &census, "enwiki", "2026-10-01", 0, &wrong_digest).is_err());
+        assert!(run(
+            &revisions,
+            &census,
+            "enwiki",
+            "2026-10-01",
+            0,
+            &wrong_digest
+        )
+        .is_err());
         fs::write(&census, b"1\n").unwrap();
         fs::write(&revisions, format!("{row}")).unwrap();
         assert!(run(&revisions, &census, "enwiki", "2026-10-01", 0, &good_digest).is_err());
