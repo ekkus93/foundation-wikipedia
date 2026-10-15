@@ -335,15 +335,14 @@ mod tests {
         assert!(lines.next().is_none());
 
         let input = record(42, "First") + &record(42, "Duplicate");
-        let mut lines = DiagnosticRevisionLines::new(
-            Cursor::new(input.as_bytes()),
-            "enwiki",
-            "2026-10-01",
-            0,
-        )
-        .unwrap();
+        let mut lines =
+            DiagnosticRevisionLines::new(Cursor::new(input.as_bytes()), "enwiki", "2026-10-01", 0)
+                .unwrap();
         assert!(lines.next().unwrap().is_ok());
-        assert!(matches!(lines.next(), Some(Err(RevisionRecordError::InvalidOrder))));
+        assert!(matches!(
+            lines.next(),
+            Some(Err(RevisionRecordError::InvalidOrder))
+        ));
         assert!(lines.next().is_none());
     }
 
