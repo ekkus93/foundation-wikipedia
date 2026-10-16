@@ -32,9 +32,11 @@ fn topic_preview_json_reports_real_cycles_not_shared_descendants() {
     assert_eq!(dag["selected_page_ids"], serde_json::json!([1, 2]));
     assert_eq!(cycle["selected_page_ids"], dag["selected_page_ids"]);
     assert!(!dag["warnings"].as_array().unwrap().iter().any(|w| {
-        w.as_str().is_some_and(|s| s.starts_with("Category cycle detected:"))
+        w.as_str()
+            .is_some_and(|s| s.starts_with("Category cycle detected:"))
     }));
     assert!(cycle["warnings"].as_array().unwrap().iter().any(|w| {
-        w.as_str().is_some_and(|s| s.starts_with("Category cycle detected:"))
+        w.as_str()
+            .is_some_and(|s| s.starts_with("Category cycle detected:"))
     }));
 }
