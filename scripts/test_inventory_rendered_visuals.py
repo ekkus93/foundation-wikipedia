@@ -92,6 +92,12 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<img srcset="data:image/png;base64,AAAA 1x, '
                           '//upload.wikimedia.org/b.png 2x">')
 
+    def test_srcset_empty_candidates_fail_closed(self):
+        for srcset in ("a.png 1x,, b.png 2x", "a.png 1x, ", ",a.png 1x"):
+            with self.subTest(srcset=srcset):
+                with self.assertRaisesRegex(vis.InventoryError, "empty responsive image"):
+                    vis.inventory('<img srcset="' + srcset + '">')
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

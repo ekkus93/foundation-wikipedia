@@ -71,6 +71,8 @@ class _Collector(HTMLParser):
     def _srcset(self, kind, value):
         # Deliberately a diagnostic split: data URIs containing commas require
         # a production-compliant parser before offline completeness approval.
+        if value and any(not part.strip() for part in value.split(",")):
+            raise InventoryError("empty responsive image candidate")
         for part in (value or "").split(","):
             tokens = part.strip().split(maxsplit=1)
             if tokens:
