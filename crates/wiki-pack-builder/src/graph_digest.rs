@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::selection::Category;
+use wiki_pack_format::Sha256Transcript;
 
 /// Stable across record insertion order and duplicate category members.
 /// Includes unvisited categories so a snapshot's full supplied graph identity
@@ -13,49 +14,49 @@ pub fn graph_digest(
     redirects: &BTreeMap<u64, u64>,
     disambiguations: &BTreeSet<u64>,
 ) -> String {
-    let mut bytes = b"foundation-wikipedia/category-graph/v1".to_vec();
-    bytes.push(0);
-    bytes.extend_from_slice(&(graph.len() as u64).to_be_bytes());
+    let mut digest = Sha256Transcript::new();
+    digest.update(b"foundation-wikipedia/category-graph/v1\0");
+    digest.update(&(graph.len() as u64).to_be_bytes());
     for (name, category) in graph {
-        add_text(&mut bytes, name);
-        bytes.push(u8::from(category.administrative));
-        add_ids(&mut bytes, &category.articles);
-        add_texts(&mut bytes, &category.children);
+        add_text(&mut digest, name);
+        digest.update(&[u8::from(category.administrative)]);
+        add_ids(&mut digest, &category.articles);
+        add_texts(&mut digest, &category.children);
     }
-    bytes.extend_from_slice(&(redirects.len() as u64).to_be_bytes());
+    digest.update(&(redirects.len() as u64).to_be_bytes());
     for (from, to) in redirects {
-        bytes.extend_from_slice(&from.to_be_bytes());
-        bytes.extend_from_slice(&to.to_be_bytes());
+        digest.update(&from.to_be_bytes());
+        digest.update(&to.to_be_bytes());
     }
-    bytes.extend_from_slice(&(disambiguations.len() as u64).to_be_bytes());
+    digest.update(&(disambiguations.len() as u64).to_be_bytes());
     for id in disambiguations {
-        bytes.extend_from_slice(&id.to_be_bytes());
+        digest.update(&id.to_be_bytes());
     }
-    wiki_pack_format::sha256_hex(&bytes)
+    digest.finish_hex()
 }
 
-fn add_text(bytes: &mut Vec<u8>, text: &str) {
-    bytes.extend_from_slice(&(text.len() as u64).to_be_bytes());
-    bytes.extend_from_slice(text.as_bytes());
+fn add_text(digest: &mut Sha256Transcript, text: &str) {
+    digest.update(&(text.len() as u64).to_be_bytes());
+    digest.update(text.as_bytes());
 }
 
-fn add_texts(bytes: &mut Vec<u8>, values: &[String]) {
+fn add_texts(digest: &mut Sha256Transcript, values: &[String]) {
     let mut canonical = values.to_vec();
     canonical.sort();
     canonical.dedup();
-    bytes.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    digest.update(&(canonical.len() as u64).to_be_bytes());
     for value in canonical {
-        add_text(bytes, &value);
+        add_text(digest, &value);
     }
 }
 
-fn add_ids(bytes: &mut Vec<u8>, values: &[u64]) {
+fn add_ids(digest: &mut Sha256Transcript, values: &[u64]) {
     let mut canonical = values.to_vec();
     canonical.sort_unstable();
     canonical.dedup();
-    bytes.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    digest.update(&(canonical.len() as u64).to_be_bytes());
     for value in canonical {
-        bytes.extend_from_slice(&value.to_be_bytes());
+        digest.update(&value.to_be_bytes());
     }
 }
 
@@ -74,6 +75,10 @@ mod tests {
             },
         )]);
         let first = graph_digest(&graph, &BTreeMap::new(), &BTreeSet::new());
+        assert_eq!(
+            first,
+            "fd4bb682bafeeeb1dac5f58072b51967fe7f4995e5cc3db9f92f305ba7458c21"
+        );
         graph.get_mut("Root").unwrap().articles = vec![2, 3, 2];
         graph.get_mut("Root").unwrap().children = vec!["Child".into(), "Child".into()];
         assert_eq!(
