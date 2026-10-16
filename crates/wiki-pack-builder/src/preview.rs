@@ -30,31 +30,33 @@ pub struct SelectionPreview {
     pub warnings: Vec<String>,
 }
 
-/// Preview exactly the selection `resolve_pinned` would return. Additional
-/// diagnostics do not alter or independently authenticate its selection hash.
-/// Detect a back edge in the categories actually expanded by this preview.
-/// An iterative DFS avoids recursion over untrusted category graphs; shared
-/// descendants in a DAG are not incorrectly reported as cycles.
-fn first_traversed_cycle(edges: &BTreeMap<String, BTreeSet<String>>) -> Option<(String, String)> {
+/// Report up to eight deterministic back edges in categories actually expanded.
+/// Iterative DFS avoids recursion over untrusted graphs; shared DAG descendants
+/// are not incorrectly reported as cycles. The boolean flags further cycles.
+fn traversed_cycles(edges: &BTreeMap<String, BTreeSet<String>>) -> (Vec<(String, String)>, bool) {
+    const MAX_CYCLE_WARNINGS: usize = 8;
     let mut active = BTreeSet::new();
     let mut finished = BTreeSet::new();
+    let mut cycles = Vec::new();
     for root in edges.keys() {
         if finished.contains(root) {
             continue;
         }
         active.insert(root.clone());
-        let mut stack = vec![(root, edges.get(root)?.iter())];
+        let mut stack = vec![(root, edges.get(root).expect("root comes from keys").iter())];
         while let Some((parent, children)) = stack.last_mut() {
             if let Some(child) = children.next() {
                 if !edges.contains_key(child) {
                     continue;
                 }
                 if active.contains(child) {
-                    return Some(((*parent).clone(), child.clone()));
-                }
-                if !finished.contains(child) {
+                    if cycles.len() == MAX_CYCLE_WARNINGS {
+                        return (cycles, true);
+                    }
+                    cycles.push(((*parent).clone(), child.clone()));
+                } else if !finished.contains(child) {
                     active.insert(child.clone());
-                    stack.push((child, edges.get(child)?.iter()));
+                    stack.push((child, edges.get(child).expect("child was checked").iter()));
                 }
             } else {
                 active.remove(*parent);
@@ -63,8 +65,11 @@ fn first_traversed_cycle(edges: &BTreeMap<String, BTreeSet<String>>) -> Option<(
             }
         }
     }
-    None
+    (cycles, false)
 }
+
+/// Preview exactly the selection `resolve_pinned` would return. Additional
+/// diagnostics do not alter or independently authenticate its selection hash.
 
 pub fn preview_pinned_selection(
     graph: &BTreeMap<String, Category>,
@@ -133,8 +138,12 @@ pub fn preview_pinned_selection(
             queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
         }
     }
-    if let Some((from, to)) = first_traversed_cycle(&traversed_edges) {
+    let (cycles, more_cycles) = traversed_cycles(&traversed_edges);
+    for (from, to) in cycles {
         warnings.insert(format!("Category cycle detected: {from} -> {to}"));
+    }
+    if more_cycles {
+        warnings.insert("Additional category cycles omitted after 8 warnings".into());
     }
     let selected_page_count = selection.page_ids.len();
     if let Some(ref fanout) = largest_category {
@@ -236,6 +245,28 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("Skipped administrative")));
+    }
+
+    #[test]
+    fn reports_multiple_disjoint_cycles_and_bounds_diagnostics() {
+        let edges = BTreeMap::from([
+            ("A".into(), BTreeSet::from(["B".into()])),
+            ("B".into(), BTreeSet::from(["A".into()])),
+            ("C".into(), BTreeSet::from(["D".into()])),
+            ("D".into(), BTreeSet::from(["C".into()])),
+        ]);
+        let (cycles, truncated) = traversed_cycles(&edges);
+        assert_eq!(cycles, vec![("B".into(), "A".into()), ("D".into(), "C".into())]);
+        assert!(!truncated);
+
+        let mut many = BTreeMap::new();
+        for i in 0..10 {
+            let name = format!("Loop{i:02}");
+            many.insert(name.clone(), BTreeSet::from([name]));
+        }
+        let (cycles, truncated) = traversed_cycles(&many);
+        assert_eq!(cycles.len(), 8);
+        assert!(truncated);
     }
 
     #[test]
