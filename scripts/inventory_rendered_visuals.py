@@ -28,9 +28,13 @@ class InventoryError(ValueError):
 
 
 class _Collector(HTMLParser):
-    def __init__(self, limit):
+    def __init__(self, limit, document_url=None):
         super().__init__(convert_charrefs=True)
         self.limit = limit
+        # When set, every candidate is resolved to an absolute URL against the
+        # HTML <base href> (if any) or this document URL; otherwise raw strings.
+        self.document_url = document_url
+        self.base_url = None
         self.urls = set()
         self.observed_references = 0
         self.picture_depth = 0
@@ -63,7 +67,11 @@ class _Collector(HTMLParser):
             raise InventoryError("unsafe or oversized visual candidate URL")
         if source.startswith("#"):
             return  # Same-document SVG fragment; no separate transport URL.
-        if source.startswith("//"):
+        if self.document_url is not None:
+            source = urljoin(self.base_url or self.document_url, source)
+            if len(source) > MAX_URL_CHARS:
+                raise InventoryError("unsafe or oversized visual candidate URL")
+        elif source.startswith("//"):
             source = "https:" + source
         try:
             parsed = urlsplit(source)
@@ -86,6 +94,20 @@ class _Collector(HTMLParser):
         self.urls.add((kind, source))
         if len(self.urls) > self.limit:
             raise InventoryError("visual candidate count exceeds budget")
+
+    def _set_base(self, href):
+        # Only the first <base href> in HTML content counts, and only if no
+        # URL-bearing reference was already seen: browsers and preload scanners
+        # disagree about earlier references, so that shape fails closed.
+        if self.observed_references:
+            raise InventoryError("base href after resource reference")
+        if self.document_url is None:
+            return
+        if not href or href != href.strip() or href.startswith("#"):
+            raise InventoryError("unsafe HTML base href")
+        resolved = urljoin(self.document_url, href)
+        _require_absolute_http(resolved, "HTML base href")
+        self.base_url = resolved
 
     def _srcset(self, kind, value):
         # Deliberately a diagnostic split: data URIs containing commas require
@@ -148,7 +170,7 @@ class _Collector(HTMLParser):
         # A duplicate resource attribute is ambiguous: browsers and dict()
         # can choose different occurrences and hide a required dependency.
         resource_tags = {"img", "source", "link", "video", "image", "feimage",
-                         "use", "object", "embed", "mglyph"}
+                         "use", "object", "embed", "mglyph", "base"}
 
         if len(attrs) != len(dict(attrs)) and (
                 tag in resource_tags or any(key == "style" for key, _ in attrs)):
@@ -159,10 +181,12 @@ class _Collector(HTMLParser):
             if self.inline_style_attributes > self.limit:
                 raise InventoryError("inline style attribute count exceeds budget")
             self._scan_css(attrs["style"] or "")
-        if tag == "base" and "href" in attrs:
+        if (tag == "base" and "href" in attrs
+                and not self.svg_depth and not self.math_depth):
             self.html_base_href_count += 1
             if self.html_base_href_count > 1:
                 raise InventoryError("multiple HTML base href elements")
+            self._set_base(attrs["href"])
         if tag == "picture":
             self.picture_depth += 1
         elif tag == "svg":
@@ -227,10 +251,31 @@ class _Collector(HTMLParser):
             self.math_depth = max(0, self.math_depth - 1)
 
 
-def inventory(markup, max_references=MAX_REFERENCES):
+def _require_absolute_http(value, what):
+    if not isinstance(value, str):
+        raise InventoryError("invalid " + what)
+    try:
+        parsed = urlsplit(value)
+    except ValueError as error:
+        raise InventoryError("invalid " + what) from error
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise InventoryError(what + " must be absolute HTTP(S)")
+    # Reuse the candidate checks: length, whitespace, authority and port.
+    _Collector(1)._add("document", value)
+
+
+def inventory(markup, max_references=MAX_REFERENCES, document_url=None):
+    """List URL candidates; with document_url, resolve them to absolute URLs.
+
+    Resolution is a diagnostic only: it does not fetch, authenticate or certify
+    anything. Without document_url, candidates stay raw and base resolution is
+    reported as pending.
+    """
     if not isinstance(max_references, int) or max_references < 1:
         raise InventoryError("invalid visual reference budget")
-    parser = _Collector(max_references)
+    if document_url is not None:
+        _require_absolute_http(document_url, "document URL")
+    parser = _Collector(max_references, document_url)
     parser.feed(markup)
     parser.close()
     if parser.style_fragments:
@@ -241,9 +286,13 @@ def inventory(markup, max_references=MAX_REFERENCES):
     # bytes at these URLs is established by this diagnostic digest.
     canonical = json.dumps(candidates, ensure_ascii=True,
                            sort_keys=True, separators=(",", ":")).encode("utf-8")
-    fingerprint = hashlib.sha256(
-        b"foundation-wikipedia/visual-url-candidates/v1\0" + canonical
-    ).hexdigest()
+    if document_url is None:
+        domain = b"foundation-wikipedia/visual-url-candidates/v1\0"
+    else:
+        # Resolved candidates are bound to the document URL they came from.
+        domain = (b"foundation-wikipedia/visual-url-candidates/v2\0"
+                  + document_url.encode("utf-8") + b"\0")
+    fingerprint = hashlib.sha256(domain + canonical).hexdigest()
     return {
         "count": len(parser.urls),
         "observed_references": parser.observed_references,
@@ -257,7 +306,10 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
         "html_base_href_count": parser.html_base_href_count,
-        "html_base_resolution_pending": bool(parser.html_base_href_count),
+        "html_base_resolution_pending": (
+            document_url is None and bool(parser.html_base_href_count)),
+        "document_url": document_url,
+        "html_base_url": parser.base_url,
         "css_and_font_dependencies_verified": False,
         "required_media_verified": False,
     }

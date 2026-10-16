@@ -260,6 +260,105 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "multiple HTML base"):
             vis.inventory('<base href="/one/"><base href="/two/">')
 
+    DOC = "https://en.wikipedia.org/wiki/Page"
+
+    def _resolved(self, markup, document_url=DOC):
+        result = vis.inventory(markup, document_url=document_url)
+        return result, {(c["kind"], c["url"]) for c in result["candidates"]}
+
+    def test_resolved_mode_without_base_uses_document_url(self):
+        result, urls = self._resolved('<img src="a.png"><img src="//c.test/b.png">')
+        self.assertEqual({("image", "https://en.wikipedia.org/wiki/a.png"),
+                          ("image", "https://c.test/b.png")}, urls)
+        self.assertFalse(result["html_base_resolution_pending"])
+        self.assertEqual(self.DOC, result["document_url"])
+        self.assertIsNone(result["html_base_url"])
+        self.assertFalse(result["required_media_verified"])
+
+    def test_resolved_mode_applies_absolute_and_relative_base(self):
+        _, urls = self._resolved(
+            '<base href="https://upload.wikimedia.org/x/"><img src="a.png">')
+        self.assertEqual({("image", "https://upload.wikimedia.org/x/a.png")}, urls)
+        result, urls = self._resolved('<base href="/static/"><img src="a.png">')
+        self.assertEqual({("image", "https://en.wikipedia.org/static/a.png")}, urls)
+        self.assertEqual("https://en.wikipedia.org/static/", result["html_base_url"])
+        _, urls = self._resolved(
+            '<base href="http://h.test/"><img src="//c.test/a.png">')
+        self.assertEqual({("image", "http://c.test/a.png")}, urls)
+
+    def test_resolved_mode_base_without_href_is_ignored(self):
+        result, urls = self._resolved('<base target="_blank"><img src="a.png">')
+        self.assertEqual({("image", "https://en.wikipedia.org/wiki/a.png")}, urls)
+        self.assertEqual(0, result["html_base_href_count"])
+        self._resolved('<base href="/a/"><base target="x">')
+
+    def test_base_after_resource_reference_fails_closed(self):
+        for document_url in (None, self.DOC):
+            with self.subTest(document_url=document_url):
+                with self.assertRaisesRegex(vis.InventoryError, "base href after"):
+                    vis.inventory('<img src="a.png"><base href="/x/">',
+                                  document_url=document_url)
+
+    def test_unsafe_base_href_fails_closed(self):
+        for href in ("data:,", "javascript:alert(1)", "", "ftp://h/", "#f",
+                     "blob:https://a.test/x", " /x/", "https://u@h.test/"):
+            with self.subTest(href=href):
+                with self.assertRaises(vis.InventoryError):
+                    vis.inventory('<base href="%s"><img src="a.png">' % href,
+                                  document_url=self.DOC)
+        with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
+            vis.inventory('<base href="/a/" href="/b/">', document_url=self.DOC)
+        with self.assertRaisesRegex(vis.InventoryError, "multiple HTML base"):
+            vis.inventory('<base href="/a/"><base href="/b/">',
+                          document_url=self.DOC)
+
+    def test_base_inside_foreign_content_is_not_an_html_base(self):
+        for page in ('<svg><base href="/evil/"></svg><img src="a.png">',
+                     '<math><base href="/evil/"></math><img src="a.png">'):
+            with self.subTest(page=page):
+                result, urls = self._resolved(page)
+                self.assertEqual(
+                    {("image", "https://en.wikipedia.org/wiki/a.png")}, urls)
+                self.assertEqual(0, result["html_base_href_count"])
+
+    def test_inline_css_uses_html_base_but_external_css_does_not(self):
+        _, urls = self._resolved(
+            '<base href="/b/"><style>.x{background:url(i.png)}'
+            '@import "t.css";</style>')
+        self.assertEqual({("css_url", "https://en.wikipedia.org/b/i.png"),
+                          ("css_import", "https://en.wikipedia.org/b/t.css")},
+                         urls)
+        sheet = "https://a.test/css/m.css"
+        graph = vis.inventory_css_dependency_graph(
+            [sheet], {sheet: ".x{background:url(../i.png)}"})
+        self.assertEqual([{"kind": "css_url", "url": "https://a.test/i.png"}],
+                         graph["candidates"])
+
+    def test_resolved_mode_dot_segments_clamp_at_root(self):
+        _, urls = self._resolved('<img src="../../../a.png">')
+        self.assertEqual({("image", "https://en.wikipedia.org/a.png")}, urls)
+
+    def test_invalid_document_url_fails_closed(self):
+        for document_url in ("/wiki/Page", "ftp://h.test/x", "data:,", "",
+                             "https://u@h.test/x", 5):
+            with self.subTest(document_url=document_url):
+                with self.assertRaises(vis.InventoryError):
+                    vis.inventory('<img src="a.png">', document_url=document_url)
+
+    def test_resolved_url_length_is_bounded(self):
+        page = '<base href="/%s/"><img src="%s.png">' % ("d" * 2500, "f" * 2500)
+        with self.assertRaisesRegex(vis.InventoryError, "oversized"):
+            vis.inventory(page, document_url=self.DOC)
+
+    def test_resolved_digest_depends_on_document_url(self):
+        page = '<img src="a.png">'
+        first = vis.inventory(page, document_url=self.DOC)["inventory_sha256"]
+        second = vis.inventory(
+            page, document_url="https://en.wikipedia.org/wiki/Other"
+        )["inventory_sha256"]
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, vis.inventory(page)["inventory_sha256"])
+
     def test_svg_filter_image_is_a_required_visual_candidate(self):
         page = (
             '<svg><filter id="blur"><feImage href="/filter.png"/></filter>'
