@@ -46,6 +46,10 @@ fn inventory_visuals_process_reports_candidates_without_claiming_verified_media(
     assert_eq!(json["observed_references"], 2);
     assert_eq!(json["unique_candidate_count"], 1);
     assert_eq!(
+        json["inventory_sha256"],
+        "03dd9d35ed55fa2c181b3d76f9c583fca66cbc8bc3c1cb03a43456120130ad3d"
+    );
+    assert_eq!(
         json["candidates"][0]["url"],
         "https://en.wikipedia.org/wiki/a.png"
     );

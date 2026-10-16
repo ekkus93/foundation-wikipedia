@@ -6,7 +6,53 @@ use std::io::Read;
 use std::path::Path;
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use wiki_pack_builder::visual_discovery::{inventory, MAX_MARKUP_BYTES, MAX_REFERENCES};
+
+
+fn canonical_ascii_json_string(value: &str) -> String {
+    // Python's json.dumps(ensure_ascii=True, separators=(",", ":")) behavior.
+    let serialized = serde_json::to_string(value).expect("string serialization");
+    let mut result = String::with_capacity(serialized.len());
+    for character in serialized.chars() {
+        if character.is_ascii() {
+            result.push(character);
+        } else {
+            let mut units = [0u16; 2];
+            for unit in character.encode_utf16(&mut units).iter() {
+                use std::fmt::Write as _;
+                write!(&mut result, "\\u{unit:04x}").expect("format Unicode escape");
+            }
+        }
+    }
+    result
+}
+
+fn inventory_fingerprint(
+    candidates: &[wiki_pack_builder::visual_discovery::Candidate],
+    document_url: &str,
+) -> String {
+    // v2 binds the canonical sorted candidate list to its exact document URL.
+    // This digest identifies a diagnostic observation, NOT downloaded bytes.
+    let mut canonical = String::from("[");
+    for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 {
+            canonical.push(',');
+        }
+        canonical.push_str("{\"kind\":");
+        canonical.push_str(&canonical_ascii_json_string(candidate.kind.as_str()));
+        canonical.push_str(",\"url\":");
+        canonical.push_str(&canonical_ascii_json_string(&candidate.url));
+        canonical.push('}');
+    }
+    canonical.push(']');
+    let mut digest = Sha256::new();
+    digest.update(b"foundation-wikipedia/visual-url-candidates/v2\0");
+    digest.update(document_url.as_bytes());
+    digest.update(b"\0");
+    digest.update(canonical.as_bytes());
+    format!("{:x}", digest.finalize())
+}
 
 fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
     let metadata =
@@ -46,6 +92,7 @@ fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
 
     Ok(json!({
         "diagnostic_only": true,
+        "inventory_sha256": inventory_fingerprint(&result.candidates, document_url),
         "required_media_verified": result.required_media_verified,
         "css_and_font_dependencies_verified": result.css_and_font_dependencies_verified,
         "document_url": result.document_url,
@@ -103,6 +150,10 @@ mod tests {
         assert_eq!(report["css_and_font_dependencies_verified"], false);
         assert_eq!(report["observed_references"], 3);
         assert_eq!(report["unique_candidate_count"], 2);
+        assert_eq!(
+            report["inventory_sha256"],
+            "79d4e3f80db62a1fae08952e007d2c6b8b65d384c7879498233b483642c90860"
+        );
         assert_eq!(report["candidates"][0]["kind"], "css_url");
         assert_eq!(
             report["candidates"][0]["url"],
