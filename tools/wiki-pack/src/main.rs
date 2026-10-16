@@ -3,6 +3,7 @@
 mod audit_diagnostic;
 mod preview_topic;
 mod visual_diagnostic;
+mod css_graph_diagnostic;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -24,6 +25,7 @@ fn usage() {
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
+    println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -217,6 +219,18 @@ fn main() {
                 parsed[3],
                 parsed.get(4).copied(),
             ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("inventory-css-graph") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 1 {
+                eprintln!("inventory-css-graph requires one local JSON input");
+                usage();
+                std::process::exit(2);
+            }
+            if let Err(error) = css_graph_diagnostic::run(Path::new(&fields[0])) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
