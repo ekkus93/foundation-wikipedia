@@ -211,7 +211,9 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         if related.links.len() > MAX_EDGES {
             return Err("related links exceed the member limit".into());
         }
-        let excluded: BTreeSet<u64> = rules.exclude.iter()
+        let excluded: BTreeSet<u64> = rules
+            .exclude
+            .iter()
             .map(|&id| canonical_related_id(id, &redirects))
             .collect::<Result<_, _>>()?;
         let mut adjacency: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
@@ -225,18 +227,27 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
             neighbors.sort_unstable();
         }
         let expanded = expand_related_links(
-            &preview.selection.page_ids, &adjacency, &excluded,
-            related.max_hops, related.max_new_pages, related.max_edge_visits,
-        ).map_err(|error| format!("related expansion rejected: {error:?}"))?;
+            &preview.selection.page_ids,
+            &adjacency,
+            &excluded,
+            related.max_hops,
+            related.max_new_pages,
+            related.max_edge_visits,
+        )
+        .map_err(|error| format!("related expansion rejected: {error:?}"))?;
         if expanded.len() > rules.page_limit {
             return Err("related expansion exceeds topic page limit".into());
         }
         let canonical = serde_json::to_vec(&(
             "foundation-wikipedia/related-selection/v1",
             &preview.selection.snapshot_selection_sha256,
-            related.max_hops, related.max_new_pages, related.max_edge_visits,
-            &adjacency, &expanded,
-        )).map_err(|error| format!("cannot fingerprint related selection: {error}"))?;
+            related.max_hops,
+            related.max_new_pages,
+            related.max_edge_visits,
+            &adjacency,
+            &expanded,
+        ))
+        .map_err(|error| format!("cannot fingerprint related selection: {error}"))?;
         Some(RelatedSelection {
             added_count: expanded.len() - preview.selection.page_ids.len(),
             page_ids: expanded,
@@ -246,7 +257,8 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     } else {
         None
     };
-    let selected_ids = related_report.as_ref()
+    let selected_ids = related_report
+        .as_ref()
         .map_or(&preview.selection.page_ids, |report| &report.page_ids);
     let selected_count = selected_ids.len();
     let selection_sha256 = related_report.as_ref().map_or(
@@ -289,10 +301,22 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         });
         if let Some(report) = &related_report {
             let object = result.as_object_mut().expect("preview JSON object");
-            object.insert("category_selection_sha256".into(), serde_json::json!(preview.selection.snapshot_selection_sha256));
-            object.insert("related_added_page_count".into(), serde_json::json!(report.added_count));
-            object.insert("related_link_mentions".into(), serde_json::json!(report.link_mentions));
-            object.insert("related_source_authenticated".into(), serde_json::json!(false));
+            object.insert(
+                "category_selection_sha256".into(),
+                serde_json::json!(preview.selection.snapshot_selection_sha256),
+            );
+            object.insert(
+                "related_added_page_count".into(),
+                serde_json::json!(report.added_count),
+            );
+            object.insert(
+                "related_link_mentions".into(),
+                serde_json::json!(report.link_mentions),
+            );
+            object.insert(
+                "related_source_authenticated".into(),
+                serde_json::json!(false),
+            );
         }
         let encoded = serde_json::to_string(&result)
             .map_err(|error| format!("cannot serialize topic preview: {error}"))?;
@@ -310,7 +334,10 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         println!("Optional related pages added: {}", report.added_count);
         println!("Related link mentions: {}", report.link_mentions);
         println!("Related links source: UNTRUSTED");
-        println!("Category selection SHA-256: {}", preview.selection.snapshot_selection_sha256);
+        println!(
+            "Category selection SHA-256: {}",
+            preview.selection.snapshot_selection_sha256
+        );
     }
     println!("Visited categories: {}", preview.visited_category_count);
     println!(
@@ -327,10 +354,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         preview.selection.definition_sha256
     );
     println!("Graph SHA-256: {}", preview.selection.graph_sha256);
-    println!(
-        "Selection SHA-256: {}",
-        selection_sha256
-    );
+    println!("Selection SHA-256: {}", selection_sha256);
     for warning in preview.warnings {
         println!("Warning: {warning}");
     }
