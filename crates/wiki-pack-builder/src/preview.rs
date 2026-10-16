@@ -47,6 +47,17 @@ pub fn preview_pinned_selection(
     let mut inspected_child_category_mentions = 0usize;
     let mut largest_category: Option<CategoryFanout> = None;
     let mut warnings: BTreeSet<String> = selection.warnings.iter().cloned().collect();
+    for id in &rules.include {
+        let mut canonical = *id;
+        while let Some(&target) = redirects.get(&canonical) {
+            canonical = target;
+        }
+        if selection.page_ids.binary_search(&canonical).is_err() {
+            warnings.insert(format!(
+                "Explicit include suppressed by exclusion: {id} -> {canonical}"
+            ));
+        }
+    }
 
     while let Some((name, depth)) = queue.pop_front() {
         if !visited.insert(name.clone()) {
