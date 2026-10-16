@@ -422,7 +422,12 @@ fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
     let second = invoke("preview-topic", &args);
     assert!(second.status.success(), "{second:?}");
     let again: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
-    assert_eq!(parsed, again);
+    assert_ne!(parsed["input_sha256"], again["input_sha256"]);
+    let mut normalized = parsed.clone();
+    normalized.as_object_mut().unwrap().remove("input_sha256");
+    let mut reordered_normalized = again.clone();
+    reordered_normalized.as_object_mut().unwrap().remove("input_sha256");
+    assert_eq!(normalized, reordered_normalized);
 
     fs::write(
         &input,
