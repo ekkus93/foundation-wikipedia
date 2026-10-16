@@ -12,7 +12,7 @@ class InventoryTests(unittest.TestCase):
             '<style>.x{background:url(example.png)}</style>'
             '<picture><source srcset="//cdn.example/p.webp 1x, '
             'https://cdn.example/p2.webp 2x">'
-            '<img src="/i.png" srcset="/i2.png 2x, /i2.png 2x"></picture>'
+            '<img src="/i.png" srcset="/i2.png 1x, /i2.png 2x"></picture>'
             '<svg><image href="//cdn.example/s.svg"/>'
             '<use href="#local"/><use xlink:href="/symbols.svg#icon"/></svg>'
             '<video poster="/thumbnail.jpg" src="//cdn.example/movie.mp4"></video>'
