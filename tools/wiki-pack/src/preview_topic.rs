@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use wiki_pack_builder::preview::preview_pinned_selection;
+use wiki_pack_builder::related::expand_related_links;
 use wiki_pack_builder::selection::{Category, Rules};
 
 const MAX_INPUT_BYTES: u64 = 64 * 1024 * 1024;
@@ -31,6 +32,45 @@ struct PreviewInput {
     redirects: Vec<PreviewRedirect>,
     #[serde(default)]
     disambiguations: Vec<u64>,
+    #[serde(default)]
+    related: Option<RelatedInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelatedInput {
+    max_hops: usize,
+    max_new_pages: usize,
+    max_edge_visits: usize,
+    links: Vec<RelatedLink>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelatedLink {
+    from: u64,
+    to: u64,
+}
+
+struct RelatedSelection {
+    page_ids: Vec<u64>,
+    selection_sha256: String,
+    added_count: usize,
+    link_mentions: usize,
+}
+
+fn canonical_related_id(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, String> {
+    let mut seen = BTreeSet::new();
+    while let Some(&next) = redirects.get(&id) {
+        if !seen.insert(id) || seen.len() > 4096 {
+            return Err("related link redirect cycle or excessive depth".into());
+        }
+        id = next;
+    }
+    if id == 0 {
+        return Err("related links require nonzero page IDs".into());
+    }
+    Ok(id)
 }
 
 #[derive(Deserialize)]
@@ -151,6 +191,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     if input.disambiguations.contains(&0) {
         return Err("invalid disambiguation page ID".into());
     }
+    let related = input.related;
     let rules = Rules {
         roots: input.roots,
         include: input.include,
@@ -166,10 +207,56 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         &input.snapshot_id,
     )
     .map_err(|error| format!("topic preview rejected: {error:?}"))?;
+    let related_report = if let Some(related) = related {
+        if related.links.len() > MAX_EDGES {
+            return Err("related links exceed the member limit".into());
+        }
+        let excluded: BTreeSet<u64> = rules.exclude.iter()
+            .map(|&id| canonical_related_id(id, &redirects))
+            .collect::<Result<_, _>>()?;
+        let mut adjacency: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        let link_mentions = related.links.len();
+        for link in related.links {
+            let from = canonical_related_id(link.from, &redirects)?;
+            let to = canonical_related_id(link.to, &redirects)?;
+            adjacency.entry(from).or_default().push(to);
+        }
+        for neighbors in adjacency.values_mut() {
+            neighbors.sort_unstable();
+        }
+        let expanded = expand_related_links(
+            &preview.selection.page_ids, &adjacency, &excluded,
+            related.max_hops, related.max_new_pages, related.max_edge_visits,
+        ).map_err(|error| format!("related expansion rejected: {error:?}"))?;
+        if expanded.len() > rules.page_limit {
+            return Err("related expansion exceeds topic page limit".into());
+        }
+        let canonical = serde_json::to_vec(&(
+            "foundation-wikipedia/related-selection/v1",
+            &preview.selection.snapshot_selection_sha256,
+            related.max_hops, related.max_new_pages, related.max_edge_visits,
+            &adjacency, &expanded,
+        )).map_err(|error| format!("cannot fingerprint related selection: {error}"))?;
+        Some(RelatedSelection {
+            added_count: expanded.len() - preview.selection.page_ids.len(),
+            page_ids: expanded,
+            selection_sha256: format!("{:x}", Sha256::digest(&canonical)),
+            link_mentions,
+        })
+    } else {
+        None
+    };
+    let selected_ids = related_report.as_ref()
+        .map_or(&preview.selection.page_ids, |report| &report.page_ids);
+    let selected_count = selected_ids.len();
+    let selection_sha256 = related_report.as_ref().map_or(
+        preview.selection.snapshot_selection_sha256.as_str(),
+        |report| report.selection_sha256.as_str(),
+    );
     if json_output {
         // Machine-readable pre-download preview for a future GUI/builder
         // integration. No field here confers publisher trust or installability.
-        let result = serde_json::json!({
+        let mut result = serde_json::json!({
             "schema_version": 1,
             "source": "local-untrusted-category-graph",
             "input_sha256": input_sha256,
@@ -181,10 +268,10 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
 
             "definition_sha256": preview.selection.definition_sha256,
             "graph_sha256": preview.selection.graph_sha256,
-            "selection_sha256": preview.selection.snapshot_selection_sha256,
+            "selection_sha256": selection_sha256,
 
-            "selected_page_ids": preview.selection.page_ids,
-            "selected_page_count": preview.selected_page_count,
+            "selected_page_ids": selected_ids,
+            "selected_page_count": selected_count,
             "visited_category_count": preview.visited_category_count,
             "skipped_administrative_count": preview.skipped_administrative_count,
             "inspected_article_mentions": preview.inspected_article_mentions,
@@ -200,6 +287,13 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
             }),
             "warnings": preview.warnings,
         });
+        if let Some(report) = &related_report {
+            let object = result.as_object_mut().expect("preview JSON object");
+            object.insert("category_selection_sha256".into(), serde_json::json!(preview.selection.snapshot_selection_sha256));
+            object.insert("related_added_page_count".into(), serde_json::json!(report.added_count));
+            object.insert("related_link_mentions".into(), serde_json::json!(report.link_mentions));
+            object.insert("related_source_authenticated".into(), serde_json::json!(false));
+        }
         let encoded = serde_json::to_string(&result)
             .map_err(|error| format!("cannot serialize topic preview: {error}"))?;
         println!("{encoded}");
@@ -211,7 +305,13 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         "Snapshot label (untrusted): {}",
         preview.selection.snapshot_id
     );
-    println!("Selected page IDs: {}", preview.selected_page_count);
+    println!("Selected page IDs: {selected_count}");
+    if let Some(report) = &related_report {
+        println!("Optional related pages added: {}", report.added_count);
+        println!("Related link mentions: {}", report.link_mentions);
+        println!("Related links source: UNTRUSTED");
+        println!("Category selection SHA-256: {}", preview.selection.snapshot_selection_sha256);
+    }
     println!("Visited categories: {}", preview.visited_category_count);
     println!(
         "Skipped administrative categories: {}",
@@ -229,7 +329,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     println!("Graph SHA-256: {}", preview.selection.graph_sha256);
     println!(
         "Selection SHA-256: {}",
-        preview.selection.snapshot_selection_sha256
+        selection_sha256
     );
     for warning in preview.warnings {
         println!("Warning: {warning}");
