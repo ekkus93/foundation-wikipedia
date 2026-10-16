@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use wiki_pack_builder::visual_discovery::{inventory, MAX_MARKUP_BYTES, MAX_REFERENCES};
 
 fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("cannot stat HTML input: {error}"))?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("cannot stat HTML input: {error}"))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err("HTML input must be a regular file, not a symlink".into());
     }
@@ -35,8 +35,7 @@ fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
     if bytes.len() > MAX_MARKUP_BYTES {
         return Err("HTML input exceeds the 64 MiB scanner limit".into());
     }
-    let markup = String::from_utf8(bytes)
-        .map_err(|_| "HTML input must be UTF-8".to_owned())?;
+    let markup = String::from_utf8(bytes).map_err(|_| "HTML input must be UTF-8".to_owned())?;
     let result = inventory(&markup, document_url, MAX_REFERENCES)
         .map_err(|error| format!("visual candidate inventory rejected input: {error:?}"))?;
     let candidates: Vec<Value> = result
@@ -88,8 +87,11 @@ mod tests {
     #[test]
     fn candidate_report_is_explicitly_unverified_and_deterministic() {
         let path = fixture_path();
-        fs::write(&path, r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#)
-            .unwrap();
+        fs::write(
+            &path,
+            r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#,
+        )
+        .unwrap();
         let report = inspect(&path, "https://en.wikipedia.org/wiki/Test").unwrap();
         fs::remove_file(path).unwrap();
 
@@ -99,7 +101,10 @@ mod tests {
         assert_eq!(report["observed_references"], 3);
         assert_eq!(report["unique_candidate_count"], 2);
         assert_eq!(report["candidates"][0]["kind"], "css_url");
-        assert_eq!(report["candidates"][0]["url"], "https://en.wikipedia.org/wiki/b.svg");
+        assert_eq!(
+            report["candidates"][0]["url"],
+            "https://en.wikipedia.org/wiki/b.svg"
+        );
         assert_eq!(report["candidates"][1]["kind"], "image");
     }
 
