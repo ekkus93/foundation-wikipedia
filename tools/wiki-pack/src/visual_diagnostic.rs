@@ -191,6 +191,22 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn symlinked_html_parent_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = fixture_path().with_extension("dir");
+        let link = fixture_path().with_extension("link");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("page.html"), "<img src='a.png'>").unwrap();
+        symlink(&root, &link).unwrap();
+        let error =
+            inspect(&link.join("page.html"), "https://en.wikipedia.org/wiki/Test").unwrap_err();
+        fs::remove_file(link).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(error.contains("contains a symlink"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn symlinked_html_input_is_rejected() {
         use std::os::unix::fs::symlink;
         let target = fixture_path();
