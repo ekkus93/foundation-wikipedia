@@ -19,7 +19,7 @@ class InventoryTests(unittest.TestCase):
             '<audio src="//cdn.example/sound.mp3"></audio>'
         )
         result = vis.inventory(page)
-        self.assertEqual(8, result["count"])
+        self.assertEqual(9, result["count"])
         self.assertEqual(1, result["inline_styles"])
         self.assertFalse(result["required_media_verified"])
         self.assertFalse(result["css_and_font_dependencies_verified"])
