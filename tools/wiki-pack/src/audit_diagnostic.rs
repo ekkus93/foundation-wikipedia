@@ -137,6 +137,10 @@ pub fn run(
     if !unchanged(&records, &record_meta)? || !unchanged(&hashed.inner, &census_meta)? {
         return Err("diagnostic input changed during validation".into());
     }
+    // Print the exact consumed-byte receipt even when the caller did not pin
+    // revision-content bytes. Neither digest authenticates its publisher.
+    println!("Expected census SHA-256 (caller pin): {}", expected_sha256.to_ascii_lowercase());
+    println!("Revision-content SHA-256 (consumed): {consumed_revision_digest}");
     println!(
         "Matched {} diagnostic revision-content records to digest-pinned expected IDs",
         counts.observed_count
@@ -148,6 +152,7 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
