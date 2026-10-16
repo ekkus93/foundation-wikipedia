@@ -198,8 +198,11 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("page.html"), "<img src='a.png'>").unwrap();
         symlink(&root, &link).unwrap();
-        let error =
-            inspect(&link.join("page.html"), "https://en.wikipedia.org/wiki/Test").unwrap_err();
+        let error = inspect(
+            &link.join("page.html"),
+            "https://en.wikipedia.org/wiki/Test",
+        )
+        .unwrap_err();
         fs::remove_file(link).unwrap();
         fs::remove_dir_all(root).unwrap();
         assert!(error.contains("contains a symlink"), "{error}");
