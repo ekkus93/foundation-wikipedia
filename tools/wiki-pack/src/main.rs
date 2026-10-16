@@ -2,6 +2,7 @@
 //! These commands do not install packs or verify publisher signatures.
 mod audit_diagnostic;
 mod preview_topic;
+mod visual_diagnostic;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -22,6 +23,7 @@ fn usage() {
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
+    println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -215,6 +217,22 @@ fn main() {
                 parsed[3],
                 parsed.get(4).copied(),
             ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("inventory-visuals") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 2 {
+                eprintln!("inventory-visuals requires a local HTML file and document URL");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(document_url) = fields[1].to_str() else {
+                eprintln!("Document URL must be UTF-8");
+                std::process::exit(2);
+            };
+            if let Err(error) = visual_diagnostic::run(Path::new(&fields[0]), document_url) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
