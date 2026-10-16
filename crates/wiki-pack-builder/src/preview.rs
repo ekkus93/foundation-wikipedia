@@ -117,3 +117,110 @@ pub fn preview_pinned_selection(
         warnings: warnings.into_iter().collect(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_counts_only_traversed_content_and_deduplicates_rules() {
+        let graph = BTreeMap::from([
+            (
+                "Root".into(),
+                Category {
+                    articles: vec![1, 2],
+                    children: vec!["Admin".into(), "Child".into()],
+                    administrative: false,
+                },
+            ),
+            (
+                "Admin".into(),
+                Category {
+                    articles: vec![999],
+                    children: vec![],
+                    administrative: true,
+                },
+            ),
+            (
+                "Child".into(),
+                Category {
+                    articles: vec![3],
+                    children: vec!["Root".into()],
+                    administrative: false,
+                },
+            ),
+        ]);
+        let rules = Rules {
+            roots: vec!["Root".into(), "Root".into()],
+            include: vec![4, 4],
+            exclude: vec![2, 2],
+            depth_limit: 3,
+            page_limit: 10,
+        };
+        let preview = preview_pinned_selection(
+            &graph,
+            &rules,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "snapshot-1",
+        )
+        .unwrap();
+        assert_eq!(vec![1, 3, 4], preview.selection.page_ids);
+        assert_eq!(3, preview.selected_page_count);
+        assert_eq!(3, preview.visited_category_count);
+        assert_eq!(1, preview.skipped_administrative_count);
+        assert_eq!(3, preview.inspected_article_mentions);
+        assert_eq!(3, preview.inspected_child_category_mentions);
+        assert_eq!(1, preview.explicit_include_ids);
+        assert_eq!(1, preview.explicit_exclude_ids);
+        assert_eq!(
+            Some(CategoryFanout {
+                name: "Root".into(),
+                article_mentions: 2,
+                child_categories: 2,
+            }),
+            preview.largest_category
+        );
+        assert!(preview.warnings.iter().any(|w| w.contains("Skipped administrative")));
+    }
+
+    #[test]
+    fn preview_warns_near_limit_without_changing_pinned_selection() {
+        let graph = BTreeMap::from([(
+            "Root".into(),
+            Category {
+                articles: (1..=100).collect(),
+                children: vec![],
+                administrative: false,
+            },
+        )]);
+        let rules = Rules {
+            roots: vec!["Root".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 1,
+            page_limit: 100,
+        };
+        let preview = preview_pinned_selection(
+            &graph,
+            &rules,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "snapshot-2",
+        )
+        .unwrap();
+        assert_eq!(100, preview.selected_page_count);
+        assert!(preview.warnings.iter().any(|w| w.contains("Selection near page limit")));
+        assert_eq!(
+            preview.selection,
+            resolve_pinned(
+                &graph,
+                &rules,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                "snapshot-2",
+            )
+            .unwrap()
+        );
+    }
+}
