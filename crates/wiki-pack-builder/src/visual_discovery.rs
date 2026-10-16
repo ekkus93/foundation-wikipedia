@@ -953,9 +953,7 @@ mod tests {
 
     #[test]
     fn css_tokens_ignore_word_prefixed_functions_and_reject_truncated_urls() {
-        let tokens =
-            css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' )")
-                .unwrap();
+        let tokens = css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' )").unwrap();
         let found: Vec<_> = tokens.iter().map(|(_, u)| u.as_str()).collect();
         assert_eq!(vec!["c.png", "d.png"], found);
         for css in [
