@@ -100,3 +100,34 @@ fn css_graph_cli_rejects_oversized_and_malformed_input() {
     assert!(!malformed.status.success());
     assert!(String::from_utf8_lossy(&malformed.stderr).contains("invalid CSS graph JSON"));
 }
+
+#[test]
+fn css_graph_digest_identifies_exact_supplied_bytes() {
+    let path = fixture_path();
+    let value = json!({
+        "roots": ["https://cdn.test/root.css"],
+        "stylesheets": {
+            "https://cdn.test/root.css": ".figure { background: url(figure.svg) }"
+        }
+    });
+    let original = serde_json::to_vec(&value).unwrap();
+    fs::write(&path, &original).unwrap();
+    let first = execute(&path);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let first_report: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_digest = first_report["input_sha256"].as_str().unwrap();
+    assert_eq!(first_digest.len(), 64);
+    assert!(first_digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let mut changed = original;
+    changed.push(b'\\n');
+    fs::write(&path, changed).unwrap();
+    let second = execute(&path);
+    fs::remove_file(&path).unwrap();
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    let second_report: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_ne!(first_digest, second_report["input_sha256"].as_str().unwrap());
+    assert_eq!(first_report["candidates"], second_report["candidates"]);
+    assert_eq!(first_report["required_media_verified"], false);
+    assert_eq!(second_report["required_media_verified"], false);
+}
