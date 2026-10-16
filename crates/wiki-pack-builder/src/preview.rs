@@ -148,6 +148,7 @@ pub fn preview_pinned_selection(
     }
     if selected_page_count == rules.page_limit
         || (selected_page_count >= 10
+
             && selected_page_count >= rules.page_limit.saturating_sub(rules.page_limit / 10))
     {
         warnings.insert(format!(
@@ -298,8 +299,8 @@ mod tests {
         graph
             .get_mut("Shared")
             .unwrap()
-            .children
 
+            .children
             .push("Root".into());
         let cyclic = inspect(&graph, &rules);
         assert_eq!(cyclic.selection.page_ids, vec![1, 2]);
@@ -387,5 +388,4 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("Selection near page limit: 10/10")));
     }
-
 }
