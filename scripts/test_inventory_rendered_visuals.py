@@ -118,6 +118,17 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(2, vis.inventory(
             '<img srcset="a.png 320w, b.png 640w">')["count"])
 
+    def test_inline_css_dependency_surfaces_are_counted_and_bounded(self):
+        page = '<style>.x{background:url(a.png)}</style><div style="background:url(b.png)"></div>'
+        result = vis.inventory(page)
+        self.assertEqual(1, result["inline_styles"])
+        self.assertEqual(1, result["inline_style_attributes"])
+        self.assertFalse(result["css_and_font_dependencies_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "inline style attribute"):
+            vis.inventory('<div style="a:1"></div><span style="b:2"></span>', max_references=1)
+        with self.assertRaisesRegex(vis.InventoryError, "inline style element"):
+            vis.inventory("<style></style><style></style>", max_references=1)
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

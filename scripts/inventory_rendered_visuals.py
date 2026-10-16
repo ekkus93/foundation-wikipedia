@@ -28,6 +28,7 @@ class _Collector(HTMLParser):
         self.picture_depth = 0
         self.svg_depth = 0
         self.inline_styles = 0
+        self.inline_style_attributes = 0
         self.unsupported_schemes = 0
         self.missing_sources = 0
 
@@ -105,6 +106,10 @@ class _Collector(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if "style" in attrs:
+            self.inline_style_attributes += 1
+            if self.inline_style_attributes > self.limit:
+                raise InventoryError("inline style attribute count exceeds budget")
         if tag == "picture":
             self.picture_depth += 1
         elif tag == "svg":
@@ -124,6 +129,8 @@ class _Collector(HTMLParser):
             self._add("svg_use", attrs.get("href") or attrs.get("xlink:href"))
         elif tag == "style":
             self.inline_styles += 1
+            if self.inline_styles > self.limit:
+                raise InventoryError("inline style element count exceeds budget")
 
     def handle_endtag(self, tag):
         if tag == "picture":
@@ -153,6 +160,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "candidates": candidates,
         "inventory_sha256": fingerprint,
         "inline_styles": parser.inline_styles,
+        "inline_style_attributes": parser.inline_style_attributes,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
         "css_and_font_dependencies_verified": False,
