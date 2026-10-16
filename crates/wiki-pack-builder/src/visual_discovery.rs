@@ -612,7 +612,12 @@ fn match_import(chars: &[char], at: usize) -> Option<(String, usize)> {
         return None;
     }
     let after = at + 7;
-    if !chars.get(after).is_some_and(|c| c.is_whitespace()) {
+    // A CSS @import string token can directly follow the at-keyword.
+    // Do not accept an adjacent identifier such as @importurl(...).
+    if !chars
+        .get(after)
+        .is_some_and(|c| c.is_whitespace() || *c == '"' || *c == '\'')
+    {
         return None;
     }
     let value_at = skip_ws(chars, after);
@@ -1286,6 +1291,37 @@ mod tests {
         );
         assert!(!graph.css_and_font_dependencies_verified);
         assert!(!graph.required_media_verified);
+    }
+
+    #[test]
+    fn adjacent_quoted_import_is_followed_but_adjacent_identifier_is_not() {
+        let root = "https://cdn.test/css/root.css".to_owned();
+        let child = "https://cdn.test/css/child.css".to_owned();
+        let css = r#"@import"child.css"; @important"ignored.css";"#;
+        let stylesheets = BTreeMap::from([
+            (root.clone(), css.to_owned()),
+            (child, ".x { background:url(img.png) }".to_owned()),
+        ]);
+        let graph = inventory_supplied_css_graph(&[root.clone()], &stylesheets, 10).unwrap();
+        assert_eq!(2, graph.stylesheets_inspected);
+        assert_eq!(2, graph.observed_references);
+        assert_eq!(
+            graph
+                .candidates
+                .iter()
+                .map(|candidate| (candidate.kind.as_str(), candidate.url.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("css_import", "https://cdn.test/css/child.css"),
+                ("css_url", "https://cdn.test/css/img.png"),
+            ]
+        );
+        assert!(!graph.required_media_verified);
+        let incomplete = BTreeMap::from([(root.clone(), css.to_owned())]);
+        assert_eq!(
+            Err(DiscoveryError::MissingSuppliedStylesheet),
+            inventory_supplied_css_graph(&[root], &incomplete, 10)
+        );
     }
 
     #[test]
