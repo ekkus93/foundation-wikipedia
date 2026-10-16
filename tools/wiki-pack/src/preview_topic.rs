@@ -171,13 +171,13 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         // integration. No field here confers publisher trust or installability.
         let result = serde_json::json!({
             "schema_version": 1,
-            "input_sha256": input_sha256,
             "source": "local-untrusted-category-graph",
             "source_authenticated": false,
             "publisher_signature_verified": false,
             "offline_ready": false,
             "pack_installed": false,
             "snapshot_label": preview.selection.snapshot_id,
+
             "definition_sha256": preview.selection.definition_sha256,
             "graph_sha256": preview.selection.graph_sha256,
             "selection_sha256": preview.selection.snapshot_selection_sha256,
