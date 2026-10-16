@@ -172,6 +172,27 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<style>@import "a.css"; @import "a.css";</style>',
                           max_references=1)
 
+    def test_css_url_import_forms_are_classified_as_stylesheets(self):
+        page = (
+            '<style>@import url(base.css); @import url("theme.css") screen; '
+            "@import url('print.css') print; "
+            '/* @import url(ignored.css); */ '
+            '.x{background:url(icon.png);content:"@import url(fake.css)";}</style>'
+        )
+        result = vis.inventory(page)
+        self.assertEqual(3, result["inline_css_imports"])
+        self.assertEqual(1, result["inline_css_urls"])
+        self.assertEqual(4, result["observed_references"])
+        self.assertEqual(
+            {("css_import", "base.css"), ("css_import", "theme.css"),
+             ("css_import", "print.css"), ("css_url", "icon.png")},
+            {(item["kind"], item["url"]) for item in result["candidates"]},
+        )
+        self.assertFalse(result["css_and_font_dependencies_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory('<style>@import url(a.css); @import url(b.css);</style>',
+                          max_references=1)
+
     def test_preloaded_required_visual_and_font_candidates(self):
         page = (
             '<link rel="preload" as="font" href="/fonts/wiki.woff2">'

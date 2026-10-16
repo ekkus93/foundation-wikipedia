@@ -18,7 +18,7 @@ MAX_INLINE_CSS_CHARS = 2 * 1024 * 1024
 # This is a diagnostic-only subset of CSS URL tokens, not a CSS parser.
 # Comments and quoted CSS strings are skipped before matching url(...).
 _CSS_TOKEN_RE = re.compile(
-    r"""(?s)/\*.*?\*/|(?<![\w-])@import\s+(?:"([^"\\]*)"|'([^'\\]*)')|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?<![\w-])url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)""",
+    r"""(?s)/\*.*?\*/|(?<![\w-])@import\s+(?:url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)|"([^"\\]*)"|'([^'\\]*)')|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?<![\w-])url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)""",
     re.IGNORECASE,
 )
 
@@ -124,7 +124,7 @@ class _Collector(HTMLParser):
             source = next((s for s in token.groups() if s is not None), None)
             if source is None:
                 continue  # CSS comment or quoted string, not a URL token.
-            if token.group(1) is not None or token.group(2) is not None:
+            if any(token.group(i) is not None for i in range(1, 6)):
                 self.inline_css_imports += 1
                 self._add("css_import", source)
             else:
