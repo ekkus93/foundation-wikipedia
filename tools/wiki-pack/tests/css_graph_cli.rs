@@ -84,3 +84,19 @@ fn css_graph_cli_rejects_directory_input() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("regular file"));
 }
+
+#[test]
+fn css_graph_cli_rejects_oversized_and_malformed_input() {
+    let path = fixture_path();
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(4 * 1024 * 1024 + 1).unwrap();
+    drop(file);
+    let oversized = execute(&path);
+    assert!(!oversized.status.success());
+    assert!(String::from_utf8_lossy(&oversized.stderr).contains("size limit"));
+    fs::write(&path, b"{not-json").unwrap();
+    let malformed = execute(&path);
+    fs::remove_file(&path).unwrap();
+    assert!(!malformed.status.success());
+    assert!(String::from_utf8_lossy(&malformed.stderr).contains("invalid CSS graph JSON"));
+}
