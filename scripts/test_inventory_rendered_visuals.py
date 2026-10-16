@@ -240,6 +240,7 @@ class InventoryTests(unittest.TestCase):
             '<div style="background:url(a.png)" style="background:url(b.png)">',
             '<picture><source srcset="a.png 1x" srcset="b.png 2x"></picture>',
             '<embed type="image/png" src="a.png" src="b.png">',
+            '<svg><feImage href="a.png" href="b.png"/></svg>',
         )
         for page in pages:
             with self.subTest(page=page):

@@ -147,8 +147,8 @@ class _Collector(HTMLParser):
     def handle_starttag(self, tag, attrs):
         # A duplicate resource attribute is ambiguous: browsers and dict()
         # can choose different occurrences and hide a required dependency.
-        resource_tags = {"img", "source", "link", "video", "image", "use",
-                         "object", "embed", "mglyph"}
+        resource_tags = {"img", "source", "link", "video", "image", "feimage",
+                         "use", "object", "embed", "mglyph"}
 
         if len(attrs) != len(dict(attrs)) and (
                 tag in resource_tags or any(key == "style" for key, _ in attrs)):
