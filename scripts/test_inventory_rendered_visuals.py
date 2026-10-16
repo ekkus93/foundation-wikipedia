@@ -156,6 +156,16 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<style>' + "x" * (vis.MAX_INLINE_CSS_CHARS + 1)
                           + '</style>')
 
+    def test_adjacent_quoted_css_import_matches_rust_diagnostic(self):
+        result = vis.inventory('<style>@import"child.css"; '
+                               '@important"ignored.css";</style>')
+        self.assertEqual(1, result["inline_css_imports"])
+        self.assertEqual(1, result["observed_references"])
+        self.assertEqual(
+            [{"kind": "css_import", "url": "child.css"}],
+            result["candidates"],
+        )
+
     def test_quoted_css_imports_and_comments(self):
         page = (
             '<style>/* @import "ignored.css"; */ '
