@@ -515,6 +515,14 @@ fn css_url_tokens(css: &str) -> Result<Vec<(bool, String)>, DiscoveryError> {
                 i = end;
                 continue;
             }
+            // Once a URL function starts, discarding malformed syntax would
+            // silently omit a required visual resource from the diagnostic.
+            if starts_with_ignore_case(&chars, i, "url") {
+                let opening = skip_ws(&chars, i + 3);
+                if chars.get(opening) == Some(&'(') {
+                    return Err(DiscoveryError::InvalidInlineCss);
+                }
+            }
         }
         i += 1;
     }
@@ -944,12 +952,23 @@ mod tests {
     }
 
     #[test]
-    fn css_tokens_ignore_word_prefixed_and_malformed_functions() {
+    fn css_tokens_ignore_word_prefixed_functions_and_reject_truncated_urls() {
         let tokens =
-            css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' ) url(e.png")
+            css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' )")
                 .unwrap();
         let found: Vec<_> = tokens.iter().map(|(_, u)| u.as_str()).collect();
         assert_eq!(vec!["c.png", "d.png"], found);
+        for css in [
+            "url(missing.png",
+            "url('missing.png)",
+            "background: url(x.png y.png)",
+        ] {
+            assert_eq!(
+                Err(DiscoveryError::InvalidInlineCss),
+                css_url_tokens(css),
+                "{css}"
+            );
+        }
     }
 
     #[test]
