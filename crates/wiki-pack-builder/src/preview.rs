@@ -146,8 +146,9 @@ pub fn preview_pinned_selection(
             ));
         }
     }
-    if selected_page_count >= 100
-        && selected_page_count >= rules.page_limit.saturating_sub(rules.page_limit / 10)
+    if selected_page_count == rules.page_limit
+        || (selected_page_count >= 10
+            && selected_page_count >= rules.page_limit.saturating_sub(rules.page_limit / 10))
     {
         warnings.insert(format!(
             "Selection near page limit: {selected_page_count}/{}",
@@ -298,6 +299,7 @@ mod tests {
             .get_mut("Shared")
             .unwrap()
             .children
+
             .push("Root".into());
         let cyclic = inspect(&graph, &rules);
         assert_eq!(cyclic.selection.page_ids, vec![1, 2]);
@@ -354,4 +356,36 @@ mod tests {
             .unwrap()
         );
     }
+    #[test]
+    fn small_topic_at_page_limit_warns_without_changing_selection() {
+        let graph = BTreeMap::from([(
+            "Root".into(),
+            Category {
+                articles: (1..=10).collect(),
+                children: vec![],
+                administrative: false,
+            },
+        )]);
+        let rules = Rules {
+            roots: vec!["Root".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 10,
+        };
+        let preview = preview_pinned_selection(
+            &graph,
+            &rules,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "snapshot-small",
+        )
+        .unwrap();
+        assert_eq!(preview.selection.page_ids, (1..=10).collect::<Vec<_>>());
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Selection near page limit: 10/10")));
+    }
+
 }
