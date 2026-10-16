@@ -35,6 +35,8 @@ class _Collector(HTMLParser):
         self.observed_references = 0
         self.picture_depth = 0
         self.svg_depth = 0
+        self.math_depth = 0
+        self.unresolved_dynamic_surfaces = 0
         self.inline_styles = 0
         self.inline_style_attributes = 0
         self.inline_css_urls = 0
@@ -143,7 +145,7 @@ class _Collector(HTMLParser):
         # A duplicate resource attribute is ambiguous: browsers and dict()
         # can choose different occurrences and hide a required dependency.
         resource_tags = {"img", "source", "link", "video", "image", "use",
-                         "object", "embed"}
+                         "object", "embed", "mglyph"}
         if len(attrs) != len(dict(attrs)) and (
                 tag in resource_tags or any(key == "style" for key, _ in attrs)):
             raise InventoryError("duplicate HTML resource attribute")
@@ -157,6 +159,16 @@ class _Collector(HTMLParser):
             self.picture_depth += 1
         elif tag == "svg":
             self.svg_depth += 1
+        elif tag == "math":
+            self.math_depth += 1
+        elif tag in ("canvas", "iframe", "foreignobject"):
+            # Dynamic drawing, an embedded document, or arbitrary foreign
+            # markup is not a verified offline visual resource graph.
+            self.unresolved_dynamic_surfaces += 1
+            if self.unresolved_dynamic_surfaces > self.limit:
+                raise InventoryError("unresolved visual surface count exceeds budget")
+        elif tag == "mglyph" and self.math_depth:
+            self._add("math_glyph", attrs.get("src"))
         elif tag == "img":
             self._add("image", attrs.get("src"))
             self._srcset("responsive_image", attrs.get("srcset"))
@@ -203,6 +215,8 @@ class _Collector(HTMLParser):
             self.picture_depth = max(0, self.picture_depth - 1)
         elif tag == "svg":
             self.svg_depth = max(0, self.svg_depth - 1)
+        elif tag == "math":
+            self.math_depth = max(0, self.math_depth - 1)
 
 
 def inventory(markup, max_references=MAX_REFERENCES):
@@ -231,6 +245,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "inline_style_attributes": parser.inline_style_attributes,
         "inline_css_urls": parser.inline_css_urls,
         "inline_css_imports": parser.inline_css_imports,
+        "unresolved_dynamic_surfaces": parser.unresolved_dynamic_surfaces,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
         "css_and_font_dependencies_verified": False,

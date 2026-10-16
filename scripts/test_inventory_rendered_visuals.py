@@ -271,6 +271,33 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertEqual(1, result["count"])
 
+    def test_mathml_image_glyphs_and_dynamic_surfaces_are_diagnostic_only(self):
+        page = (
+            '<math><mrow><mglyph src="/math/glyph.svg"/></mrow>'
+            '<mglyph src="#local"/></math>'
+            '<mglyph src="/outside-math.svg"/>'
+            '<canvas></canvas><iframe src="/embedded.html"></iframe>'
+            '<svg><foreignObject></foreignObject></svg>'
+        )
+        result = vis.inventory(page)
+        self.assertEqual(
+            {("math_glyph", "/math/glyph.svg")},
+            {(item["kind"], item["url"]) for item in result["candidates"]},
+        )
+        self.assertEqual(2, result["observed_references"])
+        self.assertEqual(3, result["unresolved_dynamic_surfaces"])
+        self.assertFalse(result["required_media_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory(
+                '<math><mglyph src="a.svg"/><mglyph src="b.svg"/></math>',
+                max_references=1,
+            )
+        with self.assertRaisesRegex(vis.InventoryError, "visual surface count"):
+            vis.inventory("<iframe></iframe><canvas></canvas>",
+                          max_references=1)
+        with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
+            vis.inventory('<math><mglyph src="a" src="b"/></math>')
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
