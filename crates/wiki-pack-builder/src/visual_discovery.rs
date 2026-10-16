@@ -13,7 +13,7 @@
 //! unsafe shapes fail closed instead of being guessed.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::states::RawKind;
@@ -96,6 +96,7 @@ pub enum DiscoveryError {
     ConflictingSvgHref,
     InlineCssBudget,
     InvalidInlineCss,
+    MissingSuppliedStylesheet,
     UnclosedStyleElement,
     Budget(&'static str),
 }
@@ -773,6 +774,121 @@ pub fn inventory(
     })
 }
 
+/// A bounded diagnostic audit over CSS source text already supplied by a caller.
+/// A stylesheet URL is only an identity/base URL. No HTTP request occurs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuppliedCssGraph {
+    pub stylesheets_inspected: usize,
+    pub observed_references: usize,
+    pub candidates: Vec<Candidate>,
+    /// Always false: none of these caller-supplied CSS bytes are authenticated.
+    pub css_and_font_dependencies_verified: bool,
+    /// Always false: candidates have no verified source/license/object receipts.
+    pub required_media_verified: bool,
+}
+
+/// Traverse caller-supplied external CSS and its @import dependencies without
+/// fetching resources. Reject missing imported CSS rather than returning a
+/// misleadingly complete URL candidate inventory. Cycles are allowed and
+/// processed once, with an aggregate CSS text and reference budget.
+///
+/// Every stylesheet key/root must already be a canonical absolute HTTP(S) URL.
+/// All candidates are sorted and resolved against the containing stylesheet.
+pub fn inventory_supplied_css_graph(
+    roots: &[String],
+    stylesheets: &BTreeMap<String, String>,
+    max_references: usize,
+) -> Result<SuppliedCssGraph, DiscoveryError> {
+    if roots.is_empty()
+        || max_references == 0
+        || max_references > MAX_REFERENCES
+        || roots.len() > max_references
+        || stylesheets.len() > max_references
+    {
+        return Err(DiscoveryError::InvalidBudget);
+    }
+    let canonical = |source: &str| -> Result<String, DiscoveryError> {
+        let parsed = parse_absolute_http(source).ok_or(DiscoveryError::InvalidDocumentUrl)?;
+        if parsed.as_str() != source {
+            return Err(DiscoveryError::InvalidDocumentUrl);
+        }
+        Ok(source.to_owned())
+    };
+    for url in stylesheets.keys() {
+        canonical(url)?;
+    }
+    let mut queue = BTreeSet::new();
+    for root in roots {
+        queue.insert(canonical(root)?);
+    }
+    let mut visited = BTreeSet::new();
+    let mut candidates = BTreeSet::new();
+    let mut total_css_chars = 0usize;
+    let mut observed = 0usize;
+    while let Some(url) = queue.pop_first() {
+        if visited.contains(&url) {
+            continue;
+        }
+        if visited.len() >= max_references {
+            return Err(DiscoveryError::Budget("CSS graph stylesheet count"));
+        }
+        let css = stylesheets
+            .get(&url)
+            .ok_or(DiscoveryError::MissingSuppliedStylesheet)?;
+        total_css_chars = total_css_chars
+            .checked_add(css.chars().count())
+            .filter(|count| *count <= MAX_INLINE_CSS_CHARS)
+            .ok_or(DiscoveryError::InlineCssBudget)?;
+        let document = parse_absolute_http(&url).ok_or(DiscoveryError::InvalidDocumentUrl)?;
+        let mut state = State {
+            limit: max_references,
+            document,
+            base: None,
+            urls: BTreeSet::new(),
+            observed_references: 0,
+            picture_depth: 0,
+            svg_depth: 0,
+            math_depth: 0,
+            unresolved_dynamic_surfaces: 0,
+            inline_styles: 0,
+            inline_style_attributes: 0,
+            inline_css_urls: 0,
+            inline_css_imports: 0,
+            inline_css_chars: 0,
+            pending_css_chars: 0,
+            style_fragments: Vec::new(),
+            unsupported_schemes: 0,
+            missing_sources: 0,
+            html_base_href_count: 0,
+            error: None,
+        };
+        state.scan_css(css)?;
+        observed = observed
+            .checked_add(state.observed_references)
+            .filter(|count| *count <= max_references)
+            .ok_or(DiscoveryError::Budget("CSS graph reference count"))?;
+        visited.insert(url);
+        for candidate in state.urls {
+            if candidate.kind == CandidateKind::CssImport
+                && !visited.contains(&candidate.url)
+            {
+                queue.insert(candidate.url.clone());
+            }
+            candidates.insert(candidate);
+        }
+        if candidates.len() > max_references {
+            return Err(DiscoveryError::Budget("CSS graph candidate count"));
+        }
+    }
+    Ok(SuppliedCssGraph {
+        stylesheets_inspected: visited.len(),
+        observed_references: observed,
+        candidates: candidates.into_iter().collect(),
+        css_and_font_dependencies_verified: false,
+        required_media_verified: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,6 +1254,68 @@ mod tests {
         assert!(run(r#"<img src="a\b.png">"#).is_err());
         assert!(run(r#"<img src="http://h.test:0/a.png">"#).is_err());
         assert!(run(r#"<img src="http://u@h.test/a.png">"#).is_err());
+    }
+
+    #[test]
+    fn supplied_css_graph_resolves_import_cycles_and_urls_without_claiming_verification() {
+        let root = "https://cdn.test/css/root.css".to_owned();
+        let child = "https://cdn.test/css/child.css".to_owned();
+        let stylesheets = BTreeMap::from([
+            (
+                root.clone(),
+                r#"@import "child.css"; .a { background:url(../img/a.png) }"#.into(),
+            ),
+            (
+                child.clone(),
+                r#"@import "root.css"; @font-face { src:url(font.woff2) }"#.into(),
+            ),
+        ]);
+        let graph = inventory_supplied_css_graph(&[root], &stylesheets, 10).unwrap();
+        assert_eq!(graph.stylesheets_inspected, 2);
+        assert_eq!(graph.observed_references, 4);
+        assert_eq!(
+            graph.candidates
+                .iter()
+                .map(|candidate| (candidate.kind.as_str(), candidate.url.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("css_import", "https://cdn.test/css/child.css"),
+                ("css_import", "https://cdn.test/css/root.css"),
+                ("css_url", "https://cdn.test/css/font.woff2"),
+                ("css_url", "https://cdn.test/img/a.png"),
+            ]
+        );
+        assert!(!graph.css_and_font_dependencies_verified);
+        assert!(!graph.required_media_verified);
+    }
+
+    #[test]
+    fn supplied_css_graph_fails_closed_on_missing_import_and_global_budgets() {
+        let root = "https://cdn.test/styles/root.css".to_owned();
+        let mut stylesheets = BTreeMap::from([(
+            root.clone(),
+            r#"@import "missing.css"; .a { background:url(figure.svg) }"#.to_owned(),
+        )]);
+        assert_eq!(
+            Err(DiscoveryError::MissingSuppliedStylesheet),
+            inventory_supplied_css_graph(&[root.clone()], &stylesheets, 10)
+        );
+        stylesheets.insert(
+            "https://cdn.test/styles/missing.css".into(),
+            ".a { background:url(figure.svg) }".into(),
+        );
+        assert_eq!(
+            Err(DiscoveryError::Budget("CSS graph reference count")),
+            inventory_supplied_css_graph(&[root.clone()], &stylesheets, 2)
+        );
+        assert_eq!(
+            Err(DiscoveryError::InvalidDocumentUrl),
+            inventory_supplied_css_graph(&["javascript:evil()".into()], &stylesheets, 10)
+        );
+        assert_eq!(
+            Err(DiscoveryError::InvalidBudget),
+            inventory_supplied_css_graph(&[root], &stylesheets, MAX_REFERENCES + 1)
+        );
     }
 
     #[test]
