@@ -74,3 +74,13 @@ fn css_graph_cli_rejects_unknown_import_and_bad_args() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("MissingSuppliedStylesheet"));
 }
+
+#[test]
+fn css_graph_cli_rejects_directory_input() {
+    let path = fixture_path();
+    fs::create_dir(&path).unwrap();
+    let result = execute(&path);
+    fs::remove_dir(&path).unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("regular file"));
+}
