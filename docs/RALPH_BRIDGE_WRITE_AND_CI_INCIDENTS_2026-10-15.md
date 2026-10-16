@@ -160,3 +160,57 @@ Ralph Bridge accepted and verified direct-master operations `b6d22c7a6a024ddfae5
 - **Source quality:** verified [renderer 38826201740](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38826201740), job `116734130132`, reports 533 live candidates vs 25 local candidates across 25 sampled revisions, 316 live image references vs 0 local, and 23 pages with inline CSS. The report is diagnostic, not a source authenticity, media license, offline or pack-install acceptance.
 - **Historical unresolved platform-safety rejection:** an earlier user-visible session reported blocked `commit_files` / `create_or_update_file` calls at approximately 23:32 UTC, with no Ralph operation IDs or underlying raw response receipt preserved in this run. The current four writes were accepted on the same bridge runtime instance. This contrast does not independently establish the cause or permanent resolution of the previous platform check; do not attribute that earlier rejection to GitHub or Ralph Bridge without receipts.
 - **Protected sources:** canonical TODO remains 1,536 lines/blob `ec594ed49cf4fff5e1c7ab42fca927881be55df5` and SRC-003 census document remains 346 lines/blob `0191d49981243930fce5039d03225248068ac51d`. `SRC-003` and `PACK-003` remain unchecked for substantive completeness, media acquisition, attribution and offline-device requirements.
+
+## 2026-10-15/16 UTC — Visual inventory fingerprint and renderer dependency gates
+
+- Ralph Bridge runtime v`0.6.2`, build `0acea4b23362e2ccecab8f6c9db4418b162426cf`,
+  instance `2b818998d9ea4beab846a083bc4b3224`, started `2026-10-15T22:44:38.900088Z`,
+  auth mode `app`. Three direct-master CAS source operations were
+  accepted and post-write verified without reconciliation ambiguity:
+  `commit_files` operation `75534212a9794614808a7e7b2a5ff3da`,
+  `2026-10-15T23:57:23.840225Z`, expected `c6b80476146e439f5843dff21a5e38c92ba3bd55`,
+  observed `c28a562b9c5f8b3dea32c358b1feadb38be36a2f`;
+  `commit_files` operation `14faba1893044f25a6049c56daa212bd`,
+  `2026-10-15T23:58:04.680871Z`, expected `c28a562b9c5f8b3dea32c358b1feadb38be36a2f`,
+  observed `cfad4f7e1f932b80b82e502b06eead04578dbf61`;
+  `create_or_update_file` operation `9d04b8a6e9e14d0e864e6db83340226b`,
+  `2026-10-15T23:58:51.649288Z`, expected `cfad4f7e1f932b80b82e502b06eead04578dbf61`,
+  observed `3ad2bf0c3562e24ef0167ccebd118eead5ba1e95`. All returned
+  `accepted=true` and `write_reconciled=false`; no ambiguous write was retried.
+- Source change: deterministic domain-separated candidate URL-kind digest,
+  cross-page candidate deduplication, and a regression for the exact NUL
+  delimiter. The renderer workflow's push path filters and Unit tests step
+  now explicitly include `scripts/inventory_rendered_visuals.py` and
+  `scripts/test_inventory_rendered_visuals.py` rather than letting Python
+  inventory changes bypass live renderer CI. **Classification:** confirmed
+  CI coverage omission corrected by a source workflow change, not a Bridge error.
+  No failing CI run was observed for the intermediate code commits.
+- Final exact-head CI on `3ad2bf0c3562e24ef0167ccebd118eead5ba1e95`:
+  [Rust 38826792734](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38826792734),
+  [Platform 38826792795](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38826792795),
+  [Renderer 38826792779](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38826792779);
+  all succeeded. Renderer job `116736008864`, bounded log lines 228–322
+  around `2026-10-16T00:00:10.0157371Z`, reports 533 live candidate
+  occurrences, 441 unique live URL-kind candidates, 25 local candidate
+  occurrences, 3 unique local candidates, and 316 vs 0 live/local image
+  references over 25 pages. These are *not* locally acquired or licensed assets.
+- A bounded `wait_for_ci_outcome` on that final SHA exhausted its 18-second
+  wait budget with Rust and Renderer passed and Platform native Tauri still in
+  progress. Continued status polling showed the Platform job and overall
+  exact-head CI ultimately passed. **Classification:** ordinary bounded
+  orchestration wait expiration, not a confirmed CI/GitHub/Bridge failure.
+- During read-only workflow-path discovery, multiple guessed nonexistent
+  `.github/workflows/` paths returned generic `INVALID_ARGUMENT` /
+  `Error executing tool get_file` wrapper responses with no operation IDs,
+  HTTP status or structured diagnostics. The actual
+  `.github/workflows/renderer-dump-qualification.yml` was retrieved
+  successfully by the same Ralph runtime and repaired without a write
+  conflict. **Classification:** read-only missing-path lookup responses;
+  the generic transport wrapper alone does not establish a Ralph Bridge
+  defect. No source mutation was attempted for guessed missing paths.
+- Protected integrity unchanged: canonical TODO 1,536 lines/blob
+  `ec594ed49cf4fff5e1c7ab42fca927881be55df5`; census document 346
+  lines/blob `0191d49981243930fce5039d03225248068ac51d`. SRC-003 and
+  PACK-003 remain unchecked pending independent upstream source completeness,
+  renderer dependency parity, mandatory media acquisition/license verification,
+  offline resolver and end-to-end desktop/Android qualification.
