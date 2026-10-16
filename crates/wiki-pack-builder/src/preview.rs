@@ -32,6 +32,42 @@ pub struct SelectionPreview {
 
 /// Preview exactly the selection `resolve_pinned` would return. Additional
 /// diagnostics do not alter or independently authenticate its selection hash.
+/// Detect a back edge in the categories actually expanded by this preview.
+/// An iterative DFS avoids recursion over untrusted category graphs; shared
+/// descendants in a DAG are not incorrectly reported as cycles.
+fn first_traversed_cycle(
+    edges: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<(String, String)> {
+    let mut active = BTreeSet::new();
+    let mut finished = BTreeSet::new();
+    for root in edges.keys() {
+        if finished.contains(root) {
+            continue;
+        }
+        active.insert(root.clone());
+        let mut stack = vec![(root, edges.get(root)?.iter())];
+        while let Some((parent, children)) = stack.last_mut() {
+            if let Some(child) = children.next() {
+                if !edges.contains_key(child) {
+                    continue;
+                }
+                if active.contains(child) {
+                    return Some(((*parent).clone(), child.clone()));
+                }
+                if !finished.contains(child) {
+                    active.insert(child.clone());
+                    stack.push((child, edges.get(child)?.iter()));
+                }
+            } else {
+                active.remove(*parent);
+                finished.insert((*parent).clone());
+                stack.pop();
+            }
+        }
+    }
+    None
+}
+
 pub fn preview_pinned_selection(
     graph: &BTreeMap<String, Category>,
     rules: &Rules,
@@ -41,6 +77,7 @@ pub fn preview_pinned_selection(
 ) -> Result<SelectionPreview, ResolveError> {
     let selection = resolve_pinned(graph, rules, redirects, disambiguations, snapshot_id)?;
     let mut visited = BTreeSet::new();
+    let mut traversed_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut queue: VecDeque<_> = rules.roots.iter().map(|name| (name.clone(), 0)).collect();
     let mut skipped_administrative_count = 0usize;
     let mut inspected_article_mentions = 0usize;
@@ -86,6 +123,7 @@ pub fn preview_pinned_selection(
             largest_category = Some(fanout);
         }
         if depth < rules.depth_limit {
+            traversed_edges.insert(name.clone(), node.children.iter().cloned().collect());
             inspected_child_category_mentions =
                 inspected_child_category_mentions.saturating_add(node.children.len());
             if node.children.len() >= 128 {
@@ -96,6 +134,9 @@ pub fn preview_pinned_selection(
             }
             queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
         }
+    }
+    if let Some((from, to)) = first_traversed_cycle(&traversed_edges) {
+        warnings.insert(format!("Category cycle detected: {from} -> {to}"));
     }
     let selected_page_count = selection.page_ids.len();
     if let Some(ref fanout) = largest_category {
@@ -196,6 +237,77 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("Skipped administrative")));
+    }
+
+    #[test]
+    fn preview_reports_real_cycles_without_mislabeling_shared_dag_descendants() {
+        let mut graph = BTreeMap::from([
+            (
+                "Root".into(),
+                Category {
+                    articles: vec![1],
+                    children: vec!["A".into(), "B".into()],
+                    administrative: false,
+                },
+            ),
+            (
+                "A".into(),
+                Category {
+                    articles: vec![],
+                    children: vec!["Shared".into()],
+                    administrative: false,
+                },
+            ),
+            (
+                "B".into(),
+                Category {
+                    articles: vec![],
+                    children: vec!["Shared".into()],
+                    administrative: false,
+                },
+            ),
+            (
+                "Shared".into(),
+                Category {
+                    articles: vec![2],
+                    children: vec![],
+                    administrative: false,
+                },
+            ),
+        ]);
+        let mut rules = Rules {
+            roots: vec!["Root".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 4,
+            page_limit: 10,
+        };
+        let inspect = |graph: &BTreeMap<String, Category>, rules: &Rules| {
+            preview_pinned_selection(
+                graph,
+                rules,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                "snapshot-1",
+            )
+            .unwrap()
+        };
+        assert!(!inspect(&graph, &rules)
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("Category cycle detected:")));
+        graph.get_mut("Shared").unwrap().children.push("Root".into());
+        let cyclic = inspect(&graph, &rules);
+        assert_eq!(cyclic.selection.page_ids, vec![1, 2]);
+        assert!(cyclic
+            .warnings
+            .iter()
+            .any(|warning| warning == "Category cycle detected: Shared -> Root"));
+        rules.depth_limit = 2;
+        assert!(!inspect(&graph, &rules)
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("Category cycle detected:")));
     }
 
     #[test]
