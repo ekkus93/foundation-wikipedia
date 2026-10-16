@@ -41,9 +41,17 @@ fn text_preview_reports_exact_input_digest_and_stable_selection() {
     let second = invoke(&format!("{raw}\n"));
     fs::remove_file(path).unwrap();
     assert_ne!(first, second);
-    for label in ["Definition SHA-256:", "Graph SHA-256:", "Selection SHA-256:"] {
+    for label in [
+        "Definition SHA-256:",
+        "Graph SHA-256:",
+        "Selection SHA-256:",
+    ] {
         let digest_line = |report: &str| {
-            report.lines().find(|line| line.starts_with(label)).unwrap().to_owned()
+            report
+                .lines()
+                .find(|line| line.starts_with(label))
+                .unwrap()
+                .to_owned()
         };
         assert_eq!(digest_line(&first), digest_line(&second));
     }
