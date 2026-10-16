@@ -13,6 +13,14 @@ from urllib.parse import urlsplit
 
 MAX_URL_CHARS = 4096
 MAX_REFERENCES = 10000
+MAX_INLINE_CSS_CHARS = 2 * 1024 * 1024
+
+# This is a diagnostic-only subset of CSS URL tokens, not a CSS parser.
+# Comments and quoted CSS strings are skipped before matching url(...).
+_CSS_TOKEN_RE = re.compile(
+    r"""(?s)/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?<![\w-])url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)""",
+    re.IGNORECASE,
+)
 
 
 class InventoryError(ValueError):
@@ -29,6 +37,9 @@ class _Collector(HTMLParser):
         self.svg_depth = 0
         self.inline_styles = 0
         self.inline_style_attributes = 0
+        self.inline_css_urls = 0
+        self.inline_css_chars = 0
+        self.style_fragments = []
         self.unsupported_schemes = 0
         self.missing_sources = 0
 
@@ -104,12 +115,32 @@ class _Collector(HTMLParser):
                     raise InventoryError("data URL srcset requires complete parsing")
                 self._add(kind, tokens[0])
 
+    def _scan_css(self, css):
+        self.inline_css_chars += len(css)
+        if self.inline_css_chars > MAX_INLINE_CSS_CHARS:
+            raise InventoryError("inline CSS text exceeds diagnostic budget")
+        for token in _CSS_TOKEN_RE.finditer(css):
+            source = next((s for s in token.groups() if s is not None), None)
+            if source is None:
+                continue  # CSS comment or quoted string, not a URL token.
+            self.inline_css_urls += 1
+            self._add("css_url", source)
+
+    def handle_data(self, data):
+        if self.style_fragments:
+            self.inline_css_chars += len(data)
+            if self.inline_css_chars > MAX_INLINE_CSS_CHARS:
+                raise InventoryError("inline CSS text exceeds diagnostic budget")
+            self.style_fragments[-1].append(data)
+            self.inline_css_chars -= len(data)  # Count once when scanning.
+
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if "style" in attrs:
             self.inline_style_attributes += 1
             if self.inline_style_attributes > self.limit:
                 raise InventoryError("inline style attribute count exceeds budget")
+            self._scan_css(attrs["style"] or "")
         if tag == "picture":
             self.picture_depth += 1
         elif tag == "svg":
@@ -131,9 +162,12 @@ class _Collector(HTMLParser):
             self.inline_styles += 1
             if self.inline_styles > self.limit:
                 raise InventoryError("inline style element count exceeds budget")
+            self.style_fragments.append([])
 
     def handle_endtag(self, tag):
-        if tag == "picture":
+        if tag == "style" and self.style_fragments:
+            self._scan_css("".join(self.style_fragments.pop()))
+        elif tag == "picture":
             self.picture_depth = max(0, self.picture_depth - 1)
         elif tag == "svg":
             self.svg_depth = max(0, self.svg_depth - 1)
@@ -145,6 +179,8 @@ def inventory(markup, max_references=MAX_REFERENCES):
     parser = _Collector(max_references)
     parser.feed(markup)
     parser.close()
+    if parser.style_fragments:
+        raise InventoryError("unclosed inline style element")
     candidates = [{"kind": kind, "url": url}
                   for kind, url in sorted(parser.urls)]
     # Stable measurement identity only. Neither source authenticity nor the
@@ -161,6 +197,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "inventory_sha256": fingerprint,
         "inline_styles": parser.inline_styles,
         "inline_style_attributes": parser.inline_style_attributes,
+        "inline_css_urls": parser.inline_css_urls,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
         "css_and_font_dependencies_verified": False,

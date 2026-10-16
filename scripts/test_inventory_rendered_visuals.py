@@ -129,6 +129,29 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "inline style element"):
             vis.inventory("<style></style><style></style>", max_references=1)
 
+    def test_diagnostic_inline_css_urls_are_bounded_and_not_verified(self):
+        page = (
+            '<style>/* url(fake.png) */ .a { background:url("a.png"); '
+            'content:"url(fake2.png)"; } @font-face {src:url(../f.woff2)}</style>'
+            '<div style="background-image:url(a.png)"></div>'
+        )
+        result = vis.inventory(page)
+        self.assertEqual(2, result["count"])
+        self.assertEqual(3, result["inline_css_urls"])
+        self.assertEqual(3, result["observed_references"])
+        self.assertEqual(
+            {("css_url", "a.png"), ("css_url", "../f.woff2")},
+            {(item["kind"], item["url"]) for item in result["candidates"]},
+        )
+        self.assertFalse(result["css_and_font_dependencies_verified"])
+        self.assertFalse(result["required_media_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory('<div style="a:url(a.png);b:url(b.png)"></div>',
+                          max_references=1)
+        with self.assertRaisesRegex(vis.InventoryError, "CSS text"):
+            vis.inventory('<style>' + "x" * (vis.MAX_INLINE_CSS_CHARS + 1)
+                          + '</style>')
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
