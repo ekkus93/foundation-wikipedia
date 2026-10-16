@@ -869,9 +869,7 @@ pub fn inventory_supplied_css_graph(
             .ok_or(DiscoveryError::Budget("CSS graph reference count"))?;
         visited.insert(url);
         for candidate in state.urls {
-            if candidate.kind == CandidateKind::CssImport
-                && !visited.contains(&candidate.url)
-            {
+            if candidate.kind == CandidateKind::CssImport && !visited.contains(&candidate.url) {
                 queue.insert(candidate.url.clone());
             }
             candidates.insert(candidate);
@@ -1274,7 +1272,8 @@ mod tests {
         assert_eq!(graph.stylesheets_inspected, 2);
         assert_eq!(graph.observed_references, 4);
         assert_eq!(
-            graph.candidates
+            graph
+                .candidates
                 .iter()
                 .map(|candidate| (candidate.kind.as_str(), candidate.url.as_str()))
                 .collect::<Vec<_>>(),
