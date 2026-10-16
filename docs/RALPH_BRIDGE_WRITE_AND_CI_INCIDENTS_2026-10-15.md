@@ -214,3 +214,39 @@ Ralph Bridge accepted and verified direct-master operations `b6d22c7a6a024ddfae5
   PACK-003 remain unchecked pending independent upstream source completeness,
   renderer dependency parity, mandatory media acquisition/license verification,
   offline resolver and end-to-end desktop/Android qualification.
+
+## 2026-10-16 UTC — srcset data-URL ambiguity guard qualified
+
+- Current Ralph Bridge v`0.6.2`, build `0acea4b23362e2ccecab8f6c9db4418b162426cf`,
+  instance `2b818998d9ea4beab846a083bc4b3224`, started `2026-10-15T22:44:38.900088Z`,
+  auth `app`.
+  `commit_files(repo=ekkus93/foundation-wikipedia, branch=master,
+  expected_head_sha=22a8025c4ae7efdc355e6aaff0a68c9af5cad2b2,
+  paths=[scripts/inventory_rendered_visuals.py,
+  scripts/test_inventory_rendered_visuals.py,
+  docs/SRC_003_VISUAL_CANDIDATE_DEDUP_2026-10-15.md])` returned operation
+  `dff2ca61449a4cdeb53f7475aa746f33`, requested
+  `2026-10-16T00:03:39.705951Z`, `accepted=true`,
+  `write_reconciled=false`, verified observed head
+  `ba93bd1f03fe155ca69742852a6ed866c21abc64` and all changed blobs.
+  No ambiguous write acknowledgment or stale-head retry.
+- **Qualified exact-head CI:** [Rust 38827278461](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278461),
+  [Platform 38827278501](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278501),
+  [Renderer 38827278454](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278454)
+  all passed on `ba93bd1f03fe155ca69742852a6ed866c21abc64`.
+  Bounded `wait_for_ci_outcome` reads on this exact SHA twice expired their
+  explicit 18-second budgets (4 polls each) while workflows were running,
+  then a later read returned `state=passed`. No matching failure diagnostic
+  or error-marked job step was observed. **Classification:** ordinary
+  bounded wait expirations with successful CI resolution, not Ralph/GitHub
+  source-write errors.
+- The diagnostic reader explicitly refuses data-URL responsive image variants
+  whose comma syntax could otherwise be misread as separate relative URLs.
+  A deterministic unit test guards the condition. Neither this narrow fix
+  nor URL-kind fingerprints proves offline completeness, media license/creator
+  identity, or publisher trust.
+- Canonical TODO remains 1,536 lines/blob
+  `ec594ed49cf4fff5e1c7ab42fca927881be55df5`, and
+  the SRC-003 census remains 346 lines/blob
+  `0191d49981243930fce5039d03225248068ac51d`.
+  SRC-003 and PACK-003 stay unchecked.

@@ -58,3 +58,17 @@ a `data:` candidate in `img` or `picture/source` responsive variants,
 with a deterministic regression. This protects the candidate list from a
 false external-resource identity. It does not make the remaining simplified
 `srcset` grammar suitable for certifying mandatory offline media.
+
+## Exact-head qualification of ambiguous data-URI protection
+
+The fail-closed data-URI-in-srcset regression is committed directly to master
+at `ba93bd1f03fe155ca69742852a6ed866c21abc64` by Ralph Bridge operation
+`dff2ca61449a4cdeb53f7475aa746f33`, `accepted=true`,
+`write_reconciled=false`. All exact-head workflows passed:
+[Rust 38827278461](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278461),
+[Platform 38827278501](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278501),
+and [Renderer 38827278454](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38827278454).
+The update rejects malformed/unsupported responsive-media candidates rather
+than falsely treating them as verified local assets. It does not establish
+complete srcset or CSS parsing, Commons media provenance, verified offline
+resource bytes, or any release acceptance.
