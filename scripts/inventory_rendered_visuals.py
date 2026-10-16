@@ -62,6 +62,8 @@ class _Collector(HTMLParser):
         for part in (value or "").split(","):
             tokens = part.strip().split(maxsplit=1)
             if tokens:
+                if tokens[0].lower().startswith("data:"):
+                    raise InventoryError("data URL srcset requires complete parsing")
                 self._add(kind, tokens[0])
 
     def handle_starttag(self, tag, attrs):

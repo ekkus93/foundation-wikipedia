@@ -47,3 +47,14 @@ image-reference discrepancy and 23 pages with inline CSS persist.
 URL-kind uniqueness cannot substitute for byte-level deduplication or
 license/creator validation, and none of these metrics qualify offline-ready
 articles or packs.
+
+## Ambiguous data-URL responsive image protection
+
+Diagnostic `srcset` splitting deliberately is not a full WHATWG grammar
+implementation. A `data:` candidate contains a comma separating metadata
+from its payload, which must not be misinterpreted as a second relative
+remote-media filename. The candidate inventory now fails closed when it sees
+a `data:` candidate in `img` or `picture/source` responsive variants,
+with a deterministic regression. This protects the candidate list from a
+false external-resource identity. It does not make the remaining simplified
+`srcset` grammar suitable for certifying mandatory offline media.

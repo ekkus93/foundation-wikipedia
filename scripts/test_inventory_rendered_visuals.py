@@ -57,6 +57,13 @@ class InventoryTests(unittest.TestCase):
                 with self.assertRaises(vis.InventoryError):
                     vis.inventory('<img src="' + value + '">')
 
+    def test_srcset_data_url_cannot_create_phantom_relative_candidates(self):
+        # A comma in a data URL is part of its payload, not necessarily a
+        # separator between independent installable image variants.
+        with self.assertRaisesRegex(vis.InventoryError, "data URL srcset"):
+            vis.inventory('<img srcset="data:image/png;base64,AAAA 1x, '
+                          '//upload.wikimedia.org/b.png 2x">')
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
