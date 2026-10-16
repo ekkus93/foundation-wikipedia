@@ -9,7 +9,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use wiki_pack_builder::visual_discovery::{inventory, MAX_MARKUP_BYTES, MAX_REFERENCES};
 
-
 fn canonical_ascii_json_string(value: &str) -> String {
     // Python's json.dumps(ensure_ascii=True, separators=(",", ":")) behavior.
     let serialized = serde_json::to_string(value).expect("string serialization");
