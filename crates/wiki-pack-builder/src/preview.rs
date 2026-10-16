@@ -256,7 +256,10 @@ mod tests {
             ("D".into(), BTreeSet::from(["C".into()])),
         ]);
         let (cycles, truncated) = traversed_cycles(&edges);
-        assert_eq!(cycles, vec![("B".into(), "A".into()), ("D".into(), "C".into())]);
+        assert_eq!(
+            cycles,
+            vec![("B".into(), "A".into()), ("D".into(), "C".into())]
+        );
         assert!(!truncated);
 
         let mut many = BTreeMap::new();
