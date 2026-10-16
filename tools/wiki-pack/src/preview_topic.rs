@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use wiki_pack_builder::preview::preview_pinned_selection;
 use wiki_pack_builder::selection::{Category, Rules};
 
@@ -94,6 +95,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err("preview input exceeds the 64 MiB limit".into());
     }
+    let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let input: PreviewInput =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid preview JSON: {error}"))?;
     if input.categories.len() > MAX_CATEGORIES
@@ -169,6 +171,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         // integration. No field here confers publisher trust or installability.
         let result = serde_json::json!({
             "schema_version": 1,
+            "input_sha256": input_sha256,
             "source": "local-untrusted-category-graph",
             "source_authenticated": false,
             "publisher_signature_verified": false,
@@ -178,6 +181,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
             "definition_sha256": preview.selection.definition_sha256,
             "graph_sha256": preview.selection.graph_sha256,
             "selection_sha256": preview.selection.snapshot_selection_sha256,
+
             "selected_page_ids": preview.selection.page_ids,
             "selected_page_count": preview.selected_page_count,
             "visited_category_count": preview.visited_category_count,
@@ -216,6 +220,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         "Raw article/category mentions inspected: {}/{}",
         preview.inspected_article_mentions, preview.inspected_child_category_mentions
     );
+    println!("Input SHA-256 (untrusted local JSON): {input_sha256}");
     println!(
         "Definition SHA-256: {}",
         preview.selection.definition_sha256
