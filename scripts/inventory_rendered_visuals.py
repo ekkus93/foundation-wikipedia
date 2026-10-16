@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 MAX_URL_CHARS = 4096
 MAX_REFERENCES = 10000
@@ -248,6 +248,77 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "unresolved_dynamic_surfaces": parser.unresolved_dynamic_surfaces,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
+        "css_and_font_dependencies_verified": False,
+        "required_media_verified": False,
+    }
+
+def inventory_css_dependency_graph(roots, stylesheets, max_references=MAX_REFERENCES):
+    """Discover URL candidates across supplied external CSS and @import chains.
+
+    Caller provides stylesheet contents; this function performs no downloads
+    and does not authenticate sources, parse all CSS syntax or certify packs.
+    Missing discovered imports fail closed. All output URLs are absolute.
+    """
+    if not isinstance(max_references, int) or max_references < 1:
+        raise InventoryError("invalid CSS graph reference budget")
+    if not isinstance(stylesheets, dict) or not isinstance(roots, (list, tuple)):
+        raise InventoryError("invalid CSS graph inputs")
+    if not roots:
+        raise InventoryError("empty stylesheet roots")
+
+    def absolute_url(value):
+        if not isinstance(value, str):
+            raise InventoryError("invalid stylesheet URL")
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise InventoryError("stylesheet URL must be absolute HTTP(S)")
+        # Apply exactly the same URL length, authority and port restrictions
+        # used by the HTML candidate diagnostic.
+        validator = _Collector(1)
+        validator._add("stylesheet", value)
+        return value
+
+    queue = sorted(set(absolute_url(root) for root in roots))
+    visited = set()
+    observed = 0
+    total_css_chars = 0
+    found = set()
+    while queue:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        if current not in stylesheets:
+            raise InventoryError("missing supplied stylesheet import")
+        css = stylesheets[current]
+        if not isinstance(css, str):
+            raise InventoryError("invalid supplied stylesheet content")
+        total_css_chars += len(css)
+        if total_css_chars > MAX_INLINE_CSS_CHARS:
+            raise InventoryError("CSS graph text exceeds diagnostic budget")
+        local = _Collector(max_references)
+        local._scan_css(css)
+        observed += local.observed_references
+        if observed > max_references:
+            raise InventoryError("CSS graph reference count exceeds budget")
+        visited.add(current)
+        if len(visited) > max_references:
+            raise InventoryError("CSS graph stylesheet count exceeds budget")
+        for kind, relative in sorted(local.urls):
+            url = absolute_url(urljoin(current, relative))
+            found.add((kind, url))
+            if kind == "css_import" and url not in visited:
+                queue.append(url)
+    candidates = [{"kind": kind, "url": url} for kind, url in sorted(found)]
+    transcript = json.dumps(candidates, ensure_ascii=True, sort_keys=True,
+                            separators=(",", ":")).encode("utf-8")
+    return {
+        "stylesheets_inspected": len(visited),
+        "observed_references": observed,
+        "count": len(candidates),
+        "candidates": candidates,
+        "inventory_sha256": hashlib.sha256(
+            b"foundation-wikipedia/css-url-graph/v1\\0" + transcript
+        ).hexdigest(),
         "css_and_font_dependencies_verified": False,
         "required_media_verified": False,
     }

@@ -298,6 +298,35 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
             vis.inventory('<math><mglyph src="a" src="b"/></math>')
 
+    def test_supplied_external_css_graph_resolves_import_cycles_and_urls(self):
+        main = "https://wiki.example/assets/css/main.css"
+        detail = "https://wiki.example/assets/css/detail.css"
+        css = {
+            main: '@import "detail.css"; .hero{background:url(../img/hero.png)}',
+            detail: '@import "main.css"; @font-face{src:url(fonts/wiki.woff2)}',
+        }
+        found = vis.inventory_css_dependency_graph([main], css)
+        entries = {(x["kind"], x["url"]) for x in found["candidates"]}
+        self.assertEqual(2, found["stylesheets_inspected"])
+        self.assertEqual(4, found["observed_references"])
+        self.assertEqual(
+            {("css_import", main), ("css_import", detail),
+             ("css_url", "https://wiki.example/assets/img/hero.png"),
+             ("css_url", "https://wiki.example/assets/css/fonts/wiki.woff2")},
+            entries,
+        )
+        self.assertFalse(found["required_media_verified"])
+        self.assertFalse(found["css_and_font_dependencies_verified"])
+        self.assertEqual(found["inventory_sha256"],
+                         vis.inventory_css_dependency_graph([main, main], css)
+                         ["inventory_sha256"])
+        with self.assertRaisesRegex(vis.InventoryError, "missing supplied"):
+            vis.inventory_css_dependency_graph([main], {main: css[main]})
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory_css_dependency_graph([main], css, max_references=3)
+        with self.assertRaisesRegex(vis.InventoryError, "absolute HTTP"):
+            vis.inventory_css_dependency_graph(["file:///tmp/sheet.css"], css)
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
