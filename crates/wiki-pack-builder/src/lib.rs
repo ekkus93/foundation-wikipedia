@@ -10,6 +10,7 @@ pub mod joined_preview;
 pub mod media;
 pub mod media_inventory;
 pub mod preview;
+pub mod related;
 pub mod selection;
 pub mod visual_discovery;
 
