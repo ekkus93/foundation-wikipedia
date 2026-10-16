@@ -70,7 +70,6 @@ fn traversed_cycles(edges: &BTreeMap<String, BTreeSet<String>>) -> (Vec<(String,
 
 /// Preview exactly the selection `resolve_pinned` would return. Additional
 /// diagnostics do not alter or independently authenticate its selection hash.
-
 pub fn preview_pinned_selection(
     graph: &BTreeMap<String, Category>,
     rules: &Rules,
