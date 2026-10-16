@@ -319,7 +319,7 @@ class InventoryTests(unittest.TestCase):
                                 sort_keys=True, separators=(",", ":")).encode("utf-8")
         self.assertEqual(
             hashlib.sha256(
-                b"foundation-wikipedia/css-url-graph/v1\\0" + transcript
+                b"foundation-wikipedia/css-url-graph/v1\0" + transcript
             ).hexdigest(),
             found["inventory_sha256"],
         )
