@@ -50,8 +50,14 @@ fn optional_related_expansion_is_deterministic_and_exclusion_aware() {
     assert_eq!(first["selected_page_count"], 3);
     assert_eq!(first["related_added_page_count"], 2);
     assert_eq!(first["related_source_authenticated"], false);
-    assert_ne!(first["category_selection_sha256"], first["selection_sha256"]);
-    request["related"]["links"].as_array_mut().unwrap().reverse();
+    assert_ne!(
+        first["category_selection_sha256"],
+        first["selection_sha256"]
+    );
+    request["related"]["links"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
     let (ok, reordered) = preview(&request);
     assert!(ok, "{reordered}");
     assert_eq!(first["selection_sha256"], reordered["selection_sha256"]);
