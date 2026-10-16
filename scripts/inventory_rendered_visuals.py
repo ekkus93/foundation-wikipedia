@@ -56,7 +56,7 @@ class _Collector(HTMLParser):
             self.missing_sources += 1
             return
         if (len(source) > MAX_URL_CHARS or source != source.strip()
-                or "\\\\" in source
+                or "\\" in source
                 or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
                        for ch in source)):
             raise InventoryError("unsafe or oversized visual candidate URL")
