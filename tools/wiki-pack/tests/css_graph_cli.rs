@@ -72,7 +72,5 @@ fn css_graph_cli_rejects_unknown_import_and_bad_args() {
     let result = execute(&path);
     fs::remove_file(path).unwrap();
     assert!(!result.status.success());
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("MissingSuppliedStylesheet")
-    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("MissingSuppliedStylesheet"));
 }

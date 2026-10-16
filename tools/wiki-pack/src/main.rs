@@ -1,9 +1,9 @@
 //! Verification and provisional custom export of unsigned FWPACK01 envelopes.
 //! These commands do not install packs or verify publisher signatures.
 mod audit_diagnostic;
+mod css_graph_diagnostic;
 mod preview_topic;
 mod visual_diagnostic;
-mod css_graph_diagnostic;
 
 use std::env;
 use std::ffi::{OsStr, OsString};

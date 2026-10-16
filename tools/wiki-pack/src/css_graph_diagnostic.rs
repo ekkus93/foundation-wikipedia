@@ -43,8 +43,8 @@ fn inspect(path: &Path) -> Result<Value, String> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err("CSS graph JSON input exceeds the size limit".into());
     }
-    let input: Input =
-        serde_json::from_slice(&bytes).map_err(|error| format!("invalid CSS graph JSON: {error}"))?;
+    let input: Input = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid CSS graph JSON: {error}"))?;
     let result = inventory_supplied_css_graph(&input.roots, &input.stylesheets, MAX_REFERENCES)
         .map_err(|error| format!("CSS graph rejected: {error:?}"))?;
     let candidates: Vec<Value> = result
