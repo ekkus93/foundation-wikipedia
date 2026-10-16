@@ -172,6 +172,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         let result = serde_json::json!({
             "schema_version": 1,
             "source": "local-untrusted-category-graph",
+            "input_sha256": input_sha256,
             "source_authenticated": false,
             "publisher_signature_verified": false,
             "offline_ready": false,
