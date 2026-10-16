@@ -54,6 +54,18 @@ fn inventory_fingerprint(
 }
 
 fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let info = fs::symlink_metadata(ancestor)
+                .map_err(|error| format!("cannot inspect HTML input path: {error}"))?;
+            if info.file_type().is_symlink() {
+                return Err("HTML input path contains a symlink".into());
+            }
+        }
+    }
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("cannot stat HTML input: {error}"))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
