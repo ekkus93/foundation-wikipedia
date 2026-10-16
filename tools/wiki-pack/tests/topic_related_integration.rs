@@ -1,5 +1,5 @@
-use std::{fs, process::Command};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::{fs, process::Command};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
