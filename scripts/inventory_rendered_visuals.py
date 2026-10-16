@@ -45,6 +45,7 @@ class _Collector(HTMLParser):
         self.style_fragments = []
         self.unsupported_schemes = 0
         self.missing_sources = 0
+        self.html_base_href_count = 0
 
     def _add(self, kind, source):
         # Cap total observed references, not only distinct URL candidates:
@@ -148,6 +149,7 @@ class _Collector(HTMLParser):
         # can choose different occurrences and hide a required dependency.
         resource_tags = {"img", "source", "link", "video", "image", "use",
                          "object", "embed", "mglyph"}
+
         if len(attrs) != len(dict(attrs)) and (
                 tag in resource_tags or any(key == "style" for key, _ in attrs)):
             raise InventoryError("duplicate HTML resource attribute")
@@ -157,6 +159,10 @@ class _Collector(HTMLParser):
             if self.inline_style_attributes > self.limit:
                 raise InventoryError("inline style attribute count exceeds budget")
             self._scan_css(attrs["style"] or "")
+        if tag == "base" and "href" in attrs:
+            self.html_base_href_count += 1
+            if self.html_base_href_count > 1:
+                raise InventoryError("multiple HTML base href elements")
         if tag == "picture":
             self.picture_depth += 1
         elif tag == "svg":
@@ -250,6 +256,8 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "unresolved_dynamic_surfaces": parser.unresolved_dynamic_surfaces,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
+        "html_base_href_count": parser.html_base_href_count,
+        "html_base_resolution_pending": bool(parser.html_base_href_count),
         "css_and_font_dependencies_verified": False,
         "required_media_verified": False,
     }
@@ -298,6 +306,7 @@ def inventory_css_dependency_graph(roots, stylesheets, max_references=MAX_REFERE
         if total_css_chars > MAX_INLINE_CSS_CHARS:
             raise InventoryError("CSS graph text exceeds diagnostic budget")
         local = _Collector(max_references)
+
         local._scan_css(css)
         observed += local.observed_references
         if observed > max_references:

@@ -148,6 +148,7 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertFalse(result["css_and_font_dependencies_verified"])
         self.assertFalse(result["required_media_verified"])
+
         with self.assertRaisesRegex(vis.InventoryError, "reference count"):
             vis.inventory('<div style="a:url(a.png);b:url(b.png)"></div>',
                           max_references=1)
@@ -246,6 +247,18 @@ class InventoryTests(unittest.TestCase):
                     vis.inventory(page)
         self.assertEqual(0, vis.inventory('<div class="a" class="b">')["count"])
 
+    def test_html_base_href_is_reported_without_discarding_rendered_page(self):
+        result = vis.inventory('<base href="/wiki/"><img src="figure.png">')
+        self.assertEqual(1, result["html_base_href_count"])
+        self.assertTrue(result["html_base_resolution_pending"])
+        self.assertEqual([{"kind": "image", "url": "figure.png"}],
+                         result["candidates"])
+        self.assertFalse(result["required_media_verified"])
+        self.assertFalse(vis.inventory('<img src="figure.png">')
+                         ["html_base_resolution_pending"])
+        with self.assertRaisesRegex(vis.InventoryError, "multiple HTML base"):
+            vis.inventory('<base href="/one/"><base href="/two/">')
+
     def test_svg_filter_image_is_a_required_visual_candidate(self):
         page = (
             '<svg><filter id="blur"><feImage href="/filter.png"/></filter>'
@@ -298,6 +311,7 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "visual surface count"):
             vis.inventory("<iframe></iframe><canvas></canvas>",
                           max_references=1)
+
         with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
             vis.inventory('<math><mglyph src="a" src="b"/></math>')
 
