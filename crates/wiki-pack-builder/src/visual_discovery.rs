@@ -95,6 +95,7 @@ pub enum DiscoveryError {
     InvalidResponsiveImage(&'static str),
     ConflictingSvgHref,
     InlineCssBudget,
+    InvalidInlineCss,
     UnclosedStyleElement,
     Budget(&'static str),
 }
@@ -283,7 +284,7 @@ impl State {
         if self.inline_css_chars > MAX_INLINE_CSS_CHARS {
             return Err(DiscoveryError::InlineCssBudget);
         }
-        for (is_import, source) in css_url_tokens(css) {
+        for (is_import, source) in css_url_tokens(css)? {
             if is_import {
                 self.inline_css_imports += 1;
                 self.add(CandidateKind::CssImport, Some(&source))?;
@@ -473,7 +474,7 @@ fn is_css_word(c: char) -> bool {
 /// Diagnostic subset of CSS URL tokens, not a CSS parser. Comments and quoted
 /// strings are skipped before matching `url(...)` and `@import`. Returns
 /// `(is_import, url)` pairs in source order.
-fn css_url_tokens(css: &str) -> Vec<(bool, String)> {
+fn css_url_tokens(css: &str) -> Result<Vec<(bool, String)>, DiscoveryError> {
     let chars: Vec<char> = css.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -489,10 +490,13 @@ fn css_url_tokens(css: &str) -> Vec<(bool, String)> {
                 }
                 j += 1;
             }
-            if closed {
-                i = j + 2;
-                continue;
+            if !closed {
+                // A dangling comment can hide every later URL: a partial
+                // candidate list must not be reported as complete.
+                return Err(DiscoveryError::InvalidInlineCss);
             }
+            i = j + 2;
+            continue;
         } else if chars[i] == '@' && !prev_is_word {
             if let Some((source, end)) = match_import(&chars, i) {
                 out.push((true, source));
@@ -504,6 +508,7 @@ fn css_url_tokens(css: &str) -> Vec<(bool, String)> {
                 i = end;
                 continue;
             }
+            return Err(DiscoveryError::InvalidInlineCss);
         } else if !prev_is_word {
             if let Some((source, end)) = match_url_function(&chars, i) {
                 out.push((false, source));
@@ -513,7 +518,7 @@ fn css_url_tokens(css: &str) -> Vec<(bool, String)> {
         }
         i += 1;
     }
-    out
+    Ok(out)
 }
 
 fn starts_with_ignore_case(chars: &[char], at: usize, word: &str) -> bool {
@@ -699,7 +704,7 @@ pub fn inventory(
     document_url: &str,
     max_references: usize,
 ) -> Result<VisualInventory, DiscoveryError> {
-    if max_references == 0 {
+    if max_references == 0 || max_references > MAX_REFERENCES {
         return Err(DiscoveryError::InvalidBudget);
     }
     if markup.len() > MAX_MARKUP_BYTES {
@@ -886,6 +891,10 @@ mod tests {
             Err(DiscoveryError::InvalidBudget),
             inventory("", DOC, 0).map(|_| ())
         );
+        assert_eq!(
+            Err(DiscoveryError::InvalidBudget),
+            inventory("", DOC, MAX_REFERENCES + 1).map(|_| ())
+        );
         let long = format!(
             r#"<base href="/{}/"><img src="{}.png">"#,
             "d".repeat(2500),
@@ -937,9 +946,29 @@ mod tests {
     #[test]
     fn css_tokens_ignore_word_prefixed_and_malformed_functions() {
         let tokens =
-            css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' ) url(e.png");
+            css_url_tokens("x-url(a.png) myurl(b.png) url(c.png) url( 'd.png' ) url(e.png")
+                .unwrap();
         let found: Vec<_> = tokens.iter().map(|(_, u)| u.as_str()).collect();
         assert_eq!(vec!["c.png", "d.png"], found);
+    }
+
+    #[test]
+    fn malformed_inline_css_does_not_yield_partial_candidates() {
+        for page in [
+            r#"<style>/* url(hidden.png) </style>"#,
+            r#"<style>.x { content: "url(hidden.png) }</style>"#,
+            r#"<p style='background:url(good.png); /* url(hidden.png)'>"#,
+        ] {
+            assert_eq!(
+                Err(DiscoveryError::InvalidInlineCss),
+                run(page).map(|_| ()),
+                "{page}"
+            );
+        }
+        assert_eq!(
+            vec![pair("css_url", "https://en.wikipedia.org/wiki/yes.png")],
+            urls(r#"<style>/* url(no.png) */ .ok { background:url(yes.png) }</style>"#)
+        );
     }
 
     #[test]
