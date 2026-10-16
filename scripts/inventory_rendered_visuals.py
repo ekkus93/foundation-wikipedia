@@ -56,7 +56,9 @@ class _Collector(HTMLParser):
             self.missing_sources += 1
             return
         if (len(source) > MAX_URL_CHARS or source != source.strip()
-                or any(ch.isspace() or ord(ch) < 32 for ch in source)):
+                or "\\\\" in source
+                or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
+                       for ch in source)):
             raise InventoryError("unsafe or oversized visual candidate URL")
         if source.startswith("#"):
             return  # Same-document SVG fragment; no separate transport URL.

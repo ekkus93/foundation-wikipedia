@@ -56,7 +56,10 @@ class InventoryTests(unittest.TestCase):
                       "https://example.test:invalid/a",
                       "https://example.test:65536/a",
                       "https://example.test:0/a",
-                      "https://:443/a"):
+                      "https://:443/a",
+                      "https://example.test" + chr(92) + "path",
+                      "relative" + chr(92) + "image.png",
+                      "filename" + chr(127) + ".png"):
             with self.subTest(value=value[:24]):
                 with self.assertRaises(vis.InventoryError):
                     vis.inventory('<img src="' + value + '">')
