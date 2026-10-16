@@ -98,6 +98,16 @@ class InventoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(vis.InventoryError, "empty responsive image"):
                     vis.inventory('<img srcset="' + srcset + '">')
 
+    def test_malformed_srcset_descriptors_fail_closed(self):
+        invalid = ("a.png 1x 2x", "a.png 0w", "a.png 0x",
+                   "a.png 2h", "a.png abc", "a.png -1x")
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(vis.InventoryError, "descriptor"):
+                    vis.inventory('<img srcset="' + value + '">')
+        self.assertEqual(2, vis.inventory(
+            '<img srcset="a.png 1.5x, b.png 2x">')["count"])
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

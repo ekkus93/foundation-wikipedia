@@ -7,6 +7,7 @@ dependency graph will require a separate verified renderer/media pipeline.
 """
 import hashlib
 import json
+import re
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -75,6 +76,16 @@ class _Collector(HTMLParser):
             raise InventoryError("empty responsive image candidate")
         for part in (value or "").split(","):
             tokens = part.strip().split(maxsplit=1)
+            if len(tokens) > 2:
+                raise InventoryError("invalid responsive image descriptor")
+            if len(tokens) == 2:
+                descriptor = tokens[1]
+                valid = (len(descriptor) <= 32 and re.fullmatch(
+                    r"(?:[1-9][0-9]*w|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)x)",
+                    descriptor,
+                ))
+                if not valid or (descriptor.endswith("x") and float(descriptor[:-1]) <= 0):
+                    raise InventoryError("invalid responsive image descriptor")
             if tokens:
                 if tokens[0].lower().startswith("data:"):
                     raise InventoryError("data URL srcset requires complete parsing")
