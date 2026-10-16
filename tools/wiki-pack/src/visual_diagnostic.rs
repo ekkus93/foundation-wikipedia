@@ -138,7 +138,8 @@ mod tests {
     #[test]
     fn candidate_report_is_explicitly_unverified_and_deterministic() {
         let path = fixture_path();
-        let markup = r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#;
+        let markup =
+            r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#;
         fs::write(&path, markup).unwrap();
         let report = inspect(&path, "https://en.wikipedia.org/wiki/Test").unwrap();
         fs::remove_file(path).unwrap();
