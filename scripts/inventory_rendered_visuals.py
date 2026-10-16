@@ -74,6 +74,8 @@ class _Collector(HTMLParser):
         # a production-compliant parser before offline completeness approval.
         if value and any(not part.strip() for part in value.split(",")):
             raise InventoryError("empty responsive image candidate")
+        seen_descriptors = set()
+        descriptor_family = None
         for part in (value or "").split(","):
             tokens = part.strip().split(maxsplit=1)
             if len(tokens) > 2:
@@ -87,6 +89,16 @@ class _Collector(HTMLParser):
                 if not valid or (descriptor.endswith("x") and float(descriptor[:-1]) <= 0):
                     raise InventoryError("invalid responsive image descriptor")
             if tokens:
+                descriptor = tokens[1] if len(tokens) == 2 else "1x"
+                family = descriptor[-1]
+                value_number = (int(descriptor[:-1]) if family == "w"
+                                else float(descriptor[:-1]))
+                if descriptor_family is not None and family != descriptor_family:
+                    raise InventoryError("mixed responsive image descriptors")
+                if (family, value_number) in seen_descriptors:
+                    raise InventoryError("duplicate responsive image descriptor")
+                descriptor_family = family
+                seen_descriptors.add((family, value_number))
                 if tokens[0].lower().startswith("data:"):
                     raise InventoryError("data URL srcset requires complete parsing")
                 self._add(kind, tokens[0])

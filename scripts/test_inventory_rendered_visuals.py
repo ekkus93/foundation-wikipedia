@@ -108,6 +108,16 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(2, vis.inventory(
             '<img srcset="a.png 1.5x, b.png 2x">')["count"])
 
+    def test_duplicate_and_mixed_srcset_descriptors_fail_closed(self):
+        bad = ("a.png 1x, b.png 1.0x", "a.png, b.png 1x",
+               "a.png 320w, b.png 320w", "a.png 320w, b.png 2x")
+        for srcset in bad:
+            with self.subTest(srcset=srcset):
+                with self.assertRaises(vis.InventoryError):
+                    vis.inventory('<img srcset="' + srcset + '">')
+        self.assertEqual(2, vis.inventory(
+            '<img srcset="a.png 320w, b.png 640w">')["count"])
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
