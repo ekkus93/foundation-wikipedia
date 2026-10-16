@@ -14,10 +14,10 @@ fn preview_reports_suppressed_explicit_includes() {
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["selected_page_ids"], serde_json::json!([1]));
     let warnings = result["warnings"].as_array().unwrap();
-    assert!(warnings.iter().any(|w| w.as_str() == Some(
-        "Explicit include suppressed by exclusion: 20 -> 2"
-    )));
-    assert!(warnings.iter().any(|w| w.as_str() == Some(
-        "Explicit include suppressed by exclusion: 30 -> 30"
-    )));
+    assert!(warnings
+        .iter()
+        .any(|w| w.as_str() == Some("Explicit include suppressed by exclusion: 20 -> 2")));
+    assert!(warnings
+        .iter()
+        .any(|w| w.as_str() == Some("Explicit include suppressed by exclusion: 30 -> 30")));
 }
