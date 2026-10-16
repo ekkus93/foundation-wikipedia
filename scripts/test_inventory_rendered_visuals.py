@@ -152,6 +152,26 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<style>' + "x" * (vis.MAX_INLINE_CSS_CHARS + 1)
                           + '</style>')
 
+    def test_preloaded_required_visual_and_font_candidates(self):
+        page = (
+            '<link rel="preload" as="font" href="/fonts/wiki.woff2">'
+            '<link rel="preload" as="style" href="/css/article.css">'
+            '<link rel="preload" as="image" href="/figures/a.png" '
+            'imagesrcset="/figures/a2.png 2x, /figures/a3.png 3x">'
+            '<link rel="preload" as="fetch" href="/ignored.json">'
+        )
+        result = vis.inventory(page)
+        entries = {(x["kind"], x["url"]) for x in result["candidates"]}
+        self.assertEqual(5, len(entries))
+        self.assertIn(("preload_font", "/fonts/wiki.woff2"), entries)
+        self.assertIn(("preload_style", "/css/article.css"), entries)
+        self.assertIn(("preload_image", "/figures/a.png"), entries)
+        self.assertIn(("preload_responsive_image", "/figures/a2.png"), entries)
+        self.assertFalse(result["css_and_font_dependencies_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "duplicate responsive"):
+            vis.inventory('<link rel="preload" as="image" '
+                          'imagesrcset="/a.png 1x, /b.png 1.0x">')
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

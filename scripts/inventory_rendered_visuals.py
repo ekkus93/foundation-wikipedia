@@ -150,8 +150,16 @@ class _Collector(HTMLParser):
             self._srcset("responsive_image", attrs.get("srcset"))
         elif tag == "source" and self.picture_depth:
             self._srcset("picture_variant", attrs.get("srcset"))
-        elif tag == "link" and "stylesheet" in (attrs.get("rel") or "").lower().split():
-            self._add("stylesheet", attrs.get("href"))
+        elif tag == "link":
+            relations = set((attrs.get("rel") or "").lower().split())
+            if "stylesheet" in relations:
+                self._add("stylesheet", attrs.get("href"))
+            elif "preload" in relations:
+                resource_type = (attrs.get("as") or "").lower().strip()
+                if resource_type in ("font", "image", "style"):
+                    self._add("preload_" + resource_type, attrs.get("href"))
+                    if resource_type == "image" and "imagesrcset" in attrs:
+                        self._srcset("preload_responsive_image", attrs["imagesrcset"])
         elif tag == "video" and attrs.get("poster"):
             self._add("av_preview", attrs["poster"])
         elif tag == "image" and self.svg_depth:
