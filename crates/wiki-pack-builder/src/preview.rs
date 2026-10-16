@@ -35,9 +35,7 @@ pub struct SelectionPreview {
 /// Detect a back edge in the categories actually expanded by this preview.
 /// An iterative DFS avoids recursion over untrusted category graphs; shared
 /// descendants in a DAG are not incorrectly reported as cycles.
-fn first_traversed_cycle(
-    edges: &BTreeMap<String, BTreeSet<String>>,
-) -> Option<(String, String)> {
+fn first_traversed_cycle(edges: &BTreeMap<String, BTreeSet<String>>) -> Option<(String, String)> {
     let mut active = BTreeSet::new();
     let mut finished = BTreeSet::new();
     for root in edges.keys() {
@@ -296,7 +294,11 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.starts_with("Category cycle detected:")));
-        graph.get_mut("Shared").unwrap().children.push("Root".into());
+        graph
+            .get_mut("Shared")
+            .unwrap()
+            .children
+            .push("Root".into());
         let cyclic = inspect(&graph, &rules);
         assert_eq!(cyclic.selection.page_ids, vec![1, 2]);
         assert!(cyclic
