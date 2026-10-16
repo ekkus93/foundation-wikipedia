@@ -11,6 +11,7 @@ pub mod media;
 pub mod media_inventory;
 pub mod preview;
 pub mod selection;
+pub mod visual_discovery;
 
 /// Shared provisional pack envelope contract for CLI and future desktop UI.
 pub use wiki_pack_format;

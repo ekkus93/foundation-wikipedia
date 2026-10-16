@@ -749,6 +749,8 @@ dependencies = [
 name = "wiki-pack-builder"
 version = "0.1.0"
 dependencies = [
+ "html5ever",
+ "url",
  "wiki-core",
  "wiki-model",
  "wiki-pack-format",

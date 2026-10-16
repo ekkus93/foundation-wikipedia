@@ -15,3 +15,5 @@ wiki-source = { path = "../wiki-source" }
 wiki-store = { path = "../wiki-store" }
 wiki-search = { path = "../wiki-search" }
 wiki-pack-format = { path = "../wiki-pack-format" }
+html5ever = "0.40"
+url = "2"
