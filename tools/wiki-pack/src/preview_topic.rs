@@ -2,7 +2,7 @@
 //! The JSON input is explicitly untrusted; no pack is built or installed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
@@ -59,7 +59,22 @@ fn safe_category_name(name: &str) -> bool {
 }
 
 pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot stat preview input: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err("preview input must be a regular file, not a symlink".into());
+    }
+    if metadata.len() > MAX_INPUT_BYTES {
+        return Err("preview input exceeds the 64 MiB limit".into());
+    }
     let file = File::open(path).map_err(|error| format!("cannot open preview input: {error}"))?;
+    if !file
+        .metadata()
+        .map_err(|error| format!("cannot inspect open preview input: {error}"))?
+        .is_file()
+    {
+        return Err("opened preview input is not a regular file".into());
+    }
     let mut bytes = Vec::new();
     file.take(MAX_INPUT_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -202,4 +217,52 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         println!("Warning: {warning}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    fn test_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fw-topic-preview-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn rejects_directory_before_json_read() {
+        let path = test_path();
+        fs::create_dir(&path).unwrap();
+        let error = run(&path, true).unwrap_err();
+        fs::remove_dir(&path).unwrap();
+        assert!(error.contains("regular file"), "{error}");
+    }
+
+    #[test]
+    fn rejects_sparse_oversized_file_before_json_read() {
+        let path = test_path();
+        let file = File::create(&path).unwrap();
+        file.set_len(MAX_INPUT_BYTES + 1).unwrap();
+        let error = run(&path, true).unwrap_err();
+        fs::remove_file(&path).unwrap();
+        assert!(error.contains("64 MiB limit"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_before_json_read() {
+        let target = test_path();
+        let link = test_path();
+        fs::write(&target, b"{}").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let error = run(&link, true).unwrap_err();
+        fs::remove_file(&link).unwrap();
+        fs::remove_file(&target).unwrap();
+        assert!(error.contains("regular file"), "{error}");
+    }
 }
