@@ -57,6 +57,30 @@ class InventoryTests(unittest.TestCase):
                 with self.assertRaises(vis.InventoryError):
                     vis.inventory('<img src="' + value + '">')
 
+    def test_repeated_and_unsupported_references_consume_budget(self):
+        # A candidate-set-only cap permits unbounded duplicate references.
+        # Missing sources, unsupported schemes and same-document SVG uses
+        # also require a bounded amount of parser work.
+        samples = (
+            '<img src="same.png"><img src="same.png">',
+            '<img><img>',
+            '<img src="data:image/png;base64,a"><img src="data:image/png;base64,b">',
+            '<svg><use href="#one"/><use href="#one"/></svg>',
+            '<picture><source srcset="a.png 1x, a.png 2x"></picture>',
+        )
+        for markup in samples:
+            with self.subTest(markup=markup):
+                with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+                    vis.inventory(markup, max_references=1)
+
+    def test_observed_reference_count_is_separate_from_unique_candidates(self):
+        result = vis.inventory('<img src="same.png"><img src="same.png">'
+                               '<img src="data:image/png;base64,a"><img>')
+        self.assertEqual(1, result["count"])
+        self.assertEqual(4, result["observed_references"])
+        self.assertEqual(1, result["unsupported_schemes"])
+        self.assertEqual(1, result["missing_sources"])
+
     def test_srcset_data_url_cannot_create_phantom_relative_candidates(self):
         # A comma in a data URL is part of its payload, not necessarily a
         # separator between independent installable image variants.

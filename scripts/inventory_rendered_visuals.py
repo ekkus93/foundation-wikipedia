@@ -23,6 +23,7 @@ class _Collector(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.limit = limit
         self.urls = set()
+        self.observed_references = 0
         self.picture_depth = 0
         self.svg_depth = 0
         self.inline_styles = 0
@@ -30,6 +31,11 @@ class _Collector(HTMLParser):
         self.missing_sources = 0
 
     def _add(self, kind, source):
+        # Cap total observed references, not only distinct URL candidates:
+        # repeated, missing and unsupported references must consume budget.
+        self.observed_references += 1
+        if self.observed_references > self.limit:
+            raise InventoryError("visual reference count exceeds budget")
         if not source:
             self.missing_sources += 1
             return
@@ -112,6 +118,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
     ).hexdigest()
     return {
         "count": len(parser.urls),
+        "observed_references": parser.observed_references,
         "candidates": candidates,
         "inventory_sha256": fingerprint,
         "inline_styles": parser.inline_styles,
