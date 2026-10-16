@@ -131,10 +131,7 @@ fn topic_preview_json_reports_multiple_independent_cycles() {
 
 #[test]
 fn topic_preview_caps_cycle_warning_count() {
-    let path = std::env::temp_dir().join(format!(
-        "fw-topic-cycle-cap-{}.json",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("fw-topic-cycle-cap-{}.json", std::process::id()));
     let names: Vec<String> = (0..10).map(|i| format!("Loop{i:02}")).collect();
     let mut categories = vec![serde_json::json!({
         "name": "Root",
@@ -172,5 +169,7 @@ fn topic_preview_caps_cycle_warning_count() {
         .count();
     assert_eq!(cycles, 8);
     let overflow = "Additional category cycles omitted after 8 warnings";
-    assert!(warnings.iter().any(|warning| warning.as_str() == Some(overflow)));
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.as_str() == Some(overflow)));
 }
