@@ -18,7 +18,7 @@ MAX_INLINE_CSS_CHARS = 2 * 1024 * 1024
 # This is a diagnostic-only subset of CSS URL tokens, not a CSS parser.
 # Comments and quoted CSS strings are skipped before matching url(...).
 _CSS_TOKEN_RE = re.compile(
-    r"""(?s)/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?<![\w-])url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)""",
+    r"""(?s)/\*.*?\*/|(?<![\w-])@import\s+(?:"([^"\\]*)"|'([^'\\]*)')|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?<![\w-])url\s*\(\s*(?:"([^"\\]*)"|'([^'\\]*)'|([^\s()"'\\]+))\s*\)""",
     re.IGNORECASE,
 )
 
@@ -38,6 +38,7 @@ class _Collector(HTMLParser):
         self.inline_styles = 0
         self.inline_style_attributes = 0
         self.inline_css_urls = 0
+        self.inline_css_imports = 0
         self.inline_css_chars = 0
         self.style_fragments = []
         self.unsupported_schemes = 0
@@ -123,8 +124,12 @@ class _Collector(HTMLParser):
             source = next((s for s in token.groups() if s is not None), None)
             if source is None:
                 continue  # CSS comment or quoted string, not a URL token.
-            self.inline_css_urls += 1
-            self._add("css_url", source)
+            if token.group(1) is not None or token.group(2) is not None:
+                self.inline_css_imports += 1
+                self._add("css_import", source)
+            else:
+                self.inline_css_urls += 1
+                self._add("css_url", source)
 
     def handle_data(self, data):
         if self.style_fragments:
@@ -206,6 +211,7 @@ def inventory(markup, max_references=MAX_REFERENCES):
         "inline_styles": parser.inline_styles,
         "inline_style_attributes": parser.inline_style_attributes,
         "inline_css_urls": parser.inline_css_urls,
+        "inline_css_imports": parser.inline_css_imports,
         "unsupported_schemes": parser.unsupported_schemes,
         "missing_sources": parser.missing_sources,
         "css_and_font_dependencies_verified": False,

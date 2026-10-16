@@ -152,6 +152,26 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<style>' + "x" * (vis.MAX_INLINE_CSS_CHARS + 1)
                           + '</style>')
 
+    def test_quoted_css_imports_and_comments(self):
+        page = (
+            '<style>/* @import "ignored.css"; */ '
+            '@import "theme.css" screen; '
+            ".a { background: url(icon.png); content: '@import ignored.css'; }"
+            '</style>'
+        )
+        result = vis.inventory(page)
+        self.assertEqual(2, result["count"])
+        self.assertEqual(1, result["inline_css_imports"])
+        self.assertEqual(1, result["inline_css_urls"])
+        self.assertEqual(
+            {("css_import", "theme.css"), ("css_url", "icon.png")},
+            {(x["kind"], x["url"]) for x in result["candidates"]},
+        )
+        self.assertFalse(result["css_and_font_dependencies_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory('<style>@import "a.css"; @import "a.css";</style>',
+                          max_references=1)
+
     def test_preloaded_required_visual_and_font_candidates(self):
         page = (
             '<link rel="preload" as="font" href="/fonts/wiki.woff2">'
