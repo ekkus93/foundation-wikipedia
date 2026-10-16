@@ -139,7 +139,10 @@ pub fn run(
     }
     // Print the exact consumed-byte receipt even when the caller did not pin
     // revision-content bytes. Neither digest authenticates its publisher.
-    println!("Expected census SHA-256 (caller pin): {}", expected_sha256.to_ascii_lowercase());
+    println!(
+        "Expected census SHA-256 (caller pin): {}",
+        expected_sha256.to_ascii_lowercase()
+    );
     println!("Revision-content SHA-256 (consumed): {consumed_revision_digest}");
     println!(
         "Matched {} diagnostic revision-content records to digest-pinned expected IDs",
@@ -148,6 +151,7 @@ pub fn run(
     println!("Official publisher, independent census and generation scope: NOT AUTHENTICATED");
     println!("Rendered HTML, mandatory media and offline pack readiness: NOT VERIFIED");
     Ok(counts.observed_count)
+
 }
 
 #[cfg(test)]
