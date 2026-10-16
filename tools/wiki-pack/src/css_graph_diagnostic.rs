@@ -82,3 +82,21 @@ pub fn run(path: &Path) -> Result<(), String> {
     println!("{output}");
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_symlinked_parent_directory() {
+        let root = std::env::temp_dir().join(format!("fw-css-parent-{}", std::process::id()));
+        let link = root.with_extension("link");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("graph.json"), b"{}").unwrap();
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        let error = inspect(&link.join("graph.json")).unwrap_err();
+        fs::remove_file(&link).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert!(error.contains("contains a symlink"), "{error}");
+    }
+}
