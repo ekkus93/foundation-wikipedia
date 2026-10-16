@@ -88,7 +88,8 @@ fn administrative_and_depth_limited_edges_do_not_trigger_false_cycle_warnings() 
 
 #[test]
 fn topic_preview_json_reports_multiple_independent_cycles() {
-    let path = std::env::temp_dir().join(format!("fw-topic-multi-cycle-{}.json", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("fw-topic-multi-cycle-{}.json", std::process::id()));
     let input = serde_json::json!({
         "snapshot_id": "snapshot-1",
         "roots": ["Root"],
@@ -121,6 +122,9 @@ fn topic_preview_json_reports_multiple_independent_cycles() {
         .collect();
     assert_eq!(
         cycles,
-        vec!["Category cycle detected: B -> A", "Category cycle detected: D -> C"]
+        vec![
+            "Category cycle detected: B -> A",
+            "Category cycle detected: D -> C"
+        ]
     );
 }
