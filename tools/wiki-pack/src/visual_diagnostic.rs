@@ -80,6 +80,7 @@ fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
     if bytes.len() > MAX_MARKUP_BYTES {
         return Err("HTML input exceeds the 64 MiB scanner limit".into());
     }
+    let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let markup = String::from_utf8(bytes).map_err(|_| "HTML input must be UTF-8".to_owned())?;
     let result = inventory(&markup, document_url, MAX_REFERENCES)
         .map_err(|error| format!("visual candidate inventory rejected input: {error:?}"))?;
@@ -91,6 +92,7 @@ fn inspect(path: &Path, document_url: &str) -> Result<Value, String> {
 
     Ok(json!({
         "diagnostic_only": true,
+        "html_input_sha256": input_sha256,
         "inventory_sha256": inventory_fingerprint(&result.candidates, document_url),
         "required_media_verified": result.required_media_verified,
         "css_and_font_dependencies_verified": result.css_and_font_dependencies_verified,
@@ -136,15 +138,16 @@ mod tests {
     #[test]
     fn candidate_report_is_explicitly_unverified_and_deterministic() {
         let path = fixture_path();
-        fs::write(
-            &path,
-            r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#,
-        )
-        .unwrap();
+        let markup = r#"<img src="a.png"><img src="a.png"><style>.x{background:url(b.svg)}</style>"#;
+        fs::write(&path, markup).unwrap();
         let report = inspect(&path, "https://en.wikipedia.org/wiki/Test").unwrap();
         fs::remove_file(path).unwrap();
 
         assert_eq!(report["diagnostic_only"], true);
+        assert_eq!(
+            report["html_input_sha256"],
+            format!("{:x}", Sha256::digest(markup.as_bytes()))
+        );
         assert_eq!(report["required_media_verified"], false);
         assert_eq!(report["css_and_font_dependencies_verified"], false);
         assert_eq!(report["observed_references"], 3);
