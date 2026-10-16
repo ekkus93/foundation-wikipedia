@@ -243,6 +243,34 @@ class InventoryTests(unittest.TestCase):
                     vis.inventory(page)
         self.assertEqual(0, vis.inventory('<div class="a" class="b">')["count"])
 
+    def test_svg_filter_image_is_a_required_visual_candidate(self):
+        page = (
+            '<svg><filter id="blur"><feImage href="/filter.png"/></filter>'
+            '<image xlink:href="/diagram.svg"/>'
+            '<use href="#local"/><feImage href="#internal"/></svg>'
+        )
+        result = vis.inventory(page)
+        self.assertEqual(
+            {("svg_filter_image", "/filter.png"),
+             ("svg_image", "/diagram.svg")},
+            {(item["kind"], item["url"]) for item in result["candidates"]},
+        )
+        self.assertEqual(4, result["observed_references"])
+        self.assertFalse(result["required_media_verified"])
+
+    def test_conflicting_svg_href_aliases_fail_closed(self):
+        for tag in ("image", "feImage", "use"):
+            with self.subTest(tag=tag):
+                with self.assertRaisesRegex(vis.InventoryError, "conflicting SVG"):
+                    vis.inventory(
+                        '<svg><' + tag + ' href="/a.png" '
+                        'xlink:href="/b.png"/></svg>'
+                    )
+        result = vis.inventory(
+            '<svg><feImage href="/same.png" xlink:href="/same.png"/></svg>'
+        )
+        self.assertEqual(1, result["count"])
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

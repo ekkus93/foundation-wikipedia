@@ -180,10 +180,16 @@ class _Collector(HTMLParser):
                     "data" if tag == "object" else "src"))
         elif tag == "video" and attrs.get("poster"):
             self._add("av_preview", attrs["poster"])
-        elif tag == "image" and self.svg_depth:
-            self._add("svg_image", attrs.get("href") or attrs.get("xlink:href"))
-        elif tag == "use" and self.svg_depth:
-            self._add("svg_use", attrs.get("href") or attrs.get("xlink:href"))
+        elif tag in ("image", "feimage", "use") and self.svg_depth:
+            # HTMLParser lowercases SVG tag names. SVG filters can load
+            # external images through feImage as well as ordinary <image>.
+            href = attrs.get("href")
+            legacy_href = attrs.get("xlink:href")
+            if href and legacy_href and href != legacy_href:
+                raise InventoryError("conflicting SVG resource attributes")
+            kind = {"image": "svg_image", "feimage": "svg_filter_image",
+                    "use": "svg_use"}[tag]
+            self._add(kind, href or legacy_href)
         elif tag == "style":
             self.inline_styles += 1
             if self.inline_styles > self.limit:
