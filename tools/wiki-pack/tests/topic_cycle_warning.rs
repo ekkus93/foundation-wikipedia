@@ -128,3 +128,49 @@ fn topic_preview_json_reports_multiple_independent_cycles() {
         ]
     );
 }
+
+#[test]
+fn topic_preview_caps_cycle_warning_count() {
+    let path = std::env::temp_dir().join(format!(
+        "fw-topic-cycle-cap-{}.json",
+        std::process::id()
+    ));
+    let names: Vec<String> = (0..10).map(|i| format!("Loop{i:02}")).collect();
+    let mut categories = vec![serde_json::json!({
+        "name": "Root",
+        "articles": [1],
+        "children": names
+    })];
+    for name in &names {
+        categories.push(serde_json::json!({
+            "name": name,
+            "children": [name]
+        }));
+    }
+    let input = serde_json::json!({
+        "snapshot_id": "snapshot-1",
+        "roots": ["Root"],
+        "depth_limit": 2,
+        "page_limit": 10,
+        "categories": categories
+    });
+    fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
+        .args(["preview-topic", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["selected_page_ids"], serde_json::json!([1]));
+    let warnings = report["warnings"].as_array().unwrap();
+    let cycles = warnings
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|text| text.starts_with("Category cycle detected:"))
+        .count();
+    assert_eq!(cycles, 8);
+    let overflow = "Additional category cycles omitted after 8 warnings";
+    assert!(warnings.iter().any(|warning| warning.as_str() == Some(overflow)));
+}
