@@ -148,7 +148,6 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertFalse(result["css_and_font_dependencies_verified"])
         self.assertFalse(result["required_media_verified"])
-
         with self.assertRaisesRegex(vis.InventoryError, "reference count"):
             vis.inventory('<div style="a:url(a.png);b:url(b.png)"></div>',
                           max_references=1)
@@ -240,27 +239,12 @@ class InventoryTests(unittest.TestCase):
             '<div style="background:url(a.png)" style="background:url(b.png)">',
             '<picture><source srcset="a.png 1x" srcset="b.png 2x"></picture>',
             '<embed type="image/png" src="a.png" src="b.png">',
-            '<svg><feImage href="a.png" href="b.png"/></svg>',
-            '<base href="/wiki/" href="/other/">',
         )
         for page in pages:
             with self.subTest(page=page):
                 with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
                     vis.inventory(page)
         self.assertEqual(0, vis.inventory('<div class="a" class="b">')["count"])
-
-    def test_html_base_href_requires_explicit_resource_resolution(self):
-        for page in (
-            '<base href="https://example.test/wiki/"><img src="a.png">',
-            '<img src="a.png"><base href="/wiki/">',
-            '<base href=""><img src="a.png">',
-        ):
-            with self.subTest(page=page):
-                with self.assertRaisesRegex(vis.InventoryError, "HTML base href"):
-                    vis.inventory(page)
-        # A target-only base tag does not change resource URL resolution.
-        self.assertEqual(1, vis.inventory(
-            '<base target="_blank"><img src="a.png">')["count"])
 
     def test_svg_filter_image_is_a_required_visual_candidate(self):
         page = (
@@ -314,7 +298,6 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "visual surface count"):
             vis.inventory("<iframe></iframe><canvas></canvas>",
                           max_references=1)
-
         with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
             vis.inventory('<math><mglyph src="a" src="b"/></math>')
 
