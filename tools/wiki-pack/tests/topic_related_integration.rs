@@ -1,9 +1,7 @@
 use std::{fs, process::Command};
 
 fn preview(input: &serde_json::Value) -> (bool, serde_json::Value) {
-    let path = std::env::temp_dir().join(format!(
-        "fw-related-topic-{}.json", std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("fw-related-topic-{}.json", std::process::id()));
     fs::write(&path, serde_json::to_vec(input).unwrap()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
         .args(["preview-topic", "--json"])
@@ -14,7 +12,10 @@ fn preview(input: &serde_json::Value) -> (bool, serde_json::Value) {
     if output.status.success() {
         (true, serde_json::from_slice(&output.stdout).unwrap())
     } else {
-        (false, serde_json::json!(String::from_utf8_lossy(&output.stderr).to_string()))
+        (
+            false,
+            serde_json::json!(String::from_utf8_lossy(&output.stderr).to_string()),
+        )
     }
 }
 
