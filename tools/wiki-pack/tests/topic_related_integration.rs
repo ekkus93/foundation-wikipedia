@@ -1,7 +1,14 @@
 use std::{fs, process::Command};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 fn preview(input: &serde_json::Value) -> (bool, serde_json::Value) {
-    let path = std::env::temp_dir().join(format!("fw-related-topic-{}.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "fw-related-topic-{}-{}.json",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
     fs::write(&path, serde_json::to_vec(input).unwrap()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
         .args(["preview-topic", "--json"])
