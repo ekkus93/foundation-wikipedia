@@ -20,6 +20,18 @@ struct Input {
 }
 
 fn inspect(path: &Path) -> Result<Value, String> {
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let info = fs::symlink_metadata(ancestor)
+                .map_err(|error| format!("cannot inspect CSS graph path: {error}"))?;
+            if info.file_type().is_symlink() {
+                return Err("CSS graph input path contains a symlink".into());
+            }
+        }
+    }
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("cannot stat CSS graph: {error}"))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
