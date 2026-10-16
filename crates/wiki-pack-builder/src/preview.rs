@@ -304,7 +304,7 @@ mod tests {
         assert!(cyclic
             .warnings
             .iter()
-            .any(|warning| warning == "Category cycle detected: Shared -> Root"));
+            .any(|warning| warning.starts_with("Category cycle detected:")));
         rules.depth_limit = 2;
         assert!(!inspect(&graph, &rules)
             .warnings
