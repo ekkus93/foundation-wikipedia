@@ -315,6 +315,14 @@ class InventoryTests(unittest.TestCase):
              ("css_url", "https://wiki.example/assets/css/fonts/wiki.woff2")},
             entries,
         )
+        transcript = json.dumps(found["candidates"], ensure_ascii=True,
+                                sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self.assertEqual(
+            hashlib.sha256(
+                b"foundation-wikipedia/css-url-graph/v1\\0" + transcript
+            ).hexdigest(),
+            found["inventory_sha256"],
+        )
         self.assertFalse(found["required_media_verified"])
         self.assertFalse(found["css_and_font_dependencies_verified"])
         self.assertEqual(found["inventory_sha256"],

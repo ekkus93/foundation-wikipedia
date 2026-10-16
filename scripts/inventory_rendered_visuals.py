@@ -317,7 +317,7 @@ def inventory_css_dependency_graph(roots, stylesheets, max_references=MAX_REFERE
         "count": len(candidates),
         "candidates": candidates,
         "inventory_sha256": hashlib.sha256(
-            b"foundation-wikipedia/css-url-graph/v1\\0" + transcript
+            b"foundation-wikipedia/css-url-graph/v1\0" + transcript
         ).hexdigest(),
         "css_and_font_dependencies_verified": False,
         "required_media_verified": False,
