@@ -59,6 +59,18 @@ fn safe_category_name(name: &str) -> bool {
 }
 
 pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let info = fs::symlink_metadata(ancestor)
+                .map_err(|error| format!("cannot inspect preview input path: {error}"))?;
+            if info.file_type().is_symlink() {
+                return Err("preview input path contains a symlink".into());
+            }
+        }
+    }
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("cannot stat preview input: {error}"))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -264,5 +276,19 @@ mod input_tests {
         fs::remove_file(&link).unwrap();
         fs::remove_file(&target).unwrap();
         assert!(error.contains("regular file"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_parent_directory() {
+        let root = test_path();
+        let link = test_path();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("input.json"), b"{}").unwrap();
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        let error = run(&link.join("input.json"), true).unwrap_err();
+        fs::remove_file(&link).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert!(error.contains("contains a symlink"), "{error}");
     }
 }
