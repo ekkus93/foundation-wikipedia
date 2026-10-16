@@ -54,20 +54,38 @@ fn inventory_visuals_process_reports_candidates_without_claiming_verified_media(
 #[test]
 fn inventory_visuals_process_resolves_html_base_and_rejects_ambiguous_base() {
     let path = fixture_path();
-    fs::write(&path, "<base href='https://upload.wikimedia.org/media/'><img src='a.svg'>").unwrap();
+    fs::write(
+        &path,
+        "<base href='https://upload.wikimedia.org/media/'><img src='a.svg'>",
+    )
+    .unwrap();
     let output = command()
         .arg("inventory-visuals")
         .arg(&path)
         .arg("https://en.wikipedia.org/wiki/Test")
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["html_base_url"], "https://upload.wikimedia.org/media/");
-    assert_eq!(report["candidates"][0]["url"], "https://upload.wikimedia.org/media/a.svg");
+    assert_eq!(
+        report["html_base_url"],
+        "https://upload.wikimedia.org/media/"
+    );
+    assert_eq!(
+        report["candidates"][0]["url"],
+        "https://upload.wikimedia.org/media/a.svg"
+    );
     assert_eq!(report["required_media_verified"], false);
 
-    fs::write(&path, "<base href='https://a.test/'><base href='https://b.test/'><img src='a.svg'>").unwrap();
+    fs::write(
+        &path,
+        "<base href='https://a.test/'><base href='https://b.test/'><img src='a.svg'>",
+    )
+    .unwrap();
     let duplicate = command()
         .arg("inventory-visuals")
         .arg(&path)
