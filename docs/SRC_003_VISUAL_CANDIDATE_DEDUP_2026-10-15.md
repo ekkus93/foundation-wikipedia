@@ -89,3 +89,7 @@ and [Renderer 38830731899](https://github.com/ekkus93/foundation-wikipedia/actio
 all passed. This is a bounded diagnostic improvement, not a complete media
 inventory, authenticated source, verified attribution or offline-ready pack.
 SRC-003 and PACK-003 remain unchecked.
+
+## Empty srcset candidates — qualified 2026-10-16 UTC
+
+At exact source SHA `1c524975b6833632b1a837027ac560a64e564ba2`, the diagnostic inventory now rejects leading, consecutive or trailing empty comma-delimited `srcset` entries rather than silently omitting them. Synthetic regressions cover all three positions. Ralph Bridge operation `462cd56f9f914422b4707e5d3e411646` accepted and verified the direct-master source change. Exact-head [Rust 38836350370](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38836350370), [Platform 38836350351](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38836350351) and [Renderer 38836350359](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38836350359) all passed. The simplified `srcset` parser is not yet a production-complete media resolver, and SRC-003/PACK-003 remain unchecked.
