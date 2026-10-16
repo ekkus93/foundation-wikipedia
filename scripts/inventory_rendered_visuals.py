@@ -81,7 +81,7 @@ class _Collector(HTMLParser):
             if len(tokens) == 2:
                 descriptor = tokens[1]
                 valid = (len(descriptor) <= 32 and re.fullmatch(
-                    r"(?:[1-9][0-9]*w|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)x)",
+                    r"(?:[1-9][0-9]*w|(?:[0-9]+(?:[.][0-9]*)?|[.][0-9]+)x)",
                     descriptor,
                 ))
                 if not valid or (descriptor.endswith("x") and float(descriptor[:-1]) <= 0):
