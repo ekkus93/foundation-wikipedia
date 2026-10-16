@@ -54,8 +54,14 @@ class _Collector(HTMLParser):
             if parsed.scheme not in ("http", "https"):
                 self.unsupported_schemes += 1
                 return
-            if not parsed.netloc or "@" in parsed.netloc:
+            if not parsed.netloc or "@" in parsed.netloc or not parsed.hostname:
                 raise InventoryError("unsafe visual candidate authority")
+            try:
+                port = parsed.port
+            except ValueError as error:
+                raise InventoryError("invalid visual candidate port") from error
+            if port == 0:
+                raise InventoryError("invalid visual candidate port")
         elif parsed.netloc:
             raise InventoryError("ambiguous visual candidate authority")
         self.urls.add((kind, source))

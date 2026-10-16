@@ -52,7 +52,11 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(vis.InventoryError, "invalid visual reference budget"):
             vis.inventory("", max_references=0)
         for value in ("https://user:password@host.invalid/a", "http://[bad-ip/a",
-                      "https://example.test/" + "x" * 4200):
+                      "https://example.test/" + "x" * 4200,
+                      "https://example.test:invalid/a",
+                      "https://example.test:65536/a",
+                      "https://example.test:0/a",
+                      "https://:443/a"):
             with self.subTest(value=value[:24]):
                 with self.assertRaises(vis.InventoryError):
                     vis.inventory('<img src="' + value + '">')
