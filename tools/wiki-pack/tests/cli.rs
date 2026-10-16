@@ -426,7 +426,10 @@ fn cli_json_preview_is_deterministic_and_explicitly_untrusted() {
     let mut normalized = parsed.clone();
     normalized.as_object_mut().unwrap().remove("input_sha256");
     let mut reordered_normalized = again.clone();
-    reordered_normalized.as_object_mut().unwrap().remove("input_sha256");
+    reordered_normalized
+        .as_object_mut()
+        .unwrap()
+        .remove("input_sha256");
     assert_eq!(normalized, reordered_normalized);
 
     fs::write(
