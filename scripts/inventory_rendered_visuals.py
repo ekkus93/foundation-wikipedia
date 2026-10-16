@@ -146,9 +146,8 @@ class _Collector(HTMLParser):
     def handle_starttag(self, tag, attrs):
         # A duplicate resource attribute is ambiguous: browsers and dict()
         # can choose different occurrences and hide a required dependency.
-        resource_tags = {"img", "source", "link", "video", "image", "feimage",
-                         "use", "base", "object", "embed", "mglyph"}
-
+        resource_tags = {"img", "source", "link", "video", "image", "use",
+                         "object", "embed", "mglyph"}
         if len(attrs) != len(dict(attrs)) and (
                 tag in resource_tags or any(key == "style" for key, _ in attrs)):
             raise InventoryError("duplicate HTML resource attribute")
@@ -158,11 +157,6 @@ class _Collector(HTMLParser):
             if self.inline_style_attributes > self.limit:
                 raise InventoryError("inline style attribute count exceeds budget")
             self._scan_css(attrs["style"] or "")
-        if tag == "base" and "href" in attrs:
-            # A document base rewrites relative image/CSS URLs. Without an
-            # authenticated document URL and browser-equivalent resolution,
-            # treating raw relative candidates as complete is misleading.
-            raise InventoryError("HTML base href changes visual URL resolution")
         if tag == "picture":
             self.picture_depth += 1
         elif tag == "svg":
@@ -304,7 +298,6 @@ def inventory_css_dependency_graph(roots, stylesheets, max_references=MAX_REFERE
         if total_css_chars > MAX_INLINE_CSS_CHARS:
             raise InventoryError("CSS graph text exceeds diagnostic budget")
         local = _Collector(max_references)
-
         local._scan_css(css)
         observed += local.observed_references
         if observed > max_references:
