@@ -208,6 +208,20 @@ class InventoryTests(unittest.TestCase):
                           '<embed type="image/png" src="same.png">',
                           max_references=1)
 
+    def test_duplicate_resource_attributes_fail_closed(self):
+        pages = (
+            '<img src="a.png" src="b.png">',
+            '<link rel="stylesheet" href="/a.css" href="/b.css">',
+            '<div style="background:url(a.png)" style="background:url(b.png)">',
+            '<picture><source srcset="a.png 1x" srcset="b.png 2x"></picture>',
+            '<embed type="image/png" src="a.png" src="b.png">',
+        )
+        for page in pages:
+            with self.subTest(page=page):
+                with self.assertRaisesRegex(vis.InventoryError, "duplicate HTML"):
+                    vis.inventory(page)
+        self.assertEqual(0, vis.inventory('<div class="a" class="b">')["count"])
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'

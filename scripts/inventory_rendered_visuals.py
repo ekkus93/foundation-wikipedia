@@ -140,6 +140,13 @@ class _Collector(HTMLParser):
             self.inline_css_chars -= len(data)  # Count once when scanning.
 
     def handle_starttag(self, tag, attrs):
+        # A duplicate resource attribute is ambiguous: browsers and dict()
+        # can choose different occurrences and hide a required dependency.
+        resource_tags = {"img", "source", "link", "video", "image", "use",
+                         "object", "embed"}
+        if len(attrs) != len(dict(attrs)) and (
+                tag in resource_tags or any(key == "style" for key, _ in attrs)):
+            raise InventoryError("duplicate HTML resource attribute")
         attrs = dict(attrs)
         if "style" in attrs:
             self.inline_style_attributes += 1
