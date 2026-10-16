@@ -584,3 +584,11 @@ Bridge v0.6.2, build `0acea4b23362e2ccecab8f6c9db4418b162426cf`, instance `2b818
 - Test asserts that an administrative category is skipped and never selected, a cycle beyond the configured depth does not warn, and expanding the depth exposes the real cycle without changing selected page IDs.
 - Exact-head Rust workspace CI `38964778809` and Platform shells CI `38964778776` both passed at `0fbc482026ba052216c23d7f3b3fa0d44d6d7b91`. A bounded 60-second CI observation timed out while both workflows were still running; a second bounded observation reported both complete and successful. This timeout is not a CI failure.
 - Classification: confirmed successful test implementation and qualification; separate platform safety denials for the uncommitted multi-cycle feature. No user credentials or hardware were needed.
+
+## 2026-10-16 20:58 UTC — PACK-002 rustfmt gate and denied repairs
+
+- Exact `master` `b0ac3d1e9f725975cac018e4c44103815ab94c00`; canonical TODO 1,536 lines/blob `ec594ed49cf4fff5e1c7ab42fca927881be55df5`; SRC-003 census 346 lines/blob `0191d49981243930fce5039d03225248068ac51d`.
+- Bridge v0.6.2/build `0acea4b23362e2ccecab8f6c9db4418b162426cf`, instance `090878b555454b658a84fd67850085fe`, started 2026-10-16T16:03:29.198120Z, auth app.
+- Confirmed authored CI formatting failure: Rust workflow 38965595531, job 117191156393, Format step 4, bounded lines 298-337: extra blank lines in `crates/wiki-pack-builder/src/preview.rs` near lines 148 and 299. Platform workflow 38965595345 passed on same SHA. Parent SHA 2550e037f3afb1ba9fe9832e6cbc11112d68919e also failed Rust Format (38965460729).
+- Two attempted exact-head UTF-8 source upserts (`create_or_update_file`, `commit_files`) and one exact-parent `restore_file_from_ref` were denied by the outer platform before Ralph operation IDs; exact message `This tool call was blocked by OpenAI's safety checks. Please double check what you are sending.` Source SHA remained unchanged after reconciliation. Classification: platform safety denial for writes; independent confirmed source rustfmt failure, not demonstrated GitHub API failure.
+- No CI qualification or successful repair is claimed for these denied writes.
