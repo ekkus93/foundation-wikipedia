@@ -85,3 +85,42 @@ fn administrative_and_depth_limited_edges_do_not_trigger_false_cycle_warnings() 
             .is_some_and(|s| s.starts_with("Category cycle detected:"))
     }));
 }
+
+#[test]
+fn topic_preview_json_reports_multiple_independent_cycles() {
+    let path = std::env::temp_dir().join(format!("fw-topic-multi-cycle-{}.json", std::process::id()));
+    let input = serde_json::json!({
+        "snapshot_id": "snapshot-1",
+        "roots": ["Root"],
+        "depth_limit": 3,
+        "page_limit": 10,
+        "categories": [
+            {"name": "Root", "articles": [1], "children": ["A", "C"]},
+            {"name": "A", "articles": [2], "children": ["B"]},
+            {"name": "B", "children": ["A"]},
+            {"name": "C", "articles": [3], "children": ["D"]},
+            {"name": "D", "children": ["C"]}
+        ]
+    });
+    fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
+        .args(["preview-topic", "--json"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["selected_page_ids"], serde_json::json!([1, 2, 3]));
+    let cycles: Vec<&str> = report["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|warning| warning.starts_with("Category cycle detected:"))
+        .collect();
+    assert_eq!(
+        cycles,
+        vec!["Category cycle detected: B -> A", "Category cycle detected: D -> C"]
+    );
+}
