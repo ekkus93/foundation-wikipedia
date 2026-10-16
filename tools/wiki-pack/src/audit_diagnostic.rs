@@ -151,12 +151,10 @@ pub fn run(
     println!("Official publisher, independent census and generation scope: NOT AUTHENTICATED");
     println!("Rendered HTML, mandatory media and offline pack readiness: NOT VERIFIED");
     Ok(counts.observed_count)
-
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
