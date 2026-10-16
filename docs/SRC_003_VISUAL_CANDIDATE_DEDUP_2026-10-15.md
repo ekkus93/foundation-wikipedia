@@ -72,3 +72,20 @@ The update rejects malformed/unsupported responsive-media candidates rather
 than falsely treating them as verified local assets. It does not establish
 complete srcset or CSS parsing, Commons media provenance, verified offline
 resource bytes, or any release acceptance.
+
+## Observed-reference budget — qualified 2026-10-16 UTC
+
+At exact master SHA `0bad2d152e81d6b33daa6c8172460524c396a5b6`,
+the visual inventory now counts all references before deduplication, including
+repeated URLs, missing sources, unsupported schemes and SVG fragments. It
+exposes `observed_references` separately from the distinct candidate count.
+Synthetic regression tests cover duplicate URLs, missing/unsupported sources,
+SVG fragments and repeated responsive variants at a one-reference budget.
+
+Ralph operation `98474e926fce41519e21eb42bdc5d90c` was accepted and verified.
+Exact-head [Rust 38830731817](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38830731817),
+[Platform 38830731900](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38830731900)
+and [Renderer 38830731899](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38830731899)
+all passed. This is a bounded diagnostic improvement, not a complete media
+inventory, authenticated source, verified attribution or offline-ready pack.
+SRC-003 and PACK-003 remain unchecked.
