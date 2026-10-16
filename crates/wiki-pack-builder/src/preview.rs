@@ -181,7 +181,10 @@ mod tests {
             }),
             preview.largest_category
         );
-        assert!(preview.warnings.iter().any(|w| w.contains("Skipped administrative")));
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|w| w.contains("Skipped administrative")));
     }
 
     #[test]
@@ -210,7 +213,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(100, preview.selected_page_count);
-        assert!(preview.warnings.iter().any(|w| w.contains("Selection near page limit")));
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|w| w.contains("Selection near page limit")));
         assert_eq!(
             preview.selection,
             resolve_pinned(
