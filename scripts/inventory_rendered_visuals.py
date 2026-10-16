@@ -165,6 +165,12 @@ class _Collector(HTMLParser):
                     self._add("preload_" + resource_type, attrs.get("href"))
                     if resource_type == "image" and "imagesrcset" in attrs:
                         self._srcset("preload_responsive_image", attrs["imagesrcset"])
+        elif tag in ("object", "embed"):
+            # Only explicitly image-typed embeds can be classified safely.
+            media_type = (attrs.get("type") or "").split(";", 1)[0].strip().lower()
+            if media_type.startswith("image/"):
+                self._add("embedded_image", attrs.get(
+                    "data" if tag == "object" else "src"))
         elif tag == "video" and attrs.get("poster"):
             self._add("av_preview", attrs["poster"])
         elif tag == "image" and self.svg_depth:

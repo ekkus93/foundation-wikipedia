@@ -192,6 +192,22 @@ class InventoryTests(unittest.TestCase):
             vis.inventory('<link rel="preload" as="image" '
                           'imagesrcset="/a.png 1x, /b.png 1.0x">')
 
+    def test_explicit_image_embeds_are_separate_resource_candidates(self):
+        result = vis.inventory(
+            '<object type="image/svg+xml" data="/diagram.svg"></object>'
+            '<embed type="image/png; charset=binary" src="/plot.png">'
+            '<object type="application/pdf" data="/not-image.pdf"></object>'
+        )
+        self.assertEqual(
+            {("embedded_image", "/diagram.svg"), ("embedded_image", "/plot.png")},
+            {(x["kind"], x["url"]) for x in result["candidates"]},
+        )
+        self.assertFalse(result["required_media_verified"])
+        with self.assertRaisesRegex(vis.InventoryError, "reference count"):
+            vis.inventory('<embed type="image/png" src="same.png">'
+                          '<embed type="image/png" src="same.png">',
+                          max_references=1)
+
     def test_reports_unsupported_urls_without_exporting_them(self):
         result = vis.inventory(
             '<img src="data:image/png;base64,a"><img src="javascript:alert(1)">'
