@@ -48,7 +48,9 @@ fn audit_cli_reports_consumed_record_and_expected_census_digests() {
     let success = invoke(&census_pin);
     assert!(success.status.success(), "{success:?}");
     let stdout = String::from_utf8(success.stdout).unwrap();
-    assert!(stdout.contains(&format!("Expected census SHA-256 (caller pin): {census_pin}")));
+    assert!(stdout.contains(&format!(
+        "Expected census SHA-256 (caller pin): {census_pin}"
+    )));
     assert!(stdout.contains(&format!("Revision-content SHA-256 (consumed): {revision_pin}")));
     assert!(stdout.contains("NOT AUTHENTICATED"));
     let failed = invoke(&"0".repeat(64));
