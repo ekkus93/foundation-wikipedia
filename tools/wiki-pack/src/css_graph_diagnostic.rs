@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use wiki_pack_builder::visual_discovery::{inventory_supplied_css_graph, MAX_REFERENCES};
 
 const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
@@ -55,6 +56,7 @@ fn inspect(path: &Path) -> Result<Value, String> {
     if bytes.len() as u64 > MAX_INPUT_BYTES {
         return Err("CSS graph JSON input exceeds the size limit".into());
     }
+    let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let input: Input = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid CSS graph JSON: {error}"))?;
     let result = inventory_supplied_css_graph(&input.roots, &input.stylesheets, MAX_REFERENCES)
@@ -66,6 +68,7 @@ fn inspect(path: &Path) -> Result<Value, String> {
         .collect();
     Ok(json!({
         "diagnostic_only": true,
+        "input_sha256": input_sha256,
         "stylesheets_inspected": result.stylesheets_inspected,
         "observed_references": result.observed_references,
         "unique_candidate_count": candidates.len(),
