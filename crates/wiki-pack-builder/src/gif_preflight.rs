@@ -55,32 +55,30 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
         };
         match marker {
             0x3b => return seen_image && at + 1 == bytes.len(),
-            0x21 => {
-                match bytes.get(at + 1) {
-                    Some(0xf9) => {
-                        if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
-                            return false;
-                        }
-                        at += 8;
+            0x21 => match bytes.get(at + 1) {
+                Some(0xf9) => {
+                    if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
+                        return false;
                     }
-                    Some(0xfe) => {
-                        let Some(end) = skip_blocks(bytes, at + 2) else {
-                            return false;
-                        };
-                        at = end;
-                    }
-                    Some(0xff) | Some(0x01) => {
-                        let expected = if bytes[at + 1] == 0xff { 11 } else { 12 };
-                        if bytes.get(at + 2) != Some(&expected) {
-                            return false;
-                        }
-                        let Some(end) = skip_blocks(bytes, at + 2) else {
-                            return false;
-                        };
-                        at = end;
-                    }
-                    _ => return false,
+                    at += 8;
                 }
+                Some(0xfe) => {
+                    let Some(end) = skip_blocks(bytes, at + 2) else {
+                        return false;
+                    };
+                    at = end;
+                }
+                Some(0xff) | Some(0x01) => {
+                    let expected = if bytes[at + 1] == 0xff { 11 } else { 12 };
+                    if bytes.get(at + 2) != Some(&expected) {
+                        return false;
+                    }
+                    let Some(end) = skip_blocks(bytes, at + 2) else {
+                        return false;
+                    };
+                    at = end;
+                }
+                _ => return false,
             },
             0x2c => {
                 if at + 10 > bytes.len() {
@@ -173,7 +171,10 @@ mod tests {
         assert!(gif_container_preflight(&single));
 
         let mut repeated = single.clone();
-        repeated.splice(single.len() - 1..single.len() - 1, single[19..single.len() - 1].iter().copied());
+        repeated.splice(
+            single.len() - 1..single.len() - 1,
+            single[19..single.len() - 1].iter().copied(),
+        );
         assert!(!gif_container_preflight(&repeated));
     }
 
