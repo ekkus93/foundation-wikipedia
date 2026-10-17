@@ -3,6 +3,7 @@
 //! Wikimedia snapshot; missing category pages are rejected, not invented.
 use std::collections::{BTreeMap, BTreeSet};
 
+use wiki_pack_format::Sha256Transcript;
 use wiki_source::enterprise::JoinedEnterpriseArticle;
 
 use crate::selection::{resolve_pinned, Category, PinnedResolution, ResolveError, Rules};
@@ -167,9 +168,42 @@ pub struct RevisionPinnedSelection {
     pub unresolved_redirect_titles: BTreeSet<String>,
 }
 
-fn append_text(out: &mut Vec<u8>, value: &str) {
-    out.extend_from_slice(&(value.len() as u64).to_be_bytes());
-    out.extend_from_slice(value.as_bytes());
+fn append_text(digest: &mut Sha256Transcript, value: &str) {
+    digest.update(&(value.len() as u64).to_be_bytes());
+    digest.update(value.as_bytes());
+}
+
+/// Stream the original v2 revision receipt encoding without retaining a
+/// potentially full-snapshot-sized byte transcript in memory.
+fn revision_receipt_sha256(
+    project: &str,
+    generation_id: &str,
+    selection_sha256: &str,
+    joined_page_revisions: &BTreeMap<u64, u64>,
+    unresolved_redirect_titles: &BTreeSet<String>,
+    page_revisions: &BTreeMap<u64, u64>,
+) -> String {
+    let mut digest = Sha256Transcript::new();
+    digest.update(b"foundation-wikipedia/revision-pinned-selection/v2\0");
+    append_text(&mut digest, project);
+    append_text(&mut digest, generation_id);
+    append_text(&mut digest, selection_sha256);
+    // Include every joined page identity, including category revisions.
+    digest.update(&(joined_page_revisions.len() as u64).to_be_bytes());
+    for (id, revision) in joined_page_revisions {
+        digest.update(&id.to_be_bytes());
+        digest.update(&revision.to_be_bytes());
+    }
+    digest.update(&(unresolved_redirect_titles.len() as u64).to_be_bytes());
+    for title in unresolved_redirect_titles {
+        append_text(&mut digest, title);
+    }
+    digest.update(&(page_revisions.len() as u64).to_be_bytes());
+    for (id, revision) in page_revisions {
+        digest.update(&id.to_be_bytes());
+        digest.update(&revision.to_be_bytes());
+    }
+    digest.finish_hex()
 }
 
 /// Resolve against an already revision-joined batch, refusing explicit and
@@ -230,34 +264,20 @@ pub fn resolve_joined_revision_pinned_with_redirects(
             .ok_or(JoinedSelectionError::NotMainspace(*id))?;
         page_revisions.insert(*id, *revision);
     }
-    let mut bytes = b"foundation-wikipedia/revision-pinned-selection/v2\0".to_vec();
-    append_text(&mut bytes, &joined.project);
-    append_text(&mut bytes, &joined.generation_id);
-    append_text(&mut bytes, &selection.snapshot_selection_sha256);
-    // Bind the complete supplied joined page identity map, including category
-    // source revisions, even when the selected page IDs do not change.
-    bytes.extend_from_slice(&(joined.page_revisions.len() as u64).to_be_bytes());
-    for (id, revision) in &joined.page_revisions {
-        bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.extend_from_slice(&revision.to_be_bytes());
-    }
-    // Title aliases must not be mistaken for page-ID redirects, but drift in
-    // the supplied alias inventory must still invalidate the local receipt.
-    bytes.extend_from_slice(&(joined.unresolved_redirect_titles.len() as u64).to_be_bytes());
-    for title in &joined.unresolved_redirect_titles {
-        append_text(&mut bytes, title);
-    }
-    bytes.extend_from_slice(&(page_revisions.len() as u64).to_be_bytes());
-    for (id, revision) in &page_revisions {
-        bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.extend_from_slice(&revision.to_be_bytes());
-    }
+    let revision_selection_sha256 = revision_receipt_sha256(
+        &joined.project,
+        &joined.generation_id,
+        &selection.snapshot_selection_sha256,
+        &joined.page_revisions,
+        &joined.unresolved_redirect_titles,
+        &page_revisions,
+    );
     Ok(RevisionPinnedSelection {
         project: joined.project,
         generation_id: joined.generation_id,
         selection,
         page_revisions,
-        revision_selection_sha256: wiki_pack_format::sha256_hex(&bytes),
+        revision_selection_sha256,
         unresolved_redirect_titles: joined.unresolved_redirect_titles,
     })
 }
@@ -337,4 +357,46 @@ fn validate_redirect_identities(
         }
     }
     Ok(redirects)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_revision_receipt_matches_legacy_v2_bytes() {
+        let all = BTreeMap::from([(1, 11), (90, 99), (123, 456)]);
+        let aliases = BTreeSet::from(["Alias".to_owned(), "Café".to_owned()]);
+        let selected = BTreeMap::from([(1, 11), (123, 456)]);
+        let actual = revision_receipt_sha256(
+            "enwiki",
+            "20261016",
+            "base-selection",
+            &all,
+            &aliases,
+            &selected,
+        );
+
+        let mut legacy = b"foundation-wikipedia/revision-pinned-selection/v2\0".to_vec();
+        for value in ["enwiki", "20261016", "base-selection"] {
+            legacy.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            legacy.extend_from_slice(value.as_bytes());
+        }
+        legacy.extend_from_slice(&(all.len() as u64).to_be_bytes());
+        for (id, revision) in &all {
+            legacy.extend_from_slice(&id.to_be_bytes());
+            legacy.extend_from_slice(&revision.to_be_bytes());
+        }
+        legacy.extend_from_slice(&(aliases.len() as u64).to_be_bytes());
+        for title in &aliases {
+            legacy.extend_from_slice(&(title.len() as u64).to_be_bytes());
+            legacy.extend_from_slice(title.as_bytes());
+        }
+        legacy.extend_from_slice(&(selected.len() as u64).to_be_bytes());
+        for (id, revision) in &selected {
+            legacy.extend_from_slice(&id.to_be_bytes());
+            legacy.extend_from_slice(&revision.to_be_bytes());
+        }
+        assert_eq!(actual, wiki_pack_format::sha256_hex(&legacy));
+    }
 }
