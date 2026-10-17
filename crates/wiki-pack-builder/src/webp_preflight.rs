@@ -16,6 +16,20 @@ fn le24(bytes: &[u8]) -> u32 {
     u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16)
 }
 
+/// Bound lossless WebP dimensions and reject unsupported version bits before decoding.
+fn valid_vp8l_header(payload: &[u8]) -> bool {
+    if payload.len() < 5 || payload[0] != 0x2f {
+        return false;
+    }
+    let bits = u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]]);
+    let width = (bits & 0x3fff) + 1;
+    let height = ((bits >> 14) & 0x3fff) + 1;
+    (bits >> 29) == 0
+        && width <= 16_384
+        && height <= 16_384
+        && u64::from(width) * u64::from(height) <= 64 * 1024 * 1024
+}
+
 fn valid_animation_frame(frame: &[u8]) -> bool {
     if frame.len() < 30 {
         return false;
@@ -45,6 +59,9 @@ fn valid_animation_frame(frame: &[u8]) -> bool {
             return false;
         };
         if next > frame.len() {
+            return false;
+        }
+        if chunk == b"VP8L" && !valid_vp8l_header(&frame[offset + 8..offset + 8 + size]) {
             return false;
         }
         if chunk == b"ALPH" && !seen_alpha && !seen_image && size > 0 {
@@ -141,6 +158,11 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
+        if chunk == b"VP8L"
+            && !valid_vp8l_header(&bytes[header_end..header_end + chunk_size])
+        {
+            return false;
+        }
         if chunk == b"ANMF" {
             let frame = &bytes[header_end..header_end + chunk_size];
             if !valid_animation_frame(frame) {
@@ -219,6 +241,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_lossless_header_version_signature_and_decompression_limits() {
+        assert!(webp_riff_preflight(WEBP));
+        let mut malformed = WEBP.to_vec();
+        malformed[20] = 0;
+        assert!(!webp_riff_preflight(&malformed));
+
+        let mut reserved_version = WEBP.to_vec();
+        reserved_version[24] = 0x20;
+        assert!(!webp_riff_preflight(&reserved_version));
+
+        let mut huge = WEBP.to_vec();
+        let oversized_dimensions = 0x3fff_u32 | (0x3fff_u32 << 14);
+        huge[21..25].copy_from_slice(&oversized_dimensions.to_le_bytes());
+        assert!(!webp_riff_preflight(&huge));
+    }
+
+    #[test]
     fn checks_all_trailing_riff_chunks_and_padding() {
         let mut with_metadata = WEBP.to_vec();
         with_metadata.extend_from_slice(b"EXIF\x00\x00\x00\x00");
@@ -284,6 +323,10 @@ mod tests {
         let riff_size = (sample.len() - 8) as u32;
         sample[4..8].copy_from_slice(&riff_size.to_le_bytes());
         assert!(webp_riff_preflight(&sample));
+
+        let mut malformed_frame_header = sample.clone();
+        malformed_frame_header[76] = 0;
+        assert!(!webp_riff_preflight(&malformed_frame_header));
 
         let mut no_animation_flag = sample.clone();
         no_animation_flag[20] = 0;
