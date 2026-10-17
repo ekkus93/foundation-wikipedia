@@ -89,7 +89,10 @@ fn expand_verified_links(
         if link.project != base.project || link.generation_id != base.generation_id {
             return Err(JoinedRelatedError::MixedSource);
         }
-        if link.from_page_id == 0 || link.from_revision_id == 0 || link.to_page_id == 0 {
+        if [link.from_page_id, link.from_revision_id, link.to_page_id]
+            .iter()
+            .any(|&id| id == 0 || id > i64::MAX as u64)
+        {
             return Err(JoinedRelatedError::InvalidPage);
         }
         for id in [link.from_page_id, link.to_page_id] {
@@ -393,6 +396,22 @@ mod tests {
             check(&[link(0, 2)], &base),
             Err(JoinedRelatedError::InvalidPage)
         );
+        for oversized in [
+            RelatedLinkIdentity {
+                from_page_id: i64::MAX as u64 + 1,
+                ..link(1, 2)
+            },
+            RelatedLinkIdentity {
+                from_revision_id: i64::MAX as u64 + 1,
+                ..link(1, 2)
+            },
+            RelatedLinkIdentity {
+                to_page_id: i64::MAX as u64 + 1,
+                ..link(1, 2)
+            },
+        ] {
+            assert_eq!(check(&[oversized], &base), Err(JoinedRelatedError::InvalidPage));
+        }
         let mut foreign = link(4, 2);
         foreign.generation_id = "other".into();
         assert_eq!(
