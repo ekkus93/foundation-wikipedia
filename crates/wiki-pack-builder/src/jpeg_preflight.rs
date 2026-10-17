@@ -17,6 +17,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     let mut at = 2_usize;
     let mut seen_frame = false;
     let mut baseline_frame = false;
+    let mut progressive_dct_frame = false;
     let mut seen_scan = false;
     let mut frame_ids = Vec::new();
     let mut baseline_scanned_ids = Vec::new();
@@ -92,6 +93,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             }
             seen_frame = true;
             baseline_frame = marker == 0xc0;
+            progressive_dct_frame = marker == 0xc2;
         }
         if marker == 0xc4 {
             if body.is_empty() {
@@ -178,6 +180,17 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             for id in &scan_ids {
                 if !scanned_frame_ids.contains(id) {
                     scanned_frame_ids.push(*id);
+                }
+            }
+            if progressive_dct_frame {
+                let spectral_start = body[body.len() - 3];
+                let spectral_end = body[body.len() - 2];
+                if spectral_end > 63
+                    || spectral_start > spectral_end
+                    || (spectral_start == 0 && spectral_end != 0)
+                    || (spectral_start != 0 && components != 1)
+                {
+                    return false;
                 }
             }
             if baseline_frame {
@@ -445,6 +458,7 @@ mod tests {
         progressive[5] = 14;
         progressive[11] = 2;
         progressive.splice(15..15, [2, 0x11, 0]);
+        progressive[26] = 0; // Progressive DC scan: Ss = Se = 0.
         assert!(!jpeg_container_preflight(&progressive));
 
         let at = progressive.len() - 2;
@@ -455,6 +469,21 @@ mod tests {
         let at = progressive.len() - 2;
         progressive.splice(at..at, [0xff, 0xda, 0, 8, 1, 1, 0, 0, 0, 0, 0x44]);
         assert!(jpeg_container_preflight(&progressive));
+    }
+
+    #[test]
+    fn progressive_dct_rejects_invalid_spectral_ranges() {
+        let mut valid = jpeg();
+        valid[3] = 0xc2; // SOF2.
+        valid[23] = 0; // DC-only scan.
+        assert!(jpeg_container_preflight(&valid));
+
+        for (start, end) in [(0, 1), (4, 3), (1, 64)] {
+            let mut invalid = valid.clone();
+            invalid[22] = start;
+            invalid[23] = end;
+            assert!(!jpeg_container_preflight(&invalid));
+        }
     }
 
     #[test]
