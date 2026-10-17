@@ -103,7 +103,7 @@ fn expand_verified_links(
             .entry(link.from_page_id)
             .or_default()
             .push(link.to_page_id);
-        canonical_edges.push((link.from_page_id, link.to_page_id));
+        canonical_edges.push((link.from_page_id, link.from_revision_id, link.to_page_id));
     }
     let expanded = expand_related_links(
         &base.selection.page_ids,
@@ -126,7 +126,7 @@ fn expand_verified_links(
     }
     canonical_edges.sort_unstable();
     canonical_edges.dedup();
-    let mut bytes = b"foundation-wikipedia/joined-related-revisions/v1\0".to_vec();
+    let mut bytes = b"foundation-wikipedia/joined-related-revisions/v2\0".to_vec();
     append_text(&mut bytes, &base.project);
     append_text(&mut bytes, &base.generation_id);
     append_text(&mut bytes, &base.revision_selection_sha256);
@@ -139,8 +139,9 @@ fn expand_verified_links(
         bytes.extend_from_slice(&(value as u64).to_be_bytes());
     }
     bytes.extend_from_slice(&(canonical_edges.len() as u64).to_be_bytes());
-    for (from, to) in canonical_edges {
+    for (from, revision, to) in canonical_edges {
         bytes.extend_from_slice(&from.to_be_bytes());
+        bytes.extend_from_slice(&revision.to_be_bytes());
         bytes.extend_from_slice(&to.to_be_bytes());
     }
     bytes.extend_from_slice(&(page_revisions.len() as u64).to_be_bytes());
@@ -249,6 +250,7 @@ mod tests {
         }
     }
 
+
     fn joined_link(from: u64, to: u64) -> RelatedLinkIdentity {
         let mut result = link(from, to);
         result.from_revision_id = from + 100;
@@ -281,6 +283,26 @@ mod tests {
         assert_eq!(
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 3),
             Err(JoinedRelatedError::Budget(ResolveError::TooManyPages))
+        );
+    }
+
+    #[test]
+    fn receipt_binds_unselected_link_source_revisions() {
+        let (base, mut mainspace, limits) = fixture();
+        // The edge source is not reachable from the seed, so neither the
+        // selected page IDs nor their revisions change.
+        let mut links = vec![link(4, 2)];
+        let first =
+            expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
+        assert_eq!(first.page_revisions, base.page_revisions);
+        mainspace.insert(4, 45);
+        links[0].from_revision_id = 45;
+        let changed =
+            expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
+        assert_eq!(changed.page_revisions, first.page_revisions);
+        assert_ne!(
+            changed.related_selection_sha256,
+            first.related_selection_sha256
         );
     }
 
