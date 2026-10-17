@@ -214,7 +214,6 @@ pub fn read_pack_raster_asset(
     })
 }
 
-
 /// Read a raster by its exact discovered source URL and return only notices
 /// registered for that URL. One digest can be referenced by several distinct
 /// sources, so a digest-wide notice collection is not always the correct
@@ -234,7 +233,9 @@ pub fn read_pack_raster_asset_for_source(
         .get(source_url)
         .ok_or(RasterAssetError::UnboundSource)?;
     let mut asset = read_pack_raster_asset(plan, local_uri, registry, pack_id, store)?;
-    asset.notices.retain(|notice| notice.source_url == source_url);
+    asset
+        .notices
+        .retain(|notice| notice.source_url == source_url);
     if asset.notices.is_empty() {
         return Err(RasterAssetError::MissingSourceNotice);
     }
@@ -521,15 +522,16 @@ mod tests {
         ));
         let mut other_source = second.clone();
         other_source.source_url = "https://en.wikipedia.org/other.png".into();
-        registry.register_verified_bytes(png, &other_source).unwrap();
+        registry
+            .register_verified_bytes(png, &other_source)
+            .unwrap();
         let filtered =
             read_pack_raster_asset_for_source(&plan, url, &registry, "physics", &store).unwrap();
         assert_eq!(filtered.notices, vec![notice.clone(), second]);
         let mut wrong_plan = plan.clone();
-        wrong_plan.source_to_local_uri.insert(
-            "https://en.wikipedia.org/missing.png".into(),
-            uri.clone(),
-        );
+        wrong_plan
+            .source_to_local_uri
+            .insert("https://en.wikipedia.org/missing.png".into(), uri.clone());
         assert!(matches!(
             read_pack_raster_asset_for_source(
                 &wrong_plan,
