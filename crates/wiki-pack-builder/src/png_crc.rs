@@ -93,9 +93,17 @@ mod tests {
         assert!(verify_png_chunk_crcs(&original));
         for kind in [b"IHDR", b"tEXt", b"IDAT", b"IEND"] {
             let mut altered = original.clone();
-            let index = altered.windows(4).position(|window| window == kind).unwrap();
-            let payload_or_crc = if kind == b"IEND" { index + 4 } else { index + 4 };
-            altered[payload_or_crc] ^= 1;
+            let index = altered
+                .windows(4)
+                .position(|window| window == kind)
+                .unwrap();
+            // Flip a structurally permitted IHDR byte; otherwise alter data or CRC.
+            let byte_to_corrupt = if kind == b"IHDR" {
+                index + 16
+            } else {
+                index + 4
+            };
+            altered[byte_to_corrupt] ^= 1;
             assert!(png_chunk_preflight(&altered));
             assert!(!verify_png_chunk_crcs(&altered));
         }
