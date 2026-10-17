@@ -16,6 +16,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     }
     let mut at = 2_usize;
     let mut seen_frame = false;
+    let mut baseline_frame = false;
     let mut seen_scan = false;
     let mut frame_ids = Vec::new();
     let mut restart_interval = 0_u16;
@@ -62,6 +63,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             let width = u16::from_be_bytes([body[3], body[4]]);
             let components = usize::from(body[5]);
             if !(8..=16).contains(&body[0])
+                || (marker == 0xc0 && body[0] != 8)
                 || width == 0
                 || height == 0
                 || width > 16_384
@@ -83,6 +85,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 frame_ids.push(entry[0]);
             }
             seen_frame = true;
+            baseline_frame = marker == 0xc0;
         }
         if marker == 0xc4 {
             if body.is_empty() {
@@ -165,6 +168,9 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                     return false;
                 }
                 scan_ids.push(entry[0]);
+            }
+            if baseline_frame && !body.ends_with(&[0, 63, 0]) {
+                return false;
             }
             seen_scan = true;
             at = end;
@@ -284,6 +290,16 @@ mod tests {
         duplicate_frame[11] = 2;
         duplicate_frame.splice(15..15, [1, 0x11, 0]);
         assert!(!jpeg_container_preflight(&duplicate_frame));
+    }
+
+    #[test]
+    fn rejects_baseline_precision_and_scan_parameters() {
+        let original = jpeg();
+        for (offset, value) in [(6, 12), (22, 1), (23, 62), (24, 16)] {
+            let mut malformed = original.clone();
+            malformed[offset] = value;
+            assert!(!jpeg_container_preflight(&malformed), "offset {offset}");
+        }
     }
 
     #[test]
