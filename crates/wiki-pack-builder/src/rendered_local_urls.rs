@@ -8,7 +8,8 @@
 use std::collections::BTreeMap;
 
 use wiki_store::media_inventory::RequiredMedia;
-use wiki_store::media_objects::MediaObjectStore;
+use wiki_store::media_objects::{MediaObjectError, MediaObjectStore};
+use wiki_store::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
 
 use crate::rendered_dependencies::RenderDependencyGraph;
 use crate::rendered_objects::{audit_rendered_objects, RenderedObjectAudit, RenderedObjectError};
@@ -49,6 +50,59 @@ pub fn plan_verified_local_urls(
         handler_qualified: false,
         rewritten_content_qualified: false,
     })
+}
+
+/// A single owner-scoped, on-demand local-object read. This is only a
+/// building block for a future scheme handler; it does not authenticate the
+/// caller's URL plan, HTML, pack manifest, media license, or source provenance.
+#[derive(Debug)]
+pub enum LocalAssetReadError {
+    InvalidUri,
+    NotInPlan,
+    Registry(MediaRegistryError),
+    NotOwned,
+    Object(MediaObjectError),
+    WrongSize,
+}
+
+/// Resolve only canonical digest URIs present in this plan, and require a
+/// currently registered *pack* owner before rehashing the bytes on every read.
+/// A cache or user-pin owner alone cannot authorize this pack's resource.
+/// The platform adapter must enforce its own origin, pack and MIME policies.
+pub fn read_verified_pack_asset(
+    plan: &VerifiedLocalUrlPlan,
+    local_uri: &str,
+    registry: &MediaRegistry,
+    pack_id: &str,
+    store: &MediaObjectStore,
+) -> Result<Vec<u8>, LocalAssetReadError> {
+    let digest = local_uri
+        .strip_prefix("wiki-asset://sha256/")
+        .filter(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        .ok_or(LocalAssetReadError::InvalidUri)?;
+    if !plan.source_to_local_uri.values().any(|uri| uri == local_uri) {
+        return Err(LocalAssetReadError::NotInPlan);
+    }
+    let owned = registry
+        .owned_media(OwnerKind::Pack, pack_id)
+        .map_err(LocalAssetReadError::Registry)?;
+    let expected_bytes = owned
+        .iter()
+        .find(|(owned_digest, _)| owned_digest == digest)
+        .map(|(_, bytes)| *bytes)
+        .ok_or(LocalAssetReadError::NotOwned)?;
+    let bytes = store
+        .read_verified(digest)
+        .map_err(LocalAssetReadError::Object)?;
+    if bytes.len() as u64 != expected_bytes {
+        return Err(LocalAssetReadError::WrongSize);
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -133,6 +187,75 @@ mod tests {
         assert!(!plan.audit.offline_ready);
         assert!(!plan.handler_qualified);
         assert!(!plan.rewritten_content_qualified);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_reads_require_exact_pack_owner_and_rehash_bytes() {
+        use wiki_store::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
+
+        let (root, store) = store_fixture();
+        let digest = store.store_bytes(b"image").unwrap();
+        let image_url = "https://en.wikipedia.org/a.png";
+        let graph = inventory_rendered_dependencies(
+            "<img src='/a.png'>",
+            DOC,
+            &BTreeMap::new(),
+            8,
+        )
+        .unwrap();
+        let bindings = BTreeMap::from([(
+            image_url.to_owned(),
+            RequiredMedia {
+                digest: digest.clone(),
+                bytes: 5,
+            },
+        )]);
+        let plan = plan_verified_local_urls(&graph, &bindings, &store).unwrap();
+        let uri = &plan.source_to_local_uri[image_url];
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: image_url.into(),
+            creator: "Test fixture".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        assert_eq!(registry.register_verified_bytes(b"image", &notice).unwrap(), digest);
+        registry.add_owner(&digest, OwnerKind::Cache, "physics").unwrap();
+        assert!(matches!(
+            read_verified_pack_asset(&plan, uri, &registry, "physics", &store),
+            Err(LocalAssetReadError::NotOwned)
+        ));
+        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(
+            read_verified_pack_asset(&plan, uri, &registry, "physics", &store).unwrap(),
+            b"image"
+        );
+        assert!(matches!(
+            read_verified_pack_asset(&plan, uri, &registry, "other", &store),
+            Err(LocalAssetReadError::NotOwned)
+        ));
+        for bad_uri in [
+            "wiki-asset://sha256/",
+            "wiki-asset://sha256/../../etc/passwd",
+            "wiki-asset://sha256/ABCDEF",
+            "wiki-asset://sha256/0?x=1",
+        ] {
+            assert!(matches!(
+                read_verified_pack_asset(&plan, bad_uri, &registry, "physics", &store),
+                Err(LocalAssetReadError::InvalidUri)
+            ));
+        }
+        let valid_but_not_planned = format!("wiki-asset://sha256/{}", "0".repeat(64));
+        assert!(matches!(
+            read_verified_pack_asset(&plan, &valid_but_not_planned, &registry, "physics", &store),
+            Err(LocalAssetReadError::NotInPlan)
+        ));
+        fs::write(root.join(&digest[..2]).join(&digest), b"wrong").unwrap();
+        assert!(matches!(
+            read_verified_pack_asset(&plan, uri, &registry, "physics", &store),
+            Err(LocalAssetReadError::Object(_))
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 
