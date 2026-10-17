@@ -126,7 +126,10 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                 } else {
                     global_entries
                 };
-                if transparent_index.take().is_some_and(|index| index >= entries) {
+                if transparent_index
+                    .take()
+                    .is_some_and(|index| index >= entries)
+                {
                     return false;
                 }
                 at += 10;
