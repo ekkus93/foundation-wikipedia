@@ -323,7 +323,11 @@ mod tests {
     #[test]
     fn validates_transparency_chunk_shape_and_order() {
         let mut indexed = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut indexed, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(
+            &mut indexed,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0],
+        );
         add_chunk(&mut indexed, b"PLTE", &[255, 0, 0]);
         add_chunk(&mut indexed, b"tRNS", &[128]);
         add_chunk(&mut indexed, b"IDAT", &[0]);
@@ -331,7 +335,11 @@ mod tests {
         assert!(png_chunk_preflight(&indexed));
 
         let mut too_many = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut too_many, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(
+            &mut too_many,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0],
+        );
         add_chunk(&mut too_many, b"PLTE", &[255, 0, 0]);
         add_chunk(&mut too_many, b"tRNS", &[128, 255]);
         add_chunk(&mut too_many, b"IDAT", &[0]);
@@ -347,20 +355,30 @@ mod tests {
 
         let mut after_idat = indexed.clone();
         let transparency_offset = after_idat.windows(4).position(|w| w == b"tRNS").unwrap() - 4;
-        let chunk: Vec<u8> = after_idat.drain(transparency_offset..transparency_offset + 13).collect();
+        let chunk: Vec<u8> = after_idat
+            .drain(transparency_offset..transparency_offset + 13)
+            .collect();
         let iend_offset = after_idat.windows(4).position(|w| w == b"IEND").unwrap() - 4;
         after_idat.splice(iend_offset..iend_offset, chunk);
         assert!(!png_chunk_preflight(&after_idat));
 
         let mut alpha = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut alpha, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(
+            &mut alpha,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+        );
         add_chunk(&mut alpha, b"tRNS", &[0]);
         add_chunk(&mut alpha, b"IDAT", &[0]);
         add_chunk(&mut alpha, b"IEND", &[]);
         assert!(!png_chunk_preflight(&alpha));
 
         let mut grayscale = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut grayscale, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]);
+        add_chunk(
+            &mut grayscale,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0],
+        );
         add_chunk(&mut grayscale, b"tRNS", &[0, 0]);
         add_chunk(&mut grayscale, b"IDAT", &[0]);
         add_chunk(&mut grayscale, b"IEND", &[]);
