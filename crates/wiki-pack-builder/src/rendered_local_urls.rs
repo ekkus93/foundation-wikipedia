@@ -11,9 +11,7 @@ use wiki_store::media_inventory::RequiredMedia;
 use wiki_store::media_objects::MediaObjectStore;
 
 use crate::rendered_dependencies::RenderDependencyGraph;
-use crate::rendered_objects::{
-    audit_rendered_objects, RenderedObjectAudit, RenderedObjectError,
-};
+use crate::rendered_objects::{audit_rendered_objects, RenderedObjectAudit, RenderedObjectError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedLocalUrlPlan {
@@ -94,15 +92,42 @@ mod tests {
         )
         .unwrap();
         let bindings = BTreeMap::from([
-            (image_a.to_owned(), RequiredMedia { digest: digest.clone(), bytes: 5 }),
-            (image_b.to_owned(), RequiredMedia { digest: digest.clone(), bytes: 5 }),
-            (css_url.to_owned(), RequiredMedia { digest: css_digest.clone(), bytes: css_text.len() as u64 }),
+            (
+                image_a.to_owned(),
+                RequiredMedia {
+                    digest: digest.clone(),
+                    bytes: 5,
+                },
+            ),
+            (
+                image_b.to_owned(),
+                RequiredMedia {
+                    digest: digest.clone(),
+                    bytes: 5,
+                },
+            ),
+            (
+                css_url.to_owned(),
+                RequiredMedia {
+                    digest: css_digest.clone(),
+                    bytes: css_text.len() as u64,
+                },
+            ),
         ]);
         let plan = plan_verified_local_urls(&graph, &bindings, &store).unwrap();
         assert_eq!(plan.source_to_local_uri.len(), 3);
-        assert_eq!(plan.source_to_local_uri[image_a], format!("wiki-asset://sha256/{digest}"));
-        assert_eq!(plan.source_to_local_uri[image_a], plan.source_to_local_uri[image_b]);
-        assert_eq!(plan.source_to_local_uri[css_url], format!("wiki-asset://sha256/{css_digest}"));
+        assert_eq!(
+            plan.source_to_local_uri[image_a],
+            format!("wiki-asset://sha256/{digest}")
+        );
+        assert_eq!(
+            plan.source_to_local_uri[image_a],
+            plan.source_to_local_uri[image_b]
+        );
+        assert_eq!(
+            plan.source_to_local_uri[css_url],
+            format!("wiki-asset://sha256/{css_digest}")
+        );
         assert_eq!(plan.audit.verified_objects, 2);
         assert!(!plan.audit.source_authenticated);
         assert!(!plan.audit.offline_ready);
@@ -115,20 +140,26 @@ mod tests {
     fn refuses_unverified_bindings_and_dynamic_surfaces() {
         let (root, store) = store_fixture();
         let digest = store.store_bytes(b"image").unwrap();
-        let graph = inventory_rendered_dependencies(
-            "<img src='/a.png'>", DOC, &BTreeMap::new(), 8,
-        ).unwrap();
+        let graph = inventory_rendered_dependencies("<img src='/a.png'>", DOC, &BTreeMap::new(), 8)
+            .unwrap();
         let bindings = BTreeMap::from([(
             "https://en.wikipedia.org/a.png".to_owned(),
-            RequiredMedia { digest: digest.clone(), bytes: 5 },
+            RequiredMedia {
+                digest: digest.clone(),
+                bytes: 5,
+            },
         )]);
         assert!(matches!(
             plan_verified_local_urls(&graph, &BTreeMap::new(), &store),
             Err(RenderedObjectError::MissingBinding(_))
         ));
         let dynamic = inventory_rendered_dependencies(
-            "<img src='/a.png'><canvas></canvas>", DOC, &BTreeMap::new(), 8,
-        ).unwrap();
+            "<img src='/a.png'><canvas></canvas>",
+            DOC,
+            &BTreeMap::new(),
+            8,
+        )
+        .unwrap();
         assert!(matches!(
             plan_verified_local_urls(&dynamic, &bindings, &store),
             Err(RenderedObjectError::UnresolvedReferences)
