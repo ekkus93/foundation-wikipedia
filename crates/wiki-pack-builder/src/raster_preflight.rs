@@ -22,8 +22,14 @@ mod tests {
 
     #[test]
     fn rejects_truncated_and_unsupported_raster_payloads() {
-        assert!(!raster_structural_preflight("image/jpeg", &[0xff, 0xd8, 0xff, 0xd9]));
-        assert!(!raster_structural_preflight("image/png", b"\x89PNG\r\n\x1a\n"));
+        assert!(!raster_structural_preflight(
+            "image/jpeg",
+            &[0xff, 0xd8, 0xff, 0xd9]
+        ));
+        assert!(!raster_structural_preflight(
+            "image/png",
+            b"\x89PNG\r\n\x1a\n"
+        ));
         assert!(!raster_structural_preflight("image/gif", b"GIF89a"));
         assert!(!raster_structural_preflight("image/webp", b"RIFF"));
         assert!(!raster_structural_preflight("image/svg+xml", b"<svg/>"));
