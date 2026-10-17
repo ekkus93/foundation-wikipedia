@@ -12,6 +12,10 @@ use crate::rendered_local_urls::{
 
 /// Check RIFF chunk boundaries, image placement and animation frame envelopes.
 /// Image decoding and embedded metadata sanitization require separate validation.
+fn le24(bytes: &[u8]) -> u32 {
+    u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16)
+}
+
 fn valid_animation_frame(frame: &[u8]) -> bool {
     if frame.len() < 30 {
         return false;
@@ -78,6 +82,8 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
     let mut animated = false;
     let mut seen_animation_header = false;
     let mut seen_extended_image = false;
+    let mut canvas = None;
+    let mut animated_pixels = 0_u64;
     while offset < bytes.len() {
         let Some(header_end) = offset.checked_add(8) else {
             return false;
@@ -135,8 +141,28 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
-        if chunk == b"ANMF" && !valid_animation_frame(&bytes[header_end..header_end + chunk_size]) {
-            return false;
+        if chunk == b"ANMF" {
+            let frame = &bytes[header_end..header_end + chunk_size];
+            if !valid_animation_frame(frame) {
+                return false;
+            }
+            let Some((canvas_width, canvas_height)) = canvas else {
+                return false;
+            };
+            let x = 2 * le24(&frame[0..3]);
+            let y = 2 * le24(&frame[3..6]);
+            let width = 1 + le24(&frame[6..9]);
+            let height = 1 + le24(&frame[9..12]);
+            if frame[15] & 0xfc != 0
+                || x + width > canvas_width
+                || y + height > canvas_height
+            {
+                return false;
+            }
+            animated_pixels += u64::from(width) * u64::from(height);
+            if animated_pixels > 64 * 1024 * 1024 {
+                return false;
+            }
         }
         if chunks == 0 && chunk == b"VP8X" {
             // Extended WebP declares a 24-bit canvas size minus one.
@@ -158,6 +184,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             {
                 return false;
             }
+            canvas = Some((width, height));
         }
         offset = next;
         chunks += 1;
@@ -282,6 +309,18 @@ mod tests {
         let mut oversized_frame_image = sample.clone();
         oversized_frame_image[72..76].copy_from_slice(&100_u32.to_le_bytes());
         assert!(!webp_riff_preflight(&oversized_frame_image));
+
+        let mut oversized_frame_canvas = sample.clone();
+        oversized_frame_canvas[58] = 1;
+        assert!(!webp_riff_preflight(&oversized_frame_canvas));
+
+        let mut out_of_bounds_frame_origin = sample.clone();
+        out_of_bounds_frame_origin[52] = 1;
+        assert!(!webp_riff_preflight(&out_of_bounds_frame_origin));
+
+        let mut reserved_frame_flags = sample.clone();
+        reserved_frame_flags[67] = 0x80;
+        assert!(!webp_riff_preflight(&reserved_frame_flags));
     }
 
     #[test]
