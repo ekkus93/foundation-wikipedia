@@ -39,6 +39,10 @@ pub struct Resolution {
     pub warnings: Vec<String>,
 }
 
+fn invalid_page_id(id: u64) -> bool {
+    id == 0 || id > i64::MAX as u64
+}
+
 pub fn resolve(
     graph: &BTreeMap<String, Category>,
     rules: &Rules,
@@ -73,7 +77,7 @@ pub fn resolve_with_redirects(
         .include
         .iter()
         .chain(&rules.exclude)
-        .any(|id| *id == 0)
+        .any(|id| invalid_page_id(*id))
     {
         return Err(ResolveError::InvalidPage);
     }
@@ -166,7 +170,7 @@ fn validate_pinned_redirect_map(redirects: &BTreeMap<u64, u64>) -> Result<(), Re
         let mut path = Vec::new();
         let mut current = start;
         let mut depth = loop {
-            if current == 0 {
+            if invalid_page_id(current) {
                 return Err(ResolveError::InvalidPage);
             }
             if let Some(&cached) = suffix_depths.get(&current) {
@@ -198,7 +202,7 @@ fn validate_pinned_redirect_map(redirects: &BTreeMap<u64, u64>) -> Result<(), Re
 fn canonical_page(mut id: u64, redirects: &BTreeMap<u64, u64>) -> Result<u64, ResolveError> {
     let mut visited = BTreeSet::new();
     loop {
-        if id == 0 {
+        if invalid_page_id(id) {
             return Err(ResolveError::InvalidPage);
         }
         match redirects.get(&id) {
@@ -278,9 +282,11 @@ pub fn resolve_pinned(
     // subset. Reject malformed identities even in unselected source records.
     if graph
         .values()
-        .any(|category| category.articles.contains(&0))
-        || redirects.iter().any(|(&from, &to)| from == 0 || to == 0)
-        || disambiguations.contains(&0)
+        .any(|category| category.articles.iter().any(|&id| invalid_page_id(id)))
+        || redirects
+            .iter()
+            .any(|(&from, &to)| invalid_page_id(from) || invalid_page_id(to))
+        || disambiguations.iter().any(|&id| invalid_page_id(id))
     {
         return Err(ResolveError::InvalidPage);
     }
