@@ -145,7 +145,6 @@ pub fn read_source_raster_with_png_preflight(
     pack_id: &str,
     store: &MediaObjectStore,
 ) -> Result<VerifiedRasterAsset, RasterAssetError> {
-
     let asset = read_pack_raster_asset_for_source(plan, source_url, registry, pack_id, store)?;
     if asset.mime == "image/png" && !png_chunk_preflight(&asset.bytes) {
         return Err(RasterAssetError::UnsupportedOrMismatchedMime);
