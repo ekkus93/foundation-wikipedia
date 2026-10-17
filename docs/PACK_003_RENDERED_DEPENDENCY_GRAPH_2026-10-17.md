@@ -49,3 +49,9 @@ The shared Rust pack-builder now exposes `read_verified_pack_asset` as a **provi
 
 - Initial owner-scoped reader commit `108c9f4f4ae3d98496e8b067f713958ed76bf960`: Rust run `39014657657` failed **Format**, job `117344128859`, bounded log lines 299–359. This was authored formatting, not a Ralph or GitHub API failure.
 - Formatter repair commit `474e7fee6fd76e8d1aa0c7e6c9e4e0262c2ff780`: [Rust workspace CI 39014728232](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39014728232) and [Platform shells CI 39014728214](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39014728214) both passed on the exact source SHA. Platform checks cover desktop frontend/Tauri and Android shell builds, **not** actual offline WebView asset loading.
+
+### Owner lookup optimization and recovery
+
+`wiki-store::media_ownership::MediaRegistry::owned_digest_size` now performs a digest-specific SQL lookup with owner-kind and owner-ID constraints, rather than loading all registered media on each `read_verified_pack_asset` request. Tests cover pack-only authorization, cross-owner isolation, cache ownership not authorizing a pack and removal/revocation. This is an efficiency and fail-closed lookup improvement, **not** a browser scheme handler or offline-completeness certificate.
+
+Recovered complete source SHA `4e99c038aa1407aa2958ad7a8e3495d31046423d` passed [Rust workspace CI 39015249765](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39015249765), [Platform shells CI 39015249724](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39015249724) and [Android Rust ABI CI 39015249722](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39015249722). Android codec probe `39015249701` was still running when documented. The initial formatting failure and accidental incomplete source reconstruction were repaired and are described in the canonical Ralph incident log. PACK-003 remains unchecked.
