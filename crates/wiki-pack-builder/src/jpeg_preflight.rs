@@ -84,6 +84,24 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             }
             seen_frame = true;
         }
+        if marker == 0xdb {
+            if body.is_empty() {
+                return false;
+            }
+            let mut offset = 0_usize;
+            while offset < body.len() {
+                let table = body[offset];
+                let precision = table >> 4;
+                if precision > 1 || table & 0x0f > 3 {
+                    return false;
+                }
+                let table_bytes = if precision == 0 { 64 } else { 128 };
+                offset += 1 + table_bytes;
+                if offset > body.len() {
+                    return false;
+                }
+            }
+        }
         if marker == 0xdd {
             if body.len() != 2 {
                 return false;
@@ -245,6 +263,28 @@ mod tests {
             malformed[offset] = value;
             assert!(!jpeg_container_preflight(&malformed), "offset {offset}");
         }
+    }
+
+    #[test]
+    fn validates_quantization_table_envelopes() {
+        let original = jpeg();
+        let mut dqt = vec![0xff, 0xdb, 0, 67, 0];
+        dqt.extend([1_u8; 64]);
+        let mut valid = original.clone();
+        valid.splice(2..2, dqt.clone());
+        assert!(jpeg_container_preflight(&valid));
+
+        for invalid_header in [0x20, 0x04] {
+            let mut malformed = valid.clone();
+            malformed[6] = invalid_header;
+            assert!(!jpeg_container_preflight(&malformed));
+        }
+        let mut incomplete = original.clone();
+        incomplete.splice(2..2, [0xff, 0xdb, 0, 3, 0]);
+        assert!(!jpeg_container_preflight(&incomplete));
+        let mut empty = original;
+        empty.splice(2..2, [0xff, 0xdb, 0, 2]);
+        assert!(!jpeg_container_preflight(&empty));
     }
 
     #[test]
