@@ -256,7 +256,10 @@ mod tests {
         mainspace.insert(4, 45);
         let changed =
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
-        assert_ne!(first.related_selection_sha256, changed.related_selection_sha256);
+        assert_ne!(
+            first.related_selection_sha256,
+            changed.related_selection_sha256
+        );
         assert_eq!(
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 3),
             Err(JoinedRelatedError::Budget(ResolveError::TooManyPages))
