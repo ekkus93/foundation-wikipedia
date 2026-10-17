@@ -73,7 +73,6 @@ fn expand_verified_links(
     page_limit: usize,
 ) -> Result<RelatedRevisionReceipt, JoinedRelatedError> {
     for (&id, &revision) in &base.page_revisions {
-
         if mainspace.get(&id) != Some(&revision) {
             return Err(JoinedRelatedError::InconsistentBase(id));
         }
@@ -149,7 +148,6 @@ fn expand_verified_links(
     for (&id, &revision) in &page_revisions {
         bytes.extend_from_slice(&id.to_be_bytes());
         bytes.extend_from_slice(&revision.to_be_bytes());
-
     }
     Ok(RelatedRevisionReceipt {
         related_added_page_count: page_revisions.len() - base.page_revisions.len(),
@@ -300,7 +298,6 @@ mod tests {
         mainspace.insert(4, 45);
         links[0].from_revision_id = 45;
         let changed =
-
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
         assert_eq!(changed.page_revisions, first.page_revisions);
         assert_ne!(
@@ -376,7 +373,6 @@ mod tests {
         base.page_revisions.insert(1, 999);
         assert_eq!(
             check(&[], &base),
-
             Err(JoinedRelatedError::InconsistentBase(1))
         );
     }
