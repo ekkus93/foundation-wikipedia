@@ -245,3 +245,8 @@ mod tests {
         let mut trailing = original.clone();
         trailing.push(0);
         assert!(!jpeg_container_preflight(&trailing));
+        let mut bare_marker = original;
+        bare_marker.splice(2..2, [0xff, 0xd0]);
+        assert!(!jpeg_container_preflight(&bare_marker));
+    }
+}
