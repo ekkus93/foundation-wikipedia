@@ -17,17 +17,21 @@ fn le24(bytes: &[u8]) -> u32 {
 }
 
 /// Bound lossless WebP dimensions and reject unsupported version bits before decoding.
-fn valid_vp8l_header(payload: &[u8]) -> bool {
+fn vp8l_dimensions(payload: &[u8]) -> Option<(u32, u32)> {
     if payload.len() < 5 || payload[0] != 0x2f {
-        return false;
+        return None;
     }
     let bits = u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]]);
     let width = (bits & 0x3fff) + 1;
     let height = ((bits >> 14) & 0x3fff) + 1;
-    (bits >> 29) == 0
-        && width <= 16_384
-        && height <= 16_384
-        && u64::from(width) * u64::from(height) <= 64 * 1024 * 1024
+    if (bits >> 29) != 0
+        || width > 16_384
+        || height > 16_384
+        || u64::from(width) * u64::from(height) > 64 * 1024 * 1024
+    {
+        return None;
+    }
+    Some((width, height))
 }
 
 fn valid_animation_frame(frame: &[u8]) -> bool {
@@ -61,8 +65,12 @@ fn valid_animation_frame(frame: &[u8]) -> bool {
         if next > frame.len() {
             return false;
         }
-        if chunk == b"VP8L" && !valid_vp8l_header(&frame[offset + 8..offset + 8 + size]) {
-            return false;
+        if chunk == b"VP8L" {
+            let image = &frame[offset + 8..offset + 8 + size];
+            let frame_dimensions = (1 + le24(&frame[6..9]), 1 + le24(&frame[9..12]));
+            if vp8l_dimensions(image) != Some(frame_dimensions) {
+                return false;
+            }
         }
         if chunk == b"ALPH" && !seen_alpha && !seen_image && size > 0 {
             seen_alpha = true;
@@ -158,8 +166,11 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
-        if chunk == b"VP8L" && !valid_vp8l_header(&bytes[header_end..header_end + chunk_size]) {
-            return false;
+        if chunk == b"VP8L" {
+            let dimensions = vp8l_dimensions(&bytes[header_end..header_end + chunk_size]);
+            if dimensions.is_none() || (canvas.is_some() && !animated && dimensions != canvas) {
+                return false;
+            }
         }
         if chunk == b"ANMF" {
             let frame = &bytes[header_end..header_end + chunk_size];
@@ -256,6 +267,17 @@ mod tests {
     }
 
     #[test]
+    fn extended_lossless_dimensions_must_match_canvas() {
+        let mut extended = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
+        extended.extend_from_slice(&[0; 10]);
+        extended.extend_from_slice(&WEBP[12..]);
+        extended[4..8].copy_from_slice(&36_u32.to_le_bytes());
+        assert!(webp_riff_preflight(&extended));
+        extended[39] = 1; // Lossless header declares two pixels in a one-pixel canvas.
+        assert!(!webp_riff_preflight(&extended));
+    }
+
+    #[test]
     fn checks_all_trailing_riff_chunks_and_padding() {
         let mut with_metadata = WEBP.to_vec();
         with_metadata.extend_from_slice(b"EXIF\x00\x00\x00\x00");
@@ -321,6 +343,10 @@ mod tests {
         let riff_size = (sample.len() - 8) as u32;
         sample[4..8].copy_from_slice(&riff_size.to_le_bytes());
         assert!(webp_riff_preflight(&sample));
+
+        let mut mismatched_frame_dimensions = sample.clone();
+        mismatched_frame_dimensions[77] = 1;
+        assert!(!webp_riff_preflight(&mismatched_frame_dimensions));
 
         let mut malformed_frame_header = sample.clone();
         malformed_frame_header[76] = 0;
