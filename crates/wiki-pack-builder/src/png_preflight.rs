@@ -124,11 +124,7 @@ mod tests {
 
     fn sample_png() -> Vec<u8> {
         let mut png = PNG_SIGNATURE.to_vec();
-        add_chunk(
-            &mut png,
-            b"IHDR",
-            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
-        );
+        add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
         add_chunk(&mut png, b"IDAT", &[0]);
         add_chunk(&mut png, b"IEND", &[]);
         png
