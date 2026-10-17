@@ -26,7 +26,9 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut offset = PNG_SIGNATURE.len();
     let mut seen_ihdr = false;
     let mut seen_idat = false;
+    let mut seen_idat_data = false;
     let mut seen_palette = false;
+    let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
     let mut palette_allowed = true;
     let mut past_idat = false;
@@ -100,6 +102,9 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             indexed_color = color_type == 3;
+            if indexed_color {
+                max_palette_entries = 1_usize << bit_depth;
+            }
             palette_allowed = !matches!(color_type, 0 | 4);
             seen_ihdr = true;
         } else if kind == b"IHDR" {
@@ -112,6 +117,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 || length == 0
                 || length > 768
                 || length % 3 != 0
+                || length / 3 > max_palette_entries
             {
                 return false;
             }
@@ -122,12 +128,14 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             seen_idat = true;
+            seen_idat_data |= length > 0;
         } else if seen_idat {
             past_idat = true;
         }
         if kind == b"IEND" {
             return length == 0
                 && seen_idat
+                && seen_idat_data
                 && (!indexed_color || seen_palette)
                 && next == bytes.len();
         }
@@ -251,6 +259,39 @@ mod tests {
         add_chunk(&mut separated_idat, b"IDAT", &[0]);
         add_chunk(&mut separated_idat, b"IEND", &[]);
         assert!(!png_chunk_preflight(&separated_idat));
+    }
+
+    #[test]
+    fn requires_nonempty_idat_data_but_allows_empty_split_chunks() {
+        let mut png = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(&mut png, b"IDAT", &[]);
+        add_chunk(&mut png, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&png));
+
+        let mut split = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut split, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(&mut split, b"IDAT", &[]);
+        add_chunk(&mut split, b"IDAT", &[0]);
+        add_chunk(&mut split, b"IEND", &[]);
+        assert!(png_chunk_preflight(&split));
+    }
+
+    #[test]
+    fn indexed_palette_cannot_exceed_bit_depth_capacity() {
+        let mut png = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 1, 3, 0, 0, 0]);
+        add_chunk(&mut png, b"PLTE", &[255, 0, 0, 0, 0, 255]);
+        add_chunk(&mut png, b"IDAT", &[0]);
+        add_chunk(&mut png, b"IEND", &[]);
+        assert!(png_chunk_preflight(&png));
+
+        let mut too_many = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut too_many, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 1, 3, 0, 0, 0]);
+        add_chunk(&mut too_many, b"PLTE", &[255, 0, 0, 0, 0, 255, 0, 255, 0]);
+        add_chunk(&mut too_many, b"IDAT", &[0]);
+        add_chunk(&mut too_many, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&too_many));
     }
 
     #[test]
