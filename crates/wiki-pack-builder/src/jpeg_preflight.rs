@@ -104,6 +104,13 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 if symbols == 0 || symbols > 256 {
                     return false;
                 }
+                let mut available_codes = 1_i32;
+                for &count in &body[offset + 1..offset + 17] {
+                    available_codes = available_codes * 2 - i32::from(count);
+                    if available_codes < 0 {
+                        return false;
+                    }
+                }
                 offset += 17 + symbols;
                 if offset > body.len() {
                     return false;
@@ -336,6 +343,16 @@ mod tests {
         let mut empty = original;
         empty.splice(2..2, [0xff, 0xc4, 0, 2]);
         assert!(!jpeg_container_preflight(&empty));
+    }
+
+    #[test]
+    fn rejects_oversubscribed_huffman_codes() {
+        let mut dht = vec![0xff, 0xc4, 0, 22, 0, 3];
+        dht.extend([0_u8; 15]);
+        dht.extend([1, 2, 3]);
+        let mut invalid = jpeg();
+        invalid.splice(2..2, dht);
+        assert!(!jpeg_container_preflight(&invalid));
     }
 
     #[test]
