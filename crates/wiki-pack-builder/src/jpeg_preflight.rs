@@ -185,7 +185,11 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             if progressive_dct_frame {
                 let spectral_start = body[body.len() - 3];
                 let spectral_end = body[body.len() - 2];
-                if spectral_end > 63
+                let successive = body[body.len() - 1];
+                let high = successive >> 4;
+                let low = successive & 0x0f;
+                if (high != 0 && high != low + 1)
+                    || spectral_end > 63
                     || spectral_start > spectral_end
                     || (spectral_start == 0 && spectral_end != 0)
                     || (spectral_start != 0 && components != 1)
@@ -482,6 +486,26 @@ mod tests {
             let mut invalid = valid.clone();
             invalid[22] = start;
             invalid[23] = end;
+            assert!(!jpeg_container_preflight(&invalid));
+        }
+    }
+
+    #[test]
+    fn progressive_dct_rejects_invalid_successive_approximation() {
+        let mut first = jpeg();
+        first[3] = 0xc2; // Progressive DCT frame.
+        first[23] = 0; // DC-only scan.
+        first[24] = 1; // Initial DC scan, Al=1.
+        assert!(jpeg_container_preflight(&first));
+
+        let mut refined = first.clone();
+        let at = refined.len() - 2;
+        refined.splice(at..at, [0xff, 0xda, 0, 8, 1, 1, 0, 0, 0, 0x10, 0x33]);
+        assert!(jpeg_container_preflight(&refined));
+
+        for invalid_successive in [0x20, 0x31, 0xff] {
+            let mut invalid = first.clone();
+            invalid[24] = invalid_successive;
             assert!(!jpeg_container_preflight(&invalid));
         }
     }
