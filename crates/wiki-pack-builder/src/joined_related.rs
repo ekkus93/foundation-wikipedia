@@ -104,7 +104,12 @@ fn expand_verified_links(
             .entry(link.from_page_id)
             .or_default()
             .push(link.to_page_id);
-        canonical_edges.push((link.from_page_id, link.from_revision_id, link.to_page_id));
+        canonical_edges.push((
+            link.from_page_id,
+            link.from_revision_id,
+            link.to_page_id,
+            mainspace[&link.to_page_id],
+        ));
     }
     let expanded = expand_related_links(
         &base.selection.page_ids,
@@ -128,7 +133,7 @@ fn expand_verified_links(
     canonical_edges.sort_unstable();
     canonical_edges.dedup();
     let mut digest = Sha256Transcript::new();
-    digest.update(b"foundation-wikipedia/joined-related-revisions/v2\0");
+    digest.update(b"foundation-wikipedia/joined-related-revisions/v3\0");
     append_text(&mut digest, &base.project);
     append_text(&mut digest, &base.generation_id);
     append_text(&mut digest, &base.revision_selection_sha256);
@@ -141,10 +146,11 @@ fn expand_verified_links(
         digest.update(&(value as u64).to_be_bytes());
     }
     digest.update(&(canonical_edges.len() as u64).to_be_bytes());
-    for (from, revision, to) in canonical_edges {
+    for (from, from_revision, to, to_revision) in canonical_edges {
         digest.update(&from.to_be_bytes());
-        digest.update(&revision.to_be_bytes());
+        digest.update(&from_revision.to_be_bytes());
         digest.update(&to.to_be_bytes());
+        digest.update(&to_revision.to_be_bytes());
     }
     digest.update(&(page_revisions.len() as u64).to_be_bytes());
     for (&id, &revision) in &page_revisions {
@@ -273,7 +279,7 @@ mod tests {
         assert_eq!(first.related_added_page_count, 3);
         assert_eq!(
             first.related_selection_sha256,
-            "c5394be12b03f06e18b06b40dd7d47d25ccc3f960e3a765a254efc2fbacb83bc"
+            "534f70fc647d193e7b8a33011eeb8003e58e674b31be8c22bc09c48acf550a6a"
         );
         assert!(!first.related_source_authenticated);
         let mut reordered = links.clone();
@@ -307,6 +313,25 @@ mod tests {
         assert_eq!(first.page_revisions, base.page_revisions);
         mainspace.insert(4, 45);
         links[0].from_revision_id = 45;
+        let changed =
+            expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
+        assert_eq!(changed.page_revisions, first.page_revisions);
+        assert_ne!(
+            changed.related_selection_sha256,
+            first.related_selection_sha256
+        );
+    }
+
+    #[test]
+    fn receipt_binds_unselected_link_target_revisions() {
+        let (base, mut mainspace, limits) = fixture();
+        // The edge is unreachable, so the target's revision is not in the
+        // selected result, but its validated identity still belongs to the receipt.
+        let links = vec![link(4, 2)];
+        let first =
+            expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
+        assert_eq!(first.page_revisions, base.page_revisions);
+        mainspace.insert(2, 23);
         let changed =
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
         assert_eq!(changed.page_revisions, first.page_revisions);
