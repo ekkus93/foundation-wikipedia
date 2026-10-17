@@ -410,7 +410,8 @@ mod tests {
                 ..link(1, 2)
             },
         ] {
-            assert_eq!(check(&[oversized], &base), Err(JoinedRelatedError::InvalidPage));
+            let error = check(&[oversized], &base).unwrap_err();
+            assert_eq!(error, JoinedRelatedError::InvalidPage);
         }
         let mut foreign = link(4, 2);
         foreign.generation_id = "other".into();
