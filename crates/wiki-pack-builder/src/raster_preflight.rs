@@ -59,8 +59,8 @@ mod tests {
     #[test]
     fn accepts_bounded_jpeg_and_gif_envelopes() {
         let jpeg = [
-            0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 1, 0x11, 0, 0xff, 0xda, 0, 8, 1,
-            1, 0, 0, 63, 0, 0x11, 0xff, 0, 0x22, 0xff, 0xd9,
+            0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 1, 0x11, 0, 0xff, 0xda, 0, 8, 1, 1, 0,
+            0, 63, 0, 0x11, 0xff, 0, 0x22, 0xff, 0xd9,
         ];
         assert!(raster_structural_preflight("image/jpeg", &jpeg));
 
@@ -71,5 +71,4 @@ mod tests {
         gif.extend_from_slice(&[2, 2, 0x4c, 1, 0, 0x3b]);
         assert!(raster_structural_preflight("image/gif", &gif));
     }
-
 }
