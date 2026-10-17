@@ -92,13 +92,9 @@ pub fn read_verified_pack_asset(
     {
         return Err(LocalAssetReadError::NotInPlan);
     }
-    let owned = registry
-        .owned_media(OwnerKind::Pack, pack_id)
-        .map_err(LocalAssetReadError::Registry)?;
-    let expected_bytes = owned
-        .iter()
-        .find(|(owned_digest, _)| owned_digest == digest)
-        .map(|(_, bytes)| *bytes)
+    let expected_bytes = registry
+        .owned_digest_size(OwnerKind::Pack, pack_id, digest)
+        .map_err(LocalAssetReadError::Registry)?
         .ok_or(LocalAssetReadError::NotOwned)?;
     let bytes = store
         .read_verified(digest)

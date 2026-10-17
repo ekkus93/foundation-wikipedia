@@ -398,6 +398,32 @@ impl MediaRegistry {
         Ok(hashes)
     }
 
+    /// Efficient owner-scoped digest lookup for on-demand asset reads. This
+    /// checks a registered claim, not the bytes, manifest, or media license.
+    pub fn owned_digest_size(
+        &self,
+        kind: OwnerKind,
+        owner_id: &str,
+        digest: &str,
+    ) -> Result<Option<u64>, MediaRegistryError> {
+        if !valid_owner_id(owner_id) || !valid_digest(digest) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let bytes: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT o.bytes FROM media_objects o
+                 JOIN media_owners r ON r.digest=o.digest
+                 WHERE r.kind=?1 AND r.owner_id=?2 AND o.digest=?3",
+                params![kind.as_str(), owner_id, digest],
+                |row| row.get(0),
+            )
+            .optional()?;
+        bytes
+            .map(|size| u64::try_from(size).map_err(|_| MediaRegistryError::InvalidInput))
+            .transpose()
+    }
+
     /// Return only this owner's registered digest/byte claims, in stable order.
     /// These claims are not proof that the objects still exist on disk.
     pub fn owned_media(
@@ -469,6 +495,39 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn scoped_digest_query_checks_owner_kind_and_revocation() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry.register_verified_bytes(b"figure", &notice("A")).unwrap();
+        assert_eq!(
+            registry.owned_digest_size(OwnerKind::Pack, "physics", &digest).unwrap(),
+            None
+        );
+        registry.add_owner(&digest, OwnerKind::Cache, "physics").unwrap();
+        assert_eq!(
+            registry.owned_digest_size(OwnerKind::Pack, "physics", &digest).unwrap(),
+            None
+        );
+        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(
+            registry.owned_digest_size(OwnerKind::Pack, "physics", &digest).unwrap(),
+            Some(6)
+        );
+        assert_eq!(
+            registry.owned_digest_size(OwnerKind::Pack, "math", &digest).unwrap(),
+            None
+        );
+        assert!(matches!(
+            registry.owned_digest_size(OwnerKind::Pack, "../physics", &digest),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        registry.remove_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(
+            registry.owned_digest_size(OwnerKind::Pack, "physics", &digest).unwrap(),
+            None
+        );
     }
 
     #[test]
