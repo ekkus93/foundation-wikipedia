@@ -30,6 +30,8 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
     const MAX_CHUNKS: usize = 4096;
     let mut offset = 12;
     let mut chunks = 0;
+    let mut extended = false;
+    let mut seen_extended_image = false;
     while offset < bytes.len() {
         let Some(header_end) = offset.checked_add(8) else {
             return false;
@@ -51,6 +53,12 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             if chunk_size == 0 {
                 return false;
             }
+            extended = chunk == b"VP8X";
+        } else if extended
+            && (chunk == b"VP8 " || chunk == b"VP8L" || chunk == b"ANMF")
+            && chunk_size > 0
+        {
+            seen_extended_image = true;
         }
         let next = match header_end
             .checked_add(chunk_size)
@@ -82,7 +90,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
         offset = next;
         chunks += 1;
     }
-    chunks > 0 && offset == bytes.len()
+    chunks > 0 && offset == bytes.len() && (!extended || seen_extended_image)
 }
 
 /// Optional stricter read boundary for a future platform scheme adapter.
@@ -135,6 +143,9 @@ mod tests {
     fn checks_extended_canvas_dimensions_and_reserved_header_bytes() {
         let mut ext = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
         ext.extend_from_slice(&[0; 10]);
+        assert!(!webp_riff_preflight(&ext)); // VP8X metadata alone is not an image.
+        ext.extend_from_slice(&WEBP[12..]);
+        ext[4..8].copy_from_slice(&36_u32.to_le_bytes());
         assert!(webp_riff_preflight(&ext));
 
         let mut oversized = ext.clone();
@@ -153,6 +164,17 @@ mod tests {
         bad = ext.clone();
         bad[16] = 9;
         assert!(!webp_riff_preflight(&bad));
+    }
+
+    #[test]
+    fn rejects_extended_container_without_image_payload() {
+        let mut only_metadata = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
+        only_metadata.extend_from_slice(&[0; 10]);
+        assert!(!webp_riff_preflight(&only_metadata));
+
+        only_metadata.extend_from_slice(b"EXIF\x00\x00\x00\x00");
+        only_metadata[4..8].copy_from_slice(&30_u32.to_le_bytes());
+        assert!(!webp_riff_preflight(&only_metadata));
     }
 
     #[test]
