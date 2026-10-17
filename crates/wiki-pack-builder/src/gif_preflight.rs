@@ -49,6 +49,7 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
     };
     let mut at = 13 + 3 * global_entries;
     let mut transparent_index = None;
+    let mut pending_gce = false;
     let mut seen_image = false;
     // Bound cumulative decompressed frame area, not just the logical canvas.
     let mut total_frame_pixels = 0_u64;
@@ -57,9 +58,12 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
             return false;
         };
         match marker {
-            0x3b => return seen_image && at + 1 == bytes.len(),
+            0x3b => return seen_image && !pending_gce && at + 1 == bytes.len(),
             0x21 => match bytes.get(at + 1) {
                 Some(0xf9) => {
+                    if pending_gce {
+                        return false;
+                    }
                     if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
                         return false;
                     }
@@ -68,6 +72,7 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     if packed & 0xe0 != 0 || ((packed >> 2) & 7) > 3 {
                         return false;
                     }
+                    pending_gce = true;
                     transparent_index = if packed & 1 != 0 {
                         Some(usize::from(bytes[at + 6]))
                     } else {
@@ -92,6 +97,7 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     if bytes[at + 1] == 0x01 {
                         // Plain-text extensions are graphic rendering blocks.
                         transparent_index = None;
+                        pending_gce = false;
                     }
                     at = end;
                 }
@@ -132,6 +138,7 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                 {
                     return false;
                 }
+                pending_gce = false;
                 at += 10;
                 if local {
                     at += 3 * entries;
@@ -216,6 +223,20 @@ mod tests {
         local.splice(37..37, [0; 12]);
         local[25] = 3;
         assert!(gif_container_preflight(&local));
+    }
+
+    #[test]
+    fn rejects_repeated_and_dangling_graphics_control_extensions() {
+        let original = gif();
+        let gce = [0x21, 0xf9, 4, 0, 0, 0, 0, 0];
+        let mut duplicate = original.clone();
+        duplicate.splice(19..19, gce.into_iter().chain(gce));
+        assert!(!gif_container_preflight(&duplicate));
+
+        let mut dangling = original;
+        let at = dangling.len() - 1;
+        dangling.splice(at..at, gce);
+        assert!(!gif_container_preflight(&dangling));
     }
 
     #[test]
