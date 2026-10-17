@@ -133,6 +133,12 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 if offset > body.len() {
                     return false;
                 }
+                let values = &body[offset - table_bytes..offset];
+                if (precision == 0 && values.contains(&0))
+                    || (precision == 1 && values.chunks_exact(2).any(|pair| pair == [0, 0]))
+                {
+                    return false;
+                }
             }
         }
         if marker == 0xdd {
@@ -352,6 +358,16 @@ mod tests {
         dht.extend([1, 2, 3]);
         let mut invalid = jpeg();
         invalid.splice(2..2, dht);
+        assert!(!jpeg_container_preflight(&invalid));
+    }
+
+    #[test]
+    fn rejects_zero_quantization_entries() {
+        let mut table = vec![0xff, 0xdb, 0, 67, 0];
+        table.extend([1_u8; 64]);
+        table[5] = 0;
+        let mut invalid = jpeg();
+        invalid.splice(2..2, table);
         assert!(!jpeg_container_preflight(&invalid));
     }
 
