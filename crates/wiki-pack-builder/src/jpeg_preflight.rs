@@ -232,7 +232,15 @@ mod tests {
     #[test]
     fn rejects_invalid_frame_sampling_and_table_selectors() {
         let original = jpeg();
-        for (offset, value) in [(13, 0x01), (13, 0x10), (13, 0x51), (13, 0x15), (14, 4), (21, 0x40), (21, 0x04)] {
+        for (offset, value) in [
+            (13, 0x01),
+            (13, 0x10),
+            (13, 0x51),
+            (13, 0x15),
+            (14, 4),
+            (21, 0x40),
+            (21, 0x04),
+        ] {
             let mut malformed = original.clone();
             malformed[offset] = value;
             assert!(!jpeg_container_preflight(&malformed), "offset {offset}");
