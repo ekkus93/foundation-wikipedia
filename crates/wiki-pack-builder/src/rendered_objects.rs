@@ -171,7 +171,11 @@ mod tests {
             Err(RenderedObjectError::UnresolvedReferences)
         ));
         let graph = graph("<img src='/image.png'>");
-        fs::write(root.join(&image.digest[..2]).join(&image.digest), b"tampered").unwrap();
+        fs::write(
+            root.join(&image.digest[..2]).join(&image.digest),
+            b"tampered",
+        )
+        .unwrap();
         assert!(matches!(
             audit_rendered_objects(&graph, &bindings, &store),
             Err(RenderedObjectError::InvalidObjects(
