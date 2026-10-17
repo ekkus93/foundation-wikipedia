@@ -449,6 +449,44 @@ impl MediaRegistry {
         Ok(Some(mime))
     }
 
+    /// Return every distinct attribution notice for a verified owner-scoped object.
+    /// This preserves creator/source/license records without treating caller-supplied
+    /// notice fields as authenticated Wikimedia provenance.
+    pub fn owned_digest_notices(
+        &self,
+        kind: OwnerKind,
+        owner_id: &str,
+        digest: &str,
+    ) -> Result<Vec<MediaNotice>, MediaRegistryError> {
+        if self.owned_digest_size(kind, owner_id, digest)?.is_none() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT mime, source_url, creator, license FROM media_notices
+             WHERE digest=?1 ORDER BY source_url, creator, license, mime",
+        )?;
+        let rows = statement.query_map(params![digest], |row| {
+            Ok(MediaNotice {
+                mime: row.get(0)?,
+                source_url: row.get(1)?,
+                creator: row.get(2)?,
+                license: row.get(3)?,
+            })
+        })?;
+        let mut notices = Vec::new();
+        for notice in rows {
+            let notice = notice?;
+            if !notice.validate() {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+            notices.push(notice);
+        }
+        if notices.is_empty() {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        Ok(notices)
+    }
+
     /// Return only this owner's registered digest/byte claims, in stable order.
     /// These claims are not proof that the objects still exist on disk.
     pub fn owned_media(
@@ -571,6 +609,46 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn owned_digest_notices_preserve_creators_with_owner_scoping() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let alice = notice("Alice");
+        let bob = notice("Bob");
+        let digest = registry.register_verified_bytes(b"figure", &alice).unwrap();
+        registry.register_verified_bytes(b"figure", &bob).unwrap();
+        assert!(registry
+            .owned_digest_notices(OwnerKind::Pack, "math", &digest)
+            .unwrap()
+            .is_empty());
+        registry
+            .add_owner(&digest, OwnerKind::Cache, "math")
+            .unwrap();
+        assert!(registry
+            .owned_digest_notices(OwnerKind::Pack, "math", &digest)
+            .unwrap()
+            .is_empty());
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
+        assert_eq!(
+            registry
+                .owned_digest_notices(OwnerKind::Pack, "math", &digest)
+                .unwrap(),
+            vec![alice, bob]
+        );
+        assert!(registry
+            .owned_digest_notices(OwnerKind::Pack, "other", &digest)
+            .unwrap()
+            .is_empty());
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
+        assert!(registry
+            .owned_digest_notices(OwnerKind::Pack, "math", &digest)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
