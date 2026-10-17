@@ -215,6 +215,10 @@ pub fn preview_joined_selection_with_related(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enterprise_graph::{
+        graph_from_joined, resolve_joined_revision_pinned_with_redirects, GraphBuildError,
+        JoinedSelectionError, RedirectBuildError,
+    };
     use crate::selection::PinnedResolution;
 
     fn fixture() -> (RevisionPinnedSelection, BTreeMap<u64, u64>, RelatedLimits) {
@@ -413,6 +417,52 @@ mod tests {
             rendered_html: String::new(),
             categories: categories.iter().map(|s| (*s).to_string()).collect(),
             redirects: vec![],
+        }
+    }
+
+    #[test]
+    fn joined_graph_and_redirects_reject_out_of_range_signed_ids() {
+        let records = vec![
+            joined_record(90, 14, "Category:Physics", &[]),
+            joined_record(1, 0, "Seed", &["Category:Physics"]),
+        ];
+        let mut oversized_page = records.clone();
+        oversized_page[1].structured.page.page_id = i64::MAX as u64 + 1;
+        assert_eq!(
+            graph_from_joined(&oversized_page, &BTreeSet::new()).err(),
+            Some(GraphBuildError::InvalidIdentity)
+        );
+
+        let mut oversized_revision = records.clone();
+        oversized_revision[1].structured.revision_id = i64::MAX as u64 + 1;
+        assert_eq!(
+            graph_from_joined(&oversized_revision, &BTreeSet::new()).err(),
+            Some(GraphBuildError::InvalidIdentity)
+        );
+
+        let rules = Rules {
+            roots: vec!["Category:Physics".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 2,
+        };
+        for (from, to) in [(i64::MAX as u64 + 1, 1), (2, i64::MAX as u64 + 1)] {
+            let redirect = PageRedirectIdentity {
+                project: "enwiki".into(),
+                generation_id: "20261016".into(),
+                from_page_id: from,
+                to_page_id: to,
+            };
+            assert!(matches!(
+                resolve_joined_revision_pinned_with_redirects(
+                    &records,
+                    &BTreeSet::new(),
+                    &rules,
+                    &[redirect]
+                ),
+                Err(JoinedSelectionError::Redirect(RedirectBuildError::InvalidId))
+            ));
         }
     }
 
