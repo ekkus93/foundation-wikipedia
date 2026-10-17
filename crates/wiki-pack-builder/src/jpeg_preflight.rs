@@ -11,10 +11,7 @@ use crate::rendered_local_urls::{
 /// Reject malformed marker envelopes and excessive declared frame dimensions.
 /// Does not decode Huffman/arithmetic data, ICC profiles or EXIF metadata.
 pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
-    if bytes.len() < 20
-        || bytes.len() > 64 * 1024 * 1024
-        || !bytes.starts_with(&[0xff, 0xd8])
-    {
+    if bytes.len() < 20 || bytes.len() > 64 * 1024 * 1024 || !bytes.starts_with(&[0xff, 0xd8]) {
         return false;
     }
     let mut at = 2_usize;
@@ -144,9 +141,7 @@ mod tests {
     fn jpeg() -> Vec<u8> {
         let mut bytes = vec![0xff, 0xd8];
         // SOF0: 8-bit, one pixel, one component.
-        bytes.extend_from_slice(&[
-            0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 1, 0x11, 0,
-        ]);
+        bytes.extend_from_slice(&[0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 1, 0x11, 0]);
         // SOS: one component, followed by synthetic entropy and EOI.
         bytes.extend_from_slice(&[
             0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0, 0x11, 0xff, 0, 0x22, 0xff, 0xd9,
@@ -174,7 +169,7 @@ mod tests {
         assert!(!jpeg_container_preflight(&no_frame));
         assert!(!jpeg_container_preflight(&original[..15]));
         let mut zero_width = original.clone();
-        zero_width[9] = 0;
+        zero_width[10] = 0;
         assert!(!jpeg_container_preflight(&zero_width));
         let mut huge = original.clone();
         huge[7..11].copy_from_slice(&[0x40, 0x01, 0x40, 0x01]);
