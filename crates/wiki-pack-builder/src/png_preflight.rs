@@ -28,6 +28,9 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut seen_idat = false;
     let mut seen_idat_data = false;
     let mut seen_palette = false;
+    let mut palette_entries = 0_usize;
+    let mut png_color_type = 0_u8;
+    let mut seen_transparency = false;
     let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
     let mut palette_allowed = true;
@@ -101,6 +104,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
             {
                 return false;
             }
+            png_color_type = color_type;
             indexed_color = color_type == 3;
             if indexed_color {
                 max_palette_entries = 1_usize << bit_depth;
@@ -122,6 +126,19 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             seen_palette = true;
+            palette_entries = length / 3;
+        }
+        if kind == b"tRNS" {
+            let invalid = match png_color_type {
+                0 => length != 2,
+                2 => length != 6,
+                3 => !seen_palette || length == 0 || length > palette_entries,
+                _ => true,
+            };
+            if seen_transparency || seen_idat || invalid {
+                return false;
+            }
+            seen_transparency = true;
         }
         if kind == b"IDAT" {
             if past_idat {
@@ -301,6 +318,53 @@ mod tests {
         add_chunk(&mut too_many, b"IDAT", &[0]);
         add_chunk(&mut too_many, b"IEND", &[]);
         assert!(!png_chunk_preflight(&too_many));
+    }
+
+    #[test]
+    fn validates_transparency_chunk_shape_and_order() {
+        let mut indexed = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut indexed, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(&mut indexed, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut indexed, b"tRNS", &[128]);
+        add_chunk(&mut indexed, b"IDAT", &[0]);
+        add_chunk(&mut indexed, b"IEND", &[]);
+        assert!(png_chunk_preflight(&indexed));
+
+        let mut too_many = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut too_many, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(&mut too_many, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut too_many, b"tRNS", &[128, 255]);
+        add_chunk(&mut too_many, b"IDAT", &[0]);
+        add_chunk(&mut too_many, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&too_many));
+
+        let mut duplicate = indexed.clone();
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"tRNS", &[255]);
+        let idat_offset = duplicate.windows(4).position(|w| w == b"IDAT").unwrap() - 4;
+        duplicate.splice(idat_offset..idat_offset, chunk);
+        assert!(!png_chunk_preflight(&duplicate));
+
+        let mut after_idat = indexed.clone();
+        let transparency_offset = after_idat.windows(4).position(|w| w == b"tRNS").unwrap() - 4;
+        let chunk: Vec<u8> = after_idat.drain(transparency_offset..transparency_offset + 13).collect();
+        let iend_offset = after_idat.windows(4).position(|w| w == b"IEND").unwrap() - 4;
+        after_idat.splice(iend_offset..iend_offset, chunk);
+        assert!(!png_chunk_preflight(&after_idat));
+
+        let mut alpha = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut alpha, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(&mut alpha, b"tRNS", &[0]);
+        add_chunk(&mut alpha, b"IDAT", &[0]);
+        add_chunk(&mut alpha, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&alpha));
+
+        let mut grayscale = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut grayscale, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]);
+        add_chunk(&mut grayscale, b"tRNS", &[0, 0]);
+        add_chunk(&mut grayscale, b"IDAT", &[0]);
+        add_chunk(&mut grayscale, b"IEND", &[]);
+        assert!(png_chunk_preflight(&grayscale));
     }
 
     #[test]
