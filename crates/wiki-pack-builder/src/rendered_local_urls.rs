@@ -5,7 +5,7 @@
 //! handler must authorize each URI against an installed pack's owner inventory
 //! and rehash the object on read; this plan alone never certifies offline use.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wiki_store::media_inventory::RequiredMedia;
 use wiki_store::media_objects::{MediaObjectError, MediaObjectStore};
@@ -50,6 +50,48 @@ pub fn plan_verified_local_urls(
         handler_qualified: false,
         rewritten_content_qualified: false,
     })
+}
+
+/// Preflight that every discovered object also belongs to the selected pack.
+/// Source authenticity, media attribution and pack activation are separate gates.
+#[derive(Debug)]
+pub enum OwnedLocalPlanError {
+    Rendered(RenderedObjectError),
+    Registry(MediaRegistryError),
+    MissingOwner(String),
+    WrongOwnedSize(String),
+}
+
+/// Require exact local byte integrity and pack-owner identity for *all* graph
+/// resource digests before giving the caller a plan. A cache or pin cannot
+/// substitute for the named pack, and repeated URLs are checked once per digest.
+/// This is not a trusted manifest, sanitizer or WebView handler.
+pub fn plan_pack_owned_local_urls(
+    graph: &RenderDependencyGraph,
+    bindings: &BTreeMap<String, RequiredMedia>,
+    registry: &MediaRegistry,
+    pack_id: &str,
+    store: &MediaObjectStore,
+) -> Result<VerifiedLocalUrlPlan, OwnedLocalPlanError> {
+    let plan = plan_verified_local_urls(graph, bindings, store)
+        .map_err(OwnedLocalPlanError::Rendered)?;
+    let mut checked = BTreeSet::new();
+    for object in bindings.values() {
+        if !checked.insert(&object.digest) {
+            continue;
+        }
+        match registry
+            .owned_digest_size(OwnerKind::Pack, pack_id, &object.digest)
+            .map_err(OwnedLocalPlanError::Registry)?
+        {
+            None => return Err(OwnedLocalPlanError::MissingOwner(object.digest.clone())),
+            Some(bytes) if bytes != object.bytes => {
+                return Err(OwnedLocalPlanError::WrongOwnedSize(object.digest.clone()));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(plan)
 }
 
 /// A single owner-scoped, on-demand local-object read. This is only a
@@ -257,6 +299,63 @@ mod tests {
         assert!(matches!(
             read_verified_pack_asset(&plan, uri, &registry, "physics", &store),
             Err(LocalAssetReadError::Object(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_plan_requires_every_pack_object_and_rejects_other_owners() {
+        use wiki_store::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
+
+        let (root, store) = store_fixture();
+        let a = store.store_bytes(b"image-one").unwrap();
+        let b = store.store_bytes(b"image-two").unwrap();
+        let graph = inventory_rendered_dependencies(
+            "<img src='/a.png'><img src='/b.png'>",
+            DOC,
+            &BTreeMap::new(),
+            8,
+        )
+        .unwrap();
+        let bindings = BTreeMap::from([
+            (
+                "https://en.wikipedia.org/a.png".to_owned(),
+                RequiredMedia { digest: a.clone(), bytes: 9 },
+            ),
+            (
+                "https://en.wikipedia.org/b.png".to_owned(),
+                RequiredMedia { digest: b.clone(), bytes: 9 },
+            ),
+        ]);
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Figure.png".into(),
+            creator: "Fixture".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        registry.register_verified_bytes(b"image-one", &notice).unwrap();
+        registry.register_verified_bytes(b"image-two", &notice).unwrap();
+        registry.add_owner(&a, OwnerKind::Pack, "physics").unwrap();
+        registry.add_owner(&b, OwnerKind::Cache, "physics").unwrap();
+        assert!(matches!(
+            plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store),
+            Err(OwnedLocalPlanError::MissingOwner(_))
+        ));
+        registry.add_owner(&b, OwnerKind::Pack, "physics").unwrap();
+        let plan = plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store)
+            .unwrap();
+        assert_eq!(plan.source_to_local_uri.len(), 2);
+        assert!(!plan.audit.offline_ready);
+        assert!(!plan.handler_qualified);
+        assert!(matches!(
+            plan_pack_owned_local_urls(&graph, &bindings, &registry, "other", &store),
+            Err(OwnedLocalPlanError::MissingOwner(_))
+        ));
+        registry.remove_owner(&b, OwnerKind::Pack, "physics").unwrap();
+        assert!(matches!(
+            plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store),
+            Err(OwnedLocalPlanError::MissingOwner(_))
         ));
         fs::remove_dir_all(root).unwrap();
     }
