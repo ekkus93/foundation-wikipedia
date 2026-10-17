@@ -336,12 +336,20 @@ mod tests {
         );
     }
 
-    fn joined_record(id: u64, namespace: i32, name: &str, categories: &[&str]) -> JoinedEnterpriseArticle {
+    fn joined_record(
+        id: u64,
+        namespace: i32,
+        name: &str,
+        categories: &[&str],
+    ) -> JoinedEnterpriseArticle {
         use wiki_source::enterprise::StructuredArticle;
         use wiki_source::join::PageKey;
         JoinedEnterpriseArticle {
             structured: StructuredArticle {
-                page: PageKey { project: "enwiki".into(), page_id: id },
+                page: PageKey {
+                    project: "enwiki".into(),
+                    page_id: id,
+                },
                 revision_id: id + 100,
                 date_modified: "2026-10-16T00:00:00Z".into(),
                 generation_id: "20261016".into(),
