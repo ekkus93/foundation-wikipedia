@@ -67,7 +67,11 @@ pub fn graph_from_joined(
         if page.generation_id != generation_id {
             return Err(GraphBuildError::MixedGeneration);
         }
-        if page.page.page_id == 0 || page.revision_id == 0 {
+        if page.page.page_id == 0
+            || page.revision_id == 0
+            || page.page.page_id > i64::MAX as u64
+            || page.revision_id > i64::MAX as u64
+        {
             return Err(GraphBuildError::InvalidIdentity);
         }
         if page_revisions
@@ -276,7 +280,11 @@ fn validate_redirect_identities(
         if identity.project != joined.project || identity.generation_id != joined.generation_id {
             return Err(RedirectBuildError::MixedSource);
         }
-        if identity.from_page_id == 0 || identity.to_page_id == 0 {
+        if identity.from_page_id == 0
+            || identity.to_page_id == 0
+            || identity.from_page_id > i64::MAX as u64
+            || identity.to_page_id > i64::MAX as u64
+        {
             return Err(RedirectBuildError::InvalidId);
         }
         if joined.page_revisions.contains_key(&identity.from_page_id) {
