@@ -26,6 +26,10 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut offset = PNG_SIGNATURE.len();
     let mut seen_ihdr = false;
     let mut seen_idat = false;
+    let mut seen_palette = false;
+    let mut indexed_color = false;
+    let mut palette_allowed = true;
+    let mut past_idat = false;
     for _ in 0..MAX_CHUNKS {
         let Some(header_end) = offset.checked_add(8) else {
             return false;
@@ -68,7 +72,16 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 bytes[header_end + 6],
                 bytes[header_end + 7],
             ]);
-            if width == 0
+            let bit_depth = bytes[header_end + 8];
+            let color_type = bytes[header_end + 9];
+            let supported_depth = match color_type {
+                0 => matches!(bit_depth, 1 | 2 | 4 | 8 | 16),
+                2 | 4 | 6 => matches!(bit_depth, 8 | 16),
+                3 => matches!(bit_depth, 1 | 2 | 4 | 8),
+                _ => false,
+            };
+            if !supported_depth
+                || width == 0
                 || height == 0
                 || width > MAX_DIMENSION
                 || height > MAX_DIMENSION
@@ -79,15 +92,37 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
             {
                 return false;
             }
+            indexed_color = color_type == 3;
+            palette_allowed = !matches!(color_type, 0 | 4);
             seen_ihdr = true;
         } else if kind == b"IHDR" {
             return false;
         }
+        if kind == b"PLTE" {
+            if !palette_allowed
+                || seen_palette
+                || seen_idat
+                || length == 0
+                || length > 768
+                || length % 3 != 0
+            {
+                return false;
+            }
+            seen_palette = true;
+        }
         if kind == b"IDAT" {
+            if past_idat {
+                return false;
+            }
             seen_idat = true;
+        } else if seen_idat {
+            past_idat = true;
         }
         if kind == b"IEND" {
-            return length == 0 && seen_idat && next == bytes.len();
+            return length == 0
+                && seen_idat
+                && (!indexed_color || seen_palette)
+                && next == bytes.len();
         }
         offset = next;
     }
@@ -144,6 +179,41 @@ mod tests {
         add_chunk(&mut with_text, b"IDAT", &[0]);
         add_chunk(&mut with_text, b"IEND", &[]);
         assert!(png_chunk_preflight(&with_text));
+    }
+
+    #[test]
+    fn enforces_valid_color_depth_and_palette_ordering() {
+        let mut png = sample_png();
+        png[24] = 4;
+        assert!(!png_chunk_preflight(&png));
+        png = sample_png();
+        png[25] = 5;
+        assert!(!png_chunk_preflight(&png));
+
+        let mut indexed = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut indexed, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(&mut indexed, b"IDAT", &[0]);
+        add_chunk(&mut indexed, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&indexed));
+
+        let mut indexed_with_palette = PNG_SIGNATURE.to_vec();
+        add_chunk(
+            &mut indexed_with_palette,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0],
+        );
+        add_chunk(&mut indexed_with_palette, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut indexed_with_palette, b"IDAT", &[0]);
+        add_chunk(&mut indexed_with_palette, b"IEND", &[]);
+        assert!(png_chunk_preflight(&indexed_with_palette));
+
+        let mut separated_idat = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut separated_idat, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(&mut separated_idat, b"IDAT", &[0]);
+        add_chunk(&mut separated_idat, b"tEXt", b"caption");
+        add_chunk(&mut separated_idat, b"IDAT", &[0]);
+        add_chunk(&mut separated_idat, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&separated_idat));
     }
 
     #[test]
