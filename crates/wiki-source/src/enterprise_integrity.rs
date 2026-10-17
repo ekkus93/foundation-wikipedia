@@ -25,7 +25,17 @@ fn valid_identifier(value: &str) -> bool {
     !value.trim().is_empty()
         && value == value.trim()
         && value.len() <= 4096
-        && !value.chars().any(char::is_control)
+        && !value.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{061c}'
+                        | '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
 }
 
 fn check_parts(
@@ -233,6 +243,10 @@ mod tests {
         assert!(valid_identifier("cite1"));
         assert!(valid_identifier("référence-1"));
         assert!(!valid_identifier("bad\nanchor"));
+        // Bidi overrides and isolates must not spoof displayed evidence IDs.
+        assert!(!valid_identifier("cite\u{202e}1"));
+        assert!(!valid_identifier("cite\u{2066}1"));
+        assert!(!valid_identifier("cite\u{200f}1"));
         assert!(!valid_identifier(&"x".repeat(4097)));
         let mut article = JoinedEnterpriseArticle {
             structured: crate::enterprise::StructuredArticle {
