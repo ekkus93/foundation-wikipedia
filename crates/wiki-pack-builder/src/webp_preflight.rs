@@ -13,7 +13,11 @@ use crate::rendered_local_urls::{
 /// Check only the outer RIFF envelope and the first recognized WebP image chunk.
 /// Later metadata chunks and image decoding require separate validation.
 pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
-    if bytes.len() < 22 || !bytes.starts_with(b"RIFF") || &bytes[8..12] != b"WEBP" {
+    if bytes.len() < 22
+        || bytes.len() > 64 * 1024 * 1024
+        || !bytes.starts_with(b"RIFF")
+        || &bytes[8..12] != b"WEBP"
+    {
         return false;
     }
     let riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
@@ -55,6 +59,30 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
+        if chunks == 0 && chunk == b"VP8X" {
+            // Extended WebP declares a 24-bit canvas size minus one.
+            if chunk_size != 10 {
+                return false;
+            }
+            let ext = &bytes[header_end..header_end + 10];
+            if ext[0] & 0xc1 != 0 || ext[1..4] != [0, 0, 0] {
+                return false;
+            }
+            let width = 1
+                + u32::from(ext[4])
+                + (u32::from(ext[5]) << 8)
+                + (u32::from(ext[6]) << 16);
+            let height = 1
+                + u32::from(ext[7])
+                + (u32::from(ext[8]) << 8)
+                + (u32::from(ext[9]) << 16);
+            if width > 16_384
+                || height > 16_384
+                || u64::from(width) * u64::from(height) > 64 * 1024 * 1024
+            {
+                return false;
+            }
+        }
         offset = next;
         chunks += 1;
     }
@@ -105,6 +133,30 @@ mod tests {
         dangling.push(0);
         dangling[4..8].copy_from_slice(&19_u32.to_le_bytes());
         assert!(!webp_riff_preflight(&dangling));
+    }
+
+    #[test]
+    fn checks_extended_canvas_dimensions_and_reserved_header_bytes() {
+        let mut ext = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
+        ext.extend_from_slice(&[0; 10]);
+        assert!(webp_riff_preflight(&ext));
+
+        let mut oversized = ext.clone();
+        oversized[24] = 0xff;
+        oversized[25] = 0xff;
+        assert!(!webp_riff_preflight(&oversized));
+
+        let mut bad = ext.clone();
+        bad[20] = 0x80;
+        assert!(!webp_riff_preflight(&bad));
+
+        bad = ext.clone();
+        bad[21] = 1;
+        assert!(!webp_riff_preflight(&bad));
+
+        bad = ext.clone();
+        bad[16] = 9;
+        assert!(!webp_riff_preflight(&bad));
     }
 
     #[test]
