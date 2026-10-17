@@ -291,8 +291,8 @@ pub fn resolve_pinned(
     append_strings(&mut definition, &rules.roots);
     append_ids(&mut definition, &rules.include);
     append_ids(&mut definition, &rules.exclude);
-    definition.extend_from_slice(&(rules.depth_limit as u64).to_be_bytes());
-    definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
+    definition.update(&(rules.depth_limit as u64).to_be_bytes());
+    definition.update(&(rules.page_limit as u64).to_be_bytes());
     let definition_sha256 = definition.finish_hex();
 
     let graph_sha256 = crate::graph_digest::graph_digest(graph, redirects, disambiguations);
