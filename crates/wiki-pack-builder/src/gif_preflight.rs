@@ -123,6 +123,9 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     return false;
                 }
                 let packed = bytes[at + 9];
+                if packed & 0x18 != 0 {
+                    return false;
+                }
                 let local = packed & 0x80 != 0;
                 if !local && !global {
                     return false;
@@ -237,6 +240,19 @@ mod tests {
         let at = dangling.len() - 1;
         dangling.splice(at..at, gce);
         assert!(!gif_container_preflight(&dangling));
+    }
+
+    #[test]
+    fn rejects_reserved_image_descriptor_bits() {
+        let original = gif();
+        let mut reserved = original.clone();
+        reserved[28] = 0x08;
+        assert!(!gif_container_preflight(&reserved));
+        reserved[28] = 0x10;
+        assert!(!gif_container_preflight(&reserved));
+        let mut interlaced = original;
+        interlaced[28] = 0x40;
+        assert!(gif_container_preflight(&interlaced));
     }
 
     #[test]
