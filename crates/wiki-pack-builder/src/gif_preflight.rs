@@ -42,10 +42,13 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
         return false;
     }
     let global = bytes[10] & 0x80 != 0;
-    let mut at = 13;
-    if global {
-        at += 3 * (1_usize << (usize::from(bytes[10] & 7) + 1));
-    }
+    let global_entries = if global {
+        1_usize << (usize::from(bytes[10] & 7) + 1)
+    } else {
+        0
+    };
+    let mut at = 13 + 3 * global_entries;
+    let mut transparent_index = None;
     let mut seen_image = false;
     // Bound cumulative decompressed frame area, not just the logical canvas.
     let mut total_frame_pixels = 0_u64;
@@ -60,6 +63,16 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
                         return false;
                     }
+                    let packed = bytes[at + 3];
+                    // The top three bits and disposal methods 4..7 are reserved.
+                    if packed & 0xe0 != 0 || ((packed >> 2) & 7) > 3 {
+                        return false;
+                    }
+                    transparent_index = if packed & 1 != 0 {
+                        Some(usize::from(bytes[at + 6]))
+                    } else {
+                        None
+                    };
                     at += 8;
                 }
                 Some(0xfe) => {
@@ -76,6 +89,10 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     let Some(end) = skip_blocks(bytes, at + 2) else {
                         return false;
                     };
+                    if bytes[at + 1] == 0x01 {
+                        // Plain-text extensions are graphic rendering blocks.
+                        transparent_index = None;
+                    }
                     at = end;
                 }
                 _ => return false,
@@ -104,9 +121,17 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                 if !local && !global {
                     return false;
                 }
+                let entries = if local {
+                    1_usize << (usize::from(packed & 7) + 1)
+                } else {
+                    global_entries
+                };
+                if transparent_index.take().is_some_and(|index| index >= entries) {
+                    return false;
+                }
                 at += 10;
                 if local {
-                    at += 3 * (1_usize << (usize::from(packed & 7) + 1));
+                    at += 3 * entries;
                 }
                 let Some(&code_size) = bytes.get(at) else {
                     return false;
@@ -161,6 +186,33 @@ mod tests {
         let mut extended = original.clone();
         extended.splice(19..19, [0x21, 0xf9, 4, 0, 0, 0, 0, 0]);
         assert!(gif_container_preflight(&extended));
+    }
+
+    #[test]
+    fn validates_graphics_control_flags_and_transparent_palette_index() {
+        let original = gif();
+        let mut valid = original.clone();
+        valid.splice(19..19, [0x21, 0xf9, 4, 0x01, 0, 0, 1, 0]);
+        assert!(gif_container_preflight(&valid));
+
+        let mut reserved = valid.clone();
+        reserved[22] = 0x21;
+        assert!(!gif_container_preflight(&reserved));
+
+        let mut disposal = valid.clone();
+        disposal[22] = 0x11;
+        assert!(!gif_container_preflight(&disposal));
+
+        let mut invalid_index = valid.clone();
+        invalid_index[25] = 2;
+        assert!(!gif_container_preflight(&invalid_index));
+
+        // A frame-local palette overrides the two-entry global palette.
+        let mut local = valid;
+        local[36] = 0x81;
+        local.splice(37..37, [0; 12]);
+        local[25] = 3;
+        assert!(gif_container_preflight(&local));
     }
 
     #[test]
