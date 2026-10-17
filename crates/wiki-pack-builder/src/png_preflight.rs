@@ -32,6 +32,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut png_color_type = 0_u8;
     let mut png_bit_depth = 0_u8;
     let mut seen_transparency = false;
+    let mut seen_srgb = false;
     let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
     let mut palette_allowed = true;
@@ -155,6 +156,12 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             seen_transparency = true;
+        }
+        if kind == b"sRGB" {
+            if seen_srgb || seen_palette || seen_idat || length != 1 || bytes[header_end] > 3 {
+                return false;
+            }
+            seen_srgb = true;
         }
         if kind == b"IDAT" {
             if past_idat {
@@ -312,6 +319,46 @@ mod tests {
         add_chunk(&mut invalid, b"IDAT", &[0]);
         add_chunk(&mut invalid, b"IEND", &[]);
         assert!(!png_chunk_preflight(&invalid));
+    }
+
+    #[test]
+    fn srgb_chunk_requires_valid_intent_unique_placement_before_palette_and_idat() {
+        let mut valid = sample_png();
+        let mut srgb = Vec::new();
+        add_chunk(&mut srgb, b"sRGB", &[0]);
+        valid.splice(33..33, srgb.clone());
+        assert!(png_chunk_preflight(&valid));
+
+        let mut duplicate = valid.clone();
+        duplicate.splice(33..33, srgb);
+        assert!(!png_chunk_preflight(&duplicate));
+
+        for payload in [&[][..], &[4_u8][..], &[0_u8, 1][..]] {
+            let mut invalid = sample_png();
+            let mut chunk = Vec::new();
+            add_chunk(&mut chunk, b"sRGB", payload);
+            invalid.splice(33..33, chunk);
+            assert!(!png_chunk_preflight(&invalid));
+        }
+
+        let mut after_idat = sample_png();
+        let iend_offset = after_idat.windows(4).position(|w| w == b"IEND").unwrap() - 4;
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"sRGB", &[2]);
+        after_idat.splice(iend_offset..iend_offset, chunk);
+        assert!(!png_chunk_preflight(&after_idat));
+
+        let mut after_palette = PNG_SIGNATURE.to_vec();
+        add_chunk(
+            &mut after_palette,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0],
+        );
+        add_chunk(&mut after_palette, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut after_palette, b"sRGB", &[1]);
+        add_chunk(&mut after_palette, b"IDAT", &[0]);
+        add_chunk(&mut after_palette, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&after_palette));
     }
 
     #[test]
