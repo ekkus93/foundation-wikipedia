@@ -18,6 +18,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     let mut seen_frame = false;
     let mut seen_scan = false;
     let mut frame_ids = Vec::new();
+    let mut restart_interval = 0_u16;
     for _ in 0..4096 {
         if bytes.get(at) != Some(&0xff) {
             return false;
@@ -79,6 +80,12 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             }
             seen_frame = true;
         }
+        if marker == 0xdd {
+            if body.len() != 2 {
+                return false;
+            }
+            restart_interval = u16::from_be_bytes([body[0], body[1]]);
+        }
         if marker == 0xda {
             if !seen_frame || body.len() < 6 {
                 return false;
@@ -97,12 +104,15 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             seen_scan = true;
             at = end;
             let mut has_entropy = false;
+            let mut entropy_since_restart = false;
+            let mut expected_restart = 0xd0_u8;
             loop {
                 let Some(&byte) = bytes.get(at) else {
                     return false;
                 };
                 if byte != 0xff {
                     has_entropy = true;
+                    entropy_since_restart = true;
                     at += 1;
                     continue;
                 }
@@ -115,11 +125,20 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 };
                 if next == 0x00 {
                     has_entropy = true;
+                    entropy_since_restart = true;
                     at += 1;
                 } else if (0xd0..=0xd7).contains(&next) {
+                    if restart_interval == 0
+                        || !entropy_since_restart
+                        || next != expected_restart
+                    {
+                        return false;
+                    }
+                    expected_restart = if next == 0xd7 { 0xd0 } else { next + 1 };
+                    entropy_since_restart = false;
                     at += 1;
                 } else {
-                    if !has_entropy {
+                    if !has_entropy || !entropy_since_restart {
                         return false;
                     }
                     at = marker_start;
@@ -171,7 +190,8 @@ mod tests {
         with_app.splice(2..2, [0xff, 0xe1, 0, 4, 0x12, 0x34]);
         assert!(jpeg_container_preflight(&with_app));
         let mut with_restart = original;
-        with_restart.splice(29..29, [0xff, 0xd0]);
+        with_restart.splice(2..2, [0xff, 0xdd, 0, 4, 0, 1]);
+        with_restart.splice(34..34, [0xff, 0xd0]);
         assert!(jpeg_container_preflight(&with_restart));
     }
 
@@ -202,6 +222,18 @@ mod tests {
         duplicate_frame[11] = 2;
         duplicate_frame.splice(15..15, [1, 0x11, 0]);
         assert!(!jpeg_container_preflight(&duplicate_frame));
+    }
+
+    #[test]
+    fn rejects_unannounced_and_out_of_order_restart_markers() {
+        let original = jpeg();
+        let mut unannounced = original.clone();
+        unannounced.splice(28..28, [0xff, 0xd0]);
+        assert!(!jpeg_container_preflight(&unannounced));
+        let mut wrong = original;
+        wrong.splice(2..2, [0xff, 0xdd, 0, 4, 0, 1]);
+        wrong.splice(34..34, [0xff, 0xd1]);
+        assert!(!jpeg_container_preflight(&wrong));
     }
 
     #[test]
