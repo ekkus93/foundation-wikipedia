@@ -84,6 +84,32 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             }
             seen_frame = true;
         }
+        if marker == 0xc4 {
+            if body.is_empty() {
+                return false;
+            }
+            let mut offset = 0_usize;
+            while offset < body.len() {
+                if body.len() - offset < 17 {
+                    return false;
+                }
+                let table = body[offset];
+                if table >> 4 > 1 || table & 0x0f > 3 {
+                    return false;
+                }
+                let symbols: usize = body[offset + 1..offset + 17]
+                    .iter()
+                    .map(|&count| usize::from(count))
+                    .sum();
+                if symbols == 0 || symbols > 256 {
+                    return false;
+                }
+                offset += 17 + symbols;
+                if offset > body.len() {
+                    return false;
+                }
+            }
+        }
         if marker == 0xdb {
             if body.is_empty() {
                 return false;
@@ -284,6 +310,31 @@ mod tests {
         assert!(!jpeg_container_preflight(&incomplete));
         let mut empty = original;
         empty.splice(2..2, [0xff, 0xdb, 0, 2]);
+        assert!(!jpeg_container_preflight(&empty));
+    }
+
+    #[test]
+    fn validates_huffman_table_envelopes() {
+        let original = jpeg();
+        let mut dht = vec![0xff, 0xc4, 0, 20, 0, 1];
+        dht.extend([0_u8; 15]);
+        dht.push(0x42);
+        let mut valid = original.clone();
+        valid.splice(2..2, dht);
+        assert!(jpeg_container_preflight(&valid));
+
+        for invalid_header in [0x20, 0x04] {
+            let mut malformed = valid.clone();
+            malformed[6] = invalid_header;
+            assert!(!jpeg_container_preflight(&malformed));
+        }
+        let mut incomplete = original.clone();
+        let mut short_table = vec![0xff, 0xc4, 0, 19, 0, 1];
+        short_table.extend([0_u8; 15]);
+        incomplete.splice(2..2, short_table);
+        assert!(!jpeg_container_preflight(&incomplete));
+        let mut empty = original;
+        empty.splice(2..2, [0xff, 0xc4, 0, 2]);
         assert!(!jpeg_container_preflight(&empty));
     }
 
