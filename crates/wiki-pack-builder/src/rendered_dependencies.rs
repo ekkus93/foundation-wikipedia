@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use wiki_pack_format::sha256_hex;
+
 use crate::visual_discovery::{
     inventory, inventory_supplied_css_graph, Candidate, CandidateKind, DiscoveryError,
 };
@@ -30,6 +32,9 @@ pub struct RenderDependencyGraph {
     pub html_references: usize,
     pub css_references: usize,
     pub stylesheets_inspected: usize,
+    /// Digest and byte length of every caller-supplied CSS source traversed.
+    /// These receipts bind discovery text to later local-object verification.
+    pub supplied_css_receipts: BTreeMap<String, (String, u64)>,
     pub unresolved_dynamic_surfaces: usize,
     pub unsupported_schemes: usize,
     pub missing_sources: usize,
@@ -86,8 +91,29 @@ pub fn inventory_rendered_dependencies(
         return Err(RenderDependencyError::CombinedReferenceBudget);
     }
     let mut candidates: BTreeSet<Candidate> = html.candidates.into_iter().collect();
+    let mut supplied_css_receipts = BTreeMap::new();
+    for url in &roots {
+        let text = stylesheets
+            .get(url)
+            .ok_or(DiscoveryError::MissingSuppliedStylesheet)?;
+        supplied_css_receipts.insert(
+            url.clone(),
+            (sha256_hex(text.as_bytes()), text.len() as u64),
+        );
+    }
     let stylesheets_inspected = if let Some(css) = css {
         let count = css.stylesheets_inspected;
+        for candidate in &css.candidates {
+            if candidate.kind == CandidateKind::CssImport {
+                let text = stylesheets
+                    .get(&candidate.url)
+                    .ok_or(DiscoveryError::MissingSuppliedStylesheet)?;
+                supplied_css_receipts.insert(
+                    candidate.url.clone(),
+                    (sha256_hex(text.as_bytes()), text.len() as u64),
+                );
+            }
+        }
         candidates.extend(css.candidates);
         count
     } else {
@@ -101,6 +127,7 @@ pub fn inventory_rendered_dependencies(
         html_references: html.observed_references,
         css_references,
         stylesheets_inspected,
+        supplied_css_receipts,
         unresolved_dynamic_surfaces: html.unresolved_dynamic_surfaces,
         unsupported_schemes: html.unsupported_schemes,
         missing_sources: html.missing_sources,
@@ -140,6 +167,7 @@ mod tests {
         );
         let graph = inventory_rendered_dependencies(html, DOC, &stylesheets, 20).unwrap();
         assert_eq!(graph.stylesheets_inspected, 3);
+        assert_eq!(graph.supplied_css_receipts.len(), 3);
         assert_eq!(graph.html_references, 4);
         assert_eq!(graph.css_references, 4);
         let urls: BTreeSet<_> = graph.candidates.iter().map(|c| c.url.as_str()).collect();

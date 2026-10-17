@@ -18,6 +18,7 @@ pub enum RenderedObjectError {
     MissingBinding(String),
     UnexpectedBinding(String),
     ConflictingDigest(String),
+    CssBytesMismatch(String),
     InvalidObjects(MediaInventoryError),
 }
 
@@ -64,6 +65,16 @@ pub fn audit_rendered_objects(
     for url in bindings.keys() {
         if !urls.contains(url.as_str()) {
             return Err(RenderedObjectError::UnexpectedBinding(url.clone()));
+        }
+    }
+    // A CSS inventory produced from one set of source bytes cannot be
+    // satisfied by a different local stylesheet with the same URL.
+    for (url, (digest, bytes)) in &graph.supplied_css_receipts {
+        let bound = bindings
+            .get(url)
+            .ok_or_else(|| RenderedObjectError::MissingBinding(url.clone()))?;
+        if &bound.digest != digest || bound.bytes != *bytes {
+            return Err(RenderedObjectError::CssBytesMismatch(url.clone()));
         }
     }
     let mut unique: BTreeMap<String, u64> = BTreeMap::new();
@@ -157,6 +168,40 @@ mod tests {
             Err(RenderedObjectError::InvalidObjects(
                 MediaInventoryError::WrongSize
             ))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn css_discovery_bytes_must_match_verified_local_stylesheet() {
+        let (root, store, image) = fixture();
+        let css_text = ".x{background:url(/image.png)}";
+        let css_digest = store.store_bytes(css_text.as_bytes()).unwrap();
+        let style_url = "https://en.wikipedia.org/style.css";
+        let css = BTreeMap::from([(style_url.to_owned(), css_text.to_owned())]);
+        let graph = inventory_rendered_dependencies(
+            "<link rel='stylesheet' href='/style.css'><img src='/image.png'>",
+            DOC,
+            &css,
+            10,
+        )
+        .unwrap();
+        let mut bindings = BTreeMap::from([
+            (IMAGE.to_owned(), image.clone()),
+            (
+                style_url.to_owned(),
+                RequiredMedia {
+                    digest: css_digest,
+                    bytes: css_text.len() as u64,
+                },
+            ),
+        ]);
+        let audit = audit_rendered_objects(&graph, &bindings, &store).unwrap();
+        assert_eq!(audit.verified_objects, 2);
+        bindings.get_mut(style_url).unwrap().digest = image.digest;
+        assert!(matches!(
+            audit_rendered_objects(&graph, &bindings, &store),
+            Err(RenderedObjectError::CssBytesMismatch(_))
         ));
         fs::remove_dir_all(root).unwrap();
     }
