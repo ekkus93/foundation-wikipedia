@@ -31,6 +31,8 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
     let mut offset = 12;
     let mut chunks = 0;
     let mut extended = false;
+    let mut animated = false;
+    let mut seen_animation_header = false;
     let mut seen_extended_image = false;
     while offset < bytes.len() {
         let Some(header_end) = offset.checked_add(8) else {
@@ -54,11 +56,23 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             extended = chunk == b"VP8X";
-        } else if extended
-            && (chunk == b"VP8 " || chunk == b"VP8L" || chunk == b"ANMF")
-            && chunk_size > 0
-        {
-            seen_extended_image = true;
+        } else if extended {
+            if chunk == b"ANIM" {
+                if !animated || seen_animation_header || chunk_size != 6 {
+                    return false;
+                }
+                seen_animation_header = true;
+            } else if chunk == b"ANMF" {
+                if !animated || !seen_animation_header || chunk_size < 16 {
+                    return false;
+                }
+                seen_extended_image = true;
+            } else if chunk == b"VP8 " || chunk == b"VP8L" {
+                if animated || chunk_size == 0 {
+                    return false;
+                }
+                seen_extended_image = true;
+            }
         }
         let next = match header_end
             .checked_add(chunk_size)
@@ -76,6 +90,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             if ext[0] & 0xc1 != 0 || ext[1..4] != [0, 0, 0] {
                 return false;
             }
+            animated = ext[0] & 0x02 != 0;
             let width =
                 1 + u32::from(ext[4]) + (u32::from(ext[5]) << 8) + (u32::from(ext[6]) << 16);
             let height =
@@ -175,6 +190,32 @@ mod tests {
         only_metadata.extend_from_slice(b"EXIF\x00\x00\x00\x00");
         only_metadata[4..8].copy_from_slice(&30_u32.to_le_bytes());
         assert!(!webp_riff_preflight(&only_metadata));
+    }
+
+    #[test]
+    fn animated_extended_webp_requires_animation_header_and_frame() {
+        let mut sample = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
+        sample.extend_from_slice(&[0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        sample.extend_from_slice(b"ANIM\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00");
+        sample.extend_from_slice(b"ANMF\x10\x00\x00\x00");
+        sample.extend_from_slice(&[0; 16]);
+        let riff_size = (sample.len() - 8) as u32;
+        sample[4..8].copy_from_slice(&riff_size.to_le_bytes());
+        assert!(webp_riff_preflight(&sample));
+
+        let mut no_animation_flag = sample.clone();
+        no_animation_flag[20] = 0;
+        assert!(!webp_riff_preflight(&no_animation_flag));
+
+        let mut no_animation_header = sample.clone();
+        no_animation_header.drain(30..44);
+        let riff_size = (no_animation_header.len() - 8) as u32;
+        no_animation_header[4..8].copy_from_slice(&riff_size.to_le_bytes());
+        assert!(!webp_riff_preflight(&no_animation_header));
+
+        let mut empty_frame = sample.clone();
+        empty_frame[48..52].copy_from_slice(&0_u32.to_le_bytes());
+        assert!(!webp_riff_preflight(&empty_frame));
     }
 
     #[test]
