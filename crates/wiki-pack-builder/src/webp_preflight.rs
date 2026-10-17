@@ -21,8 +21,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
         return false;
     }
     let riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
-    let chunk_size =
-        u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
+    let chunk_size = u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
     let padded = chunk_size.checked_add(chunk_size & 1);
     let first_end = padded.and_then(|size| size.checked_add(20));
     riff_size.checked_add(8) == Some(bytes.len())
@@ -51,8 +50,7 @@ pub fn read_raster_with_webp_preflight(
 mod tests {
     use super::*;
 
-    const WEBP: &[u8] =
-        b"RIFF\x12\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f\x00\x00\x00\x00\x00";
+    const WEBP: &[u8] = b"RIFF\x12\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f\x00\x00\x00\x00\x00";
 
     #[test]
     fn accepts_bounded_first_image_chunk() {
