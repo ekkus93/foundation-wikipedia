@@ -570,11 +570,13 @@ mod pinned_tests {
         }
         graph.get_mut("Category:Unselected").unwrap().articles = vec![2];
         assert!(pinned(&graph, &redirects, &disambiguations).is_ok());
-        redirects.insert(99, 0);
-        assert_eq!(
-            pinned(&graph, &redirects, &disambiguations),
-            Err(ResolveError::InvalidPage)
-        );
+        for invalid in [0, i64::MAX as u64 + 1] {
+            redirects.insert(99, invalid);
+            assert_eq!(
+                pinned(&graph, &redirects, &disambiguations),
+                Err(ResolveError::InvalidPage)
+            );
+        }
         redirects.clear();
         redirects.insert(0, 99);
         assert_eq!(
