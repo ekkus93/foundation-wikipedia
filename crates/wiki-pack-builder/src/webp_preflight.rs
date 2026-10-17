@@ -10,8 +10,53 @@ use crate::rendered_local_urls::{
     read_pack_raster_asset, RasterAssetError, VerifiedLocalUrlPlan, VerifiedRasterAsset,
 };
 
-/// Check only the outer RIFF envelope and the first recognized WebP image chunk.
-/// Later metadata chunks and image decoding require separate validation.
+/// Check RIFF chunk boundaries, image placement and animation frame envelopes.
+/// Image decoding and embedded metadata sanitization require separate validation.
+fn valid_animation_frame(frame: &[u8]) -> bool {
+    if frame.len() < 30 {
+        return false;
+    }
+    let mut offset = 16;
+    let mut seen_alpha = false;
+    let mut seen_image = false;
+    for _ in 0..2 {
+        if offset == frame.len() {
+            return seen_image;
+        }
+        if frame.len() - offset < 8 {
+            return false;
+        }
+        let chunk = &frame[offset..offset + 4];
+        let size = u32::from_le_bytes([
+            frame[offset + 4],
+            frame[offset + 5],
+            frame[offset + 6],
+            frame[offset + 7],
+        ]) as usize;
+        let Some(next) = offset
+            .checked_add(8)
+            .and_then(|end| end.checked_add(size))
+            .and_then(|end| end.checked_add(size & 1))
+        else {
+            return false;
+        };
+        if next > frame.len() {
+            return false;
+        }
+        if chunk == b"ALPH" && !seen_alpha && !seen_image && size > 0 {
+            seen_alpha = true;
+        } else if chunk == b"VP8 " && !seen_image && size > 0 {
+            seen_image = true;
+        } else if chunk == b"VP8L" && !seen_alpha && !seen_image && size > 0 {
+            seen_image = true;
+        } else {
+            return false;
+        }
+        offset = next;
+    }
+    offset == frame.len() && seen_image
+}
+
 pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
     if bytes.len() < 22
         || bytes.len() > 64 * 1024 * 1024
@@ -63,16 +108,26 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
                 }
                 seen_animation_header = true;
             } else if chunk == b"ANMF" {
-                if !animated || !seen_animation_header || chunk_size < 16 {
+                if !animated || !seen_animation_header || chunk_size <= 16 {
                     return false;
                 }
                 seen_extended_image = true;
             } else if chunk == b"VP8 " || chunk == b"VP8L" {
-                if animated || chunk_size == 0 {
+                if animated || chunk_size == 0 || seen_extended_image {
                     return false;
                 }
                 seen_extended_image = true;
+            } else if chunk == b"VP8X" {
+                return false;
             }
+        } else if chunks > 0
+            && (chunk == b"VP8 "
+                || chunk == b"VP8L"
+                || chunk == b"VP8X"
+                || chunk == b"ANIM"
+                || chunk == b"ANMF")
+        {
+            return false;
         }
         let next = match header_end
             .checked_add(chunk_size)
@@ -81,6 +136,11 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
+        if chunk == b"ANMF"
+            && !valid_animation_frame(&bytes[header_end..header_end + chunk_size])
+        {
+            return false;
+        }
         if chunks == 0 && chunk == b"VP8X" {
             // Extended WebP declares a 24-bit canvas size minus one.
             if chunk_size != 10 {
@@ -197,8 +257,9 @@ mod tests {
         let mut sample = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
         sample.extend_from_slice(&[0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         sample.extend_from_slice(b"ANIM\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00");
-        sample.extend_from_slice(b"ANMF\x10\x00\x00\x00");
+        sample.extend_from_slice(b"ANMF\x1e\x00\x00\x00");
         sample.extend_from_slice(&[0; 16]);
+        sample.extend_from_slice(&WEBP[12..]);
         let riff_size = (sample.len() - 8) as u32;
         sample[4..8].copy_from_slice(&riff_size.to_le_bytes());
         assert!(webp_riff_preflight(&sample));
@@ -216,6 +277,31 @@ mod tests {
         let mut empty_frame = sample.clone();
         empty_frame[48..52].copy_from_slice(&0_u32.to_le_bytes());
         assert!(!webp_riff_preflight(&empty_frame));
+
+        let mut no_frame_image = sample.clone();
+        no_frame_image[68..72].copy_from_slice(b"JUNK");
+        assert!(!webp_riff_preflight(&no_frame_image));
+
+        let mut oversized_frame_image = sample.clone();
+        oversized_frame_image[72..76].copy_from_slice(&100_u32.to_le_bytes());
+        assert!(!webp_riff_preflight(&oversized_frame_image));
+    }
+
+    #[test]
+    fn rejects_duplicate_or_misplaced_image_chunks() {
+        let mut simple = WEBP.to_vec();
+        simple.extend_from_slice(&WEBP[12..]);
+        let simple_size = (simple.len() - 8) as u32;
+        simple[4..8].copy_from_slice(&simple_size.to_le_bytes());
+        assert!(!webp_riff_preflight(&simple));
+
+        let mut extended = b"RIFF\x16\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00".to_vec();
+        extended.extend_from_slice(&[0; 10]);
+        extended.extend_from_slice(&WEBP[12..]);
+        extended.extend_from_slice(&WEBP[12..]);
+        let extended_size = (extended.len() - 8) as u32;
+        extended[4..8].copy_from_slice(&extended_size.to_le_bytes());
+        assert!(!webp_riff_preflight(&extended));
     }
 
     #[test]
