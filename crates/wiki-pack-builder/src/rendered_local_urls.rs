@@ -85,7 +85,11 @@ pub fn read_verified_pack_asset(
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         })
         .ok_or(LocalAssetReadError::InvalidUri)?;
-    if !plan.source_to_local_uri.values().any(|uri| uri == local_uri) {
+    if !plan
+        .source_to_local_uri
+        .values()
+        .any(|uri| uri == local_uri)
+    {
         return Err(LocalAssetReadError::NotInPlan);
     }
     let owned = registry
@@ -197,13 +201,8 @@ mod tests {
         let (root, store) = store_fixture();
         let digest = store.store_bytes(b"image").unwrap();
         let image_url = "https://en.wikipedia.org/a.png";
-        let graph = inventory_rendered_dependencies(
-            "<img src='/a.png'>",
-            DOC,
-            &BTreeMap::new(),
-            8,
-        )
-        .unwrap();
+        let graph = inventory_rendered_dependencies("<img src='/a.png'>", DOC, &BTreeMap::new(), 8)
+            .unwrap();
         let bindings = BTreeMap::from([(
             image_url.to_owned(),
             RequiredMedia {
@@ -220,13 +219,20 @@ mod tests {
             creator: "Test fixture".into(),
             license: "CC BY-SA 4.0".into(),
         };
-        assert_eq!(registry.register_verified_bytes(b"image", &notice).unwrap(), digest);
-        registry.add_owner(&digest, OwnerKind::Cache, "physics").unwrap();
+        assert_eq!(
+            registry.register_verified_bytes(b"image", &notice).unwrap(),
+            digest
+        );
+        registry
+            .add_owner(&digest, OwnerKind::Cache, "physics")
+            .unwrap();
         assert!(matches!(
             read_verified_pack_asset(&plan, uri, &registry, "physics", &store),
             Err(LocalAssetReadError::NotOwned)
         ));
-        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
         assert_eq!(
             read_verified_pack_asset(&plan, uri, &registry, "physics", &store).unwrap(),
             b"image"
