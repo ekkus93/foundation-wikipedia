@@ -4,6 +4,7 @@
 //! prevent local mixing, but do NOT authenticate Wikimedia or prove completeness.
 use std::collections::{BTreeMap, BTreeSet};
 
+use wiki_pack_format::Sha256Transcript;
 use wiki_source::enterprise::JoinedEnterpriseArticle;
 
 use crate::enterprise_graph::{PageRedirectIdentity, RevisionPinnedSelection};
@@ -56,9 +57,9 @@ pub struct JoinedRelatedPreview {
     pub related: RelatedRevisionReceipt,
 }
 
-fn append_text(bytes: &mut Vec<u8>, value: &str) {
-    bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
-    bytes.extend_from_slice(value.as_bytes());
+fn append_text(digest: &mut Sha256Transcript, value: &str) {
+    digest.update(&(value.len() as u64).to_be_bytes());
+    digest.update(value.as_bytes());
 }
 
 /// Fail closed on links to unknown, non-mainspace or differently sourced pages,
@@ -126,33 +127,34 @@ fn expand_verified_links(
     }
     canonical_edges.sort_unstable();
     canonical_edges.dedup();
-    let mut bytes = b"foundation-wikipedia/joined-related-revisions/v2\0".to_vec();
-    append_text(&mut bytes, &base.project);
-    append_text(&mut bytes, &base.generation_id);
-    append_text(&mut bytes, &base.revision_selection_sha256);
+    let mut digest = Sha256Transcript::new();
+    digest.update(b"foundation-wikipedia/joined-related-revisions/v2\0");
+    append_text(&mut digest, &base.project);
+    append_text(&mut digest, &base.generation_id);
+    append_text(&mut digest, &base.revision_selection_sha256);
     for value in [
         limits.max_hops,
         limits.max_new_pages,
         limits.max_edge_visits,
         page_limit,
     ] {
-        bytes.extend_from_slice(&(value as u64).to_be_bytes());
+        digest.update(&(value as u64).to_be_bytes());
     }
-    bytes.extend_from_slice(&(canonical_edges.len() as u64).to_be_bytes());
+    digest.update(&(canonical_edges.len() as u64).to_be_bytes());
     for (from, revision, to) in canonical_edges {
-        bytes.extend_from_slice(&from.to_be_bytes());
-        bytes.extend_from_slice(&revision.to_be_bytes());
-        bytes.extend_from_slice(&to.to_be_bytes());
+        digest.update(&from.to_be_bytes());
+        digest.update(&revision.to_be_bytes());
+        digest.update(&to.to_be_bytes());
     }
-    bytes.extend_from_slice(&(page_revisions.len() as u64).to_be_bytes());
+    digest.update(&(page_revisions.len() as u64).to_be_bytes());
     for (&id, &revision) in &page_revisions {
-        bytes.extend_from_slice(&id.to_be_bytes());
-        bytes.extend_from_slice(&revision.to_be_bytes());
+        digest.update(&id.to_be_bytes());
+        digest.update(&revision.to_be_bytes());
     }
     Ok(RelatedRevisionReceipt {
         related_added_page_count: page_revisions.len() - base.page_revisions.len(),
         page_revisions,
-        related_selection_sha256: wiki_pack_format::sha256_hex(&bytes),
+        related_selection_sha256: digest.finish_hex(),
         related_source_authenticated: false,
     })
 }
@@ -265,6 +267,10 @@ mod tests {
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
         assert_eq!(first.page_revisions, mainspace);
         assert_eq!(first.related_added_page_count, 3);
+        assert_eq!(
+            first.related_selection_sha256,
+            "c5394be12b03f06e18b06b40dd7d47d25ccc3f960e3a765a254efc2fbacb83bc"
+        );
         assert!(!first.related_source_authenticated);
         let mut reordered = links.clone();
         reordered.reverse();
