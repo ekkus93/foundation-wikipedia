@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wiki_store::media_inventory::RequiredMedia;
 use wiki_store::media_objects::{MediaObjectError, MediaObjectStore};
-use wiki_store::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
+use wiki_store::media_ownership::{MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind};
 
 use crate::rendered_dependencies::RenderDependencyGraph;
 use crate::rendered_objects::{audit_rendered_objects, RenderedObjectAudit, RenderedObjectError};
@@ -154,6 +154,9 @@ pub fn read_verified_pack_asset(
 pub struct VerifiedRasterAsset {
     pub mime: String,
     pub bytes: Vec<u8>,
+    /// Distinct registered source, creator and license notices, not authenticated
+    /// upstream Wikimedia attribution or a publisher signature.
+    pub notices: Vec<MediaNotice>,
 }
 
 #[derive(Debug)]
@@ -199,7 +202,14 @@ pub fn read_pack_raster_asset(
     if !raster_signature_matches(&mime, &bytes) {
         return Err(RasterAssetError::UnsupportedOrMismatchedMime);
     }
-    Ok(VerifiedRasterAsset { mime, bytes })
+    let notices = registry
+        .owned_digest_notices(OwnerKind::Pack, pack_id, digest)
+        .map_err(RasterAssetError::Registry)?;
+    Ok(VerifiedRasterAsset {
+        mime,
+        bytes,
+        notices,
+    })
 }
 
 #[cfg(test)]
@@ -461,6 +471,12 @@ mod tests {
         let raster = read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
         assert_eq!(raster.mime, "image/png");
         assert_eq!(raster.bytes, png);
+        assert_eq!(raster.notices, vec![notice.clone()]);
+        let mut second = notice.clone();
+        second.creator = "Second creator".into();
+        registry.register_verified_bytes(png, &second).unwrap();
+        let with_two = read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
+        assert_eq!(with_two.notices, vec![notice.clone(), second]);
         assert!(matches!(
             read_pack_raster_asset(&plan, uri, &registry, "other", &store),
             Err(RasterAssetError::Read(LocalAssetReadError::NotOwned))
