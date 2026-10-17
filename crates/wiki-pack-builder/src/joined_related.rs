@@ -23,6 +23,8 @@ pub struct RelatedLinkIdentity {
     pub project: String,
     pub generation_id: String,
     pub from_page_id: u64,
+    /// Revision of the source article from which this edge was extracted.
+    pub from_revision_id: u64,
     pub to_page_id: u64,
 }
 
@@ -32,6 +34,7 @@ pub enum JoinedRelatedError {
     MixedSource,
     InvalidPage,
     NotMainspace(u64),
+    StaleLinkRevision(u64),
     InconsistentBase(u64),
     Budget(ResolveError),
 }
@@ -85,13 +88,16 @@ fn expand_verified_links(
         if link.project != base.project || link.generation_id != base.generation_id {
             return Err(JoinedRelatedError::MixedSource);
         }
-        if link.from_page_id == 0 || link.to_page_id == 0 {
+        if link.from_page_id == 0 || link.from_revision_id == 0 || link.to_page_id == 0 {
             return Err(JoinedRelatedError::InvalidPage);
         }
         for id in [link.from_page_id, link.to_page_id] {
             if !mainspace.contains_key(&id) {
                 return Err(JoinedRelatedError::NotMainspace(id));
             }
+        }
+        if mainspace.get(&link.from_page_id) != Some(&link.from_revision_id) {
+            return Err(JoinedRelatedError::StaleLinkRevision(link.from_page_id));
         }
         adjacency
             .entry(link.from_page_id)
@@ -238,8 +244,15 @@ mod tests {
             project: "enwiki".into(),
             generation_id: "20261016".into(),
             from_page_id: from,
+            from_revision_id: from * 11,
             to_page_id: to,
         }
+    }
+
+    fn joined_link(from: u64, to: u64) -> RelatedLinkIdentity {
+        let mut result = link(from, to);
+        result.from_revision_id = from + 100;
+        result
     }
 
     #[test]
@@ -329,6 +342,12 @@ mod tests {
             check(&[foreign], &base),
             Err(JoinedRelatedError::MixedSource)
         );
+        let mut stale = link(1, 2);
+        stale.from_revision_id = 999;
+        assert_eq!(
+            check(&[stale], &base),
+            Err(JoinedRelatedError::StaleLinkRevision(1))
+        );
         base.page_revisions.insert(1, 999);
         assert_eq!(
             check(&[], &base),
@@ -389,7 +408,7 @@ mod tests {
             max_new_pages: 2,
             max_edge_visits: 4,
         };
-        let links = vec![link(2, 3), link(1, 2)];
+        let links = vec![joined_link(2, 3), joined_link(1, 2)];
         let run = |rules: &Rules, links: &[RelatedLinkIdentity]| {
             preview_joined_selection_with_related(
                 &records,
@@ -420,8 +439,14 @@ mod tests {
         rules.exclude.push(2);
         let excluded = run(&rules, &links).unwrap();
         assert_eq!(excluded.related.page_revisions, BTreeMap::from([(1, 101)]));
+        let mut stale = joined_link(1, 2);
+        stale.from_revision_id = 999;
         assert_eq!(
-            run(&rules, &[link(1, 90)]),
+            run(&rules, &[stale]),
+            Err(JoinedRelatedError::StaleLinkRevision(1))
+        );
+        assert_eq!(
+            run(&rules, &[joined_link(1, 90)]),
             Err(JoinedRelatedError::NotMainspace(90))
         );
     }
