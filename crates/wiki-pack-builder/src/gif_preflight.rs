@@ -128,7 +128,7 @@ mod tests {
         let original = gif();
         assert!(!gif_container_preflight(&original[..34]));
         let mut bad = original.clone();
-        bad[31] = 250;
+        bad[30] = 250;
         assert!(!gif_container_preflight(&bad));
         bad = original.clone();
         bad[6] = 0;
