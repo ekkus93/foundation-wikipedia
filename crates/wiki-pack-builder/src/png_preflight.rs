@@ -191,7 +191,11 @@ mod tests {
         assert!(!png_chunk_preflight(&png));
 
         let mut indexed = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut indexed, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
+        add_chunk(
+            &mut indexed,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 3, 0, 0, 0],
+        );
         add_chunk(&mut indexed, b"IDAT", &[0]);
         add_chunk(&mut indexed, b"IEND", &[]);
         assert!(!png_chunk_preflight(&indexed));
@@ -208,7 +212,11 @@ mod tests {
         assert!(png_chunk_preflight(&indexed_with_palette));
 
         let mut separated_idat = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut separated_idat, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(
+            &mut separated_idat,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+        );
         add_chunk(&mut separated_idat, b"IDAT", &[0]);
         add_chunk(&mut separated_idat, b"tEXt", b"caption");
         add_chunk(&mut separated_idat, b"IDAT", &[0]);
