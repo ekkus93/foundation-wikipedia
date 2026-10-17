@@ -19,6 +19,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     let mut baseline_frame = false;
     let mut seen_scan = false;
     let mut frame_ids = Vec::new();
+    let mut baseline_scanned_ids = Vec::new();
     let mut restart_interval = 0_u16;
     for _ in 0..4096 {
         if bytes.get(at) != Some(&0xff) {
@@ -32,7 +33,10 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
         };
         at += 1;
         if marker == 0xd9 {
-            return seen_frame && seen_scan && at == bytes.len();
+            return seen_frame
+                && seen_scan
+                && (!baseline_frame || baseline_scanned_ids.len() == frame_ids.len())
+                && at == bytes.len();
         }
         if marker < 0xc0 || marker == 0xd8 || (0xd0..=0xd7).contains(&marker) {
             return false;
@@ -169,8 +173,16 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 }
                 scan_ids.push(entry[0]);
             }
-            if baseline_frame && !body.ends_with(&[0, 63, 0]) {
-                return false;
+            if baseline_frame {
+                if !body.ends_with(&[0, 63, 0]) {
+                    return false;
+                }
+                for id in &scan_ids {
+                    if baseline_scanned_ids.contains(id) {
+                        return false;
+                    }
+                    baseline_scanned_ids.push(*id);
+                }
             }
             seen_scan = true;
             at = end;
@@ -397,6 +409,26 @@ mod tests {
         wrong.splice(2..2, [0xff, 0xdd, 0, 4, 0, 1]);
         wrong.splice(34..34, [0xff, 0xd1]);
         assert!(!jpeg_container_preflight(&wrong));
+    }
+
+    #[test]
+    fn baseline_scans_cover_every_component_exactly_once() {
+        let original = jpeg();
+        let mut two_components = original.clone();
+        two_components[5] = 14;
+        two_components[11] = 2;
+        two_components.splice(15..15, [2, 0x11, 0]);
+        assert!(!jpeg_container_preflight(&two_components));
+
+        let mut complete = two_components;
+        let at = complete.len() - 2;
+        complete.splice(at..at, [0xff, 0xda, 0, 8, 1, 2, 0, 0, 63, 0, 0x33]);
+        assert!(jpeg_container_preflight(&complete));
+
+        let mut duplicate = original;
+        let at = duplicate.len() - 2;
+        duplicate.splice(at..at, [0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0, 0x33]);
+        assert!(!jpeg_container_preflight(&duplicate));
     }
 
     #[test]
