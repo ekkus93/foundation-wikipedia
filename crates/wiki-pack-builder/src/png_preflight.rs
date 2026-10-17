@@ -33,6 +33,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut png_bit_depth = 0_u8;
     let mut seen_transparency = false;
     let mut seen_srgb = false;
+    let mut seen_gamma = false;
     let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
     let mut palette_allowed = true;
@@ -162,6 +163,21 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             seen_srgb = true;
+        }
+        if kind == b"gAMA" {
+            if seen_gamma || seen_palette || seen_idat || length != 4 {
+                return false;
+            }
+            let gamma = u32::from_be_bytes([
+                bytes[header_end],
+                bytes[header_end + 1],
+                bytes[header_end + 2],
+                bytes[header_end + 3],
+            ]);
+            if gamma == 0 {
+                return false;
+            }
+            seen_gamma = true;
         }
         if kind == b"IDAT" {
             if past_idat {
@@ -356,6 +372,46 @@ mod tests {
         );
         add_chunk(&mut after_palette, b"PLTE", &[255, 0, 0]);
         add_chunk(&mut after_palette, b"sRGB", &[1]);
+        add_chunk(&mut after_palette, b"IDAT", &[0]);
+        add_chunk(&mut after_palette, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&after_palette));
+    }
+
+    #[test]
+    fn gamma_chunk_requires_nonzero_value_unique_placement_and_four_bytes() {
+        let mut valid = sample_png();
+        let mut gamma = Vec::new();
+        add_chunk(&mut gamma, b"gAMA", &45_455_u32.to_be_bytes());
+        valid.splice(33..33, gamma.clone());
+        assert!(png_chunk_preflight(&valid));
+
+        let mut duplicate = valid.clone();
+        duplicate.splice(33..33, gamma);
+        assert!(!png_chunk_preflight(&duplicate));
+
+        for payload in [&[][..], &[0_u8, 0, 0, 0][..], &[1_u8, 2, 3][..]] {
+            let mut invalid = sample_png();
+            let mut chunk = Vec::new();
+            add_chunk(&mut chunk, b"gAMA", payload);
+            invalid.splice(33..33, chunk);
+            assert!(!png_chunk_preflight(&invalid));
+        }
+
+        let mut after_idat = sample_png();
+        let iend_offset = after_idat.windows(4).position(|w| w == b"IEND").unwrap() - 4;
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"gAMA", &45_455_u32.to_be_bytes());
+        after_idat.splice(iend_offset..iend_offset, chunk);
+        assert!(!png_chunk_preflight(&after_idat));
+
+        let mut after_palette = PNG_SIGNATURE.to_vec();
+        add_chunk(
+            &mut after_palette,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0],
+        );
+        add_chunk(&mut after_palette, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut after_palette, b"gAMA", &45_455_u32.to_be_bytes());
         add_chunk(&mut after_palette, b"IDAT", &[0]);
         add_chunk(&mut after_palette, b"IEND", &[]);
         assert!(!png_chunk_preflight(&after_palette));
