@@ -165,6 +165,8 @@ pub enum RasterAssetError {
     Registry(MediaRegistryError),
     UnavailableMime,
     UnsupportedOrMismatchedMime,
+    UnboundSource,
+    MissingSourceNotice,
 }
 
 fn raster_signature_matches(mime: &str, bytes: &[u8]) -> bool {
@@ -210,6 +212,33 @@ pub fn read_pack_raster_asset(
         bytes,
         notices,
     })
+}
+
+
+/// Read a raster by its exact discovered source URL and return only notices
+/// registered for that URL. One digest can be referenced by several distinct
+/// sources, so a digest-wide notice collection is not always the correct
+/// attribution for one image in an article.
+///
+/// This does not authenticate the source mapping or the upstream notice:
+/// consumers must verify the article revision and publisher provenance too.
+pub fn read_pack_raster_asset_for_source(
+    plan: &VerifiedLocalUrlPlan,
+    source_url: &str,
+    registry: &MediaRegistry,
+    pack_id: &str,
+    store: &MediaObjectStore,
+) -> Result<VerifiedRasterAsset, RasterAssetError> {
+    let local_uri = plan
+        .source_to_local_uri
+        .get(source_url)
+        .ok_or(RasterAssetError::UnboundSource)?;
+    let mut asset = read_pack_raster_asset(plan, local_uri, registry, pack_id, store)?;
+    asset.notices.retain(|notice| notice.source_url == source_url);
+    if asset.notices.is_empty() {
+        return Err(RasterAssetError::MissingSourceNotice);
+    }
+    Ok(asset)
 }
 
 #[cfg(test)]
@@ -476,7 +505,41 @@ mod tests {
         second.creator = "Second creator".into();
         registry.register_verified_bytes(png, &second).unwrap();
         let with_two = read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
-        assert_eq!(with_two.notices, vec![notice.clone(), second]);
+        assert_eq!(with_two.notices, vec![notice.clone(), second.clone()]);
+        let scoped =
+            read_pack_raster_asset_for_source(&plan, url, &registry, "physics", &store).unwrap();
+        assert_eq!(scoped.notices, vec![notice.clone(), second.clone()]);
+        assert!(matches!(
+            read_pack_raster_asset_for_source(
+                &plan,
+                "https://en.wikipedia.org/missing.png",
+                &registry,
+                "physics",
+                &store,
+            ),
+            Err(RasterAssetError::UnboundSource)
+        ));
+        let mut other_source = second.clone();
+        other_source.source_url = "https://en.wikipedia.org/other.png".into();
+        registry.register_verified_bytes(png, &other_source).unwrap();
+        let filtered =
+            read_pack_raster_asset_for_source(&plan, url, &registry, "physics", &store).unwrap();
+        assert_eq!(filtered.notices, vec![notice.clone(), second]);
+        let mut wrong_plan = plan.clone();
+        wrong_plan.source_to_local_uri.insert(
+            "https://en.wikipedia.org/missing.png".into(),
+            uri.clone(),
+        );
+        assert!(matches!(
+            read_pack_raster_asset_for_source(
+                &wrong_plan,
+                "https://en.wikipedia.org/missing.png",
+                &registry,
+                "physics",
+                &store,
+            ),
+            Err(RasterAssetError::MissingSourceNotice)
+        ));
         assert!(matches!(
             read_pack_raster_asset(&plan, uri, &registry, "other", &store),
             Err(RasterAssetError::Read(LocalAssetReadError::NotOwned))
