@@ -45,9 +45,7 @@ fn valid_animation_frame(frame: &[u8]) -> bool {
         }
         if chunk == b"ALPH" && !seen_alpha && !seen_image && size > 0 {
             seen_alpha = true;
-        } else if !seen_image
-            && size > 0
-            && (chunk == b"VP8 " || (chunk == b"VP8L" && !seen_alpha))
+        } else if !seen_image && size > 0 && (chunk == b"VP8 " || (chunk == b"VP8L" && !seen_alpha))
         {
             seen_image = true;
         } else {
