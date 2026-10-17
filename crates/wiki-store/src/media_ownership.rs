@@ -585,7 +585,9 @@ mod tests {
                 .unwrap(),
             None
         );
-        registry.add_owner(&digest, OwnerKind::Pack, "math").unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
         assert_eq!(
             registry
                 .owned_digest_mime(OwnerKind::Pack, "math", &digest)
@@ -594,12 +596,16 @@ mod tests {
         );
         let mut conflicting = notice("Bob");
         conflicting.mime = "image/svg+xml".into();
-        registry.register_verified_bytes(b"asset", &conflicting).unwrap();
+        registry
+            .register_verified_bytes(b"asset", &conflicting)
+            .unwrap();
         assert!(matches!(
             registry.owned_digest_mime(OwnerKind::Pack, "math", &digest),
             Err(MediaRegistryError::ConflictingMime)
         ));
-        registry.remove_owner(&digest, OwnerKind::Pack, "math").unwrap();
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
         assert_eq!(
             registry
                 .owned_digest_mime(OwnerKind::Pack, "math", &digest)

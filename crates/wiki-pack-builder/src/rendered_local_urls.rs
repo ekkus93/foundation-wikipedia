@@ -168,10 +168,10 @@ fn raster_signature_matches(mime: &str, bytes: &[u8]) -> bool {
     match mime {
         "image/png" => bytes.len() >= 24 && bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         "image/jpeg" => bytes.len() >= 4 && bytes.starts_with(&[0xff, 0xd8, 0xff]),
-        "image/gif" => bytes.len() >= 13 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")),
-        "image/webp" => {
-            bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
+        "image/gif" => {
+            bytes.len() >= 13 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"))
         }
+        "image/webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
         _ => false,
     }
 }
@@ -452,9 +452,11 @@ mod tests {
             license: "CC BY-SA 4.0".into(),
         };
         registry.register_verified_bytes(png, &notice).unwrap();
-        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
-        let plan = plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store)
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
             .unwrap();
+        let plan =
+            plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store).unwrap();
         let uri = &plan.source_to_local_uri[url];
         let raster = read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
         assert_eq!(raster.mime, "image/png");
@@ -468,7 +470,9 @@ mod tests {
         registry.register_verified_bytes(png, &wrong).unwrap();
         assert!(matches!(
             read_pack_raster_asset(&plan, uri, &registry, "physics", &store),
-            Err(RasterAssetError::Registry(MediaRegistryError::ConflictingMime))
+            Err(RasterAssetError::Registry(
+                MediaRegistryError::ConflictingMime
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
@@ -476,7 +480,10 @@ mod tests {
     #[test]
     fn raster_signatures_reject_unsafe_content_and_mime_mismatch() {
         assert!(!raster_signature_matches("image/svg+xml", b"<svg/>"));
-        assert!(!raster_signature_matches("text/html", b"<script>run()</script>"));
+        assert!(!raster_signature_matches(
+            "text/html",
+            b"<script>run()</script>"
+        ));
         assert!(!raster_signature_matches("image/png", b"not a png file"));
         assert!(!raster_signature_matches("image/jpeg", b"<svg/>"));
         assert!(raster_signature_matches("image/gif", b"GIF89a1234567"));
