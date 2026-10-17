@@ -158,9 +158,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
-        if chunk == b"VP8L"
-            && !valid_vp8l_header(&bytes[header_end..header_end + chunk_size])
-        {
+        if chunk == b"VP8L" && !valid_vp8l_header(&bytes[header_end..header_end + chunk_size]) {
             return false;
         }
         if chunk == b"ANMF" {
