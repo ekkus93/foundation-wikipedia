@@ -20,6 +20,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     let mut seen_scan = false;
     let mut frame_ids = Vec::new();
     let mut baseline_scanned_ids = Vec::new();
+    let mut scanned_frame_ids = Vec::new();
     let mut restart_interval = 0_u16;
     for _ in 0..4096 {
         if bytes.get(at) != Some(&0xff) {
@@ -35,6 +36,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
         if marker == 0xd9 {
             return seen_frame
                 && seen_scan
+                && scanned_frame_ids.len() == frame_ids.len()
                 && (!baseline_frame || baseline_scanned_ids.len() == frame_ids.len())
                 && at == bytes.len();
         }
@@ -172,6 +174,11 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                     return false;
                 }
                 scan_ids.push(entry[0]);
+            }
+            for id in &scan_ids {
+                if !scanned_frame_ids.contains(id) {
+                    scanned_frame_ids.push(*id);
+                }
             }
             if baseline_frame {
                 if !body.ends_with(&[0, 63, 0]) {
@@ -429,6 +436,25 @@ mod tests {
         let at = duplicate.len() - 2;
         duplicate.splice(at..at, [0xff, 0xda, 0, 8, 1, 1, 0, 0, 63, 0, 0x33]);
         assert!(!jpeg_container_preflight(&duplicate));
+    }
+
+    #[test]
+    fn progressive_scans_must_cover_every_declared_component() {
+        let mut progressive = jpeg();
+        progressive[3] = 0xc2; // SOF2 (progressive DCT).
+        progressive[5] = 14;
+        progressive[11] = 2;
+        progressive.splice(15..15, [2, 0x11, 0]);
+        assert!(!jpeg_container_preflight(&progressive));
+
+        let at = progressive.len() - 2;
+        progressive.splice(at..at, [0xff, 0xda, 0, 8, 1, 2, 0, 0, 0, 0, 0x33]);
+        assert!(jpeg_container_preflight(&progressive));
+
+        // Multiple progressive scans of the same component are permitted.
+        let at = progressive.len() - 2;
+        progressive.splice(at..at, [0xff, 0xda, 0, 8, 1, 1, 0, 0, 0, 0, 0x44]);
+        assert!(jpeg_container_preflight(&progressive));
     }
 
     #[test]
