@@ -561,10 +561,13 @@ mod pinned_tests {
                       disambiguations: &BTreeSet<u64>| {
             resolve_pinned(graph, &rules, redirects, disambiguations, "enwiki-20261001")
         };
-        assert_eq!(
-            pinned(&graph, &redirects, &disambiguations),
-            Err(ResolveError::InvalidPage)
-        );
+        for invalid in [0, i64::MAX as u64 + 1] {
+            graph.get_mut("Category:Unselected").unwrap().articles = vec![invalid];
+            assert_eq!(
+                pinned(&graph, &redirects, &disambiguations),
+                Err(ResolveError::InvalidPage)
+            );
+        }
         graph.get_mut("Category:Unselected").unwrap().articles = vec![2];
         assert!(pinned(&graph, &redirects, &disambiguations).is_ok());
         redirects.insert(99, 0);
