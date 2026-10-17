@@ -136,9 +136,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             Some(next) if next <= bytes.len() => next,
             _ => return false,
         };
-        if chunk == b"ANMF"
-            && !valid_animation_frame(&bytes[header_end..header_end + chunk_size])
-        {
+        if chunk == b"ANMF" && !valid_animation_frame(&bytes[header_end..header_end + chunk_size]) {
             return false;
         }
         if chunks == 0 && chunk == b"VP8X" {
