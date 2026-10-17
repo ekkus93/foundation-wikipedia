@@ -10,6 +10,7 @@ pub mod joined_preview;
 pub mod joined_related;
 pub mod media;
 pub mod media_inventory;
+pub mod png_crc;
 pub mod png_preflight;
 pub mod preview;
 pub mod related;
