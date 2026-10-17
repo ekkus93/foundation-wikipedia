@@ -74,6 +74,11 @@ fn expand_verified_links(
             return Err(JoinedRelatedError::InconsistentBase(id));
         }
     }
+    // Bound even unreachable caller-supplied link records before allocating the
+    // canonical edge inventory; traversal limits alone do not bound this input.
+    if links.len() > 1_000_000 {
+        return Err(JoinedRelatedError::Budget(ResolveError::TooManyCandidates));
+    }
     let mut adjacency: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
     let mut canonical_edges = Vec::with_capacity(links.len());
     for link in links {
@@ -328,6 +333,88 @@ mod tests {
         assert_eq!(
             check(&[], &base),
             Err(JoinedRelatedError::InconsistentBase(1))
+        );
+    }
+
+    fn joined_record(id: u64, namespace: i32, name: &str, categories: &[&str]) -> JoinedEnterpriseArticle {
+        use wiki_source::enterprise::StructuredArticle;
+        use wiki_source::join::PageKey;
+        JoinedEnterpriseArticle {
+            structured: StructuredArticle {
+                page: PageKey { project: "enwiki".into(), page_id: id },
+                revision_id: id + 100,
+                date_modified: "2026-10-16T00:00:00Z".into(),
+                generation_id: "20261016".into(),
+                namespace,
+                language: "en".into(),
+                name: name.into(),
+                wikidata_id: None,
+                description: None,
+                infoboxes: vec![],
+                sections: vec![],
+                references: vec![],
+                tables: vec![],
+            },
+            rendered_html: String::new(),
+            categories: categories.iter().map(|s| (*s).to_string()).collect(),
+            redirects: vec![],
+        }
+    }
+
+    #[test]
+    fn public_joined_api_enforces_revisions_exclusions_and_total_page_budget() {
+        let records = vec![
+            joined_record(90, 14, "Category:Physics", &[]),
+            joined_record(1, 0, "Seed", &["Category:Physics"]),
+            joined_record(2, 0, "Related", &[]),
+            joined_record(3, 0, "Further", &[]),
+        ];
+        let mut rules = Rules {
+            roots: vec!["Category:Physics".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 3,
+        };
+        let limits = RelatedLimits {
+            max_hops: 2,
+            max_new_pages: 2,
+            max_edge_visits: 4,
+        };
+        let links = vec![link(2, 3), link(1, 2)];
+        let run = |rules: &Rules, links: &[RelatedLinkIdentity]| {
+            preview_joined_selection_with_related(
+                &records,
+                &BTreeSet::new(),
+                rules,
+                &[],
+                links,
+                limits,
+            )
+        };
+        let result = run(&rules, &links).unwrap();
+        assert_eq!(result.base.revision_pinned.selection.page_ids, vec![1]);
+        assert_eq!(
+            result.related.page_revisions,
+            BTreeMap::from([(1, 101), (2, 102), (3, 103)])
+        );
+        assert_eq!(result.related.related_added_page_count, 2);
+        assert!(!result.related.related_source_authenticated);
+        let mut reversed = links.clone();
+        reversed.reverse();
+        assert_eq!(result.related, run(&rules, &reversed).unwrap().related);
+        rules.page_limit = 2;
+        assert_eq!(
+            run(&rules, &links),
+            Err(JoinedRelatedError::Budget(ResolveError::TooManyPages))
+        );
+        rules.page_limit = 3;
+        rules.exclude.push(2);
+        let excluded = run(&rules, &links).unwrap();
+        assert_eq!(excluded.related.page_revisions, BTreeMap::from([(1, 101)]));
+        assert_eq!(
+            run(&rules, &[link(1, 90)]),
+            Err(JoinedRelatedError::NotMainspace(90))
         );
     }
 }
