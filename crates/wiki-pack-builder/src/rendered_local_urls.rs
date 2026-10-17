@@ -147,6 +147,61 @@ pub fn read_verified_pack_asset(
     Ok(bytes)
 }
 
+/// A conservative raster-only payload for future origin-restricted handlers.
+/// Signature checks catch obvious MIME mismatch; they are not image decoding,
+/// complete sanitization or permission to render untrusted pack content.
+#[derive(Debug)]
+pub struct VerifiedRasterAsset {
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum RasterAssetError {
+    Read(LocalAssetReadError),
+    Registry(MediaRegistryError),
+    UnavailableMime,
+    UnsupportedOrMismatchedMime,
+}
+
+fn raster_signature_matches(mime: &str, bytes: &[u8]) -> bool {
+    match mime {
+        "image/png" => bytes.len() >= 24 && bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.len() >= 4 && bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/gif" => bytes.len() >= 13 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")),
+        "image/webp" => {
+            bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
+        }
+        _ => false,
+    }
+}
+
+/// Read only a PNG, JPEG, GIF or WebP candidate with an unambiguous registered
+/// pack-owned MIME label and matching file signature. SVG, MathML, HTML,
+/// stylesheet, font and unknown objects require other qualified handling.
+/// The platform must still validate origin, policy and image decoder safety.
+pub fn read_pack_raster_asset(
+    plan: &VerifiedLocalUrlPlan,
+    local_uri: &str,
+    registry: &MediaRegistry,
+    pack_id: &str,
+    store: &MediaObjectStore,
+) -> Result<VerifiedRasterAsset, RasterAssetError> {
+    let bytes = read_verified_pack_asset(plan, local_uri, registry, pack_id, store)
+        .map_err(RasterAssetError::Read)?;
+    let digest = local_uri
+        .strip_prefix("wiki-asset://sha256/")
+        .ok_or(RasterAssetError::UnavailableMime)?;
+    let mime = registry
+        .owned_digest_mime(OwnerKind::Pack, pack_id, digest)
+        .map_err(RasterAssetError::Registry)?
+        .ok_or(RasterAssetError::UnavailableMime)?;
+    if !raster_signature_matches(&mime, &bytes) {
+        return Err(RasterAssetError::UnsupportedOrMismatchedMime);
+    }
+    Ok(VerifiedRasterAsset { mime, bytes })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +425,62 @@ mod tests {
             Err(OwnedLocalPlanError::MissingOwner(_))
         ));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raster_reader_requires_owned_mime_matching_actual_bytes() {
+        use wiki_store::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
+
+        let (root, store) = store_fixture();
+        let png = b"\x89PNG\r\n\x1a\n1234567890123456";
+        let digest = store.store_bytes(png).unwrap();
+        let graph = inventory_rendered_dependencies("<img src='/a.png'>", DOC, &BTreeMap::new(), 8)
+            .unwrap();
+        let url = "https://en.wikipedia.org/a.png";
+        let bindings = BTreeMap::from([(
+            url.to_owned(),
+            RequiredMedia {
+                digest: digest.clone(),
+                bytes: png.len() as u64,
+            },
+        )]);
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: url.into(),
+            creator: "Fixture".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        registry.register_verified_bytes(png, &notice).unwrap();
+        registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        let plan = plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store)
+            .unwrap();
+        let uri = &plan.source_to_local_uri[url];
+        let raster = read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
+        assert_eq!(raster.mime, "image/png");
+        assert_eq!(raster.bytes, png);
+        assert!(matches!(
+            read_pack_raster_asset(&plan, uri, &registry, "other", &store),
+            Err(RasterAssetError::Read(LocalAssetReadError::NotOwned))
+        ));
+        let mut wrong = notice.clone();
+        wrong.mime = "image/svg+xml".into();
+        registry.register_verified_bytes(png, &wrong).unwrap();
+        assert!(matches!(
+            read_pack_raster_asset(&plan, uri, &registry, "physics", &store),
+            Err(RasterAssetError::Registry(MediaRegistryError::ConflictingMime))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raster_signatures_reject_unsafe_content_and_mime_mismatch() {
+        assert!(!raster_signature_matches("image/svg+xml", b"<svg/>"));
+        assert!(!raster_signature_matches("text/html", b"<script>run()</script>"));
+        assert!(!raster_signature_matches("image/png", b"not a png file"));
+        assert!(!raster_signature_matches("image/jpeg", b"<svg/>"));
+        assert!(raster_signature_matches("image/gif", b"GIF89a1234567"));
+        assert!(raster_signature_matches("image/webp", b"RIFF1234WEBP"));
     }
 
     #[test]

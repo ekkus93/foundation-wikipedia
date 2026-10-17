@@ -15,6 +15,7 @@ pub enum MediaRegistryError {
     InvalidInput,
     ConflictingSize,
     ConflictingInventory,
+    ConflictingMime,
     UnknownObject,
 }
 
@@ -424,6 +425,30 @@ impl MediaRegistry {
             .transpose()
     }
 
+    /// Resolve one pack-owned object's unique declared MIME, if unambiguous.
+    /// Neither this attribution metadata nor a registered digest proves the
+    /// media bytes' actual type or upstream authenticity.
+    pub fn owned_digest_mime(
+        &self,
+        kind: OwnerKind,
+        owner_id: &str,
+        digest: &str,
+    ) -> Result<Option<String>, MediaRegistryError> {
+        if self.owned_digest_size(kind, owner_id, digest)?.is_none() {
+            return Ok(None);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT DISTINCT mime FROM media_notices WHERE digest=?1 ORDER BY mime LIMIT 2",
+        )?;
+        let mut rows = statement.query(params![digest])?;
+        let first = rows.next()?.ok_or(MediaRegistryError::InvalidInput)?;
+        let mime: String = first.get(0)?;
+        if rows.next()?.is_some() {
+            return Err(MediaRegistryError::ConflictingMime);
+        }
+        Ok(Some(mime))
+    }
+
     /// Return only this owner's registered digest/byte claims, in stable order.
     /// These claims are not proof that the objects still exist on disk.
     pub fn owned_media(
@@ -543,6 +568,41 @@ mod tests {
         assert_eq!(
             registry
                 .owned_digest_size(OwnerKind::Pack, "physics", &digest)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn owned_digest_mime_requires_pack_scope_and_rejects_conflicts() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry
+            .register_verified_bytes(b"asset", &notice("Alice"))
+            .unwrap();
+        assert_eq!(
+            registry
+                .owned_digest_mime(OwnerKind::Pack, "math", &digest)
+                .unwrap(),
+            None
+        );
+        registry.add_owner(&digest, OwnerKind::Pack, "math").unwrap();
+        assert_eq!(
+            registry
+                .owned_digest_mime(OwnerKind::Pack, "math", &digest)
+                .unwrap(),
+            Some("image/png".into())
+        );
+        let mut conflicting = notice("Bob");
+        conflicting.mime = "image/svg+xml".into();
+        registry.register_verified_bytes(b"asset", &conflicting).unwrap();
+        assert!(matches!(
+            registry.owned_digest_mime(OwnerKind::Pack, "math", &digest),
+            Err(MediaRegistryError::ConflictingMime)
+        ));
+        registry.remove_owner(&digest, OwnerKind::Pack, "math").unwrap();
+        assert_eq!(
+            registry
+                .owned_digest_mime(OwnerKind::Pack, "math", &digest)
                 .unwrap(),
             None
         );
