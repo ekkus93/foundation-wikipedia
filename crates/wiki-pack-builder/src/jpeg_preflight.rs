@@ -34,7 +34,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
         if marker == 0xd9 {
             return seen_frame && seen_scan && at == bytes.len();
         }
-        if marker == 0x00 || marker == 0xd8 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+        if marker < 0xc0 || marker == 0xd8 || (0xd0..=0xd7).contains(&marker) {
             return false;
         }
         let Some(header_end) = at.checked_add(2) else {
@@ -397,6 +397,16 @@ mod tests {
         wrong.splice(2..2, [0xff, 0xdd, 0, 4, 0, 1]);
         wrong.splice(34..34, [0xff, 0xd1]);
         assert!(!jpeg_container_preflight(&wrong));
+    }
+
+    #[test]
+    fn rejects_reserved_length_bearing_markers() {
+        let original = jpeg();
+        for marker in [0x02, 0x7f, 0xbf] {
+            let mut invalid = original.clone();
+            invalid.splice(2..2, [0xff, marker, 0, 4, 0x11, 0x22]);
+            assert!(!jpeg_container_preflight(&invalid), "marker {marker:02x}");
+        }
     }
 
     #[test]
