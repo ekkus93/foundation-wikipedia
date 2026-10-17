@@ -30,7 +30,13 @@ pub fn expand_related_links(
     {
         return Err(ResolveError::BadLimit);
     }
-    if seeds.contains(&0) || excluded.contains(&0) {
+    // All page identities must fit the signed SQLite key range, even when a
+    // seed is excluded before traversal. Do not silently discard bad IDs.
+    if seeds
+        .iter()
+        .chain(excluded.iter())
+        .any(|&id| id == 0 || id > i64::MAX as u64)
+    {
         return Err(ResolveError::InvalidPage);
     }
     let mut selected: BTreeSet<u64> = seeds
@@ -51,7 +57,7 @@ pub fn expand_related_links(
                 return Err(ResolveError::TooManyCandidates);
             }
             for &neighbor in neighbors {
-                if neighbor == 0 {
+                if neighbor == 0 || neighbor > i64::MAX as u64 {
                     return Err(ResolveError::InvalidPage);
                 }
                 if !excluded.contains(&neighbor) && selected.insert(neighbor) {
@@ -116,6 +122,20 @@ mod tests {
         let malformed = BTreeMap::from([(1, vec![0])]);
         assert_eq!(
             expand_related_links(&[1], &malformed, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        // Direct callers must not produce IDs that cannot be stored in SQLite.
+        let oversized = i64::MAX as u64 + 1;
+        assert_eq!(
+            expand_related_links(&[oversized], &adjacency, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &BTreeSet::from([oversized]), 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        assert_eq!(
+            expand_related_links(&[1], &BTreeMap::from([(1, vec![oversized])]), &excluded, 1, 10, 20),
             Err(ResolveError::InvalidPage)
         );
     }
