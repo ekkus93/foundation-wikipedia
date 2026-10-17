@@ -17,6 +17,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
     let mut at = 2_usize;
     let mut seen_frame = false;
     let mut seen_scan = false;
+    let mut frame_ids = Vec::new();
     for _ in 0..4096 {
         if bytes.get(at) != Some(&0xff) {
             return false;
@@ -70,6 +71,12 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             {
                 return false;
             }
+            for entry in body[6..].chunks_exact(3) {
+                if frame_ids.contains(&entry[0]) {
+                    return false;
+                }
+                frame_ids.push(entry[0]);
+            }
             seen_frame = true;
         }
         if marker == 0xda {
@@ -79,6 +86,13 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             let components = usize::from(body[0]);
             if !(1..=4).contains(&components) || body.len() != 4 + 2 * components {
                 return false;
+            }
+            let mut scan_ids = Vec::new();
+            for entry in body[1..1 + 2 * components].chunks_exact(2) {
+                if !frame_ids.contains(&entry[0]) || scan_ids.contains(&entry[0]) {
+                    return false;
+                }
+                scan_ids.push(entry[0]);
             }
             seen_scan = true;
             at = end;
@@ -174,6 +188,20 @@ mod tests {
         let mut huge = original.clone();
         huge[7..11].copy_from_slice(&[0x40, 0x01, 0x40, 0x01]);
         assert!(!jpeg_container_preflight(&huge));
+    }
+
+    #[test]
+    fn rejects_scan_components_not_declared_in_frame() {
+        let original = jpeg();
+        let mut unknown = original.clone();
+        unknown[20] = 2;
+        assert!(!jpeg_container_preflight(&unknown));
+
+        let mut duplicate_frame = original;
+        duplicate_frame[5] = 14;
+        duplicate_frame[11] = 2;
+        duplicate_frame.splice(15..15, [1, 0x11, 0]);
+        assert!(!jpeg_container_preflight(&duplicate_frame));
     }
 
     #[test]
