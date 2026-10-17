@@ -47,6 +47,8 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
         at += 3 * (1_usize << (usize::from(bytes[10] & 7) + 1));
     }
     let mut seen_image = false;
+    // Bound cumulative decompressed frame area, not just the logical canvas.
+    let mut total_frame_pixels = 0_u64;
     for _ in 0..4096 {
         let Some(&marker) = bytes.get(at) else {
             return false;
@@ -54,18 +56,32 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
         match marker {
             0x3b => return seen_image && at + 1 == bytes.len(),
             0x21 => {
-                if bytes.get(at + 1) == Some(&0xf9) {
-                    if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
-                        return false;
+                match bytes.get(at + 1) {
+                    Some(0xf9) => {
+                        if bytes.get(at + 2) != Some(&4) || bytes.get(at + 7) != Some(&0) {
+                            return false;
+                        }
+                        at += 8;
                     }
-                    at += 8;
-                } else {
-                    let Some(end) = skip_blocks(bytes, at + 2) else {
-                        return false;
-                    };
-                    at = end;
+                    Some(0xfe) => {
+                        let Some(end) = skip_blocks(bytes, at + 2) else {
+                            return false;
+                        };
+                        at = end;
+                    }
+                    Some(0xff) | Some(0x01) => {
+                        let expected = if bytes[at + 1] == 0xff { 11 } else { 12 };
+                        if bytes.get(at + 2) != Some(&expected) {
+                            return false;
+                        }
+                        let Some(end) = skip_blocks(bytes, at + 2) else {
+                            return false;
+                        };
+                        at = end;
+                    }
+                    _ => return false,
                 }
-            }
+            },
             0x2c => {
                 if at + 10 > bytes.len() {
                     return false;
@@ -79,6 +95,10 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
                     || u32::from(x) + u32::from(w) > u32::from(width)
                     || u32::from(y) + u32::from(h) > u32::from(height)
                 {
+                    return false;
+                }
+                total_frame_pixels += u64::from(w) * u64::from(h);
+                if total_frame_pixels > 64 * 1024 * 1024 {
                     return false;
                 }
                 let packed = bytes[at + 9];
@@ -143,6 +163,34 @@ mod tests {
         let mut extended = original.clone();
         extended.splice(19..19, [0x21, 0xf9, 4, 0, 0, 0, 0, 0]);
         assert!(gif_container_preflight(&extended));
+    }
+
+    #[test]
+    fn rejects_excessive_total_frame_area() {
+        let mut single = gif();
+        single[6..10].copy_from_slice(&[0, 32, 0, 32]);
+        single[24..28].copy_from_slice(&[0, 32, 0, 32]);
+        assert!(gif_container_preflight(&single));
+
+        let mut repeated = single.clone();
+        repeated.splice(single.len() - 1..single.len() - 1, single[19..single.len() - 1].iter().copied());
+        assert!(!gif_container_preflight(&repeated));
+    }
+
+    #[test]
+    fn rejects_unknown_or_malformed_extension_headers() {
+        let original = gif();
+        let mut with_comment = original.clone();
+        with_comment.splice(19..19, [0x21, 0xfe, 3, b'a', b'b', b'c', 0]);
+        assert!(gif_container_preflight(&with_comment));
+
+        let mut unknown = original.clone();
+        unknown.splice(19..19, [0x21, 0x00, 0]);
+        assert!(!gif_container_preflight(&unknown));
+
+        let mut malformed_app = original.clone();
+        malformed_app.splice(19..19, [0x21, 0xff, 1, b'a', 0]);
+        assert!(!gif_container_preflight(&malformed_app));
     }
 
     #[test]
