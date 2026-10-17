@@ -119,6 +119,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
         if kind == b"PLTE" {
             if !palette_allowed
                 || seen_palette
+                || seen_transparency
                 || seen_idat
                 || length == 0
                 || length > 768
@@ -291,6 +292,26 @@ mod tests {
         add_chunk(&mut separated_idat, b"IDAT", &[0]);
         add_chunk(&mut separated_idat, b"IEND", &[]);
         assert!(!png_chunk_preflight(&separated_idat));
+    }
+
+    #[test]
+    fn truecolor_palette_must_precede_transparency_chunk() {
+        let ihdr = [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0];
+        let mut valid = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut valid, b"IHDR", &ihdr);
+        add_chunk(&mut valid, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut valid, b"tRNS", &[0, 255, 0, 0, 0, 0]);
+        add_chunk(&mut valid, b"IDAT", &[0]);
+        add_chunk(&mut valid, b"IEND", &[]);
+        assert!(png_chunk_preflight(&valid));
+
+        let mut invalid = PNG_SIGNATURE.to_vec();
+        add_chunk(&mut invalid, b"IHDR", &ihdr);
+        add_chunk(&mut invalid, b"tRNS", &[0, 255, 0, 0, 0, 0]);
+        add_chunk(&mut invalid, b"PLTE", &[255, 0, 0]);
+        add_chunk(&mut invalid, b"IDAT", &[0]);
+        add_chunk(&mut invalid, b"IEND", &[]);
+        assert!(!png_chunk_preflight(&invalid));
     }
 
     #[test]
