@@ -146,7 +146,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                             && bytes[header_end..header_end + 6]
                                 .chunks_exact(2)
                                 .any(|sample| sample[0] != 0))
-                },
+                }
                 3 => !seen_palette || length == 0 || length > palette_entries,
                 _ => true,
             };
@@ -410,7 +410,11 @@ mod tests {
             (16, 65535, true),
         ] {
             let mut png = PNG_SIGNATURE.to_vec();
-            add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, depth, 0, 0, 0, 0]);
+            add_chunk(
+                &mut png,
+                b"IHDR",
+                &[0, 0, 0, 1, 0, 0, 0, 1, depth, 0, 0, 0, 0],
+            );
             add_chunk(&mut png, b"tRNS", &sample.to_be_bytes());
             add_chunk(&mut png, b"IDAT", &[0]);
             add_chunk(&mut png, b"IEND", &[]);
