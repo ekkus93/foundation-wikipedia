@@ -24,3 +24,10 @@ This addendum preserves bounded evidence for later append to `docs/RALPH_BRIDGE_
 ## Outstanding qualification
 
 PACK-002 remains unchecked: the source-joined expansion is locally revision-consistent but not independently Wikimedia-authenticated, not yet integrated into final pack manifest, and does not prove mandatory offline media or Android device acceptance. When full-file log writes are permitted, append this bounded addendum to the canonical incident log and preserve its existing content.
+
+## 2026-10-17 01:30 UTC — Receipt digest and blocked formatting repair
+
+- Runtime: Ralph Bridge 0.6.2, build `0acea4b23362e2ccecab8f6c9db4418b162426cf`, instance `090878b555454b658a84fd67850085fe`, started `2026-10-16T16:03:29.198120Z`, auth `app`.
+- Source op `f1d810c0507f4250be3ef25674dc2883` accepted from master `a7727ca35e02aac3997771a4cbe0cadf5bc0694e` to `02981900f53b8dbea211c7f8dcfbe5e443901b28`; added source-revision binding for unselected related-link edges.
+- Rust CI `38991126874` job `117273546197`, Format step failed; bounded log lines 290–329 show a single extra blank line before `joined_link` near line 250. Platform shells `38991126819` passed.
+- Four source repair attempts, one exact-ref restore and one canonical incident-log append were blocked by platform safety checks before Ralph operation IDs. Master and file blob were rechecked; no accepted repair or GitHub/API fault was established. Formatting remains unqualified.
