@@ -265,12 +265,17 @@ mod tests {
     fn requires_nonempty_idat_data_but_allows_empty_split_chunks() {
         let mut png = PNG_SIGNATURE.to_vec();
         add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(&mut png, b"tEXt", b"metadata");
         add_chunk(&mut png, b"IDAT", &[]);
         add_chunk(&mut png, b"IEND", &[]);
         assert!(!png_chunk_preflight(&png));
 
         let mut split = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut split, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        add_chunk(
+            &mut split,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+        );
         add_chunk(&mut split, b"IDAT", &[]);
         add_chunk(&mut split, b"IDAT", &[0]);
         add_chunk(&mut split, b"IEND", &[]);
@@ -287,7 +292,11 @@ mod tests {
         assert!(png_chunk_preflight(&png));
 
         let mut too_many = PNG_SIGNATURE.to_vec();
-        add_chunk(&mut too_many, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 1, 3, 0, 0, 0]);
+        add_chunk(
+            &mut too_many,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 1, 3, 0, 0, 0],
+        );
         add_chunk(&mut too_many, b"PLTE", &[255, 0, 0, 0, 0, 255, 0, 255, 0]);
         add_chunk(&mut too_many, b"IDAT", &[0]);
         add_chunk(&mut too_many, b"IEND", &[]);
