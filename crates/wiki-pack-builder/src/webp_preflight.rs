@@ -153,10 +153,7 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             let y = 2 * le24(&frame[3..6]);
             let width = 1 + le24(&frame[6..9]);
             let height = 1 + le24(&frame[9..12]);
-            if frame[15] & 0xfc != 0
-                || x + width > canvas_width
-                || y + height > canvas_height
-            {
+            if frame[15] & 0xfc != 0 || x + width > canvas_width || y + height > canvas_height {
                 return false;
             }
             animated_pixels += u64::from(width) * u64::from(height);
