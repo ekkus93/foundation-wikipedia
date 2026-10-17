@@ -673,3 +673,7 @@ Bridge v0.6.2, build `0acea4b23362e2ccecab8f6c9db4418b162426cf`, instance `2b818
 - **Confirmed authored formatting failure:** Rust run 38987442761, job 117262085429, step 4 Format. Bounded log lines 306–345 show rustfmt multiline `joined_record` signature and `PageKey` literal changes; exit 1. Platform run 38987442774 was in progress at failure observation. No API or Bridge error established.
 - Re-read full source before retry; `create_or_update_file` op `9ae29bd3c45f4dffbce63f6f204522cf`, expected `a96d2631ff4d85082e6588f35bb2be53d45ca63d`, accepted 2026-10-17T00:40:49.241355Z, observed `6d11e179d38a212bb824138ead09fbbb0dbbdf00`. Exact-head Rust run 38987480502 and Platform run 38987480477 both passed.
 - Documentation op `1232068f982f4173ab1d7147a83e6b00`, expected `6d11e179d38a212bb824138ead09fbbb0dbbdf00`, accepted 2026-10-17T00:43:19.760882Z, observed `e3a04fae77859a86b36d00bab43829ecdf47c195`. No safety denial or ambiguous write occurred in this second slice. PACK-002 remains partial.
+
+## 2026-10-17 — Source-revision link qualification
+
+- Ralph v0.6.2: source op `7a213cc7f5444761a5e41a671deedf77` accepted; exact-head Rust 38987744247 and Platform 38987744223 passed at `90a1f6425ef0eb129d05b3c41c6baf2738ef9ae3`. Several full-log writes were denied by platform safety checks before Ralph acknowledgment; master was re-read before each retry. Detailed bounded evidence preserved in `docs/RALPH_BRIDGE_WRITE_AND_CI_INCIDENTS_ADDENDUM_2026-10-17.md`.
