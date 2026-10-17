@@ -1,5 +1,12 @@
 //! Optional bounded GIF structural guard; not a decoder or sanitizer.
 
+use wiki_store::media_objects::MediaObjectStore;
+use wiki_store::media_ownership::MediaRegistry;
+
+use crate::rendered_local_urls::{
+    read_pack_raster_asset_for_source, RasterAssetError, VerifiedLocalUrlPlan, VerifiedRasterAsset,
+};
+
 fn skip_blocks(bytes: &[u8], mut at: usize) -> Option<usize> {
     for _ in 0..8192 {
         let size = usize::from(*bytes.get(at)?);
@@ -99,6 +106,21 @@ pub fn gif_container_preflight(bytes: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Opt-in source-specific read, retaining pack ownership and media notices.
+pub fn read_source_raster_with_gif_preflight(
+    plan: &VerifiedLocalUrlPlan,
+    source_url: &str,
+    registry: &MediaRegistry,
+    pack_id: &str,
+    store: &MediaObjectStore,
+) -> Result<VerifiedRasterAsset, RasterAssetError> {
+    let asset = read_pack_raster_asset_for_source(plan, source_url, registry, pack_id, store)?;
+    if asset.mime == "image/gif" && !gif_container_preflight(&asset.bytes) {
+        return Err(RasterAssetError::UnsupportedOrMismatchedMime);
+    }
+    Ok(asset)
 }
 
 #[cfg(test)]
