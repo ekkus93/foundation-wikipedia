@@ -1,6 +1,8 @@
 //! Cycle-safe topic selection against a version-pinned category graph.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use wiki_pack_format::Sha256Transcript;
+
 #[derive(Clone, Debug, Default)]
 pub struct Category {
     pub articles: Vec<u64>,
@@ -227,28 +229,28 @@ pub struct PinnedResolution {
     pub warnings: Vec<String>,
 }
 
-fn append_text(out: &mut Vec<u8>, value: &str) {
-    out.extend_from_slice(&(value.len() as u64).to_be_bytes());
-    out.extend_from_slice(value.as_bytes());
+fn append_text(digest: &mut Sha256Transcript, value: &str) {
+    digest.update(&(value.len() as u64).to_be_bytes());
+    digest.update(value.as_bytes());
 }
 
-fn append_strings(out: &mut Vec<u8>, values: &[String]) {
+fn append_strings(digest: &mut Sha256Transcript, values: &[String]) {
     let mut canonical = values.to_vec();
     canonical.sort();
     canonical.dedup();
-    out.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    digest.update(&(canonical.len() as u64).to_be_bytes());
     for value in canonical {
-        append_text(out, &value);
+        append_text(digest, &value);
     }
 }
 
-fn append_ids(out: &mut Vec<u8>, values: &[u64]) {
+fn append_ids(digest: &mut Sha256Transcript, values: &[u64]) {
     let mut canonical = values.to_vec();
     canonical.sort_unstable();
     canonical.dedup();
-    out.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+    digest.update(&(canonical.len() as u64).to_be_bytes());
     for value in canonical {
-        out.extend_from_slice(&value.to_be_bytes());
+        digest.update(&value.to_be_bytes());
     }
 }
 
@@ -284,16 +286,18 @@ pub fn resolve_pinned(
     }
     validate_pinned_redirect_map(redirects)?;
     let resolved = resolve_with_redirects(graph, rules, redirects, disambiguations)?;
-    let mut definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
+    let mut definition = Sha256Transcript::new();
+    definition.update(b"foundation-wikipedia/topic-definition/v1\0");
     append_strings(&mut definition, &rules.roots);
     append_ids(&mut definition, &rules.include);
     append_ids(&mut definition, &rules.exclude);
     definition.extend_from_slice(&(rules.depth_limit as u64).to_be_bytes());
     definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
-    let definition_sha256 = wiki_pack_format::sha256_hex(&definition);
+    let definition_sha256 = definition.finish_hex();
 
     let graph_sha256 = crate::graph_digest::graph_digest(graph, redirects, disambiguations);
-    let mut selection = b"foundation-wikipedia/topic-selection/v2\0".to_vec();
+    let mut selection = Sha256Transcript::new();
+    selection.update(b"foundation-wikipedia/topic-selection/v2\0");
     append_text(&mut selection, snapshot_id);
     append_text(&mut selection, &definition_sha256);
     append_text(&mut selection, &graph_sha256);
@@ -302,7 +306,7 @@ pub fn resolve_pinned(
         snapshot_id: snapshot_id.to_owned(),
         definition_sha256,
         graph_sha256,
-        snapshot_selection_sha256: wiki_pack_format::sha256_hex(&selection),
+        snapshot_selection_sha256: selection.finish_hex(),
         page_ids: resolved.page_ids,
         warnings: resolved.warnings,
     })
@@ -400,6 +404,69 @@ mod pinned_tests {
             );
         }
     }
+
+    #[test]
+    fn streamed_pinned_receipts_match_original_byte_encoding() {
+        let graph = BTreeMap::from([
+            ("Café".to_owned(), Category {
+                articles: vec![2],
+                children: vec![],
+                administrative: false,
+            }),
+            ("Science".to_owned(), Category {
+                articles: vec![3],
+                children: vec![],
+                administrative: false,
+            }),
+        ]);
+        let rules = Rules {
+            roots: vec!["Science".into(), "Café".into(), "Science".into()],
+            include: vec![9, 2, 2],
+            exclude: vec![8],
+            depth_limit: 0,
+            page_limit: 20,
+        };
+        let pinned = resolve_pinned(
+            &graph,
+            &rules,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "enwiki-20261016",
+        ).unwrap();
+        let mut legacy_definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
+        let mut roots = rules.roots.clone();
+        roots.sort();
+        roots.dedup();
+        legacy_definition.extend_from_slice(&(roots.len() as u64).to_be_bytes());
+        for root in &roots {
+            legacy_definition.extend_from_slice(&(root.len() as u64).to_be_bytes());
+            legacy_definition.extend_from_slice(root.as_bytes());
+        }
+        for values in [&rules.include, &rules.exclude] {
+            let mut ids = values.clone();
+            ids.sort_unstable();
+            ids.dedup();
+            legacy_definition.extend_from_slice(&(ids.len() as u64).to_be_bytes());
+            for id in ids {
+                legacy_definition.extend_from_slice(&id.to_be_bytes());
+            }
+        }
+        legacy_definition.extend_from_slice(&(rules.depth_limit as u64).to_be_bytes());
+        legacy_definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
+        assert_eq!(pinned.definition_sha256, wiki_pack_format::sha256_hex(&legacy_definition));
+
+        let mut legacy_selection = b"foundation-wikipedia/topic-selection/v2\0".to_vec();
+        for value in ["enwiki-20261016", &pinned.definition_sha256, &pinned.graph_sha256] {
+            legacy_selection.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            legacy_selection.extend_from_slice(value.as_bytes());
+        }
+        legacy_selection.extend_from_slice(&(pinned.page_ids.len() as u64).to_be_bytes());
+        for id in &pinned.page_ids {
+            legacy_selection.extend_from_slice(&id.to_be_bytes());
+        }
+        assert_eq!(pinned.snapshot_selection_sha256, wiki_pack_format::sha256_hex(&legacy_selection));
+    }
+
     #[test]
     fn pinned_receipts_reject_unselected_redirect_cycles_and_overlong_chains() {
         let graph = BTreeMap::from([(
