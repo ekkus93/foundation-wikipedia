@@ -47,6 +47,13 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
         if !kind.iter().all(u8::is_ascii_alphabetic) {
             return false;
         }
+        // The PNG reserved bit must be uppercase; unknown critical chunks
+        // cannot be safely interpreted by a future renderer.
+        let known_critical =
+            kind == b"IHDR" || kind == b"PLTE" || kind == b"IDAT" || kind == b"IEND";
+        if kind[2].is_ascii_lowercase() || (kind[0].is_ascii_uppercase() && !known_critical) {
+            return false;
+        }
         let Some(next) = header_end
             .checked_add(length)
             .and_then(|end| end.checked_add(4))
@@ -138,6 +145,7 @@ pub fn read_source_raster_with_png_preflight(
     pack_id: &str,
     store: &MediaObjectStore,
 ) -> Result<VerifiedRasterAsset, RasterAssetError> {
+
     let asset = read_pack_raster_asset_for_source(plan, source_url, registry, pack_id, store)?;
     if asset.mime == "image/png" && !png_chunk_preflight(&asset.bytes) {
         return Err(RasterAssetError::UnsupportedOrMismatchedMime);
@@ -179,6 +187,28 @@ mod tests {
         add_chunk(&mut with_text, b"IDAT", &[0]);
         add_chunk(&mut with_text, b"IEND", &[]);
         assert!(png_chunk_preflight(&with_text));
+    }
+
+    #[test]
+    fn rejects_unknown_critical_chunks_and_reserved_bit_violations() {
+        let original = sample_png();
+        let mut unknown = original.clone();
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"ABCD", &[]);
+        unknown.splice(33..33, chunk);
+        assert!(!png_chunk_preflight(&unknown));
+
+        let mut reserved = original.clone();
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"abcc", &[]);
+        reserved.splice(33..33, chunk);
+        assert!(!png_chunk_preflight(&reserved));
+
+        let mut ancillary = original;
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"abCd", &[]);
+        ancillary.splice(33..33, chunk);
+        assert!(png_chunk_preflight(&ancillary));
     }
 
     #[test]
