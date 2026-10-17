@@ -17,6 +17,7 @@ pub mod rendered_local_urls;
 pub mod rendered_objects;
 pub mod selection;
 pub mod visual_discovery;
+pub mod webp_preflight;
 
 /// Shared provisional pack envelope contract for CLI and future desktop UI.
 pub use wiki_pack_format;
