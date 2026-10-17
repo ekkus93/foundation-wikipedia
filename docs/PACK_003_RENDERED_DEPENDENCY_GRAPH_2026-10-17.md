@@ -77,3 +77,13 @@ The optional `webp_riff_preflight` wrapper now validates the outer declared RIFF
 Exact source commit `239778fc3b3909110a41099a18799e7dbcba5e5f`: [Rust workspace run 39018828398](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39018828398) **passed**; [Platform shells run 39018828396](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39018828396) **passed**. The preceding two-line rustfmt repair at `2110843acf6a46ebea8d5bee8f8ef985ce4ea002` passed Rust run `39018559750` and Platform run `39018559730`.
 
 This is not a complete WebP parser/decoder, source-authenticity guarantee, media sanitizer, browser URL handler or offline rendering proof. PACK-003 remains unchecked.
+
+## Registered attribution notices returned alongside verified raster bytes (partial)
+
+The storage registry now exposes `MediaRegistry::owned_digest_notices` for a pack-owned digest. It returns stable, individually stored MIME, source URL, creator and license notices (including multiple creators for deduplicated bytes), enforces the requested owner and validates persisted notices. This does not prove the truth of any notice or tie notice provenance to a particular publisher revision; shared digests may carry notices registered from different sources.
+
+`VerifiedRasterAsset` in the shared pack builder now includes those notices along with pack-owned, SHA-256-verified raster bytes and the unique declared MIME. The reader's existing fail-closed cross-pack restrictions and mismatch checks remain in force. Regression tests cover two notices on one asset and registry revocation behavior.
+
+Exact source SHA `7e950e7041701191691e7818854f36406b91e596`: [Rust CI 39019224006](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019224006), [Platform CI 39019224111](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019224111) and [Android Rust ABI 39019224062](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019224062) passed; [Android codec probe 39019224066](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019224066) still running at last check. Integration SHA `fac3aef76ed507fba273e5b54266852647ecaba0`: [Rust CI 39019411046](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019411046) and [Platform CI 39019411038](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39019411038) passed.
+
+Required media acquisition, authenticated source/revision metadata, robust sanitizers, HTML/CSS rewriting, actual browser resource handlers, attribution UI and representative airplane-mode acceptance remain incomplete. PACK-003 is still unchecked.
