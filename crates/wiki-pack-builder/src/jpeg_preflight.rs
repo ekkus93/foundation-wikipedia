@@ -73,7 +73,11 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             for entry in body[6..].chunks_exact(3) {
-                if frame_ids.contains(&entry[0]) {
+                if frame_ids.contains(&entry[0])
+                    || !(1..=4).contains(&(entry[1] >> 4))
+                    || !(1..=4).contains(&(entry[1] & 0x0f))
+                    || entry[2] > 3
+                {
                     return false;
                 }
                 frame_ids.push(entry[0]);
@@ -96,7 +100,11 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
             }
             let mut scan_ids = Vec::new();
             for entry in body[1..1 + 2 * components].chunks_exact(2) {
-                if !frame_ids.contains(&entry[0]) || scan_ids.contains(&entry[0]) {
+                if !frame_ids.contains(&entry[0])
+                    || scan_ids.contains(&entry[0])
+                    || entry[1] >> 4 > 3
+                    || entry[1] & 0x0f > 3
+                {
                     return false;
                 }
                 scan_ids.push(entry[0]);
@@ -219,6 +227,16 @@ mod tests {
         duplicate_frame[11] = 2;
         duplicate_frame.splice(15..15, [1, 0x11, 0]);
         assert!(!jpeg_container_preflight(&duplicate_frame));
+    }
+
+    #[test]
+    fn rejects_invalid_frame_sampling_and_table_selectors() {
+        let original = jpeg();
+        for (offset, value) in [(13, 0x01), (13, 0x10), (13, 0x51), (13, 0x15), (14, 4), (21, 0x40), (21, 0x04)] {
+            let mut malformed = original.clone();
+            malformed[offset] = value;
+            assert!(!jpeg_container_preflight(&malformed), "offset {offset}");
+        }
     }
 
     #[test]
