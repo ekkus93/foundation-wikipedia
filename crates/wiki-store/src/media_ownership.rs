@@ -54,13 +54,23 @@ impl MediaNotice {
     pub(crate) fn validate(&self) -> bool {
         safe_media_mime(&self.mime)
             && safe_media_source_url(&self.source_url)
-            && !self.creator.trim().is_empty()
-            && !self.license.trim().is_empty()
+            && safe_media_notice_text(&self.creator)
+            && safe_media_notice_text(&self.license)
             && self.mime.len() <= 255
             && self.source_url.len() <= 4096
-            && self.creator.len() <= 4096
-            && self.license.len() <= 4096
     }
+}
+
+/// Attribution text is untrusted display metadata, not HTML. Reject control
+/// characters and bidi direction overrides/isolates that can spoof creators or
+/// licenses in a future offline notice UI. The UI still must escape the text.
+fn safe_media_notice_text(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 4096
+        && !value.chars().any(|character| {
+            character.is_control()
+                || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
 }
 
 /// Strict MIME type/subtype syntax keeps renderer and export metadata free
@@ -718,6 +728,39 @@ mod tests {
         let mut svg = notice("Author");
         svg.mime = "image/svg+xml".into();
         assert!(svg.validate());
+        assert!(registry.unowned_digests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn attribution_display_text_rejects_control_and_bidi_spoofing() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        for text in [
+            "",
+            "  ",
+            "Author\nInjected",
+            "Author\rSpoof",
+            "Person\0Other",
+            "A\u{202e}evil",
+            "A\u{2066}evil",
+            "A\u{0085}evil",
+        ] {
+            for in_creator in [true, false] {
+                let mut bad = notice("Valid");
+                if in_creator {
+                    bad.creator = text.into();
+                } else {
+                    bad.license = text.into();
+                }
+                assert!(!bad.validate(), "accepted malformed notice: {text:?}");
+                assert!(matches!(
+                    registry.register_verified_bytes(b"diagram", &bad),
+                    Err(MediaRegistryError::InvalidInput)
+                ));
+            }
+        }
+        let mut international = notice("Renée 李");
+        international.license = "CC BY-SA — 4.0".into();
+        assert!(international.validate());
         assert!(registry.unowned_digests().unwrap().is_empty());
     }
 
