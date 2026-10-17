@@ -30,6 +30,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut seen_palette = false;
     let mut palette_entries = 0_usize;
     let mut png_color_type = 0_u8;
+    let mut png_bit_depth = 0_u8;
     let mut seen_transparency = false;
     let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
@@ -105,6 +106,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             png_color_type = color_type;
+            png_bit_depth = bit_depth;
             indexed_color = color_type == 3;
             if indexed_color {
                 max_palette_entries = 1_usize << bit_depth;
@@ -130,8 +132,21 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
         }
         if kind == b"tRNS" {
             let invalid = match png_color_type {
-                0 => length != 2,
-                2 => length != 6,
+                0 => {
+                    if length != 2 {
+                        true
+                    } else {
+                        let sample = u16::from_be_bytes([bytes[header_end], bytes[header_end + 1]]);
+                        png_bit_depth < 16 && sample >= (1_u16 << png_bit_depth)
+                    }
+                }
+                2 => {
+                    length != 6
+                        || (png_bit_depth == 8
+                            && bytes[header_end..header_end + 6]
+                                .chunks_exact(2)
+                                .any(|sample| sample[0] != 0))
+                },
                 3 => !seen_palette || length == 0 || length > palette_entries,
                 _ => true,
             };
@@ -383,6 +398,32 @@ mod tests {
         add_chunk(&mut grayscale, b"IDAT", &[0]);
         add_chunk(&mut grayscale, b"IEND", &[]);
         assert!(png_chunk_preflight(&grayscale));
+    }
+
+    #[test]
+    fn rejects_out_of_range_grayscale_and_rgb_transparency_samples() {
+        for (depth, sample, expected) in [
+            (1_u8, 1_u16, true),
+            (1, 2, false),
+            (8, 255, true),
+            (8, 256, false),
+            (16, 65535, true),
+        ] {
+            let mut png = PNG_SIGNATURE.to_vec();
+            add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, depth, 0, 0, 0, 0]);
+            add_chunk(&mut png, b"tRNS", &sample.to_be_bytes());
+            add_chunk(&mut png, b"IDAT", &[0]);
+            add_chunk(&mut png, b"IEND", &[]);
+            assert_eq!(png_chunk_preflight(&png), expected, "gray depth {depth}");
+        }
+        for high_byte in [0_u8, 1] {
+            let mut png = PNG_SIGNATURE.to_vec();
+            add_chunk(&mut png, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]);
+            add_chunk(&mut png, b"tRNS", &[high_byte, 0, 0, 1, 0, 2]);
+            add_chunk(&mut png, b"IDAT", &[0]);
+            add_chunk(&mut png, b"IEND", &[]);
+            assert_eq!(png_chunk_preflight(&png), high_byte == 0);
+        }
     }
 
     #[test]
