@@ -461,7 +461,9 @@ mod tests {
                     &rules,
                     &[redirect]
                 ),
-                Err(JoinedSelectionError::Redirect(RedirectBuildError::InvalidId))
+                Err(JoinedSelectionError::Redirect(
+                    RedirectBuildError::InvalidId
+                ))
             ));
         }
     }
