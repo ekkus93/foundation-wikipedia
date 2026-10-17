@@ -73,8 +73,8 @@ pub fn plan_pack_owned_local_urls(
     pack_id: &str,
     store: &MediaObjectStore,
 ) -> Result<VerifiedLocalUrlPlan, OwnedLocalPlanError> {
-    let plan = plan_verified_local_urls(graph, bindings, store)
-        .map_err(OwnedLocalPlanError::Rendered)?;
+    let plan =
+        plan_verified_local_urls(graph, bindings, store).map_err(OwnedLocalPlanError::Rendered)?;
     let mut checked = BTreeSet::new();
     for object in bindings.values() {
         if !checked.insert(&object.digest) {
@@ -320,11 +320,17 @@ mod tests {
         let bindings = BTreeMap::from([
             (
                 "https://en.wikipedia.org/a.png".to_owned(),
-                RequiredMedia { digest: a.clone(), bytes: 9 },
+                RequiredMedia {
+                    digest: a.clone(),
+                    bytes: 9,
+                },
             ),
             (
                 "https://en.wikipedia.org/b.png".to_owned(),
-                RequiredMedia { digest: b.clone(), bytes: 9 },
+                RequiredMedia {
+                    digest: b.clone(),
+                    bytes: 9,
+                },
             ),
         ]);
         let mut registry = MediaRegistry::in_memory().unwrap();
@@ -334,8 +340,12 @@ mod tests {
             creator: "Fixture".into(),
             license: "CC BY-SA 4.0".into(),
         };
-        registry.register_verified_bytes(b"image-one", &notice).unwrap();
-        registry.register_verified_bytes(b"image-two", &notice).unwrap();
+        registry
+            .register_verified_bytes(b"image-one", &notice)
+            .unwrap();
+        registry
+            .register_verified_bytes(b"image-two", &notice)
+            .unwrap();
         registry.add_owner(&a, OwnerKind::Pack, "physics").unwrap();
         registry.add_owner(&b, OwnerKind::Cache, "physics").unwrap();
         assert!(matches!(
@@ -343,8 +353,8 @@ mod tests {
             Err(OwnedLocalPlanError::MissingOwner(_))
         ));
         registry.add_owner(&b, OwnerKind::Pack, "physics").unwrap();
-        let plan = plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store)
-            .unwrap();
+        let plan =
+            plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store).unwrap();
         assert_eq!(plan.source_to_local_uri.len(), 2);
         assert!(!plan.audit.offline_ready);
         assert!(!plan.handler_qualified);
@@ -352,7 +362,9 @@ mod tests {
             plan_pack_owned_local_urls(&graph, &bindings, &registry, "other", &store),
             Err(OwnedLocalPlanError::MissingOwner(_))
         ));
-        registry.remove_owner(&b, OwnerKind::Pack, "physics").unwrap();
+        registry
+            .remove_owner(&b, OwnerKind::Pack, "physics")
+            .unwrap();
         assert!(matches!(
             plan_pack_owned_local_urls(&graph, &bindings, &registry, "physics", &store),
             Err(OwnedLocalPlanError::MissingOwner(_))
