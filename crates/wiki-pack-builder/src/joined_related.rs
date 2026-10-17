@@ -73,6 +73,7 @@ fn expand_verified_links(
     page_limit: usize,
 ) -> Result<RelatedRevisionReceipt, JoinedRelatedError> {
     for (&id, &revision) in &base.page_revisions {
+
         if mainspace.get(&id) != Some(&revision) {
             return Err(JoinedRelatedError::InconsistentBase(id));
         }
@@ -148,6 +149,7 @@ fn expand_verified_links(
     for (&id, &revision) in &page_revisions {
         bytes.extend_from_slice(&id.to_be_bytes());
         bytes.extend_from_slice(&revision.to_be_bytes());
+
     }
     Ok(RelatedRevisionReceipt {
         related_added_page_count: page_revisions.len() - base.page_revisions.len(),
@@ -223,6 +225,7 @@ mod tests {
                 snapshot_id: "enwiki-20261016".into(),
                 definition_sha256: "definition".into(),
                 graph_sha256: "graph".into(),
+
                 snapshot_selection_sha256: "base-selection".into(),
                 page_ids: vec![1],
                 warnings: vec![],
@@ -249,7 +252,6 @@ mod tests {
             to_page_id: to,
         }
     }
-
 
     fn joined_link(from: u64, to: u64) -> RelatedLinkIdentity {
         let mut result = link(from, to);
@@ -298,6 +300,7 @@ mod tests {
         mainspace.insert(4, 45);
         links[0].from_revision_id = 45;
         let changed =
+
             expand_verified_links(&base, &mainspace, &links, &BTreeSet::new(), limits, 4).unwrap();
         assert_eq!(changed.page_revisions, first.page_revisions);
         assert_ne!(
@@ -373,6 +376,7 @@ mod tests {
         base.page_revisions.insert(1, 999);
         assert_eq!(
             check(&[], &base),
+
             Err(JoinedRelatedError::InconsistentBase(1))
         );
     }
@@ -448,6 +452,7 @@ mod tests {
             BTreeMap::from([(1, 101), (2, 102), (3, 103)])
         );
         assert_eq!(result.related.related_added_page_count, 2);
+
         assert!(!result.related.related_source_authenticated);
         let mut reversed = links.clone();
         reversed.reverse();
