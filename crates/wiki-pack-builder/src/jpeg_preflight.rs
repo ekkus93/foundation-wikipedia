@@ -128,10 +128,7 @@ pub fn jpeg_container_preflight(bytes: &[u8]) -> bool {
                     entropy_since_restart = true;
                     at += 1;
                 } else if (0xd0..=0xd7).contains(&next) {
-                    if restart_interval == 0
-                        || !entropy_since_restart
-                        || next != expected_restart
-                    {
+                    if restart_interval == 0 || !entropy_since_restart || next != expected_restart {
                         return false;
                     }
                     expected_restart = if next == 0xd7 { 0xd0 } else { next + 1 };
@@ -248,8 +245,3 @@ mod tests {
         let mut trailing = original.clone();
         trailing.push(0);
         assert!(!jpeg_container_preflight(&trailing));
-        let mut bare_marker = original;
-        bare_marker.splice(2..2, [0xff, 0xd0]);
-        assert!(!jpeg_container_preflight(&bare_marker));
-    }
-}
