@@ -68,14 +68,10 @@ pub fn webp_riff_preflight(bytes: &[u8]) -> bool {
             if ext[0] & 0xc1 != 0 || ext[1..4] != [0, 0, 0] {
                 return false;
             }
-            let width = 1
-                + u32::from(ext[4])
-                + (u32::from(ext[5]) << 8)
-                + (u32::from(ext[6]) << 16);
-            let height = 1
-                + u32::from(ext[7])
-                + (u32::from(ext[8]) << 8)
-                + (u32::from(ext[9]) << 16);
+            let width =
+                1 + u32::from(ext[4]) + (u32::from(ext[5]) << 8) + (u32::from(ext[6]) << 16);
+            let height =
+                1 + u32::from(ext[7]) + (u32::from(ext[8]) << 8) + (u32::from(ext[9]) << 16);
             if width > 16_384
                 || height > 16_384
                 || u64::from(width) * u64::from(height) > 64 * 1024 * 1024
