@@ -1,6 +1,6 @@
 //! Optional bounded PNG structural preflight for offline raster candidates.
 //! This checks PNG chunk envelopes and IHDR resource limits only. It does not
-//! verify CRCs, decompress IDAT, sanitize embedded metadata or decode an image.
+//! decompress IDAT, sanitize embedded metadata or decode an image.
 
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
@@ -10,6 +10,34 @@ use crate::rendered_local_urls::{
 };
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const PNG_CRC_TABLE: [u32; 256] = {
+    let mut table = [0_u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+            bit += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+};
+
+fn png_crc32(kind: &[u8], data: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for &byte in kind.iter().chain(data.iter()) {
+        let index = ((crc as u8) ^ byte) as usize;
+        crc = PNG_CRC_TABLE[index] ^ (crc >> 8);
+    }
+    !crc
+}
 
 /// Refuse impossible/truncated PNG chunk envelopes and decompression-size
 /// hazards before a future platform decoder sees untrusted image bytes.
@@ -68,6 +96,16 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
             return false;
         };
         if next > bytes.len() {
+            return false;
+        }
+        let data_end = next - 4;
+        let stored_crc = u32::from_be_bytes([
+            bytes[data_end],
+            bytes[data_end + 1],
+            bytes[data_end + 2],
+            bytes[data_end + 3],
+        ]);
+        if png_crc32(kind, &bytes[header_end..data_end]) != stored_crc {
             return false;
         }
         if !seen_ihdr {
@@ -204,12 +242,12 @@ pub fn read_source_raster_with_png_preflight(
 mod tests {
     use super::*;
 
-    // Dummy CRC fields keep these as structural fixtures, not decoded images.
+    // Valid CRCs still do not make these synthetic IDAT bytes decodable images.
     fn add_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
         png.extend_from_slice(&(data.len() as u32).to_be_bytes());
         png.extend_from_slice(kind);
         png.extend_from_slice(data);
-        png.extend_from_slice(&[0; 4]);
+        png.extend_from_slice(&png_crc32(kind, data).to_be_bytes());
     }
 
     fn sample_png() -> Vec<u8> {
@@ -221,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_bounded_png_chunk_sequence_without_claiming_crc_or_decode() {
+    fn accepts_bounded_png_chunk_sequence_without_claiming_decode() {
         let png = sample_png();
         assert!(png_chunk_preflight(&png));
         let mut with_text = PNG_SIGNATURE.to_vec();
@@ -319,6 +357,20 @@ mod tests {
         add_chunk(&mut invalid, b"IDAT", &[0]);
         add_chunk(&mut invalid, b"IEND", &[]);
         assert!(!png_chunk_preflight(&invalid));
+    }
+
+    #[test]
+    fn rejects_crc_corruption_in_ihdr_idat_and_iend() {
+        let original = sample_png();
+        assert!(png_chunk_preflight(&original));
+        for crc_offset in [29_usize, 42, 54] {
+            let mut corrupted = original.clone();
+            corrupted[crc_offset] ^= 1;
+            assert!(!png_chunk_preflight(&corrupted), "CRC at {crc_offset}");
+        }
+        let mut corrupted_payload = original;
+        corrupted_payload[41] ^= 1;
+        assert!(!png_chunk_preflight(&corrupted_payload));
     }
 
     #[test]
