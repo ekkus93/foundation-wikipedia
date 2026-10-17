@@ -32,3 +32,9 @@ These are necessary integrity checks, **not** source authenticity or offline-com
 
 - Local-object binding implementation at `6dc32dd1eaf329c7938ddc20334d51879560c9af`: Rust workspace CI `39011194485` and Platform shells CI `39011194526` passed. Intermediate `d095c0acf8e88cfd8b888d11692035d2a9eb5792` failed Rust formatting (run `39011157719`, job `117333788245`, step 4), then was corrected.
 - CSS text-to-object receipt binding at `3657f732afe2d0b6b6877306a902dab3ea65933a`: Rust workspace CI `39011314820` and Platform shells CI `39011314821` passed at the exact SHA.
+
+## Provisional content-addressed local URI plan (additional partial implementation)
+
+The shared `wiki-pack-builder::rendered_local_urls::plan_verified_local_urls` now derives a deterministic original-URL to `wiki-asset://sha256/<64-lowercase-hex-digest>` mapping **only after** the complete rendered-object audit succeeds. Duplicate URLs and duplicate content digests remain deduplicated. The mapping is a logical identifier, never a filesystem path or authorization token; it performs no rewriting, IO, or network access. Regression tests cover transitive CSS/HTML candidates, same-content reuse, missing bindings, dynamic surfaces and tampered local bytes.
+
+This is a necessary preparation for local URI resolution, **not a working renderer or permission to load the URI**. No desktop/Android scheme handler, owner authorization, HTML/CSS sanitization or rewrite has been qualified. The new plan explicitly reports both handler and rewritten-content qualification as false, and its object audit still reports `source_authenticated=false` and `offline_ready=false`. PACK-003 remains unchecked.
