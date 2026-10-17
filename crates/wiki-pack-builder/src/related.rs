@@ -135,7 +135,14 @@ mod tests {
             Err(ResolveError::InvalidPage)
         );
         assert_eq!(
-            expand_related_links(&[1], &BTreeMap::from([(1, vec![oversized])]), &excluded, 1, 10, 20),
+            expand_related_links(
+                &[1],
+                &BTreeMap::from([(1, vec![oversized])]),
+                &excluded,
+                1,
+                10,
+                20
+            ),
             Err(ResolveError::InvalidPage)
         );
     }
