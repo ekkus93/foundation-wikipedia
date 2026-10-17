@@ -12,6 +12,7 @@ pub mod media;
 pub mod media_inventory;
 pub mod preview;
 pub mod related;
+pub mod rendered_dependencies;
 pub mod selection;
 pub mod visual_discovery;
 
