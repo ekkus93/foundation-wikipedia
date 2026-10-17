@@ -408,16 +408,22 @@ mod pinned_tests {
     #[test]
     fn streamed_pinned_receipts_match_original_byte_encoding() {
         let graph = BTreeMap::from([
-            ("Café".to_owned(), Category {
-                articles: vec![2],
-                children: vec![],
-                administrative: false,
-            }),
-            ("Science".to_owned(), Category {
-                articles: vec![3],
-                children: vec![],
-                administrative: false,
-            }),
+            (
+                "Café".to_owned(),
+                Category {
+                    articles: vec![2],
+                    children: vec![],
+                    administrative: false,
+                },
+            ),
+            (
+                "Science".to_owned(),
+                Category {
+                    articles: vec![3],
+                    children: vec![],
+                    administrative: false,
+                },
+            ),
         ]);
         let rules = Rules {
             roots: vec!["Science".into(), "Café".into(), "Science".into()],
@@ -432,7 +438,8 @@ mod pinned_tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
             "enwiki-20261016",
-        ).unwrap();
+        )
+        .unwrap();
         let mut legacy_definition = b"foundation-wikipedia/topic-definition/v1\0".to_vec();
         let mut roots = rules.roots.clone();
         roots.sort();
@@ -453,10 +460,17 @@ mod pinned_tests {
         }
         legacy_definition.extend_from_slice(&(rules.depth_limit as u64).to_be_bytes());
         legacy_definition.extend_from_slice(&(rules.page_limit as u64).to_be_bytes());
-        assert_eq!(pinned.definition_sha256, wiki_pack_format::sha256_hex(&legacy_definition));
+        assert_eq!(
+            pinned.definition_sha256,
+            wiki_pack_format::sha256_hex(&legacy_definition)
+        );
 
         let mut legacy_selection = b"foundation-wikipedia/topic-selection/v2\0".to_vec();
-        for value in ["enwiki-20261016", &pinned.definition_sha256, &pinned.graph_sha256] {
+        for value in [
+            "enwiki-20261016",
+            &pinned.definition_sha256,
+            &pinned.graph_sha256,
+        ] {
             legacy_selection.extend_from_slice(&(value.len() as u64).to_be_bytes());
             legacy_selection.extend_from_slice(value.as_bytes());
         }
@@ -464,7 +478,10 @@ mod pinned_tests {
         for id in &pinned.page_ids {
             legacy_selection.extend_from_slice(&id.to_be_bytes());
         }
-        assert_eq!(pinned.snapshot_selection_sha256, wiki_pack_format::sha256_hex(&legacy_selection));
+        assert_eq!(
+            pinned.snapshot_selection_sha256,
+            wiki_pack_format::sha256_hex(&legacy_selection)
+        );
     }
 
     #[test]
