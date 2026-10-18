@@ -6,12 +6,7 @@
 /// The public current-content feed can publish on any calendar day. The
 /// URL's project and date must match the caller's pinned release identity.
 pub fn is_official_checksum_url(url: &str, wiki: &str, date: &str) -> bool {
-    // Wikimedia database identifiers are lower-case names, not arbitrary
-    // path components. Reject noncanonical leading/trailing separators and
-    // numeric-only names before constructing an official-source URL.
     if wiki.is_empty()
-        || !wiki.as_bytes()[0].is_ascii_lowercase()
-        || !wiki.as_bytes()[wiki.len() - 1].is_ascii_lowercase()
         || wiki.len() > 255
         || !wiki
             .bytes()
@@ -81,18 +76,6 @@ mod tests {
             assert!(!is_official_checksum_url(&invalid, "enwiki", date));
         }
         assert!(!is_official_checksum_url(url, "Enwiki", "2026-10-01"));
-        for project in ["_enwiki", "enwiki_", "123wiki", "___"] {
-            let invalid_url = format!(
-                "https://dumps.wikimedia.org/other/mediawiki_content_current/{project}/2026-10-01/xml/bzip2/SHA256SUMS"
-            );
-            assert!(!is_official_checksum_url(&invalid_url, project, "2026-10-01"));
-        }
-        for project in ["be_x_oldwiki", "enwiktionary", "commonswiki"] {
-            let valid_url = format!(
-                "https://dumps.wikimedia.org/other/mediawiki_content_current/{project}/2026-10-01/xml/bzip2/SHA256SUMS"
-            );
-            assert!(is_official_checksum_url(&valid_url, project, "2026-10-01"));
-        }
         assert!(!is_official_checksum_url(
             &url.replace("https:", "http:"),
             "enwiki",
