@@ -41,14 +41,7 @@ pub enum StreamCoverageError {
 
 fn valid_scope(scope: CensusScope<'_>) -> bool {
     crate::valid_wiki_project(scope.project)
-        && !scope.generation.is_empty()
-        && scope.generation.len() <= 255
-        && !scope.generation.starts_with('.')
-        && !scope.generation.ends_with('.')
-        && scope
-            .generation
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && crate::public_dump::valid_dump_date(scope.generation)
         && scope.namespace >= 0
 }
 
@@ -280,6 +273,32 @@ mod tests {
             audit_page_coverage_stream(scope(), ids(&[1]), scope(), ids(&[])),
             Err(StreamCoverageError::InvalidCensus)
         ));
+    }
+
+    #[test]
+    fn rejects_noncalendar_dump_generation_even_when_both_scopes_agree() {
+        for generation in [
+            "2026-02-29",
+            "1900-02-29",
+            "2026-04-31",
+            "0000-01-01",
+            "2026-10-1",
+            "2026-10-01_extra",
+        ] {
+            let invalid = CensusScope {
+                generation,
+                ..scope()
+            };
+            assert!(matches!(
+                audit_page_coverage_stream(invalid, ids(&[1]), invalid, ids(&[1])),
+                Err(StreamCoverageError::InvalidCensus)
+            ));
+        }
+        let leap = CensusScope {
+            generation: "2024-02-29",
+            ..scope()
+        };
+        assert!(audit_page_coverage_stream(leap, ids(&[1]), leap, ids(&[1])).is_ok());
     }
 
     #[test]
