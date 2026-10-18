@@ -186,6 +186,11 @@ class BoundedDecompressed:
             raise DumpDecodeError("XML page exceeds per-page memory limit")
         if self.page_start is None and self.total - self.non_page_start > MAX_NON_PAGE_XML_BYTES:
             raise DumpDecodeError("non-page XML exceeds metadata memory limit")
+        # Current-content XML is UTF-8. ElementTree also accepts UTF-16,
+        # whose interleaved NUL bytes can conceal DTD/entity declarations
+        # from the raw-byte guard below. Reject that encoding before parsing.
+        if b"\\x00" in data:
+            raise DumpDecodeError("non-UTF-8 XML encoding or NUL byte")
         joined = self.tail + data
         if b"<!DOCTYPE" in joined or b"<!ENTITY" in joined:
             raise DumpDecodeError("DTD/entity declarations are forbidden")
