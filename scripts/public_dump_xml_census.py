@@ -5,7 +5,6 @@ The manifest and its digests MUST be authenticated independently. This helper
 is not the Rust importer, a source-completeness oracle, or an HTML renderer.
 It publishes only after all declared members decode and validate successfully.
 """
-import bz2
 from datetime import datetime
 import hashlib
 import json
@@ -16,6 +15,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from strict_bzip2_reader import StrictBzip2Reader
 from audit_public_dump_revision_jsonl import MAX_RECORD_BYTES, RevisionAuditError, audit_revision_jsonl
 from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
@@ -220,7 +220,7 @@ def decode_member(path, first, last, output, namespace, expected_sha256, expecte
             if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != expected_size:
                 raise DumpDecodeError("unsafe or replaced compressed member")
             compressed = HashingCompressed(handle)
-            with bz2.BZ2File(compressed) as stream:
+            with StrictBzip2Reader(compressed) as stream:
                 bounded = BoundedDecompressed(stream)
                 events = ET.iterparse(bounded, events=("start", "end"))
                 depth = 0
