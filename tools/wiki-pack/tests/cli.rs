@@ -1,20 +1,36 @@
 use std::fs::{self, File};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use wiki_pack_builder::wiki_pack_format::container::write_container;
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin, FORMAT_VERSION};
 
+fn create_fixture_dir(mut candidate: impl FnMut() -> std::path::PathBuf) -> std::path::PathBuf {
+    for _ in 0..32 {
+        let path = candidate();
+        match fs::create_dir(&path) {
+            Ok(()) => return path,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("failed to create CLI fixture directory: {error}"),
+        }
+    }
+    panic!("CLI fixture directory collisions exceeded retry budget");
+}
+
 fn fixture(official: bool) -> (std::path::PathBuf, std::path::PathBuf) {
-    let parent = std::env::temp_dir().join(format!(
-        "wiki-pack-cli-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir(&parent).unwrap();
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let parent = create_fixture_dir(|| {
+        std::env::temp_dir().join(format!(
+            "wiki-pack-cli-{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    });
     let path = parent.join("fixture.wpack");
     let manifest = Manifest {
         version: FORMAT_VERSION,
@@ -49,6 +65,20 @@ fn invoke(command: &str, args: &[&std::ffi::OsStr]) -> Output {
     process.arg(command);
     process.args(args);
     process.output().unwrap()
+}
+
+#[test]
+fn fixture_directory_collision_retries_without_reusing_existing_directory() {
+    let (parent, _) = fixture(false);
+    let already_exists = parent.join("already-exists");
+    fs::create_dir(&already_exists).unwrap();
+    let next = parent.join("available");
+    let mut candidates = [already_exists.clone(), next.clone()].into_iter();
+    let created = create_fixture_dir(|| candidates.next().unwrap());
+    assert_eq!(created, next);
+    assert!(already_exists.is_dir());
+    assert!(created.is_dir());
+    fs::remove_dir_all(parent).unwrap();
 }
 
 #[test]
