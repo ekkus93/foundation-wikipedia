@@ -146,7 +146,11 @@ pub(crate) fn valid_dump_date(date: &str) -> bool {
 
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
-    if members.is_empty() || !crate::valid_wiki_project(wiki) || !valid_dump_date(date) {
+    if members.is_empty()
+        || members.len() > MAX_MEMBERS
+        || !crate::valid_wiki_project(wiki)
+        || !valid_dump_date(date)
+    {
         return false;
     }
     let prefix = format!("{wiki}-{date}-p");
@@ -242,6 +246,18 @@ mod tests {
         );
         assert_eq!(parsed[0].sha256, "a".repeat(64));
         assert!(parse_sha256sums(&format!("{} *nested/enwiki.xml.bz2", "a".repeat(64))).is_ok());
+    }
+
+    #[test]
+    fn direct_export_identity_check_rejects_oversized_member_inventory() {
+        // Callers can construct descriptors without using parse_sha256sums.
+        // Reject over-budget collections before sorting or allocating ranges.
+        let member = DumpChecksum {
+            relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+            sha256: "a".repeat(64),
+        };
+        let oversized = vec![member; MAX_MEMBERS + 1];
+        assert!(!matches_current_export(&oversized, "enwiki", "2026-10-01"));
     }
 
     #[test]
