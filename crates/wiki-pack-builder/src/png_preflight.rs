@@ -1,6 +1,6 @@
 //! Optional bounded PNG structural preflight for offline raster candidates.
-//! This checks PNG chunk envelopes and IHDR resource limits only. It does not
-//! verify CRCs, decompress IDAT, sanitize embedded metadata or decode an image.
+//! This checks PNG chunk envelopes, CRC-32 integrity and IHDR resource limits.
+//! It does not decompress IDAT, sanitize embedded metadata or decode an image.
 
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
@@ -10,6 +10,19 @@ use crate::rendered_local_urls::{
 };
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
+/// PNG's IEEE CRC-32 over each chunk type and payload (not the length).
+/// The outer input limit bounds this calculation; no image decoding occurs.
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320_u32 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    !crc
+}
 
 /// Refuse impossible/truncated PNG chunk envelopes and decompression-size
 /// hazards before a future platform decoder sees untrusted image bytes.
@@ -70,6 +83,17 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
             return false;
         };
         if next > bytes.len() {
+            return false;
+        }
+        // CRC covers chunk type + data, excluding the length and stored CRC.
+        // Check even ancillary chunks before accepting the structural envelope.
+        let stored_crc = u32::from_be_bytes([
+            bytes[next - 4],
+            bytes[next - 3],
+            bytes[next - 2],
+            bytes[next - 1],
+        ]);
+        if png_crc32(&bytes[offset + 4..next - 4]) != stored_crc {
             return false;
         }
         if !seen_ihdr {
@@ -229,12 +253,14 @@ pub fn read_source_raster_with_png_preflight(
 mod tests {
     use super::*;
 
-    // Dummy CRC fields keep these as structural fixtures, not decoded images.
+    // Real CRCs make these chunk-integrity fixtures; IDAT is not decoded.
     fn add_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        let start = png.len();
         png.extend_from_slice(&(data.len() as u32).to_be_bytes());
         png.extend_from_slice(kind);
         png.extend_from_slice(data);
-        png.extend_from_slice(&[0; 4]);
+        let crc = png_crc32(&png[start + 4..]);
+        png.extend_from_slice(&crc.to_be_bytes());
     }
 
     fn sample_png() -> Vec<u8> {
@@ -246,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_bounded_png_chunk_sequence_without_claiming_crc_or_decode() {
+    fn accepts_bounded_png_chunk_sequence_without_claiming_decode() {
         let png = sample_png();
         assert!(png_chunk_preflight(&png));
         let mut with_text = PNG_SIGNATURE.to_vec();
@@ -259,6 +285,36 @@ mod tests {
         add_chunk(&mut with_text, b"IDAT", &[0]);
         add_chunk(&mut with_text, b"IEND", &[]);
         assert!(png_chunk_preflight(&with_text));
+    }
+
+    #[test]
+    fn validates_standard_crc_vector_and_rejects_corrupt_chunks() {
+        assert_eq!(png_crc32(b"123456789"), 0xcbf4_3926);
+        let original = sample_png();
+        assert!(png_chunk_preflight(&original));
+
+        // IHDR CRC, IDAT payload, and ancillary text payload must all be
+        // rejected if changed without recomputing the enclosing chunk CRC.
+        let mut bad_header_crc = original.clone();
+        bad_header_crc[29] ^= 1;
+        assert!(!png_chunk_preflight(&bad_header_crc));
+
+        let mut bad_idat_data = original.clone();
+        bad_idat_data[41] ^= 1;
+        assert!(!png_chunk_preflight(&bad_idat_data));
+
+        let mut with_text = PNG_SIGNATURE.to_vec();
+        add_chunk(
+            &mut with_text,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+        );
+        add_chunk(&mut with_text, b"tEXt", b"caption");
+        add_chunk(&mut with_text, b"IDAT", &[0]);
+        add_chunk(&mut with_text, b"IEND", &[]);
+        assert!(png_chunk_preflight(&with_text));
+        with_text[41] ^= 1;
+        assert!(!png_chunk_preflight(&with_text));
     }
 
     #[test]
