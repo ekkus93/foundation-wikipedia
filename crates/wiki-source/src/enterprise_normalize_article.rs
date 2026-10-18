@@ -165,8 +165,7 @@ fn has_unresolved_visual_attributes(html: &str) -> bool {
         // Permit harmless inline layout styles, but not CSS URL references.
         // Normalizing ASCII whitespace covers style =, tabs and line breaks.
         let compact: String = tag.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-        compact.contains("background=")
-            || (compact.contains("style=") && compact.contains("url("))
+        compact.contains("background=") || (compact.contains("style=") && compact.contains("url("))
     })
 }
 
@@ -215,7 +214,8 @@ fn normalize_with_index(
                 .get(offset + tag.len())
                 .is_some_and(|next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'))
         })
-    }) || has_unresolved_visual_attributes(&joined.rendered_html) {
+    }) || has_unresolved_visual_attributes(&joined.rendered_html)
+    {
         return Err(NormalizeError::UnresolvedVisual);
     }
     let rendered_html = sanitize_rendered_html(&joined.rendered_html)?;
@@ -369,7 +369,10 @@ mod tests {
         ] {
             let mut article = joined("enwiki", 42);
             article.rendered_html = markup.into();
-            assert!(normalize_enterprise_article(&article, false).is_ok(), "{markup}");
+            assert!(
+                normalize_enterprise_article(&article, false).is_ok(),
+                "{markup}"
+            );
         }
     }
 
@@ -598,8 +601,3 @@ mod tests {
         let mut stale = page;
         stale.structured.generation_id = "20261011".into();
         assert_eq!(
-            normalize_enterprise_article_with_link_index(&stale, false, &index),
-            Err(NormalizeError::GenerationMismatch)
-        );
-    }
-}
