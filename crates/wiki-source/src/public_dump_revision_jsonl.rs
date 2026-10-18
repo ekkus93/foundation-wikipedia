@@ -157,7 +157,6 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
             || format!("{:x}", Sha256::digest(record.wikitext.as_bytes())) != record.wikitext_sha256
         {
             return Err(RevisionRecordError::InvalidRecord);
-
         }
         if self.count >= MAX_RECORDS {
             return Err(RevisionRecordError::OversizedRecord);
@@ -317,7 +316,6 @@ mod tests {
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
     }
-
 
     #[test]
     fn rejects_revisions_dated_after_the_pinned_publication_day() {
