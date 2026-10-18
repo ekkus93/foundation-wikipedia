@@ -8,6 +8,8 @@
 pub fn is_official_checksum_url(url: &str, wiki: &str, date: &str) -> bool {
     if wiki.is_empty()
         || wiki.len() > 255
+        || !wiki.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        || !wiki.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
         || !wiki
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
@@ -75,6 +77,19 @@ mod tests {
             );
             assert!(!is_official_checksum_url(&invalid, "enwiki", date));
         }
+        // Official dump project identifiers start with a letter and cannot
+        // end with a separator; internal separators remain valid.
+        for project in ["_enwiki", "enwiki_", "123wiki", "___", "en__wiki_"] {
+            let candidate = format!(
+                "https://dumps.wikimedia.org/other/mediawiki_content_current/{project}/2026-10-01/xml/bzip2/SHA256SUMS"
+            );
+            assert!(!is_official_checksum_url(&candidate, project, "2026-10-01"));
+        }
+        let project = "zh_min_nanwiki";
+        let candidate = format!(
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/{project}/2026-10-01/xml/bzip2/SHA256SUMS"
+        );
+        assert!(is_official_checksum_url(&candidate, project, "2026-10-01"));
         assert!(!is_official_checksum_url(url, "Enwiki", "2026-10-01"));
         assert!(!is_official_checksum_url(
             &url.replace("https:", "http:"),
