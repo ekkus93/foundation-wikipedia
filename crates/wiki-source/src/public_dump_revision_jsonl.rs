@@ -117,8 +117,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
         generation: &str,
         namespace: i32,
     ) -> Result<Self, RevisionRecordError> {
-        if !crate::valid_wiki_project(project) || !valid_date(generation) || namespace < 0
-        {
+        if !crate::valid_wiki_project(project) || !valid_date(generation) || namespace < 0 {
             return Err(RevisionRecordError::InvalidScope);
         }
         Ok(Self {
@@ -158,6 +157,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
             || format!("{:x}", Sha256::digest(record.wikitext.as_bytes())) != record.wikitext_sha256
         {
             return Err(RevisionRecordError::InvalidRecord);
+
         }
         if self.count >= MAX_RECORDS {
             return Err(RevisionRecordError::OversizedRecord);
@@ -318,6 +318,7 @@ mod tests {
         }
     }
 
+
     #[test]
     fn rejects_revisions_dated_after_the_pinned_publication_day() {
         for future in ["2026-10-02T00:00:00Z", "2027-01-01T00:00:00Z"] {
@@ -408,8 +409,7 @@ mod tests {
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "ENwiki", "2026-10-01", 0).is_err());
         for project in ["_enwiki", "enwiki_", "123wiki", "___"] {
             assert!(
-                DiagnosticRevisionLines::new(Cursor::new(b""), project, "2026-10-01", 0)
-                    .is_err()
+                DiagnosticRevisionLines::new(Cursor::new(b""), project, "2026-10-01", 0).is_err()
             );
         }
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-02-30", 0).is_err());
