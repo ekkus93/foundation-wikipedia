@@ -45,33 +45,10 @@ pub enum RevisionRecordError {
     InvalidOrder,
 }
 
+// A diagnostic revision must use the same calendar-day policy as the
+// digest-verified public-dump generation it claims to belong to.
 fn valid_date(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() != 10
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || !bytes
-            .iter()
-            .enumerate()
-            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit())
-    {
-        return false;
-    }
-    let number = |from: usize, to: usize| -> u32 { value[from..to].parse::<u32>().unwrap_or(0) };
-    let year = number(0, 4);
-    let month = number(5, 7);
-    let day = number(8, 10);
-    if year == 0 || !(1..=12).contains(&month) {
-        return false;
-    }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days = match month {
-        2 if leap => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    };
-    day > 0 && day <= days
+    crate::public_dump::valid_dump_date(value)
 }
 
 fn valid_timestamp(value: &str) -> bool {
@@ -314,6 +291,25 @@ mod tests {
             .unwrap();
 
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
+        }
+    }
+
+    #[test]
+    fn diagnostic_generation_date_matches_the_public_dump_calendar_policy() {
+        for date in ["2024-02-29", "2000-02-29", "2026-10-01"] {
+            assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", date, 0).is_ok());
+        }
+        for date in [
+            "2025-02-29",
+            "1900-02-29",
+            "2026-11-31",
+            "0000-01-01",
+            "2026/10/01",
+        ] {
+            assert!(matches!(
+                DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", date, 0),
+                Err(RevisionRecordError::InvalidScope)
+            ));
         }
     }
 
