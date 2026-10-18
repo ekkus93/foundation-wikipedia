@@ -249,7 +249,9 @@ mod tests {
         assert!(!valid_identifier("cite\u{2066}1"));
         assert!(!valid_identifier("cite\u{200f}1"));
         // Invisible format controls must not create visually identical IDs.
-        for codepoint in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}'] {
+        for codepoint in [
+            '\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}',
+        ] {
             assert!(!valid_identifier(&format!("cite{codepoint}1")));
         }
         assert!(!valid_identifier(&"x".repeat(4097)));
