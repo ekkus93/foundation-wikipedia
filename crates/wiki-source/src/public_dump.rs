@@ -108,7 +108,11 @@ fn page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
 fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
     let suffix = name.strip_prefix(prefix)?;
     let (number, range) = suffix.split_once(".xml-p")?;
-    if number.is_empty() || number.starts_with('0') || !number.bytes().all(|b| b.is_ascii_digit()) {
+    if number.is_empty()
+        || number.starts_with('0')
+        || !number.bytes().all(|b| b.is_ascii_digit())
+        || number.parse::<u64>().is_err()
+    {
         return None;
     }
     let (first, last) = range.strip_suffix(".bz2")?.split_once('p')?;
@@ -379,9 +383,14 @@ mod tests {
             "enwiki-20261001-pages-meta-current1.xml-p01p100.bz2",
             "enwiki-20261001-pages-meta-current1.xml-p1p0100.bz2",
             "enwiki-20261001-pages-meta-current1.xml-p1p9223372036854775808.bz2",
+            "enwiki-20261001-pages-meta-current18446744073709551616.xml-p1p100.bz2",
         ] {
             let items = parse_sha256sums(&line(invalid)).unwrap();
             assert!(!matches_current_export(&items, "enwiki", "2026-10-01"));
+            assert_eq!(
+                declared_member_page_range(&items[0], "enwiki", "2026-10-01"),
+                None
+            );
         }
     }
 
