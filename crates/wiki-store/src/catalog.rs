@@ -650,7 +650,10 @@ mod tests {
         drop(writer);
 
         let reader = SnapshotCatalog::open_read_only(&database).unwrap();
-        assert_eq!(reader.lookup_key("enwiki", "earth").unwrap(), Some(key.clone()));
+        assert_eq!(
+            reader.lookup_key("enwiki", "earth").unwrap(),
+            Some(key.clone())
+        );
         assert!(reader.read_record(&root, &key).unwrap().is_some());
         assert!(reader.conn.execute("DELETE FROM records", []).is_err());
         assert!(reader.lookup_entry(&key).unwrap().is_some());
