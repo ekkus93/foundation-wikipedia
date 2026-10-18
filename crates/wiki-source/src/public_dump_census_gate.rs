@@ -37,7 +37,12 @@ fn open_regular(path: &Path) -> Result<(File, Metadata), CensusGateError> {
     }
     let file = File::open(path).map_err(CensusGateError::Io)?;
     let opened = file.metadata().map_err(CensusGateError::Io)?;
-    if !opened.is_file() || !same_identity(&link, &opened) {
+    if !opened.is_file()
+        || !same_identity(&link, &opened)
+        || opened.len() != link.len()
+        || opened.len() == 0
+        || opened.len() > MAX_CENSUS_BYTES
+    {
         return Err(CensusGateError::UnsafeInput);
     }
     Ok((file, opened))
@@ -76,19 +81,37 @@ fn unchanged(before: &Metadata, after: &Metadata) -> bool {
     }
 }
 
-fn sha256_file(file: &mut File) -> Result<String, CensusGateError> {
-    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+// A file may grow after its initial metadata check. Bound bytes read during
+// both hash passes rather than trusting a potentially stale file length.
+fn sha256_bounded<R: Read>(reader: &mut R, max_bytes: u64) -> Result<String, CensusGateError> {
     let mut hash = Sha256::new();
+    let mut total = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let size = file.read(&mut buffer).map_err(CensusGateError::Io)?;
+        let size = match reader.read(&mut buffer) {
+            Ok(size) => size,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(CensusGateError::Io(error)),
+        };
         if size == 0 {
             break;
         }
+        total = total
+            .checked_add(size as u64)
+            .ok_or(CensusGateError::UnsafeInput)?;
+        if total > max_bytes {
+            return Err(CensusGateError::UnsafeInput);
+        }
         hash.update(&buffer[..size]);
     }
-    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
     Ok(format!("{:x}", hash.finalize()))
+}
+
+fn sha256_file(file: &mut File) -> Result<String, CensusGateError> {
+    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    let digest = sha256_bounded(file, MAX_CENSUS_BYTES)?;
+    file.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    Ok(digest)
 }
 
 /// Audit observed IDs against a separately authenticated, SHA-256-pinned
@@ -272,6 +295,21 @@ mod tests {
         fs::write(&observed, b"1\n201\n").unwrap();
         let digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
         (root, expected, observed, digest)
+    }
+
+    #[test]
+    fn bounded_hashing_rejects_growth_past_the_declared_budget() {
+        let bytes = b"1\n201\n";
+        let mut oversized = io::Cursor::new(bytes);
+        assert!(matches!(
+            sha256_bounded(&mut oversized, 4),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        let mut valid = io::Cursor::new(bytes);
+        assert_eq!(
+            sha256_bounded(&mut valid, bytes.len() as u64).unwrap(),
+            format!("{:x}", Sha256::digest(bytes))
+        );
     }
 
     #[test]
