@@ -40,13 +40,7 @@ pub enum StreamCoverageError {
 }
 
 fn valid_scope(scope: CensusScope<'_>) -> bool {
-    !scope.project.is_empty()
-        && scope.project.len() <= 255
-        && scope
-            .project
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        && !scope.generation.is_empty()
+    crate::valid_wiki_project(scope.project) && !scope.generation.is_empty()
         && scope.generation.len() <= 255
         && !scope.generation.starts_with('.')
         && !scope.generation.ends_with('.')
@@ -260,6 +254,21 @@ mod tests {
         };
         assert!(matches!(
             audit_page_coverage_stream(bad, ids(&[1]), bad, ids(&[1])),
+            Err(StreamCoverageError::InvalidCensus)
+        ));
+        for project in ["_enwiki", "enwiki_", "123wiki"] {
+            let invalid = CensusScope { project, ..scope() };
+            assert!(matches!(
+                audit_page_coverage_stream(invalid, ids(&[1]), invalid, ids(&[1])),
+                Err(StreamCoverageError::InvalidCensus)
+            ));
+        }
+        let invalid = CensusScope {
+            namespace: -1,
+            ..scope()
+        };
+        assert!(matches!(
+            audit_page_coverage_stream(invalid, ids(&[1]), invalid, ids(&[1])),
             Err(StreamCoverageError::InvalidCensus)
         ));
         assert!(matches!(

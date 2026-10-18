@@ -39,12 +39,8 @@ const MAX_IDS: usize = 100_000_000;
 const MAX_EXAMPLES: usize = 12;
 
 fn validate(census: PageCensus<'_>) -> Result<(), PageCoverageError> {
-    if census.project.is_empty()
-        || census.project.len() > 255
-        || !census
-            .project
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    if !crate::valid_wiki_project(census.project)
+        || census.namespace < 0
         || census.generation.is_empty()
         || census.generation.len() > 255
         || census.generation.starts_with('.')
@@ -277,7 +273,9 @@ mod tests {
     #[test]
     fn census_identity_must_not_accept_unsafe_project_or_generation_labels() {
         let ids = [1, 2, 3];
-        for project in ["Enwiki", "en/wiki", "../wiki", "a b", ""] {
+        for project in [
+            "Enwiki", "en/wiki", "../wiki", "a b", "", "_enwiki", "enwiki_", "123wiki",
+        ] {
             let invalid = PageCensus {
                 project,
                 ..census(&ids)
@@ -287,6 +285,14 @@ mod tests {
                 Err(PageCoverageError::InvalidCensus)
             );
         }
+        let invalid = PageCensus {
+            namespace: -1,
+            ..census(&ids)
+        };
+        assert_eq!(
+            audit_page_coverage(invalid, invalid),
+            Err(PageCoverageError::InvalidCensus)
+        );
         for generation in [".hidden", "2026/10/01", "../outside", "bad label", ""] {
             let invalid = PageCensus {
                 generation,
