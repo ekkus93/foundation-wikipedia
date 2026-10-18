@@ -447,7 +447,11 @@ mod tests {
         }
 
         let mut late = sample_png();
-        let iend = late.windows(4).position(|window| window == b"IEND").unwrap() - 4;
+        let iend = late
+            .windows(4)
+            .position(|window| window == b"IEND")
+            .unwrap()
+            - 4;
         let mut chunk = Vec::new();
         add_chunk(&mut chunk, b"pHYs", &[0, 0, 0, 1, 0, 0, 0, 1, 0]);
         late.splice(iend..iend, chunk);
