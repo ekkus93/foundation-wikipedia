@@ -329,8 +329,13 @@ mod tests {
             );
             assert_eq!(
                 join_pages_with_generation_tombstones(
-                    vec![], vec![], vec![],
-                    vec![DeletionMarker { page: live.page, generation_id: "20261009".into() }],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![DeletionMarker {
+                        page: live.page,
+                        generation_id: "20261009".into()
+                    }],
                 ),
                 Err(JoinError::InvalidIdentity),
             );
@@ -348,8 +353,13 @@ mod tests {
             );
             assert_eq!(
                 join_pages_with_generation_tombstones(
-                    vec![], vec![], vec![],
-                    vec![DeletionMarker { page: part(1, "deleted").page, generation_id: generation.into() }],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![DeletionMarker {
+                        page: part(1, "deleted").page,
+                        generation_id: generation.into()
+                    }],
                 ),
                 Err(JoinError::InvalidIdentity),
             );
@@ -361,7 +371,12 @@ mod tests {
         html.payload = "html".into();
         let mut categories = source.clone();
         categories.payload.clear();
-        assert_eq!(join_pages(vec![source], vec![html], vec![categories]).unwrap().len(), 1);
+        assert_eq!(
+            join_pages(vec![source], vec![html], vec![categories])
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
