@@ -63,7 +63,7 @@ class XmlEncodingGuardTests(unittest.TestCase):
             self.stage(xml.encode("utf-16"))
         self.assertEqual(list(self.output.iterdir()), [])
         result, count = self.stage(xml.encode("utf-8"))
-        self.assertEqual((count, result.read_bytes()), (1, b"1\\n"))
+        self.assertEqual((count, result.read_bytes()), (1, b"1\n"))
 
 
 if __name__ == "__main__":

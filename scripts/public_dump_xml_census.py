@@ -189,7 +189,7 @@ class BoundedDecompressed:
         # Current-content XML is UTF-8. ElementTree also accepts UTF-16,
         # whose interleaved NUL bytes can conceal DTD/entity declarations
         # from the raw-byte guard below. Reject that encoding before parsing.
-        if b"\\x00" in data:
+        if b"\x00" in data:
             raise DumpDecodeError("non-UTF-8 XML encoding or NUL byte")
         joined = self.tail + data
         if b"<!DOCTYPE" in joined or b"<!ENTITY" in joined:
