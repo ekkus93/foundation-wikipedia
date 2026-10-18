@@ -187,12 +187,9 @@ pub fn join_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<DeletionMarker>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, BatchImportError> {
-    if project.is_empty()
-        || project.len() > 255
-        || !project
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-    {
+    // Use the same conservative project identity accepted by source manifests
+    // and pinned official dump URLs, before reading untrusted source bytes.
+    if !crate::valid_wiki_project(project) {
         return Err(BatchImportError::Join(EnterpriseError::InvalidIdentity));
     }
     if generation_id.is_empty()
@@ -481,6 +478,35 @@ mod tests {
             },
             generation_id: generation.into(),
         }
+    }
+
+    #[test]
+    fn scoped_import_rejects_ambiguous_projects_before_parsing() {
+        // Even an otherwise empty generation cannot claim a project that the
+        // official source-manifest and public-dump validators would reject.
+        for project in ["", "_enwiki", "enwiki_", "123wiki", "___", "Enwiki"] {
+            assert_eq!(
+                join_enterprise_ndjson_scoped(
+                    Cursor::new(vec![0xff]),
+                    Cursor::new(vec![0xff]),
+                    project,
+                    "20261010",
+                    vec![],
+                ),
+                Err(BatchImportError::Join(EnterpriseError::InvalidIdentity)),
+                "{project}"
+            );
+        }
+        // Legitimate underscore-delimited Wikimedia project IDs still work.
+        assert!(join_enterprise_ndjson_scoped(
+            Cursor::new(Vec::<u8>::new()),
+            Cursor::new(Vec::<u8>::new()),
+            "zh_min_nanwiki",
+            "20261010",
+            vec![],
+        )
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
