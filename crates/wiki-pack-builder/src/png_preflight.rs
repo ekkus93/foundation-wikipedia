@@ -34,6 +34,7 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
     let mut seen_transparency = false;
     let mut seen_srgb = false;
     let mut seen_gamma = false;
+    let mut seen_phys = false;
     let mut max_palette_entries = 256_usize;
     let mut indexed_color = false;
     let mut palette_allowed = true;
@@ -178,6 +179,14 @@ pub fn png_chunk_preflight(bytes: &[u8]) -> bool {
                 return false;
             }
             seen_gamma = true;
+        }
+        if kind == b"pHYs" {
+            // Pixel-density metadata must have its fixed nine-byte shape,
+            // an established unit code, and precede the image data.
+            if seen_phys || seen_idat || length != 9 || bytes[header_end + 8] > 1 {
+                return false;
+            }
+            seen_phys = true;
         }
         if kind == b"IDAT" {
             if past_idat {
@@ -415,6 +424,34 @@ mod tests {
         add_chunk(&mut after_palette, b"IDAT", &[0]);
         add_chunk(&mut after_palette, b"IEND", &[]);
         assert!(!png_chunk_preflight(&after_palette));
+    }
+
+    #[test]
+    fn phys_chunk_has_fixed_shape_valid_units_and_pre_idat_placement() {
+        let mut valid = sample_png();
+        let mut phys = Vec::new();
+        add_chunk(&mut phys, b"pHYs", &[0, 0, 0, 1, 0, 0, 0, 1, 1]);
+        valid.splice(33..33, phys.clone());
+        assert!(png_chunk_preflight(&valid));
+
+        let mut duplicate = valid.clone();
+        duplicate.splice(33..33, phys);
+        assert!(!png_chunk_preflight(&duplicate));
+
+        for payload in [&[][..], &[0_u8; 8][..], &[0, 0, 0, 1, 0, 0, 0, 1, 2][..]] {
+            let mut invalid = sample_png();
+            let mut chunk = Vec::new();
+            add_chunk(&mut chunk, b"pHYs", payload);
+            invalid.splice(33..33, chunk);
+            assert!(!png_chunk_preflight(&invalid));
+        }
+
+        let mut late = sample_png();
+        let iend = late.windows(4).position(|window| window == b"IEND").unwrap() - 4;
+        let mut chunk = Vec::new();
+        add_chunk(&mut chunk, b"pHYs", &[0, 0, 0, 1, 0, 0, 0, 1, 0]);
+        late.splice(iend..iend, chunk);
+        assert!(!png_chunk_preflight(&late));
     }
 
     #[test]
