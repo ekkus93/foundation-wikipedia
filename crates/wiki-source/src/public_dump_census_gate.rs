@@ -45,6 +45,16 @@ fn open_regular(path: &Path) -> Result<(File, Metadata), CensusGateError> {
     {
         return Err(CensusGateError::UnsafeInput);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // Both the expected and observed census must be isolated from any
+        // additional hard-link name; otherwise a second pathname could mutate
+        // the same inode even when these two paths are distinct.
+        if link.nlink() != 1 || opened.nlink() != 1 {
+            return Err(CensusGateError::UnsafeInput);
+        }
+    }
     Ok((file, opened))
 }
 
@@ -385,10 +395,27 @@ mod tests {
         ));
         fs::remove_file(&linked).unwrap();
         fs::hard_link(&expected, &linked).unwrap();
+        // Hard-linked files are unsafe independently of whether both audit
+        // paths refer to the same inode.
         assert!(matches!(
             audit_pinned_census_files(&inventory(), 0, &expected, &digest, &linked),
-            Err(CensusGateError::SameSource)
+            Err(CensusGateError::UnsafeInput)
         ));
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        fs::remove_file(&linked).unwrap();
+        assert!(audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed).is_ok());
+
+        let third_party_alias = root.join("observed-alias.ids");
+        fs::hard_link(&observed, &third_party_alias).unwrap();
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        fs::remove_file(&third_party_alias).unwrap();
+        assert!(audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
