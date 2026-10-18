@@ -117,13 +117,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
         generation: &str,
         namespace: i32,
     ) -> Result<Self, RevisionRecordError> {
-        if project.is_empty()
-            || project.len() > 255
-            || !project
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            || !valid_date(generation)
-            || namespace < 0
+        if !crate::valid_wiki_project(project) || !valid_date(generation) || namespace < 0
         {
             return Err(RevisionRecordError::InvalidScope);
         }
@@ -158,6 +152,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
                 .redirect_target
                 .as_ref()
                 .is_some_and(|s| !valid_title(s))
+
             || record.wikitext.len() > MAX_TEXT_BYTES
             || record.wikitext_sha256.len() != 64
             || format!("{:x}", Sha256::digest(record.wikitext.as_bytes())) != record.wikitext_sha256
@@ -318,6 +313,7 @@ mod tests {
                 0,
             )
             .unwrap();
+
             assert!(reader.any(|row| row.is_err()), "failed to reject: {bad}");
         }
     }
@@ -410,6 +406,12 @@ mod tests {
     #[test]
     fn rejects_invalid_expected_scope_and_trailing_record() {
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "ENwiki", "2026-10-01", 0).is_err());
+        for project in ["_enwiki", "enwiki_", "123wiki", "___"] {
+            assert!(
+                DiagnosticRevisionLines::new(Cursor::new(b""), project, "2026-10-01", 0)
+                    .is_err()
+            );
+        }
         assert!(DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-02-30", 0).is_err());
         assert!(
             DiagnosticRevisionLines::new(Cursor::new(b""), "enwiki", "2026-10-01", -1).is_err()
