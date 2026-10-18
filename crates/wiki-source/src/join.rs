@@ -50,21 +50,8 @@ fn collect(
             || item.page.page_id > i64::MAX as u64
             || item.revision_id == 0
             || item.revision_id > i64::MAX as u64
-            || item.page.project.is_empty()
-            || item.page.project.len() > 255
-            || !item
-                .page
-                .project
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            || item.generation_id.is_empty()
-            || item.generation_id.len() > 255
-            || item.generation_id.starts_with('.')
-            || item.generation_id.ends_with('.')
-            || !item
-                .generation_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || !crate::valid_wiki_project(&item.page.project)
+            || !crate::enterprise_ndjson::valid_generation_id(&item.generation_id)
         {
             return Err(JoinError::InvalidIdentity);
         }
@@ -154,12 +141,7 @@ pub fn join_pages_with_tombstones(
     for key in deleted {
         if key.page_id == 0
             || key.page_id > i64::MAX as u64
-            || key.project.is_empty()
-            || key.project.len() > 255
-            || !key
-                .project
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            || !crate::valid_wiki_project(&key.project)
         {
             return Err(JoinError::InvalidIdentity);
         }
@@ -212,19 +194,8 @@ pub fn join_pages_with_generation_tombstones(
         let id = marker.generation_id;
         if key.page_id == 0
             || key.page_id > i64::MAX as u64
-            || key.project.is_empty()
-            || key.project.len() > 255
-            || !key
-                .project
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-            || id.is_empty()
-            || id.len() > 255
-            || id.starts_with('.')
-            || id.ends_with('.')
-            || !id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            || !crate::valid_wiki_project(&key.project)
+            || !crate::enterprise_ndjson::valid_generation_id(&id)
         {
             return Err(JoinError::InvalidIdentity);
         }
@@ -337,6 +308,60 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn shared_publisher_identity_rules_cover_live_components_and_tombstones() {
+        for project in ["_enwiki", "enwiki_", "123wiki", "Enwiki", "___"] {
+            let mut live = part(1, "structured");
+            live.page.project = project.into();
+            let mut html = live.clone();
+            html.payload = "html".into();
+            let mut categories = live.clone();
+            categories.payload.clear();
+            assert_eq!(
+                join_pages(vec![live.clone()], vec![html], vec![categories]),
+                Err(JoinError::InvalidIdentity),
+            );
+            assert_eq!(
+                join_pages_with_tombstones(vec![], vec![], vec![], vec![live.page.clone()]),
+                Err(JoinError::InvalidIdentity),
+            );
+            assert_eq!(
+                join_pages_with_generation_tombstones(
+                    vec![], vec![], vec![],
+                    vec![DeletionMarker { page: live.page, generation_id: "20261009".into() }],
+                ),
+                Err(JoinError::InvalidIdentity),
+            );
+        }
+        for generation in ["", ".hidden", "name.", "bad/name", "bad name"] {
+            let mut live = part(1, "structured");
+            live.generation_id = generation.into();
+            let mut html = live.clone();
+            html.payload = "html".into();
+            let mut categories = live.clone();
+            categories.payload.clear();
+            assert_eq!(
+                join_pages(vec![live], vec![html], vec![categories]),
+                Err(JoinError::InvalidIdentity),
+            );
+            assert_eq!(
+                join_pages_with_generation_tombstones(
+                    vec![], vec![], vec![],
+                    vec![DeletionMarker { page: part(1, "deleted").page, generation_id: generation.into() }],
+                ),
+                Err(JoinError::InvalidIdentity),
+            );
+        }
+        let mut source = part(1, "structured");
+        source.page.project = "zh_min_nanwiki".into();
+        source.generation_id = "2026-10-01T00_00_00Z".into();
+        let mut html = source.clone();
+        html.payload = "html".into();
+        let mut categories = source.clone();
+        categories.payload.clear();
+        assert_eq!(join_pages(vec![source], vec![html], vec![categories]).unwrap().len(), 1);
     }
 
     #[test]
