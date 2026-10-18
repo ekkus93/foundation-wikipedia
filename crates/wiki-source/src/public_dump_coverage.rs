@@ -288,9 +288,18 @@ mod tests {
         );
         // Require a real calendar day, not merely a filesystem-safe label.
         for generation in [
-            ".hidden", "2026/10/01", "../outside", "bad label", "",
-            "20261001", "2026-02-30", "2025-02-29", "2026-13-01",
-            "2026-00-01", "2026-01-00", "2026-10-01x",
+            ".hidden",
+            "2026/10/01",
+            "../outside",
+            "bad label",
+            "",
+            "20261001",
+            "2026-02-30",
+            "2025-02-29",
+            "2026-13-01",
+            "2026-00-01",
+            "2026-01-00",
+            "2026-10-01x",
         ] {
             let invalid = PageCensus {
                 generation,
