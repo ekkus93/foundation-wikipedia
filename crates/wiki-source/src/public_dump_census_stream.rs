@@ -40,7 +40,8 @@ pub enum StreamCoverageError {
 }
 
 fn valid_scope(scope: CensusScope<'_>) -> bool {
-    crate::valid_wiki_project(scope.project) && !scope.generation.is_empty()
+    crate::valid_wiki_project(scope.project)
+        && !scope.generation.is_empty()
         && scope.generation.len() <= 255
         && !scope.generation.starts_with('.')
         && !scope.generation.ends_with('.')
