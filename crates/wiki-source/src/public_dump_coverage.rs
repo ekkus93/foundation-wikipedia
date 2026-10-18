@@ -41,14 +41,7 @@ const MAX_EXAMPLES: usize = 12;
 fn validate(census: PageCensus<'_>) -> Result<(), PageCoverageError> {
     if !crate::valid_wiki_project(census.project)
         || census.namespace < 0
-        || census.generation.is_empty()
-        || census.generation.len() > 255
-        || census.generation.starts_with('.')
-        || census.generation.ends_with('.')
-        || !census
-            .generation
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        || !crate::public_dump::valid_dump_date(census.generation)
         || census.page_ids.is_empty()
     {
         return Err(PageCoverageError::InvalidCensus);
@@ -293,7 +286,12 @@ mod tests {
             audit_page_coverage(invalid, invalid),
             Err(PageCoverageError::InvalidCensus)
         );
-        for generation in [".hidden", "2026/10/01", "../outside", "bad label", ""] {
+        // Require a real calendar day, not merely a filesystem-safe label.
+        for generation in [
+            ".hidden", "2026/10/01", "../outside", "bad label", "",
+            "20261001", "2026-02-30", "2025-02-29", "2026-13-01",
+            "2026-00-01", "2026-01-00", "2026-10-01x",
+        ] {
             let invalid = PageCensus {
                 generation,
                 ..census(&ids)
