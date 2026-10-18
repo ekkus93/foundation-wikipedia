@@ -41,10 +41,11 @@ impl ArticleCopies {
         }
     }
 
-    /// Removing an individually saved copy must never remove a pack-owned
-    /// shared object. This is a deletion guard, not a garbage collector.
+    /// Deleting a saved copy must not destroy bytes still owned by an installed
+    /// pack or a temporary cache. This is only a conservative deletion guard;
+    /// actual object deletion also requires authoritative owner accounting.
     pub fn may_delete_unowned_saved_object(self) -> bool {
-        self.saved && self.pack_owners == 0
+        self.saved && self.pack_owners == 0 && !self.cached
     }
 }
 
@@ -69,7 +70,20 @@ mod tests {
             cached: true,
         };
         assert_eq!(saved.availability(false), ArticleAvailability::SavedOffline);
-        assert!(saved.may_delete_unowned_saved_object());
+        assert!(!saved.may_delete_unowned_saved_object());
+
+        let exclusive_save = ArticleCopies {
+            pack_owners: 0,
+            saved: true,
+            cached: false,
+        };
+        assert!(exclusive_save.may_delete_unowned_saved_object());
+        assert!(!ArticleCopies {
+            pack_owners: 1,
+            saved: true,
+            cached: false,
+        }
+        .may_delete_unowned_saved_object());
     }
 
     #[test]
