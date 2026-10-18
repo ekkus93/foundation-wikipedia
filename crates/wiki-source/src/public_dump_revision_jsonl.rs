@@ -51,22 +51,6 @@ fn valid_date(value: &str) -> bool {
     crate::public_dump::valid_dump_date(value)
 }
 
-fn valid_timestamp(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 20
-        && bytes[10] == b'T'
-        && bytes[13] == b':'
-        && bytes[16] == b':'
-        && bytes[19] == b'Z'
-        && valid_date(&value[..10])
-        && [11..13, 14..16, 17..19]
-            .iter()
-            .all(|r| bytes[r.clone()].iter().all(u8::is_ascii_digit))
-        && value[11..13].parse::<u32>().is_ok_and(|n| n <= 23)
-        && value[14..16].parse::<u32>().is_ok_and(|n| n <= 59)
-        && value[17..19].parse::<u32>().is_ok_and(|n| n <= 59)
-}
-
 fn valid_title(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 4096
@@ -121,7 +105,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
             || record.revision_id == 0
             || record.revision_id > i64::MAX as u64
             || !valid_title(&record.title)
-            || !valid_timestamp(&record.timestamp)
+            || !crate::online_article::valid_utc_timestamp(&record.timestamp)
             // A published generation cannot contain a revision from a later day.
             || &record.timestamp[..10] > self.generation.as_str()
             || record
@@ -274,6 +258,8 @@ mod tests {
             valid.replace("\"page_id\":1", "\"page_id\":0"),
             valid.replace("\"page_id\":1", "\"page_id\":1,\"page_id\":1"),
             valid.replace("2026-10-01T12:30:00Z", "2026-02-30T12:30:00Z"),
+            valid.replace("2026-10-01T12:30:00Z", "2026-10-01T24:30:00Z"),
+            valid.replace("2026-10-01T12:30:00Z", "2026-10-01T12:60:00Z"),
             valid.replace("\"schema_version\":1", "\"schema_version\":2"),
             valid.replace("\"wikitext\":\"Sample\"", "\"wikitext\":\"Tampered\""),
             valid.replace("\"namespace\":0", "\"namespace\":1"),
