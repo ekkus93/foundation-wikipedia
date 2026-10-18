@@ -119,7 +119,7 @@ fn legacy_page_partition(name: &str, prefix: &str) -> Option<(u64, u64)> {
 
 /// Accept actual ISO calendar days, including non-month-start releases.
 /// The date is an identifier check, not authentication of a dump publication.
-fn valid_dump_date(date: &str) -> bool {
+pub(crate) fn valid_dump_date(date: &str) -> bool {
     let bytes = date.as_bytes();
     if bytes.len() != 10
         || bytes[4] != b'-'
