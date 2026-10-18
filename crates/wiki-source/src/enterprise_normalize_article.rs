@@ -149,6 +149,27 @@ pub fn normalize_enterprise_article_with_link_index(
     normalize_with_index(joined, is_disambiguation, Some(&link_index.by_title))
 }
 
+/// Refuse CSS-backed visual resources that an HTML sanitizer would otherwise
+/// silently drop, yielding a text-only record whose required image is missing.
+/// This is a conservative preflight, not a complete HTML/CSS media inventory.
+fn has_unresolved_visual_attributes(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    lower.split('<').skip(1).any(|fragment| {
+        let Some((tag, _)) = fragment.split_once('>') else {
+            return false;
+        };
+        let tag = tag.trim_start();
+        if tag.starts_with(['!', '/']) {
+            return false;
+        }
+        // Permit harmless inline layout styles, but not CSS URL references.
+        // Normalizing ASCII whitespace covers style =, tabs and line breaks.
+        let compact: String = tag.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+        compact.contains("background=")
+            || (compact.contains("style=") && compact.contains("url("))
+    })
+}
+
 /// Rendered HTML is sanitized at the source boundary. Unresolved images
 /// still fail closed until a verified Commons/media join is implemented.
 pub fn normalize_enterprise_article(
@@ -194,7 +215,7 @@ fn normalize_with_index(
                 .get(offset + tag.len())
                 .is_some_and(|next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'))
         })
-    }) {
+    }) || has_unresolved_visual_attributes(&joined.rendered_html) {
         return Err(NormalizeError::UnresolvedVisual);
     }
     let rendered_html = sanitize_rendered_html(&joined.rendered_html)?;
@@ -323,6 +344,32 @@ mod tests {
             rendered_html: "<article>Verified companion</article>".into(),
             categories: vec![],
             redirects: vec![],
+        }
+    }
+
+    #[test]
+    fn canonical_import_rejects_inline_css_and_background_media_dependencies() {
+        for markup in [
+            r#"<div style="background-image: url(/wiki/media/diagram.png)">Text</div>"#,
+            r#"<table background="/wiki/media/texture.png"><tr><td>Text</td></tr></table>"#,
+            "<div STYLE = 'background:URL(/wiki/media/map.svg)'>Text</div>",
+        ] {
+            let mut article = joined("enwiki", 42);
+            article.rendered_html = markup.into();
+            assert_eq!(
+                normalize_enterprise_article(&article, false),
+                Err(NormalizeError::UnresolvedVisual),
+                "{markup}"
+            );
+        }
+        // Documentation about CSS is not itself a media dependency.
+        for markup in [
+            "<p>CSS url(example.png) is an example, not an image.</p>",
+            r#"<p style="color: black">Only text</p>"#,
+        ] {
+            let mut article = joined("enwiki", 42);
+            article.rendered_html = markup.into();
+            assert!(normalize_enterprise_article(&article, false).is_ok(), "{markup}");
         }
     }
 
