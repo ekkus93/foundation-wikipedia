@@ -228,7 +228,7 @@ mod tests {
         pipeline.push(PageEvent::PageId(page_id))?;
         pipeline.push(PageEvent::BeginRevision)?;
         pipeline.push(PageEvent::RevisionId(page_id + 1000))?;
-        pipeline.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+        pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
         pipeline.push(PageEvent::EndRevision)?;
         pipeline.push(PageEvent::EndPage)
     }

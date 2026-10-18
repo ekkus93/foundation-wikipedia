@@ -383,7 +383,7 @@ mod tests {
                     pipeline.push(PageEvent::PageId(if index == 0 { 1 } else { 201 }))?;
                     pipeline.push(PageEvent::BeginRevision)?;
                     pipeline.push(PageEvent::RevisionId(1001 + index as u64))?;
-                    pipeline.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+                    pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
                     pipeline.push(PageEvent::EndRevision)?;
                     pipeline.push(PageEvent::EndPage)?;
                     pipeline.end_member()?;
@@ -411,7 +411,7 @@ mod tests {
             pipeline.push(PageEvent::PageId(if index == 0 { 1 } else { 201 }))?;
             pipeline.push(PageEvent::BeginRevision)?;
             pipeline.push(PageEvent::RevisionId(1001 + index as u64))?;
-            pipeline.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+            pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
             pipeline.push(PageEvent::EndRevision)?;
             pipeline.push(PageEvent::EndPage)?;
             pipeline.end_member()?;
