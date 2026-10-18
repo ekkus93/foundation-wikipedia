@@ -601,3 +601,8 @@ mod tests {
         let mut stale = page;
         stale.structured.generation_id = "20261011".into();
         assert_eq!(
+            normalize_enterprise_article_with_link_index(&stale, false, &index),
+            Err(NormalizeError::GenerationMismatch)
+        );
+    }
+}
