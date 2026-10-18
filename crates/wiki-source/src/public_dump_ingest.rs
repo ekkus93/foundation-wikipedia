@@ -15,6 +15,7 @@ use crate::public_dump_stream::{StreamAuditError, StreamShardAudit};
 pub enum PageIngestError {
     InvalidState,
     IncompletePage,
+    RevisionAfterGeneration,
     Metadata(PageMetadataError),
     Shard(StreamAuditError),
 }
@@ -26,6 +27,7 @@ pub enum PageIngestError {
 /// Errors permanently poison the sink, even when the caller ignores them.
 pub struct PinnedPageIngest<'a> {
     audit: StreamShardAudit<'a>,
+    generation_date: &'a str,
     metadata: PageMetadataCollector,
     active: bool,
     in_page: bool,
@@ -36,6 +38,7 @@ impl<'a> PinnedPageIngest<'a> {
     pub fn new(inventory: &'a PinnedInventory) -> Self {
         Self {
             audit: StreamShardAudit::new(inventory),
+            generation_date: inventory.date(),
             metadata: PageMetadataCollector::new(),
             active: false,
             in_page: false,
@@ -80,6 +83,13 @@ impl<'a> PinnedPageIngest<'a> {
             self.in_page = false;
         }
         if let Some(ref complete) = page {
+            // Revisions later than the declared source generation cannot be
+            // attributed to the pinned snapshot. Timestamp syntax was checked
+            // by PageMetadataCollector; fail closed before auditing/publishing.
+            if &complete.timestamp[..10] > self.generation_date {
+                self.failed = true;
+                return Err(PageIngestError::RevisionAfterGeneration);
+            }
             if let Err(error) = self.audit.push_page_id(complete.page_id) {
                 self.failed = true;
                 return Err(PageIngestError::Shard(error));
@@ -139,7 +149,7 @@ mod tests {
         ingest.push(PageEvent::PageId(id))?;
         ingest.push(PageEvent::BeginRevision)?;
         ingest.push(PageEvent::RevisionId(id + 1000))?;
-        ingest.push(PageEvent::Timestamp("2026-10-13T12:00:00Z"))?;
+        ingest.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
         ingest.push(PageEvent::EndRevision)?;
         Ok(ingest.push(PageEvent::EndPage)?.unwrap())
     }
@@ -203,6 +213,31 @@ mod tests {
                 index: 1
             }))
         );
+    }
+
+    #[test]
+    fn refuses_revision_after_declared_snapshot_date_permanently() {
+        let pinned = inventory();
+        let mut ingest = PinnedPageIngest::new(&pinned);
+        ingest
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
+        ingest.push(PageEvent::BeginPage).unwrap();
+        ingest.push(PageEvent::Title("Later revision")).unwrap();
+        ingest.push(PageEvent::Namespace(0)).unwrap();
+        ingest.push(PageEvent::PageId(1)).unwrap();
+        ingest.push(PageEvent::BeginRevision).unwrap();
+        ingest.push(PageEvent::RevisionId(42)).unwrap();
+        ingest
+            .push(PageEvent::Timestamp("2026-10-02T00:00:00Z"))
+            .unwrap();
+        ingest.push(PageEvent::EndRevision).unwrap();
+        assert_eq!(
+            ingest.push(PageEvent::EndPage),
+            Err(PageIngestError::RevisionAfterGeneration)
+        );
+        assert_eq!(ingest.end_member(), Err(PageIngestError::InvalidState));
+        assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
     }
 
     #[test]
