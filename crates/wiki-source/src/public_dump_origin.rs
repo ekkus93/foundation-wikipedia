@@ -6,18 +6,7 @@
 /// The public current-content feed can publish on any calendar day. The
 /// URL's project and date must match the caller's pinned release identity.
 pub fn is_official_checksum_url(url: &str, wiki: &str, date: &str) -> bool {
-    if wiki.is_empty()
-        || wiki.len() > 255
-        || !wiki.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        || !wiki
-            .as_bytes()
-            .last()
-            .is_some_and(u8::is_ascii_alphanumeric)
-        || !wiki
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        || !valid_calendar_date(date)
-    {
+    if !crate::valid_wiki_project(wiki) || !valid_calendar_date(date) {
         return false;
     }
     url == format!(

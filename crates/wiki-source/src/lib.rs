@@ -67,6 +67,19 @@ pub enum SourceError {
     ResourceBudget,
 }
 
+/// Conservative Wikimedia project identifier shared by verified source
+/// generation manifests and official dump URL identity checks.
+pub(crate) fn valid_wiki_project(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 255
+        && bytes.first().is_some_and(u8::is_ascii_lowercase)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
+}
+
 /// Reject names that alias Windows device files even when given an extension.
 pub(crate) fn windows_device_name(value: &str) -> bool {
     let upper = value.to_ascii_uppercase();
@@ -80,13 +93,7 @@ pub(crate) fn windows_device_name(value: &str) -> bool {
 impl SourceGeneration {
     /// Validate publication metadata before trusting any mirror or cache.
     pub fn validate(&self) -> Result<(), SourceError> {
-        if self.project.is_empty()
-            || self.project.len() > 255
-            || !self
-                .project
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        {
+        if !valid_wiki_project(&self.project) {
             return Err(SourceError::InvalidProject);
         }
         if self.upstream_id.is_empty()
@@ -148,6 +155,7 @@ impl SourceGeneration {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn sample() -> SourceGeneration {
@@ -169,6 +177,20 @@ mod tests {
         let mut bad = sample();
         bad.completed = false;
         assert_eq!(bad.validate(), Err(SourceError::Incomplete));
+    }
+
+    #[test]
+    fn generation_project_identity_matches_official_dump_syntax() {
+        for project in ["", "_enwiki", "enwiki_", "123wiki", "___", "Enwiki"] {
+            let mut bad = sample();
+            bad.project = project.into();
+            assert_eq!(bad.validate(), Err(SourceError::InvalidProject));
+            assert!(!valid_wiki_project(project));
+        }
+        let mut good = sample();
+        good.project = "zh_min_nanwiki".into();
+        assert_eq!(good.validate(), Ok(()));
+        assert!(valid_wiki_project(&good.project));
     }
 
     #[test]
