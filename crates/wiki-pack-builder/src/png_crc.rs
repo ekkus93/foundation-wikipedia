@@ -104,7 +104,9 @@ mod tests {
                 index + 4
             };
             altered[byte_to_corrupt] ^= 1;
-            assert!(png_chunk_preflight(&altered));
+            // Structural preflight now checks CRCs too, so a corrupted chunk
+            // must fail both the general PNG guard and the CRC-specific guard.
+            assert!(!png_chunk_preflight(&altered));
             assert!(!verify_png_chunk_crcs(&altered));
         }
     }
