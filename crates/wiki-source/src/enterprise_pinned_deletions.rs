@@ -74,7 +74,9 @@ pub fn decode_pinned_deletions<D: BufRead>(
     }
     // Even an empty deletion feed must use the project identity accepted by
     // the verified source-generation and scoped live-record import boundaries.
-    if !crate::valid_wiki_project(project) {
+    if !crate::valid_wiki_project(project)
+        || !crate::enterprise_ndjson::valid_generation_id(generation)
+    {
         return Err(DeletionPinnedImportError::InvalidRecord);
     }
     let mut reader = BufReader::new(DigestReader {
@@ -241,6 +243,17 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn empty_deletion_feed_cannot_claim_invalid_generation() {
+        for generation in ["", ".hidden", "trailing.", "a/b", "space here", "../"] {
+            assert_eq!(
+                decode_pinned_deletions(Cursor::new(""), "enwiki", generation, &pin("")),
+                Err(DeletionPinnedImportError::InvalidRecord),
+                "{generation}"
+            );
+        }
     }
 
     #[test]

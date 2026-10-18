@@ -18,6 +18,18 @@ pub const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 /// Deletion feeds are partitioned with the same budget as live article batches.
 pub const MAX_BATCH_TOMBSTONES: usize = MAX_BATCH_RECORDS;
 
+/// Conservative generation identifier contract shared by both live component
+/// imports and their independently pinned deletion-evidence decoder.
+pub(crate) fn valid_generation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
     Structured,
@@ -151,15 +163,7 @@ pub fn join_enterprise_ndjson<S: BufRead, R: BufRead>(
     generation_id: &str,
     deleted: Vec<PageKey>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, BatchImportError> {
-    if generation_id.trim().is_empty()
-        || generation_id != generation_id.trim()
-        || generation_id.len() > 255
-        || generation_id.starts_with('.')
-        || generation_id.ends_with('.')
-        || !generation_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
+    if !valid_generation_id(generation_id) {
         return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
     }
     // Fail before parsing source bytes or allocating a tombstone lookup table.
@@ -192,14 +196,7 @@ pub fn join_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     if !crate::valid_wiki_project(project) {
         return Err(BatchImportError::Join(EnterpriseError::InvalidIdentity));
     }
-    if generation_id.is_empty()
-        || generation_id.len() > 255
-        || generation_id.starts_with('.')
-        || generation_id.ends_with('.')
-        || !generation_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
+    if !valid_generation_id(generation_id) {
         return Err(BatchImportError::Join(EnterpriseError::InvalidGeneration));
     }
     reject_oversized_tombstone_batch(deleted.len())?;
