@@ -30,10 +30,11 @@ fn valid_identifier(value: &str) -> bool {
                 || matches!(
                     c,
                     '\u{061c}'
-                        | '\u{200e}'
-                        | '\u{200f}'
+                        | '\u{200b}'..='\u{200f}'
                         | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{206f}'
+                        | '\u{feff}'
                 )
         })
 }
@@ -247,6 +248,10 @@ mod tests {
         assert!(!valid_identifier("cite\u{202e}1"));
         assert!(!valid_identifier("cite\u{2066}1"));
         assert!(!valid_identifier("cite\u{200f}1"));
+        // Invisible format controls must not create visually identical IDs.
+        for codepoint in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}'] {
+            assert!(!valid_identifier(&format!("cite{codepoint}1")));
+        }
         assert!(!valid_identifier(&"x".repeat(4097)));
         let mut article = JoinedEnterpriseArticle {
             structured: crate::enterprise::StructuredArticle {
