@@ -72,6 +72,11 @@ pub fn decode_pinned_deletions<D: BufRead>(
     if !valid_digest(digest_pin) {
         return Err(DeletionPinnedImportError::InvalidDigestPin);
     }
+    // Even an empty deletion feed must use the project identity accepted by
+    // the verified source-generation and scoped live-record import boundaries.
+    if !crate::valid_wiki_project(project) {
+        return Err(DeletionPinnedImportError::InvalidRecord);
+    }
     let mut reader = BufReader::new(DigestReader {
         source: deletion_ndjson,
         sha: Sha256::new(),
@@ -220,6 +225,30 @@ mod tests {
                 deletion_sha256: deleted_digest,
             },
         )
+    }
+
+    #[test]
+    fn empty_deletion_feed_cannot_claim_an_invalid_project() {
+        for project in ["", "_enwiki", "enwiki_", "123wiki", "___", "Enwiki"] {
+            assert_eq!(
+                decode_pinned_deletions(
+                    Cursor::new(vec![0xff]),
+                    project,
+                    "20261010",
+                    &pin(""),
+                ),
+                Err(DeletionPinnedImportError::InvalidRecord),
+                "{project}"
+            );
+        }
+        assert!(decode_pinned_deletions(
+            Cursor::new(""),
+            "zh_min_nanwiki",
+            "20261010",
+            &pin(""),
+        )
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
