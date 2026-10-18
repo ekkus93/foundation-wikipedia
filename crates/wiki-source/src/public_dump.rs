@@ -146,13 +146,7 @@ fn valid_dump_date(date: &str) -> bool {
 
 /// Check caller-selected completed export identity, not publisher trust.
 pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) -> bool {
-    if members.is_empty()
-        || wiki.is_empty()
-        || !wiki
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-        || !valid_dump_date(date)
-    {
+    if members.is_empty() || !crate::valid_wiki_project(wiki) || !valid_dump_date(date) {
         return false;
     }
     let prefix = format!("{wiki}-{date}-p");
@@ -211,10 +205,7 @@ pub fn declared_member_page_range(
     wiki: &str,
     date: &str,
 ) -> Option<(u64, u64)> {
-    if wiki.is_empty()
-        || !wiki
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    if !crate::valid_wiki_project(wiki)
         || !valid_dump_date(date)
         || !safe_relative_path(&member.relative_path)
         || member.sha256.len() != 64
@@ -276,6 +267,28 @@ mod tests {
         members[0].sha256 = "a".repeat(64);
         members.push(members[0].clone());
         assert!(!matches_current_export(&members, "enwiki", "2026-10-01"));
+    }
+
+    #[test]
+    fn inventory_and_shard_ranges_reject_noncanonical_project_identity() {
+        for project in ["_enwiki", "enwiki_", "123wiki", "___", "Enwiki"] {
+            let path = format!("{project}-2026-10-01-p1p100.xml.bz2");
+            let members = parse_sha256sums(&line(&path)).unwrap();
+            assert!(!matches_current_export(&members, project, "2026-10-01"));
+            assert_eq!(
+                declared_member_page_range(&members[0], project, "2026-10-01"),
+                None
+            );
+        }
+
+        let project = "zh_min_nanwiki";
+        let path = format!("{project}-2026-10-01-p1p100.xml.bz2");
+        let members = parse_sha256sums(&line(&path)).unwrap();
+        assert!(matches_current_export(&members, project, "2026-10-01"));
+        assert_eq!(
+            declared_member_page_range(&members[0], project, "2026-10-01"),
+            Some((1, 100))
+        );
     }
 
     #[test]
