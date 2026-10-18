@@ -6,37 +6,12 @@
 /// The public current-content feed can publish on any calendar day. The
 /// URL's project and date must match the caller's pinned release identity.
 pub fn is_official_checksum_url(url: &str, wiki: &str, date: &str) -> bool {
-    if !crate::valid_wiki_project(wiki) || !valid_calendar_date(date) {
+    if !crate::valid_wiki_project(wiki) || !crate::public_dump::valid_dump_date(date) {
         return false;
     }
     url == format!(
         "https://dumps.wikimedia.org/other/mediawiki_content_current/{wiki}/{date}/xml/bzip2/SHA256SUMS"
     )
-}
-
-fn valid_calendar_date(date: &str) -> bool {
-    let d = date.as_bytes();
-    if d.len() != 10
-        || d[4] != b'-'
-        || d[7] != b'-'
-        || !d[..4].iter().all(u8::is_ascii_digit)
-        || !d[5..7].iter().all(u8::is_ascii_digit)
-        || !d[8..].iter().all(u8::is_ascii_digit)
-    {
-        return false;
-    }
-    let year = date[..4].parse::<u32>().unwrap_or(0);
-    let month = date[5..7].parse::<u32>().unwrap_or(0);
-    let day = date[8..].parse::<u32>().unwrap_or(0);
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return false,
-    };
-    year > 0 && day > 0 && day <= days
 }
 
 #[cfg(test)]
@@ -58,6 +33,7 @@ mod tests {
         }
         for date in [
             "2026-02-29",
+            "2026-02-30",
             "1900-02-29",
             "2026-04-31",
             "2026-10-00",
