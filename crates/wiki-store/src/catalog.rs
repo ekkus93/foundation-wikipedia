@@ -219,6 +219,24 @@ impl SnapshotCatalog {
         Self::initialize(Connection::open(path)?)
     }
 
+    /// Open an existing activated snapshot catalog for reader queries only.
+    /// Never create a missing database, migrate schemas or permit mutation.
+    pub fn open_read_only(path: &Path) -> Result<Self, CatalogError> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA query_only=ON;")?;
+        for table in ["records", "title_index"] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |row| row.get(0),
+            )?;
+            if count != 1 {
+                return Err(CatalogError::InvalidCatalogEntry);
+            }
+        }
+        Ok(Self { conn })
+    }
+
     pub fn in_memory() -> Result<Self, CatalogError> {
         Self::initialize(Connection::open_in_memory()?)
     }
@@ -616,6 +634,35 @@ mod tests {
             rendered_html: "<article>Earth</article>".into(),
             is_disambiguation: false,
         }))
+    }
+
+    #[test]
+    fn activated_catalog_opens_read_only_without_creating_or_rewriting_snapshot() {
+        let root = temp_root();
+        let database = root.join("catalog.sqlite");
+        let mut frame = Vec::new();
+        append_record_frame(&mut frame, &article(42, "Earth")).unwrap();
+        fs::write(root.join("record.shard"), &frame).unwrap();
+        let mut writer = SnapshotCatalog::open(&database).unwrap();
+        let key = writer
+            .insert_verified(&root, "record.shard", 0, frame.len() as u64)
+            .unwrap();
+        drop(writer);
+
+        let reader = SnapshotCatalog::open_read_only(&database).unwrap();
+        assert_eq!(reader.lookup_key("enwiki", "earth").unwrap(), Some(key.clone()));
+        assert!(reader.read_record(&root, &key).unwrap().is_some());
+        assert!(reader.conn.execute("DELETE FROM records", []).is_err());
+        assert!(reader.lookup_entry(&key).unwrap().is_some());
+        assert!(SnapshotCatalog::open_read_only(&root.join("missing.sqlite")).is_err());
+
+        let unrelated = root.join("not-a-catalog.sqlite");
+        drop(Connection::open(&unrelated).unwrap());
+        assert!(matches!(
+            SnapshotCatalog::open_read_only(&unrelated),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
