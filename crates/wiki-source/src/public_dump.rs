@@ -179,7 +179,7 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
                 .strip_prefix(&legacy_prefix)
                 .and_then(|suffix| suffix.split_once(".xml-p"))
                 .and_then(|(number, _)| number.parse::<u64>().ok());
-            if !number.is_some_and(|number| legacy_shards.insert(number, range).is_none()) {
+            if number.is_none_or(|number| legacy_shards.insert(number, range).is_some()) {
                 return false;
             }
             (range, 1)
