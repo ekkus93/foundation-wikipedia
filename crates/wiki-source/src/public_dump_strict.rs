@@ -16,6 +16,17 @@ pub fn verify_pinned_staged_export_exact(
 ) -> Result<u64, StagedDumpError> {
     // Inspect the complete tree BEFORE opening any staged member or sidecar.
     // The digest verifier alone cannot prevent following an unexpected link.
+    // Reject symlinked ancestors as well as a symlinked staging root.
+    // Otherwise a parent alias could redirect verification outside staging.
+    for ancestor in root.ancestors() {
+        if fs::symlink_metadata(ancestor)
+            .map_err(StagedDumpError::Io)?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(StagedDumpError::UnsafeStagingPath);
+        }
+    }
     let root_kind = fs::symlink_metadata(root)
         .map_err(StagedDumpError::Io)?
         .file_type();
@@ -137,6 +148,15 @@ mod tests {
                 Err(StagedDumpError::UnsafeStagingPath)
             ));
             fs::remove_file(root_link).unwrap();
+
+            let parent_link = root.with_extension("parent-link");
+            symlink(root.parent().unwrap(), &parent_link).unwrap();
+            let through_link = parent_link.join(root.file_name().unwrap());
+            assert!(matches!(
+                verify_pinned_staged_export_exact(&through_link, &inventory, 4096),
+                Err(StagedDumpError::UnsafeStagingPath)
+            ));
+            fs::remove_file(parent_link).unwrap();
         }
         fs::remove_dir_all(root).unwrap();
     }
