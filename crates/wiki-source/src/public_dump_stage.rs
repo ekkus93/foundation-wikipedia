@@ -267,10 +267,19 @@ pub fn stage_verified_member<R: Read>(
         let mut hash = Sha256::new();
         let mut total = 0u64;
         let mut chunk = [0u8; 64 * 1024];
+        let mut interrupted = 0u8;
         loop {
             let n = match source.read(&mut chunk) {
-                Ok(n) => n,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Ok(n) => {
+                    interrupted = 0;
+                    n
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::Interrupted && interrupted < 8 =>
+                {
+                    interrupted += 1;
+                    continue;
+                }
                 Err(error) => return Err(StageWriteError::Io(error)),
             };
             if n == 0 {
@@ -386,6 +395,55 @@ mod tests {
             Err(StagedDumpError::Io(_))
         ));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct InterruptingSource<R> {
+        reader: R,
+        remaining: usize,
+    }
+
+    impl<R: Read> Read for InterruptingSource<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.reader.read(buffer)
+        }
+    }
+
+    #[test]
+    fn staging_retries_transient_interruptions_but_cleans_up_persistent_failures() {
+        use std::io::Cursor;
+
+        let content = b"verified current-content shard";
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let descriptor = member(name, content);
+        let recovered_root = root();
+        let mut transient = InterruptingSource {
+            reader: Cursor::new(content.as_slice()),
+            remaining: 2,
+        };
+        assert_eq!(
+            stage_verified_member(&recovered_root, &descriptor, &mut transient, 1024).unwrap(),
+            content.len() as u64
+        );
+        assert_eq!(fs::read(recovered_root.join(name)).unwrap(), content);
+        fs::remove_dir_all(recovered_root).unwrap();
+
+        let failed_root = root();
+        let mut persistent = InterruptingSource {
+            reader: Cursor::new(content.as_slice()),
+            remaining: 9,
+        };
+        assert!(matches!(
+            stage_verified_member(&failed_root, &descriptor, &mut persistent, 1024),
+            Err(StageWriteError::Io(error))
+                if error.kind() == std::io::ErrorKind::Interrupted
+        ));
+        assert!(!failed_root.join(name).exists());
+        assert_eq!(fs::read_dir(&failed_root).unwrap().count(), 0);
+        fs::remove_dir_all(failed_root).unwrap();
     }
 
     #[test]
