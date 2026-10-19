@@ -291,8 +291,7 @@ mod tests {
     fn rejects_xml_forbidden_page_titles_and_redirect_targets() {
         for field in ["title", "redirect_target"] {
             for invalid in ["Invalid\u{fffe}", "Invalid\u{ffff}"] {
-                let mut row: serde_json::Value =
-                    serde_json::from_str(&record(1, "Valid")).unwrap();
+                let mut row: serde_json::Value = serde_json::from_str(&record(1, "Valid")).unwrap();
                 row[field] = serde_json::json!(invalid);
                 let input = format!("{row}\n");
                 let mut lines = DiagnosticRevisionLines::new(
