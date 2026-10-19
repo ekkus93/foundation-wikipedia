@@ -226,7 +226,7 @@ fn parse_http_response(bytes: &[u8]) -> Result<Vec<u8>, ProviderError> {
             return Err(ProviderError::InvalidResponse);
         }
     }
-    if chunked && length.is_some() {
+    if !content_type || (chunked && length.is_some()) {
         return Err(ProviderError::InvalidResponse);
     }
     let body = &bytes[split + 4..];
@@ -323,7 +323,7 @@ mod tests {
         let json =
             r#"{"object":"list","data":[{"id":"local-1","context_window":8192},{"id":"local-2"}]}"#;
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{json}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{json}",
             json.len()
         );
         let (endpoint, handle) = serve_once(response.into_bytes());
@@ -356,7 +356,7 @@ mod tests {
     fn decodes_chunked_and_rejects_conflicting_framing() {
         let json = br#"{"data":[{"id":"ollama"}]}"#;
         let response = format!(
-            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n{:X}\r\n",
             json.len()
         );
         let mut response = response.into_bytes();
@@ -372,6 +372,15 @@ mod tests {
     #[test]
     fn rejects_non_json_discovery_response_type() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(
+            parse_http_response(response),
+            Err(ProviderError::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn rejects_missing_json_discovery_media_type() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
         assert_eq!(
             parse_http_response(response),
             Err(ProviderError::InvalidResponse)
