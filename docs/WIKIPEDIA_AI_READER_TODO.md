@@ -199,6 +199,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] OpenAI-compatible endpoints and Ollama/llama-server adapters; user-selected endpoint/model.
   - [ ] Correct LAN versus on-device locality indicator.
   - **Accept:** local server supplies grounded answer without cloud calls.
+  - **Progress (2026-10-19):** Local OpenAI-compatible model discovery now rejects responses missing the JSON media type, with a negative regression and updated loopback/chunked fixtures. Exact source `76914902f7d72740943cf1f4299c1af50741ecd2` passed [Rust CI 39321427931](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39321427931), [Platform CI 39321427906](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39321427906), and [Android ABI CI 39321427954](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39321427954). Grounded real-LAN answer, endpoint selection and HTTPS remain unqualified; AI-002 stays unchecked.
 - [ ] **AI-003** Remote provider support and secret storage. **Depends:** AI-001.  
   - [ ] Hosted OpenAI, Anthropic and Gemini adapters as appropriately distinct APIs.
   - [ ] Keys in OS secret storage; masked UI, no accidental logs or pack exports.
