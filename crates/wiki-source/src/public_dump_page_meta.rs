@@ -216,6 +216,7 @@ fn valid_text(value: &str, max_bytes: usize) -> bool {
         && value == value.trim()
         && value.len() <= max_bytes
         && !value.chars().any(char::is_control)
+        && value.chars().all(|ch| !matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
 }
 
 #[cfg(test)]
@@ -324,6 +325,8 @@ mod tests {
             PageEvent::Title(""),
             PageEvent::Title(" spaced "),
             PageEvent::Title("bad\ncontrol"),
+            PageEvent::Title("\u{FFFE}"),
+            PageEvent::RedirectTarget("\u{FFFF}"),
             PageEvent::Title(&"X".repeat(MAX_TITLE_BYTES + 1)),
             PageEvent::PageId(0),
             PageEvent::Namespace(-1),
