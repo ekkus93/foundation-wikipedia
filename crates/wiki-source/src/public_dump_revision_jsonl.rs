@@ -67,6 +67,7 @@ fn valid_title(value: &str) -> bool {
         && value.len() <= 4096
         && value.trim() == value
         && !value.chars().any(char::is_control)
+        && valid_xml_text(value)
 }
 
 /// Fail-closed, streaming adapter for *already audited* diagnostic JSONL.
@@ -284,6 +285,36 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn rejects_xml_forbidden_page_titles_and_redirect_targets() {
+        for field in ["title", "redirect_target"] {
+            for invalid in ["Invalid\u{fffe}", "Invalid\u{ffff}"] {
+                let mut row: serde_json::Value =
+                    serde_json::from_str(&record(1, "Valid")).unwrap();
+                row[field] = serde_json::json!(invalid);
+                let input = format!("{row}\n");
+                let mut lines = DiagnosticRevisionLines::new(
+                    Cursor::new(input.into_bytes()),
+                    "enwiki",
+                    "2026-10-01",
+                    0,
+                )
+                .unwrap();
+                assert!(
+                    matches!(lines.next(), Some(Err(RevisionRecordError::InvalidRecord))),
+                    "{field} accepted an XML-forbidden character"
+                );
+                assert!(lines.next().is_none());
+            }
+        }
+
+        let mut row: serde_json::Value = serde_json::from_str(&record(1, "Valid")).unwrap();
+        row["title"] = serde_json::json!("München — 日本語");
+        row["redirect_target"] = serde_json::json!("東京");
+        let input = format!("{row}\n");
+        assert_eq!(parse(input.as_bytes()).unwrap().len(), 1);
     }
 
     #[test]
