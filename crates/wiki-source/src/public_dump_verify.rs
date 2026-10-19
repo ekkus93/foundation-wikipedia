@@ -137,9 +137,7 @@ mod tests {
             if self.offset == self.bytes.len() {
                 return Ok(0);
             }
-            let n = (self.bytes.len() - self.offset)
-                .min(buffer.len())
-                .min(4096);
+            let n = (self.bytes.len() - self.offset).min(buffer.len()).min(4096);
             buffer[..n].copy_from_slice(&self.bytes[self.offset..self.offset + n]);
             self.offset += n;
             if !self.reset_after_first {
