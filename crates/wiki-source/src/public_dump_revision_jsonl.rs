@@ -278,7 +278,12 @@ mod tests {
             ));
             assert!(lines.next().is_none());
         }
-        assert_eq!(parse(record(1, "line one\\nline two\\tvalue").as_bytes()).unwrap().len(), 1);
+        assert_eq!(
+            parse(record(1, "line one\\nline two\\tvalue").as_bytes())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
