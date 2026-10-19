@@ -5,7 +5,7 @@
 //! expected official publication location and verify each downloaded member
 //! against its declared digest before activating a snapshot.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_CHECKSUM_BYTES: usize = 32 * 1024 * 1024;
 const MAX_MEMBERS: usize = 100_000;
@@ -162,7 +162,7 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
     let mut format_kind = None;
     let mut names = BTreeSet::new();
     let mut partitions = Vec::with_capacity(members.len());
-    let mut legacy_shards = BTreeSet::new();
+    let mut legacy_shards = BTreeMap::new();
     for item in members {
         let name = item.relative_path.rsplit('/').next().unwrap_or("");
         if !safe_relative_path(&item.relative_path)
@@ -179,7 +179,7 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
                 .strip_prefix(&legacy_prefix)
                 .and_then(|suffix| suffix.split_once(".xml-p"))
                 .and_then(|(number, _)| number.parse::<u64>().ok());
-            if !number.is_some_and(|number| legacy_shards.insert(number)) {
+            if !number.is_some_and(|number| legacy_shards.insert(number, range).is_none()) {
                 return false;
             }
             (range, 1)
@@ -198,7 +198,14 @@ pub fn matches_current_export(members: &[DumpChecksum], wiki: &str, date: &str) 
     partitions.sort_unstable();
     (legacy_shards.is_empty()
         || (legacy_shards.len() == members.len()
-            && legacy_shards.iter().copied().eq(1..=members.len() as u64)))
+            && legacy_shards.keys().copied().eq(1..=members.len() as u64)
+            // Numbered legacy shards must advance in page-ID order. A
+            // complete ordinal set with swapped ranges is not a coherent
+            // current-content export, even if ranges do not overlap.
+            && legacy_shards
+                .values()
+                .zip(legacy_shards.values().skip(1))
+                .all(|(left, right)| left.1 < right.0)))
         && partitions.windows(2).all(|pair| pair[0].1 < pair[1].0)
 }
 
@@ -355,6 +362,15 @@ mod tests {
         let second = "enwiki-20261001-pages-meta-current2.xml-p101p200.bz2";
         let legacy = parse_sha256sums(&format!("{}\n{}", line(first), line(second))).unwrap();
         assert!(matches_current_export(&legacy, "enwiki", "2026-10-01"));
+        // A complete set of numbered shards with reversed page ranges is
+        // inconsistent, despite having no overlapping page IDs.
+        let reversed = parse_sha256sums(&format!(
+            "{}\n{}",
+            line("enwiki-20261001-pages-meta-current1.xml-p101p200.bz2"),
+            line("enwiki-20261001-pages-meta-current2.xml-p1p100.bz2")
+        ))
+        .unwrap();
+        assert!(!matches_current_export(&reversed, "enwiki", "2026-10-01"));
         // A partial numbered inventory must not look like a complete export.
         for invalid in [
             format!(
