@@ -45,9 +45,17 @@ impl<R: BufRead> Iterator for PageIdLines<R> {
         }
         let mut digits = [0u8; MAX_DIGITS];
         let mut len = 0;
+        let mut interrupted = 0u8;
         loop {
             let chunk = match self.reader.fill_buf() {
-                Ok(chunk) => chunk,
+                Ok(chunk) => {
+                    interrupted = 0;
+                    chunk
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 => {
+                    interrupted += 1;
+                    continue;
+                }
                 Err(error) => {
                     self.done = true;
                     return Some(Err(error));
@@ -115,6 +123,52 @@ mod tests {
             generation: "2026-10-01",
             namespace: 0,
         }
+    }
+
+    struct InterruptingReader<R> {
+        inner: R,
+        remaining: usize,
+    }
+
+    impl<R: io::Read> io::Read for InterruptingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl<R: BufRead> BufRead for InterruptingReader<R> {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.inner.fill_buf()
+        }
+
+        fn consume(&mut self, amt: usize) {
+            self.inner.consume(amt);
+        }
+    }
+
+    #[test]
+    fn retries_bounded_transient_interruptions_and_poison_persistent_errors() {
+        let mut recovered = PageIdLines::new(InterruptingReader {
+            inner: Cursor::new(b"1\\n42\\n"),
+            remaining: 2,
+        });
+        assert_eq!(recovered.next().unwrap().unwrap(), 1);
+        assert_eq!(recovered.next().unwrap().unwrap(), 42);
+        assert!(recovered.next().is_none());
+
+        let mut failed = PageIdLines::new(InterruptingReader {
+            inner: Cursor::new(b"1\\n"),
+            remaining: 9,
+        });
+        assert_eq!(
+            failed.next().unwrap().unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
+        assert!(failed.next().is_none());
     }
 
     #[test]
