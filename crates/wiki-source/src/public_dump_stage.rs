@@ -179,6 +179,23 @@ pub enum StageWriteError {
     Existing(DumpVerifyError),
 }
 
+/// Undo a newly published hard link when the directory durability barrier
+/// fails. Never remove a pre-existing verified target on such a failure.
+#[cfg(unix)]
+fn sync_publication_or_rollback(
+    target: &Path,
+    newly_published: bool,
+    sync_directory: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), StageWriteError> {
+    if let Err(error) = sync_directory() {
+        if newly_published {
+            fs::remove_file(target).map_err(StageWriteError::Io)?;
+        }
+        return Err(StageWriteError::Io(error));
+    }
+    Ok(())
+}
+
 /// Stream a checksum-declared member into a private staging tree without
 /// publishing partial bytes. A no-overwrite hard link makes repeated staging
 /// idempotent only when the existing member also passes digest verification.
@@ -302,8 +319,8 @@ pub fn stage_verified_member<R: Read>(
         }
         output.sync_all().map_err(StageWriteError::Io)?;
         drop(output);
-        match fs::hard_link(&temp, &target) {
-            Ok(()) => {}
+        let newly_published = match fs::hard_link(&temp, &target) {
+            Ok(()) => true,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let metadata = fs::symlink_metadata(&target).map_err(StageWriteError::Io)?;
                 if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -324,13 +341,16 @@ pub fn stage_verified_member<R: Read>(
                 if size != total {
                     return Err(StageWriteError::DigestMismatch);
                 }
+                false
             }
             Err(error) => return Err(StageWriteError::Io(error)),
-        }
+        };
         #[cfg(unix)]
-        File::open(&parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(StageWriteError::Io)?;
+        sync_publication_or_rollback(&target, newly_published, || {
+            File::open(&parent).and_then(|dir| dir.sync_all())
+        })?;
+        #[cfg(not(unix))]
+        let _ = newly_published;
         Ok(total)
     })();
     let _ = fs::remove_file(&temp);
@@ -394,6 +414,32 @@ mod tests {
             verify_staged_export(&root, &members, "enwiki", "2026-10-01", 1024),
             Err(StagedDumpError::Io(_))
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_sync_failure_removes_new_target_but_preserves_existing_target() {
+        let root = root();
+        let target = root.join("enwiki-2026-10-01-p1p100.xml.bz2");
+        let bytes = b"previously verified member";
+        fs::write(&target, bytes).unwrap();
+        assert!(matches!(
+            sync_publication_or_rollback(&target, true, || {
+                Err(std::io::Error::other("injected directory sync failure"))
+            }),
+            Err(StageWriteError::Io(_))
+        ));
+        assert!(!target.exists());
+
+        fs::write(&target, bytes).unwrap();
+        assert!(matches!(
+            sync_publication_or_rollback(&target, false, || {
+                Err(std::io::Error::other("injected directory sync failure"))
+            }),
+            Err(StageWriteError::Io(_))
+        ));
+        assert_eq!(fs::read(&target).unwrap(), bytes);
         fs::remove_dir_all(root).unwrap();
     }
 
