@@ -29,10 +29,17 @@ pub fn verify_dump_member<R: Read>(
     let mut hash = Sha256::new();
     let mut total = 0u64;
     let mut chunk = [0u8; 64 * 1024];
+    let mut interrupted = 0u8;
     loop {
         let n = match reader.read(&mut chunk) {
-            Ok(n) => n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Ok(n) => {
+                interrupted = 0;
+                n
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted && interrupted < 8 => {
+                interrupted += 1;
+                continue;
+            }
             Err(e) => return Err(DumpVerifyError::Io(e)),
         };
         if n == 0 {
@@ -73,6 +80,44 @@ mod tests {
         assert!(matches!(
             verify_dump_member(&mut input, &member(b""), 1024),
             Err(DumpVerifyError::EmptyMember)
+        ));
+    }
+
+    struct InterruptingReader<'a> {
+        inner: Cursor<&'a [u8]>,
+        remaining: usize,
+    }
+
+    impl std::io::Read for InterruptingReader<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            self.inner.read(buffer)
+        }
+    }
+
+    #[test]
+    fn bounds_interrupted_reads_without_losing_transient_recovery() {
+        let bytes = b"verified dump bytes";
+        let checksum = member(bytes);
+        let mut transient = InterruptingReader {
+            inner: Cursor::new(bytes.as_slice()),
+            remaining: 2,
+        };
+        assert_eq!(
+            verify_dump_member(&mut transient, &checksum, 1024).unwrap(),
+            bytes.len() as u64
+        );
+        let mut persistent = InterruptingReader {
+            inner: Cursor::new(bytes.as_slice()),
+            remaining: 9,
+        };
+        assert!(matches!(
+            verify_dump_member(&mut persistent, &checksum, 1024),
+            Err(DumpVerifyError::Io(error))
+                if error.kind() == std::io::ErrorKind::Interrupted
         ));
     }
 
