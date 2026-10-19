@@ -31,6 +31,17 @@ pub enum CensusGateError {
 }
 
 fn open_regular(path: &Path) -> Result<(File, Metadata), CensusGateError> {
+    // A regular leaf file can still be reached through a symlinked parent.
+    // Census inputs must use an entirely non-symlinked path before opening.
+    for ancestor in path.ancestors() {
+        if fs::symlink_metadata(ancestor)
+            .map_err(CensusGateError::Io)?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(CensusGateError::UnsafeInput);
+        }
+    }
     let link = fs::symlink_metadata(path).map_err(CensusGateError::Io)?;
     if !link.file_type().is_file() || link.len() == 0 || link.len() > MAX_CENSUS_BYTES {
         return Err(CensusGateError::UnsafeInput);
@@ -415,6 +426,22 @@ mod tests {
             Err(CensusGateError::UnsafeInput)
         ));
         fs::remove_file(&third_party_alias).unwrap();
+        assert!(audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed).is_ok());
+
+        let parent_alias = root.with_extension("parent-alias");
+        symlink(root.parent().unwrap(), &parent_alias).unwrap();
+        let alias_root = parent_alias.join(root.file_name().unwrap());
+        let alias_expected = alias_root.join("expected.ids");
+        let alias_observed = alias_root.join("observed.ids");
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &alias_expected, &digest, &observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        assert!(matches!(
+            audit_pinned_census_files(&inventory(), 0, &expected, &digest, &alias_observed),
+            Err(CensusGateError::UnsafeInput)
+        ));
+        fs::remove_file(parent_alias).unwrap();
         assert!(audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
