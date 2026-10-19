@@ -121,6 +121,50 @@ mod tests {
         ));
     }
 
+    struct IntermittentChunks<'a> {
+        bytes: &'a [u8],
+        offset: usize,
+        interrupts: usize,
+        reset_after_first: bool,
+    }
+
+    impl Read for IntermittentChunks<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.interrupts > 0 {
+                self.interrupts -= 1;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            if self.offset == self.bytes.len() {
+                return Ok(0);
+            }
+            let n = (self.bytes.len() - self.offset)
+                .min(buffer.len())
+                .min(4096);
+            buffer[..n].copy_from_slice(&self.bytes[self.offset..self.offset + n]);
+            self.offset += n;
+            if !self.reset_after_first {
+                self.reset_after_first = true;
+                self.interrupts = 8;
+            }
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn verifies_multichunk_member_after_two_full_transient_retry_windows() {
+        let bytes = vec![0x5a; 128 * 1024 + 3];
+        let mut reader = IntermittentChunks {
+            bytes: &bytes,
+            offset: 0,
+            interrupts: 8,
+            reset_after_first: false,
+        };
+        assert_eq!(
+            verify_dump_member(&mut reader, &member(&bytes), 200_000).unwrap(),
+            bytes.len() as u64
+        );
+    }
+
     #[test]
     fn streams_nonempty_member_and_rejects_tampering_and_budget() {
         let content = b"verified dump bytes";
