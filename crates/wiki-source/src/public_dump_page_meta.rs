@@ -216,7 +216,9 @@ fn valid_text(value: &str, max_bytes: usize) -> bool {
         && value == value.trim()
         && value.len() <= max_bytes
         && !value.chars().any(char::is_control)
-        && value.chars().all(|ch| !matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
+        && value
+            .chars()
+            .all(|ch| !matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
 }
 
 #[cfg(test)]
