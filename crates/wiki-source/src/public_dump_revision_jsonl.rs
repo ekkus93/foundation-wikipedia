@@ -147,9 +147,17 @@ impl<R: BufRead> Iterator for DiagnosticRevisionLines<R> {
             return None;
         }
         let mut line = Vec::new();
+        let mut interrupted = 0u8;
         loop {
             let chunk = match self.reader.fill_buf() {
-                Ok(chunk) => chunk,
+                Ok(chunk) => {
+                    interrupted = 0;
+                    chunk
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 => {
+                    interrupted += 1;
+                    continue;
+                }
                 Err(error) => {
                     self.done = true;
                     return Some(Err(RevisionRecordError::Io(error)));
@@ -252,6 +260,64 @@ mod tests {
     fn parse(bytes: &[u8]) -> Result<Vec<DiagnosticContentRevision>, RevisionRecordError> {
         let input = BufReader::with_capacity(3, Cursor::new(bytes));
         DiagnosticRevisionLines::new(input, "enwiki", "2026-10-01", 0)?.collect()
+    }
+
+    struct InterruptingReader<R> {
+        inner: R,
+        remaining: usize,
+    }
+
+    impl<R: io::Read> io::Read for InterruptingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl<R: BufRead> BufRead for InterruptingReader<R> {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.remaining > 0 {
+                self.remaining -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            self.inner.fill_buf()
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.inner.consume(amount);
+        }
+    }
+
+    #[test]
+    fn retries_bounded_interrupted_reads_without_losing_revision_records() {
+        let mut recovered = DiagnosticRevisionLines::new(
+            InterruptingReader {
+                inner: Cursor::new(record(1, "Recovered").into_bytes()),
+                remaining: 2,
+            },
+            "enwiki",
+            "2026-10-01",
+            0,
+        )
+        .unwrap();
+        assert_eq!(recovered.next().unwrap().unwrap().page_id, 1);
+        assert!(recovered.next().is_none());
+
+        let mut failed = DiagnosticRevisionLines::new(
+            InterruptingReader {
+                inner: Cursor::new(record(1, "Unreachable").into_bytes()),
+                remaining: 9,
+            },
+            "enwiki",
+            "2026-10-01",
+            0,
+        )
+        .unwrap();
+        assert!(matches!(
+            failed.next(),
+            Some(Err(RevisionRecordError::Io(error)))
+                if error.kind() == io::ErrorKind::Interrupted
+        ));
+        assert!(failed.next().is_none());
     }
 
     #[test]
