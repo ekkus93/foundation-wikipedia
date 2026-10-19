@@ -164,6 +164,31 @@ mod tests {
     }
 
     #[test]
+    fn enforces_multichunk_budget_and_rejects_late_digest_corruption() {
+        let bytes = vec![0x42; 128 * 1024 + 1];
+        let descriptor = member(&bytes);
+        let mut exact = Cursor::new(bytes.as_slice());
+        assert_eq!(
+            verify_dump_member(&mut exact, &descriptor, bytes.len() as u64).unwrap(),
+            bytes.len() as u64
+        );
+
+        let mut oversized = Cursor::new(bytes.as_slice());
+        assert!(matches!(
+            verify_dump_member(&mut oversized, &descriptor, (bytes.len() - 1) as u64),
+            Err(DumpVerifyError::TooLarge)
+        ));
+
+        let mut corrupt = bytes.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        let mut tampered = Cursor::new(corrupt.as_slice());
+        assert!(matches!(
+            verify_dump_member(&mut tampered, &descriptor, bytes.len() as u64),
+            Err(DumpVerifyError::DigestMismatch)
+        ));
+    }
+
+    #[test]
     fn streams_nonempty_member_and_rejects_tampering_and_budget() {
         let content = b"verified dump bytes";
         let descriptor = member(content);
