@@ -51,6 +51,17 @@ fn valid_date(value: &str) -> bool {
     crate::public_dump::valid_dump_date(value)
 }
 
+/// Reject code points forbidden in XML 1.0 even when the diagnostic
+/// JSONL record and its wikitext digest are internally consistent.
+fn valid_xml_text(value: &str) -> bool {
+    value.chars().all(|ch| {
+        matches!(ch, '\t' | '\n' | '\r')
+            || (' '..='\u{d7ff}').contains(&ch)
+            || ('\u{e000}'..='\u{fffd}').contains(&ch)
+            || ch >= '\u{10000}'
+    })
+}
+
 fn valid_title(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 4096
@@ -114,6 +125,7 @@ impl<R: BufRead> DiagnosticRevisionLines<R> {
                 .is_some_and(|s| !valid_title(s))
 
             || record.wikitext.len() > MAX_TEXT_BYTES
+            || !valid_xml_text(&record.wikitext)
             || record.wikitext_sha256.len() != 64
             || format!("{:x}", Sha256::digest(record.wikitext.as_bytes())) != record.wikitext_sha256
         {
@@ -248,6 +260,25 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].wikitext, "München & 日本語");
         assert_eq!(rows[1].page_id, 42);
+    }
+
+    #[test]
+    fn rejects_xml_forbidden_wikitext_even_with_matching_digest() {
+        for invalid in ["contains\u{0}nul", "control\u{1}", "noncharacter\u{fffe}"] {
+            let mut lines = DiagnosticRevisionLines::new(
+                Cursor::new(record(1, invalid).into_bytes()),
+                "enwiki",
+                "2026-10-01",
+                0,
+            )
+            .unwrap();
+            assert!(matches!(
+                lines.next(),
+                Some(Err(RevisionRecordError::InvalidRecord))
+            ));
+            assert!(lines.next().is_none());
+        }
+        assert_eq!(parse(record(1, "line one\\nline two\\tvalue").as_bytes()).unwrap().len(), 1);
     }
 
     #[test]
