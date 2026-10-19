@@ -48,7 +48,9 @@ export function normalizeWikiHref(href: string, project: string): string | null 
  * Template contents stay uninstantiated and must never be appended to the DOM.
  */
 export function extractWikiArticleLinks(html: string, project: string): WikiArticleLink[] {
-  if (html.length > MAX_HTML_BYTES || !EDITIONS.has(project)) return [];
+  // The budget is in UTF-8 bytes, not UTF-16 code units; non-ASCII HTML can exceed it.
+  if (!EDITIONS.has(project) || html.length > MAX_HTML_BYTES) return [];
+  if (new TextEncoder().encode(html).byteLength > MAX_HTML_BYTES) return [];
   const template = document.createElement("template");
   template.innerHTML = html;
   const links: WikiArticleLink[] = [];

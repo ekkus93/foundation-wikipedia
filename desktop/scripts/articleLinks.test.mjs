@@ -69,6 +69,9 @@ test("extracts article links from an uninstantiated template rather than DOMPars
     assert.equal(templateCreated, 1);
     assert.deepEqual(extractWikiArticleLinks(html, "unknown"), []);
     assert.deepEqual(extractWikiArticleLinks("x".repeat(2_000_001), "enwiki"), []);
+    // UTF-16 length is below the quota, but UTF-8 payload size exceeds 2 MB.
+    assert.deepEqual(extractWikiArticleLinks("é".repeat(1_000_001), "enwiki"), []);
+    assert.deepEqual(extractWikiArticleLinks("😀".repeat(600_000), "enwiki"), []);
     assert.equal(templateCreated, 1, "invalid inputs must not parse HTML");
   } finally {
     if (originalDocument === undefined) delete globalThis.document;
