@@ -16,6 +16,10 @@ test("rejects external, unsafe, cross-edition and non-article destinations", () 
     "https://evil@en.wikipedia.org/wiki/Physics", "/w/index.php?title=Physics",
     "./File:Example.svg", "./Category:Physics", "./Talk:Physics", "#Section",
     "./Physics?redirect=no", "./%ZZ", "./%2e%2e/Secret", "./Physics\\evil",
+    "/wiki/Physics/../Chemistry", "/wiki/Physics/%2e%2e/Chemistry",
+    "https://en.wikipedia.org/wiki/%2e/Physics",
+    "//en.wikipedia.org/wiki/Physics/.%2e/Chemistry",
+    "./Physics/%2F/Chemistry", "./Physics/%5c/Chemistry",
     " ./Physics", "./Physics\n", "/wiki/", "./Physics:Special",
   ]) assert.equal(normalizeWikiHref(href, "enwiki"), null, href);
   assert.equal(normalizeWikiHref("./Physics", "xxwiki"), null);
