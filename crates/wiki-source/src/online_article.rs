@@ -158,6 +158,11 @@ pub fn parse_current_revision(
         .and_then(Value::as_i64)
         .and_then(|ns| i32::try_from(ns).ok())
         .ok_or(OnlineArticleError::InvalidIdentity)?;
+    // This reader supports mainspace articles only. Enforce it at the parser
+    // boundary as well as in the higher-level navigation flow.
+    if namespace != 0 {
+        return Err(OnlineArticleError::InvalidIdentity);
+    }
     let revisions = page
         .get("revisions")
         .and_then(Value::as_array)
@@ -200,6 +205,7 @@ pub fn parse_rendered_revision(
     if pinned.key.page_id > i64::MAX as u64
         || pinned.revision_id == 0
         || pinned.revision_id > i64::MAX as u64
+        || pinned.namespace != 0
         || !valid_title(&pinned.title)
         || !valid_utc_timestamp(&pinned.timestamp)
     {
@@ -325,6 +331,10 @@ mod tests {
                 OnlineArticleError::InvalidIdentity,
             ),
             (
+                META.replace(r#""ns":0"#, r#""ns":1"#),
+                OnlineArticleError::InvalidIdentity,
+            ),
+            (
                 META.replace(r#""ns":0"#, r#""ns":2147483648"#),
                 OnlineArticleError::InvalidIdentity,
             ),
@@ -375,6 +385,12 @@ mod tests {
     #[test]
     fn malformed_rendering_and_unpinned_output_fail_closed() {
         let revision = parse_current_revision(META, "frwiki", 42).unwrap();
+        let mut forged_namespace = revision.clone();
+        forged_namespace.namespace = 1;
+        assert_eq!(
+            parse_rendered_revision(RENDER, &forged_namespace),
+            Err(OnlineArticleError::InvalidIdentity)
+        );
         assert_eq!(
             parse_rendered_revision(
                 r#"{"parse":{"pageid":42,"revid":300,"title":"Énergie","text":"<script>bad()</script>"}}"#,
