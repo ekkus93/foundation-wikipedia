@@ -59,7 +59,10 @@ pub struct GenerateRequest {
 
 impl GenerateRequest {
     pub fn validate(&self) -> Result<(), ProviderError> {
-        if self.model.trim().is_empty()
+        if self.model.is_empty()
+            || self.model.trim() != self.model
+            || self.model.len() > 256
+            || self.model.chars().any(char::is_control)
             || self.messages.is_empty()
             || self.max_output_tokens == 0
             || self
@@ -507,6 +510,18 @@ mod tests {
         let mut input = request();
         input.model = " ".into();
         assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+        input = request();
+        input.model = " leading".into();
+        assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+        input = request();
+        input.model = "model\nname".into();
+        assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+        input = request();
+        input.model = "x".repeat(257);
+        assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
+        input = request();
+        input.model = "modèle-1".into();
+        assert_eq!(input.validate(), Ok(()));
         input = request();
         input.messages.clear();
         assert_eq!(input.validate(), Err(ProviderError::InvalidRequest));
