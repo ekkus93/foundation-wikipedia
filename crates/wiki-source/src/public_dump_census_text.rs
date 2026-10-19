@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn retries_bounded_transient_interruptions_and_poison_persistent_errors() {
         let mut recovered = PageIdLines::new(InterruptingReader {
-            inner: Cursor::new(b"1\\n42\\n"),
+            inner: Cursor::new(b"1\n42\n"),
             remaining: 2,
         });
         assert_eq!(recovered.next().unwrap().unwrap(), 1);
@@ -161,7 +161,7 @@ mod tests {
         assert!(recovered.next().is_none());
 
         let mut failed = PageIdLines::new(InterruptingReader {
-            inner: Cursor::new(b"1\\n"),
+            inner: Cursor::new(b"1\n"),
             remaining: 9,
         });
         assert_eq!(
