@@ -231,6 +231,15 @@ pub fn parse_rendered_revision(
     {
         return Err(OnlineArticleError::RevisionMismatch);
     }
+    // Some MediaWiki parse responses include an explicit namespace. Never
+    // accept rendered content claiming a different namespace than the pinned
+    // mainspace revision, even if page ID, title and revision match.
+    if parsed
+        .get("ns")
+        .is_some_and(|ns| ns.as_i64() != Some(i64::from(pinned.namespace)))
+    {
+        return Err(OnlineArticleError::RevisionMismatch);
+    }
     let raw_html = parsed
         .get("text")
         .and_then(Value::as_str)
@@ -403,6 +412,24 @@ mod tests {
             parse_current_revision(r#"{"query":{"pages":[]}}"#, "frwiki", 42),
             Err(OnlineArticleError::InvalidResponse)
         );
+    }
+
+    #[test]
+    fn rendered_namespace_cannot_disagree_with_pinned_revision() {
+        let revision = parse_current_revision(META, "frwiki", 42).unwrap();
+        let valid = RENDER.replace(r#""title":"Énergie""#, r#""ns":0,"title":"Énergie""#);
+        assert!(parse_rendered_revision(&valid, &revision).is_ok());
+        for ns in ["1", "-1", "\\"0\\"", "null"] {
+            let forged = RENDER.replace(
+                r#""title":"Énergie""#,
+                &format!(r#""ns":{ns},"title":"Énergie""#),
+            );
+            assert_eq!(
+                parse_rendered_revision(&forged, &revision),
+                Err(OnlineArticleError::RevisionMismatch),
+                "{ns}"
+            );
+        }
     }
 
     #[test]
