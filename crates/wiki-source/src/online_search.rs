@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use serde_json::Value;
-use wiki_model::ArticleKey;
+use wiki_model::{wikipedia_title_key, ArticleKey};
 
 use crate::online_fetch::MediaWikiTransport;
 use crate::online_requests::{OnlineRequestError, WikipediaRequests};
@@ -105,10 +105,10 @@ pub fn parse_search_results(
         if !seen.insert(page_id) {
             return Err(OnlineSearchError::DuplicatePage);
         }
-        // MediaWiki treats underscores as spaces in article titles. A
-        // response must not assign those equivalent titles to different pages,
-        // including results beyond the visible limit.
-        if !seen_titles.insert(title.replace('_', " ")) {
+        // Reuse the model's first-letter and underscore normalization:
+        // distinct page IDs cannot claim the same navigation title key,
+        // including beyond the visible result limit.
+        if !seen_titles.insert(wikipedia_title_key(title)) {
             return Err(OnlineSearchError::DuplicateTitle);
         }
         if hits.len() < limit.min(100) {
@@ -212,6 +212,13 @@ mod tests {
             {"pageid":2,"ns":0,"title":"A B"}]}}"#;
         assert_eq!(
             parse_search_results(underscore_aliases, "enwiki", 0),
+            Err(OnlineSearchError::DuplicateTitle)
+        );
+        let first_letter_aliases = r#"{"query":{"search":[
+            {"pageid":1,"ns":0,"title":"physics"},
+            {"pageid":2,"ns":0,"title":"Physics"}]}}"#;
+        assert_eq!(
+            parse_search_results(first_letter_aliases, "enwiki", 1),
             Err(OnlineSearchError::DuplicateTitle)
         );
         for bad in [
