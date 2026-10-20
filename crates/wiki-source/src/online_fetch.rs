@@ -292,10 +292,7 @@ mod tests {
         transport
             .answers
             .push_back(Ok(METADATA.as_bytes().to_vec()));
-        let conflicting = RENDERED.replace(
-            r#""title":"Physics""#,
-            r#""ns":1,"title":"Physics""#,
-        );
+        let conflicting = RENDERED.replace(r#""title":"Physics""#, r#""ns":1,"title":"Physics""#);
         transport.answers.push_back(Ok(conflicting.into_bytes()));
         let error =
             fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
