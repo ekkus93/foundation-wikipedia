@@ -287,6 +287,30 @@ mod tests {
     }
 
     #[test]
+    fn rendered_namespace_mismatch_preserves_local_fallback() {
+        let mut transport = FakeTransport::default();
+        transport
+            .answers
+            .push_back(Ok(METADATA.as_bytes().to_vec()));
+        let conflicting = RENDERED.replace(
+            r#""title":"Physics""#,
+            r#""ns":1,"title":"Physics""#,
+        );
+        transport.answers.push_back(Ok(conflicting.into_bytes()));
+        let error =
+            fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
+        assert_eq!(error.stage, FetchStage::RenderedHtml);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(
+            error.cause,
+            FetchCause::Flow(OnlineFlowError::Article(
+                crate::online_article::OnlineArticleError::RevisionMismatch
+            ))
+        );
+        assert_eq!(transport.requests.len(), 2);
+    }
+
+    #[test]
     fn unexpected_query_redirect_stops_before_html_and_preserves_fallback() {
         let mut transport = FakeTransport::default();
         let redirected = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
