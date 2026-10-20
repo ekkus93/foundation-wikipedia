@@ -31,6 +31,7 @@ pub enum OnlineSearchError {
     ApiError,
     InvalidIdentity,
     DuplicatePage,
+    DuplicateTitle,
     TooManyResults,
 }
 
@@ -77,6 +78,7 @@ pub fn parse_search_results(
     }
 
     let mut seen = HashSet::new();
+    let mut seen_titles = HashSet::new();
     let mut hits = Vec::with_capacity(results.len().min(limit).min(100));
     for result in results {
         let page_id = result
@@ -102,6 +104,11 @@ pub fn parse_search_results(
             .ok_or(OnlineSearchError::InvalidIdentity)?;
         if !seen.insert(page_id) {
             return Err(OnlineSearchError::DuplicatePage);
+        }
+        // One canonical mainspace title cannot identify two distinct pages
+        // in a single search response. Check even beyond the visible limit.
+        if !seen_titles.insert(title) {
+            return Err(OnlineSearchError::DuplicateTitle);
         }
         if hits.len() < limit.min(100) {
             hits.push(OnlineSearchHit {
@@ -187,6 +194,17 @@ mod tests {
         assert_eq!(
             parse_search_results(duplicate, "enwiki", 1),
             Err(OnlineSearchError::DuplicatePage)
+        );
+        let conflicting_titles = r#"{"query":{"search":[
+            {"pageid":1,"ns":0,"title":"Physics"},
+            {"pageid":2,"ns":0,"title":"Physics"}]}}"#;
+        assert_eq!(
+            parse_search_results(conflicting_titles, "enwiki", 1),
+            Err(OnlineSearchError::DuplicateTitle)
+        );
+        assert_eq!(
+            parse_search_results(conflicting_titles, "enwiki", 0),
+            Err(OnlineSearchError::DuplicateTitle)
         );
         for bad in [
             r#"{"query":{"search":[{"pageid":0,"ns":0,"title":"A"}]}}"#,
