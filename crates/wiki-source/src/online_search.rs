@@ -98,6 +98,7 @@ pub fn parse_search_results(
             .filter(|title| {
                 !title.trim().is_empty()
                     && *title == title.trim()
+
                     && title.len() <= MAX_TITLE_BYTES
                     && !title.chars().any(char::is_control)
             })
@@ -105,9 +106,10 @@ pub fn parse_search_results(
         if !seen.insert(page_id) {
             return Err(OnlineSearchError::DuplicatePage);
         }
-        // One canonical mainspace title cannot identify two distinct pages
-        // in a single search response. Check even beyond the visible limit.
-        if !seen_titles.insert(title) {
+        // MediaWiki treats underscores as spaces in article titles. A
+        // response must not assign those equivalent titles to different pages,
+        // including results beyond the visible limit.
+        if !seen_titles.insert(title.replace('_', " ")) {
             return Err(OnlineSearchError::DuplicateTitle);
         }
         if hits.len() < limit.min(100) {
@@ -198,12 +200,20 @@ mod tests {
         let conflicting_titles = r#"{"query":{"search":[
             {"pageid":1,"ns":0,"title":"Physics"},
             {"pageid":2,"ns":0,"title":"Physics"}]}}"#;
+
         assert_eq!(
             parse_search_results(conflicting_titles, "enwiki", 1),
             Err(OnlineSearchError::DuplicateTitle)
         );
         assert_eq!(
             parse_search_results(conflicting_titles, "enwiki", 0),
+            Err(OnlineSearchError::DuplicateTitle)
+        );
+        let underscore_aliases = r#"{"query":{"search":[
+            {"pageid":1,"ns":0,"title":"A_B"},
+            {"pageid":2,"ns":0,"title":"A B"}]}}"#;
+        assert_eq!(
+            parse_search_results(underscore_aliases, "enwiki", 0),
             Err(OnlineSearchError::DuplicateTitle)
         );
         for bad in [
@@ -298,6 +308,7 @@ mod tests {
         client.responses.push_back(Ok(body.to_vec()));
         let result = fetch_search(
             &mut client,
+
             "enwiki",
             "Énergie &list=allusers",
             1,
