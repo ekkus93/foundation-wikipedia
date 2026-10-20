@@ -82,6 +82,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Distinguish online current version, installed offline version and temporary cached version.
   - [ ] Respect offline state and API failure paths.
   - **Accept:** online article opens; offline missing article shows sensible state, not broken WebView.
+  - **Progress (2026-10-20, partial):** Current-revision and rendered-revision parsers now reject non-mainspace namespaces and query-level redirect resolution before accepting revision-pinned article identity. Negative regression for query-level aliases added in `crates/wiki-source/src/online_article.rs`; formatting-only failure at code SHA `6b08f3ca743a0ee18b407aedce5df2bc114a0da4` was repaired, and exact source SHA `ed768fae1958e271ee22f2c113ff026a864c53b1` passed [Rust workspace CI 39429133349](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39429133349) and [Platform shells CI 39429133321](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39429133321). This is parser-level validation only; live search/navigation, cache/offline states, integration and device acceptance remain outstanding. **SRC-004 stays unchecked.**
 - [ ] **SRC-005** Establish authoritative-like fixture suite and source regression tests. **Depends:** SRC-002, SRC-003.  
   - [ ] Duplicate/deleted/redirect/category-cycle and beta-schema-change cases.
   - [ ] Maths, infoboxes, figures, table/reference and non-English fixtures.
