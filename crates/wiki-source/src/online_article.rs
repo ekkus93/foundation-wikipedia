@@ -130,6 +130,12 @@ pub fn parse_current_revision(
         return Err(OnlineArticleError::InvalidIdentity);
     }
     let value = parse_response(body, MAX_METADATA_BYTES)?;
+    // A normalized redirect alias is not proof that the requested page ID
+    // identifies the returned article. Resolve redirects explicitly before
+    // accepting a revision-pinned response.
+    if value.get("query").and_then(|q| q.get("redirects")).is_some() {
+        return Err(OnlineArticleError::RedirectNeedsResolution);
+    }
     let pages = value
         .get("query")
         .and_then(|q| q.get("pages"))
@@ -321,6 +327,19 @@ mod tests {
                 Err(OnlineArticleError::RevisionMismatch)
             );
         }
+    }
+
+    #[test]
+    fn query_level_redirects_require_explicit_resolution() {
+        let response = META.replacen(
+            r#"{"query":{"pages":"#,
+            r#"{"query":{"redirects":[{"from":"Alias","to":"Énergie"}],"pages":"#,
+            1,
+        );
+        assert_eq!(
+            parse_current_revision(&response, "frwiki", 42),
+            Err(OnlineArticleError::RedirectNeedsResolution)
+        );
     }
 
     #[test]
