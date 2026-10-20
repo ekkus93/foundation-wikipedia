@@ -98,7 +98,6 @@ pub fn parse_search_results(
             .filter(|title| {
                 !title.trim().is_empty()
                     && *title == title.trim()
-
                     && title.len() <= MAX_TITLE_BYTES
                     && !title.chars().any(char::is_control)
             })
@@ -200,7 +199,6 @@ mod tests {
         let conflicting_titles = r#"{"query":{"search":[
             {"pageid":1,"ns":0,"title":"Physics"},
             {"pageid":2,"ns":0,"title":"Physics"}]}}"#;
-
         assert_eq!(
             parse_search_results(conflicting_titles, "enwiki", 1),
             Err(OnlineSearchError::DuplicateTitle)
@@ -308,7 +306,6 @@ mod tests {
         client.responses.push_back(Ok(body.to_vec()));
         let result = fetch_search(
             &mut client,
-
             "enwiki",
             "Énergie &list=allusers",
             1,
