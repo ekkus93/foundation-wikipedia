@@ -133,7 +133,11 @@ pub fn parse_current_revision(
     // A normalized redirect alias is not proof that the requested page ID
     // identifies the returned article. Resolve redirects explicitly before
     // accepting a revision-pinned response.
-    if value.get("query").and_then(|q| q.get("redirects")).is_some() {
+    if value
+        .get("query")
+        .and_then(|q| q.get("redirects"))
+        .is_some()
+    {
         return Err(OnlineArticleError::RedirectNeedsResolution);
     }
     let pages = value
