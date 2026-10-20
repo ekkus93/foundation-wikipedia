@@ -419,7 +419,7 @@ mod tests {
         let revision = parse_current_revision(META, "frwiki", 42).unwrap();
         let valid = RENDER.replace(r#""title":"Énergie""#, r#""ns":0,"title":"Énergie""#);
         assert!(parse_rendered_revision(&valid, &revision).is_ok());
-        for ns in ["1", "-1", "\\"0\\"", "null"] {
+        for ns in ["1", "-1", r#""0""#, "null"] {
             let forged = RENDER.replace(
                 r#""title":"Énergie""#,
                 &format!(r#""ns":{ns},"title":"Énergie""#),
