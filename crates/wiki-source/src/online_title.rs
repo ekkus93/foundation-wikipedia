@@ -206,6 +206,38 @@ mod tests {
     }
 
     #[test]
+    fn natural_right_to_left_titles_and_normalized_aliases_are_not_rejected() {
+        for (project, title, page_id) in [
+            ("arwiki", "الفيزياء", 91_u64),
+            ("hewiki", "פיזיקה", 92_u64),
+        ] {
+            let response = serde_json::json!({
+                "batchcomplete": true,
+                "query": {
+                    "pages": [{ "pageid": page_id, "ns": 0, "title": title }]
+                }
+            })
+            .to_string();
+            let resolved = parse_title_resolution(&response, project, title).unwrap();
+            assert_eq!(resolved.key.page_id, page_id);
+            assert_eq!(resolved.key.project, project);
+            assert_eq!(resolved.canonical_title, title);
+            assert!(resolved.edges.is_empty());
+        }
+
+        let normalized = serde_json::json!({
+            "query": {
+                "normalized": [{ "from": "علم_الفيزياء", "to": "علم الفيزياء" }],
+                "pages": [{ "pageid": 93, "ns": 0, "title": "علم الفيزياء" }]
+            }
+        })
+        .to_string();
+        let resolved = parse_title_resolution(&normalized, "arwiki", "علم_الفيزياء").unwrap();
+        assert_eq!(resolved.key.page_id, 93);
+        assert_eq!(resolved.edges, vec![("علم_الفيزياء".into(), "علم الفيزياء".into())]);
+    }
+
+    #[test]
     fn rejects_cycles_wrong_alias_and_missing_pages() {
         for input in [
             r#"{"query":{"redirects":[{"from":"A","to":"B"},{"from":"B","to":"A"}],"pages":[{"pageid":42,"ns":0,"title":"A"}]}}"#,
