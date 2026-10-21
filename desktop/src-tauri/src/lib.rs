@@ -291,6 +291,38 @@ async fn clear_reader_history(app: tauri::AppHandle) -> Result<usize, String> {
     .map_err(|_| "Reading history worker stopped".to_owned())?
 }
 
+fn validated_reader_theme(state: &UserState) -> Result<Option<String>, UserStateError> {
+    match state.setting("reading.theme")? {
+        None => Ok(None),
+        Some(value) if matches!(value.as_str(), "system" | "light" | "dark") => Ok(Some(value)),
+        _ => Err(UserStateError::InvalidValue),
+    }
+}
+
+/// Persist non-secret appearance settings in the same private user-state DB.
+#[tauri::command]
+async fn read_reader_theme(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        validated_reader_theme(&state).map_err(|_| "Invalid saved appearance preference".to_owned())
+    })
+    .await
+    .map_err(|_| "Appearance preference worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn set_reader_theme(app: tauri::AppHandle, theme: String) -> Result<(), String> {
+    if !matches!(theme.as_str(), "system" | "light" | "dark") {
+        return Err("Unsupported appearance preference".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.set_setting("reading.theme", &theme)
+            .map_err(|_| "Cannot save appearance preference".to_owned())
+    })
+    .await
+    .map_err(|_| "Appearance preference worker stopped".to_owned())?
+}
+
 #[cfg(test)]
 mod bookmark_tests {
     use super::*;
@@ -314,6 +346,18 @@ mod bookmark_tests {
         assert_eq!(state.clear_history().unwrap(), 2);
         assert!(reader_history_rows(&state).unwrap().is_empty());
         assert_eq!(state.bookmark(&key).unwrap(), Some((333, String::new())));
+    }
+
+    #[test]
+    fn saved_theme_is_typed_and_rejects_corrupt_preferences() {
+        let state = UserState::in_memory().unwrap();
+        assert_eq!(validated_reader_theme(&state).unwrap(), None);
+        for theme in ["system", "light", "dark"] {
+            state.set_setting("reading.theme", theme).unwrap();
+            assert_eq!(validated_reader_theme(&state).unwrap().as_deref(), Some(theme));
+        }
+        state.set_setting("reading.theme", "invalid").unwrap();
+        assert!(matches!(validated_reader_theme(&state), Err(UserStateError::InvalidValue)));
     }
 
     #[test]
@@ -348,7 +392,9 @@ pub fn run() {
             reader_history_enabled,
             set_reader_history_enabled,
             list_reader_history,
-            clear_reader_history
+            clear_reader_history,
+            read_reader_theme,
+            set_reader_theme
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");
