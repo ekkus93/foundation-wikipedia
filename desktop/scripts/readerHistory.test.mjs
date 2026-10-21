@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { RequestEpoch } from "../src/requestEpoch.ts";
 import {
   appendReaderHistory, backReaderArticle, emptyReaderNavigation,
   forwardReaderArticle, mountedReaderFrames, openReaderArticle, popReaderHistory,
@@ -79,4 +80,20 @@ test("nearby revision frame identities survive Back, Forward and search-result r
   assert.equal(first.current, null);
   assert.deepEqual(mountedReaderFrames(first).map((a) => a.frameId), [5]);
   assert.deepEqual(mountedReaderFrames(emptyReaderNavigation()), []);
+});
+
+test("offline transition invalidates an in-flight fetch without discarding loaded revisions", () => {
+  const first = article(11, 1101);
+  const second = article(22, 2202);
+  const loaded = openReaderArticle(openReaderArticle(emptyReaderNavigation(), first), second);
+  const epoch = new RequestEpoch();
+  const inFlight = epoch.begin();
+  // A network-loss event invalidates responses but does not erase in-memory
+  // snapshots. Those snapshots remain text-only, not installed offline media.
+  epoch.invalidate();
+  assert.equal(epoch.matches(inFlight), false);
+  assert.deepEqual(loaded.current, second);
+  const back = backReaderArticle(loaded);
+  assert.deepEqual(back.current, first);
+  assert.deepEqual(forwardReaderArticle(back).current, second);
 });

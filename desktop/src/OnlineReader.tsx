@@ -55,8 +55,9 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
       setConnected(false);
       setBusy(false);
       setHits([]);
-      setNavigation(emptyReaderNavigation());
-      setNotice("Connection lost. This preview has no installed offline articles.");
+      // Preserve already-rendered, sandboxed text snapshots across a disconnect.
+      // They remain incomplete online previews, never installed offline articles.
+      setNotice("Connection lost. Previously loaded online text previews remain readable, but no complete offline article is installed.");
     };
     const reconnected = () => setConnected(true);
     window.addEventListener("offline", disconnected);
@@ -69,19 +70,19 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!query.trim() || busy) return;
+    if (!query.trim() || busy || offline || !connected || !navigator.onLine) return;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
-    setNavigation(emptyReaderNavigation());
+    // A failed search must not destroy the currently displayed revision/history.
     try {
       const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine }));
       if (!requestEpoch.current.matches(epoch)) return;
       setHits(result);
+      setNavigation(emptyReaderNavigation());
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
       if (requestEpoch.current.matches(epoch)) {
-        setHits([]);
         setNotice(`Search unavailable: ${String(error)}`);
       }
     } finally {
@@ -90,7 +91,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   }
 
   async function openArticle(command: "open_wikipedia_title" | "open_wikipedia_page", args: { title?: string; pageId?: number }) {
-    if (busy) return;
+    if (busy || offline || !connected || !navigator.onLine) return;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
@@ -147,23 +148,24 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
             placeholder="Article or topic"
             disabled={busy}
           />
-          <button type="submit" disabled={busy || !query.trim()}>Search</button>
+          <button type="submit" disabled={busy || offline || !connected || !navigator.onLine || !query.trim()}>Search</button>
         </div>
       </form>
       <label><input type="checkbox" checked={offline} disabled={busy} onChange={(event) => {
         const nowOffline = event.target.checked;
         setOffline(nowOffline);
         if (nowOffline) {
-          // Never present previously fetched online HTML or search as installed content.
-          setNavigation(emptyReaderNavigation());
+          // Invalidate pending online results, but retain isolated in-memory
+          // revision snapshots for Back/Forward. Never label them offline-ready.
+          requestEpoch.current.invalidate();
           setHits([]);
-          setNotice("Offline mode enabled. No article is installed in this preview.");
+          setNotice("Offline mode enabled. Previously loaded online text previews remain readable, but no complete offline article is installed.");
         } else {
           setNotice(null);
         }
       }} /> Work offline (no network requests)</label>
       <p className="preview-warning">
-        {offline || !connected ? "Offline mode: articles require an installed pack, which is not available in this preview. " : ""}
+        {offline || !connected ? "Network disabled: only previously loaded in-memory text previews can be read; complete offline articles require an installed pack. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;
         this page is not offline-ready. Links inside the isolated preview are disabled; verified same-edition article links are listed below.
       </p>
@@ -181,7 +183,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
             setNotice(null);
           }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
-          <p>Online revision {article.revisionId} · page ID {article.pageId}</p>
+          <p>{offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
         </div>
       )}
       {/* Hidden sandboxed iframes remain mounted for nearby navigation history.
@@ -205,7 +207,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
           <ul>
             {article.links.map((link) => (
               <li key={link.title}>
-                <button type="button" disabled={busy || offline || !connected} onClick={() => void openTitle(link.title)}>
+                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openTitle(link.title)}>
                   {link.label}
                 </button>
               </li>
@@ -219,7 +221,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
           <ul>
             {hits.map(([pageId, title]) => (
               <li key={pageId}>
-                <button type="button" disabled={busy} onClick={() => void openPage(pageId)}>
+                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openPage(pageId)}>
                   {title}
                 </button>
               </li>
