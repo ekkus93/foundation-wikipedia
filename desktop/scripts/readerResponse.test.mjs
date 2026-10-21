@@ -22,3 +22,18 @@ test("rejects invalid revisions, mismatched page IDs and oversized previews", ()
   }
   assert.throws(() => parseReaderArticle([2, 3, "B", ""], 1), /Invalid Wikipedia/);
 });
+
+test("rejects cross-page canonical title collisions after first-letter and underscore normalization", () => {
+  for (const hits of [
+    [[1, "Physics"], [2, "physics"]],
+    [[1, "Quantum_mechanics"], [2, "Quantum mechanics"]],
+    [[1, "äpfel"], [2, "Äpfel"]],
+    [[1, "Physics"], [2, "physics"], [3, "Chemistry"]],
+  ]) {
+    assert.throws(() => parseReaderSearchHits(hits), /Conflicting Wikipedia search titles/);
+  }
+  // Wikipedia's title key only uppercases the first scalar, not the rest.
+  assert.deepEqual(parseReaderSearchHits([[1, "iPhone"], [2, "Iphone"]]), [[1, "iPhone"], [2, "Iphone"]]);
+  // Multi-codepoint first-scalar uppercase expansions are left as-is.
+  assert.deepEqual(parseReaderSearchHits([[1, "ßeta"], [2, "SSeta"]]), [[1, "ßeta"], [2, "SSeta"]]);
+});
