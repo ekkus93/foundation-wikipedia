@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
-import { parseReaderArticle, parseReaderSearchHits, type ReaderSearchHit } from "./readerResponse";
+import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
 interface ArticlePreview {
@@ -111,6 +111,10 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   }
 
   function openTitle(title: string) {
+    if (!validReaderTitleInput(title)) {
+      setNotice("Invalid Wikipedia article title. Enter a mainspace title without control characters.");
+      return;
+    }
     return openArticle("open_wikipedia_title", { title });
   }
 
@@ -149,6 +153,8 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
             disabled={busy}
           />
           <button type="submit" disabled={busy || offline || !connected || !navigator.onLine || !query.trim()}>Search</button>
+          <button type="button" disabled={busy || offline || !connected || !navigator.onLine || !query.trim()}
+            onClick={() => void openTitle(query.trim())}>Open exact title</button>
         </div>
       </form>
       <label><input type="checkbox" checked={offline} disabled={busy} onChange={(event) => {

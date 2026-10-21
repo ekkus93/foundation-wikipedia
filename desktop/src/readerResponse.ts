@@ -23,6 +23,14 @@ function validTitle(value: unknown): value is string {
     value === value.trim() && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
 }
 
+/** Validate a title before a user-initiated exact-title fetch.
+ * Unlike IPC display labels, Action API title requests also have a 512-byte
+ * UTF-8 limit; reject oversize multi-byte titles before invoking the backend.
+ */
+export function validReaderTitleInput(value: unknown): value is string {
+  return validTitle(value) && new TextEncoder().encode(value).byteLength <= 512;
+}
+
 export function parseReaderSearchHits(input: unknown): ReaderSearchHit[] {
   if (!Array.isArray(input) || input.length > 100) throw new Error("Invalid Wikipedia search response");
   const seen = new Set<number>();

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderArticle, parseReaderSearchHits } from "../src/readerResponse.ts";
+import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput } from "../src/readerResponse.ts";
 
 test("accepts bounded revision-scoped article and search IPC responses", () => {
   assert.deepEqual(parseReaderSearchHits([[12, "Physics"], [13, "Mathematics"]]), [[12, "Physics"], [13, "Mathematics"]]);
@@ -51,4 +51,16 @@ test("rejects invisible directional marks in IPC titles without rejecting RTL te
   }
   assert.deepEqual(parseReaderSearchHits([[1, "פיזיקה"]]), [[1, "פיזיקה"]]);
   assert.deepEqual(parseReaderArticle([1, 2, "פיזיקה", "<p>text</p>"]), [1, 2, "פיזיקה", "<p>text</p>"]);
+});
+
+test("exact-title user navigation validates directional marks and UTF-8 byte limits", () => {
+  for (const title of ["Physics", "الفيزياء", "פיזיקה", "Mathematics"]) {
+    assert.equal(validReaderTitleInput(title), true, title);
+  }
+  for (const title of ["", "  ", " Physics", "Physics ", "A\u202eB",
+    "Physics\u2066", "A\nB", "é".repeat(257), "x".repeat(513)]) {
+    assert.equal(validReaderTitleInput(title), false, JSON.stringify(title));
+  }
+  assert.equal(validReaderTitleInput("é".repeat(256)), true);
+  assert.equal(validReaderTitleInput(null), false);
 });
