@@ -12,7 +12,7 @@ const MAX_LINKS = 80;
 const MAX_HTML_BYTES = 2_000_000;
 
 export function normalizeWikiHref(href: string, project: string): string | null {
-  if (!EDITIONS.has(project) || !href || href.length > 2048 || /[\\\\\u0000-\u001f\u007f]/u.test(href) || href.trim() !== href) return null;
+  if (!EDITIONS.has(project) || !href || href.length > 2048 || /[\\\\\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(href) || href.trim() !== href) return null;
   // Do not interpret arbitrary relative URLs, schemes, query-only links or anchors.
   if (!/^(?:\.\/|\/wiki\/|https:\/\/|\/\/)/u.test(href)) return null;
   // WHATWG URL parsing removes dot segments before callers can inspect them.
@@ -38,7 +38,7 @@ export function normalizeWikiHref(href: string, project: string): string | null 
     return null;
   }
   // A colon indicates a namespace/interwiki prefix, not an article link.
-  if (!title || title.length > 512 || title.trim() !== title || /[:?#\\\\\u0000-\u001f\u007f]/u.test(title)) return null;
+  if (!title || title.length > 512 || title.trim() !== title || /[:?#\\\\\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(title)) return null;
   if (title.split("/").some((segment) => segment === "." || segment === "..")) return null;
   return title;
 }

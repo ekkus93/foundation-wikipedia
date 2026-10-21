@@ -78,3 +78,20 @@ test("extracts article links from an uninstantiated template rather than DOMPars
     else globalThis.document = originalDocument;
   }
 });
+
+test("rejects directional-format and C1 control characters in article-link destinations", () => {
+  for (const href of [
+    "./Phy\\u202esics",
+    "./Physics\\u2066",
+    "./Physics\\u2069",
+    "./Physics\\u0085",
+    "./Physics%E2%80%AE",
+    "./Physics%E2%81%A6",
+    "/wiki/Physics%E2%81%A9",
+    "https://en.wikipedia.org/wiki/Physics%E2%80%AC",
+  ]) {
+    assert.equal(normalizeWikiHref(href, "enwiki"), null, href);
+  }
+  // Natural right-to-left letters without directional format controls are legitimate.
+  assert.equal(normalizeWikiHref("./%D7%A4%D7%99%D7%96%D7%99%D7%A7%D7%94", "enwiki"), "פיזיקה");
+});
