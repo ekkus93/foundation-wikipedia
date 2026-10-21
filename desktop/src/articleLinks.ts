@@ -60,7 +60,10 @@ export function extractWikiArticleLinks(html: string, project: string): WikiArti
     const title = normalizeWikiHref(anchor.getAttribute("href") ?? "", project);
     if (!title || seen.has(title)) continue;
     seen.add(title);
-    const label = (anchor.textContent ?? "").trim().replace(/\s+/gu, " ").slice(0, 160) || title;
+    const label = (anchor.textContent ?? "")
+      .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+      .replace(/[\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
+      .trim().replace(/\s+/gu, " ").slice(0, 160) || title;
     links.push({ title, label });
     if (links.length >= MAX_LINKS) break;
   }

@@ -48,6 +48,9 @@ test("extracts article links from an uninstantiated template rather than DOMPars
     anchor("javascript:alert(1)", "unsafe"),
     anchor("./Physics", "duplicate"),
     anchor("./Gravit%C3%A4t", " Gravität "),
+    anchor("./Chemistry", "Che\u202emistry"),
+    anchor("./Biology", "Bio\u0085logy"),
+    anchor("./Mathematics", "رياضيات"),
   ];
   globalThis.document = {
     createElement(tag) {
@@ -69,6 +72,9 @@ test("extracts article links from an uninstantiated template rather than DOMPars
     assert.deepEqual(extractWikiArticleLinks(html, "enwiki"), [
       { title: "Physics", label: "Physics" },
       { title: "Gravität", label: "Gravität" },
+      { title: "Chemistry", label: "Chemistry" },
+      { title: "Biology", label: "Bio logy" },
+      { title: "Mathematics", label: "رياضيات" },
     ]);
     assert.equal(parsed, html);
     assert.equal(templateCreated, 1);
