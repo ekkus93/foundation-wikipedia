@@ -20,7 +20,7 @@ function navigationTitleKey(title: string): string {
 
 function validTitle(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512 &&
-    value === value.trim() && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(value);
+    value === value.trim() && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
 }
 
 export function parseReaderSearchHits(input: unknown): ReaderSearchHit[] {

@@ -43,3 +43,12 @@ test("rejects cross-page canonical title collisions after first-letter and under
   // Multi-codepoint first-scalar uppercase expansions are left as-is.
   assert.deepEqual(parseReaderSearchHits([[1, "ßeta"], [2, "SSeta"]]), [[1, "ßeta"], [2, "SSeta"]]);
 });
+
+test("rejects invisible directional marks in IPC titles without rejecting RTL text", () => {
+  for (const mark of ["\u061c", "\u200e", "\u200f"]) {
+    assert.throws(() => parseReaderSearchHits([[1, "Phy" + mark + "sics"]]), /Invalid Wikipedia search identity/);
+    assert.throws(() => parseReaderArticle([1, 2, "Phy" + mark + "sics", "<p>text</p>"]), /Invalid Wikipedia article identity/);
+  }
+  assert.deepEqual(parseReaderSearchHits([[1, "פיזיקה"]]), [[1, "פיזיקה"]]);
+  assert.deepEqual(parseReaderArticle([1, 2, "פיזיקה", "<p>text</p>"]), [1, 2, "פיזיקה", "<p>text</p>"]);
+});
