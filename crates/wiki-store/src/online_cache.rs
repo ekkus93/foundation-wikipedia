@@ -386,8 +386,7 @@ mod tests {
             assert_eq!(cache.get(&item.key, 123).unwrap(), Some(item));
         }
         for marker in [
-            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}',
-            '\u{202e}', '\u{2066}', '\u{2069}',
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}', '\u{2066}', '\u{2069}',
         ] {
             let mut item = article(125);
             item.title = format!("Physics{marker}Spoof");
@@ -399,10 +398,13 @@ mod tests {
         }
         let normal = article(130);
         cache.put(&normal).unwrap();
-        cache.conn.execute(
-            "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=130",
-            params!["Physics\u{202e}Spoof"],
-        ).unwrap();
+        cache
+            .conn
+            .execute(
+                "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=130",
+                params!["Physics\u{202e}Spoof"],
+            )
+            .unwrap();
         assert!(matches!(
             cache.get(&normal.key, 130),
             Err(HtmlCacheError::InvalidContent)
