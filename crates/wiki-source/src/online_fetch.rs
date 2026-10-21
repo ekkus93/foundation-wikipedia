@@ -173,6 +173,21 @@ pub fn fetch_title<T: MediaWikiTransport>(
     requested_title: &str,
     network: NetworkState,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_title_with_versions(client, project, requested_title, network, &[])
+}
+
+/// Resolve an online title to its stable page ID before considering independently
+/// verified local versions. A title cannot identify offline content without a
+/// trusted local title index; this function makes no network request offline.
+/// Local fallbacks are checked against the resolved project/page identity by
+/// fetch_article, so a same-title but foreign cached article cannot be used.
+pub fn fetch_title_with_versions<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     let route =
         begin_title_open(project, requested_title, network).map_err(|cause| FetchFailure {
             stage: FetchStage::Selection,
@@ -198,7 +213,8 @@ pub fn fetch_title<T: MediaWikiTransport>(
                 cause: FetchCause::Flow(cause),
             }
         })?;
-    fetch_article(client, &resolved.key, NetworkState::Online, &[])
+
+    fetch_article(client, &resolved.key, NetworkState::Online, versions)
 }
 
 #[cfg(test)]
@@ -398,6 +414,7 @@ mod tests {
         assert!(client.requests.is_empty());
 
         client.answers.push_back(Err("upstream unavailable"));
+
         let error = fetch_page_id_with_versions(
             &mut client,
             "enwiki",
@@ -463,6 +480,62 @@ mod tests {
                 .query_pairs()
                 .any(|(key, val)| key == expected.0 && val == expected.1));
         }
+    }
+
+    #[test]
+    fn title_navigation_preserves_verified_local_fallback_after_upstream_failure() {
+        let mut client = FakeTransport::default();
+        let title_json = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
+        client.answers.push_back(Err("revision service unavailable"));
+        let error = fetch_title_with_versions(
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            &[local()],
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.cause, FetchCause::Transport("revision service unavailable"));
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(client.requests.len(), 2);
+    }
+
+    #[test]
+    fn title_navigation_rejects_foreign_fallback_and_never_guesses_offline_title() {
+        let mut client = FakeTransport::default();
+        assert_eq!(
+            fetch_title_with_versions(
+                &mut client,
+                "enwiki",
+                "Physics",
+                NetworkState::Offline,
+                &[local()],
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert!(client.requests.is_empty());
+
+        let title_json = r#"{"query":{"pages":[{"pageid":43,"ns":0,"title":"Physics"}]}}"#;
+        client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
+        let error = fetch_title_with_versions(
+            &mut client,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            &[local()],
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(error.fallback, None);
+        assert_eq!(
+            error.cause,
+            FetchCause::Flow(OnlineFlowError::Selection(
+                crate::online_selection::SelectionError::ForeignArticle
+            ))
+        );
+        assert_eq!(client.requests.len(), 1);
     }
 
     #[test]
