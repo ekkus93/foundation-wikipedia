@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import OnlineReader, { type ReaderArticleContext } from "./OnlineReader";
+import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderBookmarks, type ReaderBookmark } from "./readerResponse";
 import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
@@ -12,6 +12,7 @@ export default function App() {
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [message, setMessage] = useState<string | null>(null);
   const [savedBookmarks, setSavedBookmarks] = useState<ReaderBookmark[]>([]);
+  const [bookmarkOpen, setBookmarkOpen] = useState<(ReaderOpenPageRequest & { tabId: number }) | null>(null);
   const [savedBusy, setSavedBusy] = useState(false);
   const [savedError, setSavedError] = useState<string | null>(null);
   const [destination, setDestination] = useState<"article" | "settings">("article");
@@ -27,6 +28,7 @@ export default function App() {
   const tabScrollRef = useRef(new Map<number, number>());
   const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
   const bookmarkInFlightRef = useRef(false);
+  const nextBookmarkOpenId = useRef(1);
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
   const hubRef = useRef<HTMLDivElement>(null);
@@ -111,6 +113,15 @@ export default function App() {
     } finally {
       setSavedBusy(false);
     }
+  }
+
+  function openSavedBookmark(project: string, pageId: number) {
+    // The bookmark list has already been validated at the native IPC boundary.
+    // Route the request to the current tab and let its reader enforce offline mode.
+    setBookmarkOpen({ id: nextBookmarkOpenId.current++, tabId: readerTabs.activeId, project, pageId });
+    setSettingsSection(null);
+    setDestination("article");
+    setMessage(null);
   }
 
   function rememberTabScroll() {
@@ -205,7 +216,7 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader onArticleChange={(title, context) => {
+              <OnlineReader bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));
@@ -237,10 +248,13 @@ export default function App() {
           <ul>{savedBookmarks.map(([project, pageId, revisionId]) => <li key={project + ":" + pageId}>
             {project} · page {pageId} · saved revision {revisionId}{" "}
             <button type="button" disabled={savedBusy}
+              aria-label={`Open latest available article for ${project} page ${pageId}`}
+              onClick={() => openSavedBookmark(project, pageId)}>Open latest</button>{" "}
+            <button type="button" disabled={savedBusy}
               aria-label={`Remove bookmark for ${project} page ${pageId}`}
               onClick={() => void removeSavedBookmark(project, pageId)}>Remove</button>
           </li>)}</ul>
-          <p>Opening a bookmark at the latest revision and restoring its reading position are not available yet.</p>
+          <p>Opening saved pages requires a connection and displays an online text preview, not a complete offline article. Restoring saved reading positions across revisions is not available yet.</p>
         </section> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {destination === "article" && message && <div className="notice" role="status">

@@ -12,6 +12,12 @@ export interface ReaderArticleContext {
   revisionId: number;
 }
 
+export interface ReaderOpenPageRequest {
+  id: number;
+  project: string;
+  pageId: number;
+}
+
 interface ArticlePreview {
   frameId: number;
   pageId: number;
@@ -35,7 +41,10 @@ function isolatedDocument(html: string): string {
   ].join("");
 }
 
-export default function OnlineReader({ onArticleChange }: { onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void }) {
+export default function OnlineReader({ onArticleChange, bookmarkRequest }: {
+  onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void;
+  bookmarkRequest?: ReaderOpenPageRequest | null;
+}) {
   const uniqueId = useId();
   const projectFieldId = `${uniqueId}-project`;
   const queryFieldId = `${uniqueId}-query`;
@@ -45,6 +54,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   const [connected, setConnected] = useState(() => navigator.onLine);
   const requestEpoch = useRef(new RequestEpoch());
   const nextFrameId = useRef(1);
+  const lastBookmarkRequestId = useRef(0);
   const [hits, setHits] = useState<ReaderSearchHit[]>([]);
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
@@ -57,6 +67,47 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   }, [article?.title, article?.pageId, article?.revisionId, project, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Bookmark reopening is explicit user navigation. Never bypass offline mode,
+  // and do not discard the active revision/history on a failed fetch.
+  useEffect(() => {
+    if (!bookmarkRequest || bookmarkRequest.id <= lastBookmarkRequestId.current) return;
+    lastBookmarkRequestId.current = bookmarkRequest.id;
+    if (offline || !connected || !navigator.onLine) {
+      setNotice("Cannot open this saved page without a connection. The current article is unchanged.");
+      return;
+    }
+    if (!Number.isSafeInteger(bookmarkRequest.pageId) || bookmarkRequest.pageId <= 0 ||
+        !["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"].includes(bookmarkRequest.project)) {
+      setNotice("Invalid saved Wikipedia page identity.");
+      return;
+    }
+    const epoch = requestEpoch.current.begin();
+    setBusy(true);
+    setNotice(null);
+    void invoke<unknown>("open_wikipedia_page", {
+      project: bookmarkRequest.project,
+      pageId: bookmarkRequest.pageId,
+      offline: false,
+    }).then((result) => {
+      const [pageId, revisionId, title, html] = parseReaderArticle(result, bookmarkRequest.pageId);
+      if (!requestEpoch.current.matches(epoch)) return;
+      const next = { frameId: nextFrameId.current++, pageId, revisionId, title, html,
+        links: extractWikiArticleLinks(html, bookmarkRequest.project) };
+      setNavigation((previous) => openReaderArticle(
+        project === bookmarkRequest.project ? previous : emptyReaderNavigation<ArticlePreview>(), next,
+      ));
+      setProject(bookmarkRequest.project);
+      setHits([]);
+      setNotice("Opened the latest available online revision. This is not a complete offline article.");
+    }).catch(() => {
+      if (requestEpoch.current.matches(epoch)) {
+        setNotice("Saved page could not be reopened. The previous article was preserved.");
+      }
+    }).finally(() => {
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
+    });
+  }, [bookmarkRequest, project, offline, connected]);
 
   useEffect(() => {
     const disconnected = () => {
