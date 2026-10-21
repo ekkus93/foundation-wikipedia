@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isolatedReaderDocument, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
@@ -27,23 +28,12 @@ interface ArticlePreview {
   links: WikiArticleLink[];
 }
 
-// The iframe is deliberately unprivileged and has no external resource access.
-// Required visuals are not yet installed, so this is never labeled offline-ready.
-function isolatedDocument(html: string): string {
-  return [
-    "<!doctype html><html><head>",
-    "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'none'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'\">",
-    "<meta name=\"referrer\" content=\"no-referrer\">",
-    "<style>body{font:17px/1.6 Georgia,serif;padding:1rem;margin:0;color:#202122}table{max-width:100%;overflow-wrap:anywhere}img,video,audio{display:none}a{pointer-events:none}pre{white-space:pre-wrap}*{max-width:100%}</style>",
-    "</head><body>",
-    html,
-    "</body></html>",
-  ].join("");
-}
-
-export default function OnlineReader({ onArticleChange, bookmarkRequest }: {
+// Isolated preview HTML is built using whitelisted, app-controlled layout choices.
+export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth }: {
   onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void;
   bookmarkRequest?: ReaderOpenPageRequest | null;
+  textSize: ReaderTextSize;
+  readingWidth: ReaderWidth;
 }) {
   const uniqueId = useId();
   const projectFieldId = `${uniqueId}-project`;
@@ -272,7 +262,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest }: {
             sandbox=""
             referrerPolicy="no-referrer"
             className="article-preview-frame"
-            srcDoc={isolatedDocument(snapshot.html)}
+            srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth)}
           />
         ))}
       </div>

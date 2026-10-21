@@ -6,6 +6,7 @@ import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selec
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
+import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
@@ -22,6 +23,10 @@ export default function App() {
   const [savedResult, setSavedResult] = useState<string | null>(null);
   const [confirmClearReading, setConfirmClearReading] = useState(false);
   const [themeError, setThemeError] = useState<string | null>(null);
+  const [textSize, setTextSize] = useState<ReaderTextSize>("standard");
+  const [readingWidth, setReadingWidth] = useState<ReaderWidth>("standard");
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [layoutBusy, setLayoutBusy] = useState(false);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
@@ -42,6 +47,7 @@ export default function App() {
   const mainActionRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
   const themeChoiceRevision = useRef(0);
+  const layoutChoiceRevision = useRef(0);
 
   // SQLite is authoritative when available; preserve the existing browser
   // preference as a fallback for the standalone Vite development shell.
@@ -64,6 +70,51 @@ export default function App() {
     void invoke<void>("set_reader_theme", { theme: choice }).catch(() => {
       setThemeError("Theme applies in this session, but could not be saved to the private settings database.");
     });
+  }
+
+  useEffect(() => {
+    let active = true;
+    const revision = layoutChoiceRevision.current;
+    void invoke<unknown>("read_reader_layout")
+      .then(parseReaderLayout)
+      .then(([size, width]) => {
+        if (!active || layoutChoiceRevision.current !== revision) return;
+        setTextSize(size);
+        setReadingWidth(width);
+      }).catch(() => {
+        // Browser-only Vite preview has no native private database.
+      });
+    return () => { active = false; };
+  }, []);
+
+  async function chooseTextSize(value: ReaderTextSize) {
+    if (layoutBusy) return;
+    layoutChoiceRevision.current += 1;
+    setLayoutBusy(true);
+    setLayoutError(null);
+    setTextSize(value);
+    try {
+      await invoke<void>("set_reader_text_size", { textSize: value });
+    } catch {
+      setLayoutError("Text size changed for this session, but could not be saved.");
+    } finally {
+      setLayoutBusy(false);
+    }
+  }
+
+  async function chooseReadingWidth(value: ReaderWidth) {
+    if (layoutBusy) return;
+    layoutChoiceRevision.current += 1;
+    setLayoutBusy(true);
+    setLayoutError(null);
+    setReadingWidth(value);
+    try {
+      await invoke<void>("set_reader_width", { readingWidth: value });
+    } catch {
+      setLayoutError("Reading width changed for this session, but could not be saved.");
+    } finally {
+      setLayoutBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -307,7 +358,7 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
+              <OnlineReader textSize={textSize} readingWidth={readingWidth} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));
@@ -332,6 +383,24 @@ export default function App() {
             {choice === "system" ? "Use system setting" : choice === "light" ? "Light" : "Dark"}
           </label>)}
           {themeError && <p role="alert">{themeError}</p>}
+          <fieldset className="reading-layout-choice">
+            <legend>Article text size</legend>
+            {TEXT_SIZE_OPTIONS.map((size) => <label key={size}>
+              <input type="radio" name="article-text-size" checked={textSize === size}
+                disabled={layoutBusy} onChange={() => void chooseTextSize(size)} />
+              {size === "standard" ? "Standard" : size === "small" ? "Small" : "Large"}
+            </label>)}
+          </fieldset>
+          <fieldset className="reading-layout-choice">
+            <legend>Article line width</legend>
+            {WIDTH_OPTIONS.map((width) => <label key={width}>
+              <input type="radio" name="article-reading-width" checked={readingWidth === width}
+                disabled={layoutBusy} onChange={() => void chooseReadingWidth(width)} />
+              {width === "standard" ? "Standard" : width === "narrow" ? "Narrow" : "Wide"}
+            </label>)}
+          </fieldset>
+          <p>These preferences affect the isolated article preview. Changing them may reset its in-frame scroll position.</p>
+          {layoutError && <p role="alert">{layoutError}</p>}
         </fieldset> : settingsSection === "History & Saved Content" ? <section aria-label="Saved page bookmarks">
           <p>Saved Wikipedia page identities only. Bookmarks do not install article text or images for offline use.</p>
           {savedBusy && <p role="status">Loading saved bookmarks…</p>}
