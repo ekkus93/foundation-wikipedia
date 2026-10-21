@@ -434,6 +434,43 @@ mod bookmark_tests {
     }
 
     #[test]
+    fn reading_layout_survives_restart_without_changing_other_user_state() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-layout-persistence-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("user-state.sqlite");
+        {
+            let state = UserState::open(&db).unwrap();
+            state.set_setting("reading.text_size", "large").unwrap();
+            state.set_setting("reading.width", "narrow").unwrap();
+            state.set_setting("reading.theme", "dark").unwrap();
+        }
+        {
+            let state = UserState::open(&db).unwrap();
+            assert_eq!(
+                validated_reader_layout(&state).unwrap(),
+                ("large".to_owned(), "narrow".to_owned())
+            );
+            assert_eq!(validated_reader_theme(&state).unwrap(), Some("dark".to_owned()));
+            state.set_setting("reading.text_size", "small").unwrap();
+        }
+        {
+            let state = UserState::open(&db).unwrap();
+            assert_eq!(
+                validated_reader_layout(&state).unwrap(),
+                ("small".to_owned(), "narrow".to_owned())
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
         let state = UserState::in_memory().unwrap();
         let article = ArticleKey {
