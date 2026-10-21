@@ -399,7 +399,6 @@ mod tests {
                 42,
                 NetworkState::Offline,
                 &[incomplete_cache.clone()],
-
             ),
             Ok(FetchOutcome::MissingOffline)
         );
