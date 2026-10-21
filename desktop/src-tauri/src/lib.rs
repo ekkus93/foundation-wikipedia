@@ -323,6 +323,59 @@ async fn set_reader_theme(app: tauri::AppHandle, theme: String) -> Result<(), St
     .map_err(|_| "Appearance preference worker stopped".to_owned())?
 }
 
+
+fn validated_reader_layout(state: &UserState) -> Result<(String, String), UserStateError> {
+    let text_size = state.setting("reading.text_size")?
+        .unwrap_or_else(|| "standard".to_owned());
+    let reading_width = state.setting("reading.width")?
+        .unwrap_or_else(|| "standard".to_owned());
+    if !matches!(text_size.as_str(), "small" | "standard" | "large")
+        || !matches!(reading_width.as_str(), "narrow" | "standard" | "wide")
+    {
+        return Err(UserStateError::InvalidValue);
+    }
+    Ok((text_size, reading_width))
+}
+
+/// These preferences only affect app-controlled presentation, never untrusted
+/// article HTML, and contain no provider credentials or personal article data.
+#[tauri::command]
+async fn read_reader_layout(app: tauri::AppHandle) -> Result<(String, String), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        validated_reader_layout(&state)
+            .map_err(|_| "Invalid saved reading layout".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading layout worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn set_reader_text_size(app: tauri::AppHandle, text_size: String) -> Result<(), String> {
+    if !matches!(text_size.as_str(), "small" | "standard" | "large") {
+        return Err("Unsupported reading text size".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.set_setting("reading.text_size", &text_size)
+            .map_err(|_| "Cannot save reading text size".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading text size worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn set_reader_width(app: tauri::AppHandle, reading_width: String) -> Result<(), String> {
+    if !matches!(reading_width.as_str(), "narrow" | "standard" | "wide") {
+        return Err("Unsupported reading width".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.set_setting("reading.width", &reading_width)
+            .map_err(|_| "Cannot save reading width".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading width worker stopped".to_owned())?
+}
+
 #[cfg(test)]
 mod bookmark_tests {
     use super::*;
@@ -360,6 +413,26 @@ mod bookmark_tests {
         assert!(matches!(validated_reader_theme(&state), Err(UserStateError::InvalidValue)));
     }
 
+
+    #[test]
+    fn reading_layout_is_defaulted_validated_and_preserves_independent_choices() {
+        let state = UserState::in_memory().unwrap();
+        assert_eq!(validated_reader_layout(&state).unwrap(), ("standard".to_owned(), "standard".to_owned()));
+        for size in ["small", "standard", "large"] {
+            state.set_setting("reading.text_size", size).unwrap();
+            assert_eq!(validated_reader_layout(&state).unwrap().0, size);
+        }
+        for width in ["narrow", "standard", "wide"] {
+            state.set_setting("reading.width", width).unwrap();
+            assert_eq!(validated_reader_layout(&state).unwrap().1, width);
+        }
+        state.set_setting("reading.text_size", "42px; color: red").unwrap();
+        assert!(matches!(validated_reader_layout(&state), Err(UserStateError::InvalidValue)));
+        state.set_setting("reading.text_size", "standard").unwrap();
+        state.set_setting("reading.width", "calc(100vh)").unwrap();
+        assert!(matches!(validated_reader_layout(&state), Err(UserStateError::InvalidValue)));
+    }
+
     #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
         let state = UserState::in_memory().unwrap();
@@ -394,7 +467,10 @@ pub fn run() {
             list_reader_history,
             clear_reader_history,
             read_reader_theme,
-            set_reader_theme
+            set_reader_theme,
+            read_reader_layout,
+            set_reader_text_size,
+            set_reader_width
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");
