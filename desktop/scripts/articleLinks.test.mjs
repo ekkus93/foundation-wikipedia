@@ -22,6 +22,8 @@ test("rejects external, unsafe, cross-edition and non-article destinations", () 
     "./Physics/%2F/Chemistry", "./Physics/%5c/Chemistry",
     "./Physics/%252f/Chemistry", "./Physics/%255c/Chemistry",
     "./Physics/%252e%252e/Chemistry",
+    "./Physics/%25252f/Chemistry", "./Physics/%2525255c/Chemistry",
+    "./Physics/%25252e%25252e/Chemistry",
     "https://en.wikipedia.org/wiki/Physics/%252e%252e/Chemistry",
     " ./Physics", "./Physics\n", "/wiki/", "./Physics:Special",
   ]) assert.equal(normalizeWikiHref(href, "enwiki"), null, href);
