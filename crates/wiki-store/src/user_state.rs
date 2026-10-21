@@ -314,15 +314,16 @@ impl UserState {
         if visited_at <= 0 {
             return Err(UserStateError::InvalidValue);
         }
-        if !self.history_enabled()? {
-            return Ok(false);
-        }
-        self.conn.execute(
+        // Evaluate consent and insert in one SQLite statement. Separate
+        // preference-read and insert calls can race with disabling history.
+        Ok(self.conn.execute(
             "INSERT INTO history (project,page_id,revision_id,visited_at)
-             VALUES (?1,?2,?3,?4)",
+             SELECT ?1,?2,?3,?4 WHERE EXISTS (
+               SELECT 1 FROM settings
+               WHERE key='history.enabled' AND value='true'
+             )",
             params![key.project, page, revision, visited_at],
-        )?;
-        Ok(true)
+        )? != 0)
     }
 
     /// Bounded, newest-first history; invalid persisted identifiers fail closed.
@@ -817,6 +818,9 @@ mod tests {
 
         user.set_history_enabled(false).unwrap();
         assert!(!user.record_visit(&key(), 102, 1236).unwrap());
+        assert_eq!(user.recent_history(10).unwrap().len(), 2);
+        user.set_setting("history.enabled", "corrupt").unwrap();
+        assert!(!user.record_visit(&key(), 103, 1237).unwrap());
         assert_eq!(user.recent_history(10).unwrap().len(), 2);
         assert_eq!(user.clear_history().unwrap(), 2);
         assert_eq!(user.clear_history().unwrap(), 0);
