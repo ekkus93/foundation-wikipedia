@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import OnlineReader from "./OnlineReader";
+import OnlineReader, { type ReaderArticleContext } from "./OnlineReader";
+import { invoke } from "@tauri-apps/api/core";
 import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
@@ -20,6 +21,8 @@ export default function App() {
     }
   });
   const tabScrollRef = useRef(new Map<number, number>());
+  const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
+  const bookmarkInFlightRef = useRef(false);
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
   const hubRef = useRef<HTMLDivElement>(null);
@@ -95,6 +98,7 @@ export default function App() {
   function closeTab(id: number) {
     rememberTabScroll();
     tabScrollRef.current.delete(id);
+    tabArticleRef.current.delete(id);
     setReaderTabs((state) => closeReaderTab(state, id));
   }
 
@@ -115,6 +119,19 @@ export default function App() {
       setSettingsSection(null);
       setDestination("settings");
       setMessage(null);
+    } else if (action === "Bookmark") {
+      const current = tabArticleRef.current.get(readerTabs.activeId);
+      if (!current) {
+        setMessage("Open a Wikipedia article before bookmarking it.");
+      } else if (!bookmarkInFlightRef.current) {
+        bookmarkInFlightRef.current = true;
+        void invoke<boolean>("toggle_reader_bookmark", current)
+          .then((saved) => setMessage(saved
+            ? "Page bookmark saved. Article text and images were not downloaded for offline use."
+            : "Page bookmark removed."))
+          .catch(() => setMessage("Bookmark storage unavailable; no offline content was changed."))
+          .finally(() => { bookmarkInFlightRef.current = false; });
+      }
     } else {
       setMessage(`${action} is not implemented yet. This screen is a development shell.`);
     }
@@ -156,7 +173,9 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader onArticleChange={(title) => {
+              <OnlineReader onArticleChange={(title, context) => {
+                if (context) tabArticleRef.current.set(tab.id, context);
+                else tabArticleRef.current.delete(tab.id);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));
               }} />
             </section>

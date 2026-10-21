@@ -16,6 +16,8 @@ tauri-build = "2.4.1"
 tauri = "2.8.5"
 wiki-core = { path = "../../crates/wiki-core" }
 wiki-source = { path = "../../crates/wiki-source" }
+wiki-store = { path = "../../crates/wiki-store" }
+wiki-model = { path = "../../crates/wiki-model" }
 
 # Separate from the platform-neutral root workspace.
 [workspace]

@@ -6,6 +6,12 @@ import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
+export interface ReaderArticleContext {
+  project: string;
+  pageId: number;
+  revisionId: number;
+}
+
 interface ArticlePreview {
   frameId: number;
   pageId: number;
@@ -29,7 +35,7 @@ function isolatedDocument(html: string): string {
   ].join("");
 }
 
-export default function OnlineReader({ onArticleChange }: { onArticleChange?: (title: string | null) => void }) {
+export default function OnlineReader({ onArticleChange }: { onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void }) {
   const uniqueId = useId();
   const projectFieldId = `${uniqueId}-project`;
   const queryFieldId = `${uniqueId}-query`;
@@ -44,8 +50,11 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   const article = navigation.current;
   const mountedFrames = mountedReaderFrames(navigation);
   useEffect(() => {
-    onArticleChange?.(article?.title ?? null);
-  }, [article?.title, onArticleChange]);
+    onArticleChange?.(
+      article?.title ?? null,
+      article ? { project, pageId: article.pageId, revisionId: article.revisionId } : null,
+    );
+  }, [article?.title, article?.pageId, article?.revisionId, project, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
