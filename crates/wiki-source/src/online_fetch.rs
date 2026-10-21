@@ -198,6 +198,7 @@ pub fn fetch_title_with_versions<T: MediaWikiTransport>(
         OpenTitle::MissingOffline => return Ok(FetchOutcome::MissingOffline),
         OpenTitle::Resolve { title_url } => title_url,
     };
+
     let response = read_response(
         client,
         &title_url,
@@ -398,6 +399,7 @@ mod tests {
                 42,
                 NetworkState::Offline,
                 &[incomplete_cache.clone()],
+
             ),
             Ok(FetchOutcome::MissingOffline)
         );
@@ -487,7 +489,9 @@ mod tests {
         let mut client = FakeTransport::default();
         let title_json = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
         client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
-        client.answers.push_back(Err("revision service unavailable"));
+        client
+            .answers
+            .push_back(Err("revision service unavailable"));
         let error = fetch_title_with_versions(
             &mut client,
             "enwiki",
@@ -497,7 +501,10 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.stage, FetchStage::Metadata);
-        assert_eq!(error.cause, FetchCause::Transport("revision service unavailable"));
+        assert_eq!(
+            error.cause,
+            FetchCause::Transport("revision service unavailable")
+        );
         assert_eq!(error.fallback, Some(local()));
         assert_eq!(client.requests.len(), 2);
     }
