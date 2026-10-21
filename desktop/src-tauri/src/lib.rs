@@ -212,6 +212,20 @@ async fn remove_reader_bookmark(
     .map_err(|_| "Bookmark removal worker stopped".to_owned())?
 }
 
+/// Erase personal reading activity in one SQLite transaction without touching
+/// pack ownership, builder jobs or ordinary settings. The UI requires an explicit
+/// second confirmation before invoking this destructive operation.
+#[tauri::command]
+async fn clear_reader_personal_data(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut state = open_private_bookmark_store(&app)?;
+        state.clear_personal_reading_data()
+            .map_err(|_| "Cannot clear personal reading data".to_owned())
+    })
+    .await
+    .map_err(|_| "Personal reading data worker stopped".to_owned())?
+}
+
 #[cfg(test)]
 mod bookmark_tests {
     use super::*;
@@ -242,7 +256,8 @@ pub fn run() {
             open_wikipedia_page,
             toggle_reader_bookmark,
             list_reader_bookmarks,
-            remove_reader_bookmark
+            remove_reader_bookmark,
+            clear_reader_personal_data
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");

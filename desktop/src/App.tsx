@@ -15,6 +15,8 @@ export default function App() {
   const [bookmarkOpen, setBookmarkOpen] = useState<(ReaderOpenPageRequest & { tabId: number }) | null>(null);
   const [savedBusy, setSavedBusy] = useState(false);
   const [savedError, setSavedError] = useState<string | null>(null);
+  const [savedResult, setSavedResult] = useState<string | null>(null);
+  const [confirmClearReading, setConfirmClearReading] = useState(false);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
@@ -124,6 +126,23 @@ export default function App() {
     setMessage(null);
   }
 
+  async function clearPersonalReadingData() {
+    if (!confirmClearReading || savedBusy) return;
+    setSavedBusy(true);
+    setSavedError(null);
+    setSavedResult(null);
+    try {
+      await invoke<void>("clear_reader_personal_data");
+      setSavedBookmarks([]);
+      setSavedResult("Saved bookmarks, reading positions, visit history and article chats were deleted. Installed packs and settings remain unchanged.");
+      setConfirmClearReading(false);
+    } catch {
+      setSavedError("Unable to delete personal reading data. No successful deletion was confirmed.");
+    } finally {
+      setSavedBusy(false);
+    }
+  }
+
   function rememberTabScroll() {
     tabScrollRef.current.set(readerTabs.activeId, window.scrollY);
   }
@@ -146,6 +165,7 @@ export default function App() {
   }
 
   function leaveSettings() {
+    setConfirmClearReading(false);
     if (settingsSection !== null) {
       setSettingsSection(null);
     } else {
@@ -244,6 +264,7 @@ export default function App() {
           <p>Saved Wikipedia page identities only. Bookmarks do not install article text or images for offline use.</p>
           {savedBusy && <p role="status">Loading saved bookmarks…</p>}
           {savedError && <p role="alert">{savedError}</p>}
+          {savedResult && <p role="status">{savedResult}</p>}
           {!savedBusy && !savedError && savedBookmarks.length === 0 && <p>No saved pages.</p>}
           <ul>{savedBookmarks.map(([project, pageId, revisionId]) => <li key={project + ":" + pageId}>
             {project} · page {pageId} · saved revision {revisionId}{" "}
@@ -255,6 +276,18 @@ export default function App() {
               onClick={() => void removeSavedBookmark(project, pageId)}>Remove</button>
           </li>)}</ul>
           <p>Opening saved pages requires a connection and displays an online text preview, not a complete offline article. Restoring saved reading positions across revisions is not available yet.</p>
+          {!confirmClearReading ? (
+            <button type="button" disabled={savedBusy} onClick={() => {
+              setSavedResult(null);
+              setConfirmClearReading(true);
+            }}>Delete personal reading data…</button>
+          ) : (
+            <div role="group" aria-label="Confirm permanent reading data deletion">
+              <p>Delete all bookmarks, saved reading positions, visit history and article chats? This cannot be undone. Installed packs and other settings will not be deleted.</p>
+              <button type="button" disabled={savedBusy} onClick={() => void clearPersonalReadingData()}>Yes, delete reading data</button>
+              <button type="button" disabled={savedBusy} onClick={() => setConfirmClearReading(false)}>Cancel</button>
+            </div>
+          )}
         </section> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {destination === "article" && message && <div className="notice" role="status">
