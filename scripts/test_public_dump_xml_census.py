@@ -127,7 +127,7 @@ class DumpXmlTests(unittest.TestCase):
     def test_ordinary_rtl_titles_remain_valid_without_directional_controls(self):
         self.add(1, 100, f"<mediawiki>{page(1).replace('Page 1', 'الفيزياء')}</mediawiki>")
         output, count = self.run_census()
-        self.assertEqual((output.read_bytes(), count), (b"1\\n", 1))
+        self.assertEqual((output.read_bytes(), count), (b"1\n", 1))
 
     def test_revision_content_jsonl_retains_legacy_and_main_slot_wikitext(self):
         first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\nSecond line")
