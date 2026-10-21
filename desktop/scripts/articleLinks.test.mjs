@@ -96,6 +96,8 @@ test("rejects directional-format and C1 control characters in article-link desti
     "./Physics\\u2066",
     "./Physics\\u2069",
     "./Physics\\u0085",
+    "./Physics\u061c", "./Physics\u200e", "./Physics\u200f",
+    "./Physics%D8%9C", "./Physics%E2%80%8E", "./Physics%E2%80%8F",
     "./Physics%E2%80%AE",
     "./Physics%E2%81%A6",
     "/wiki/Physics%E2%81%A9",
