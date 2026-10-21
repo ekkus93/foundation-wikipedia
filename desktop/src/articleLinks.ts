@@ -19,7 +19,7 @@ export function normalizeWikiHref(href: string, project: string): string | null 
   // Reject encoded path separators and dot segments in the original href so
   // untrusted markup cannot disguise a different article as its destination.
   const rawPath = href.startsWith("./") ? href.slice(2).split(/[?#]/u, 1)[0] : href.split(/[?#]/u, 1)[0];
-  if (/%(?:2f|5c)/iu.test(rawPath) || rawPath.split("/").some((segment) => /^(?:\.|%2e){1,2}$/iu.test(segment))) return null;
+  if (/%(?:2f|5c|25(?:2f|5c|2e))/iu.test(rawPath) || rawPath.split("/").some((segment) => /^(?:\.|%2e){1,2}$/iu.test(segment))) return null;
   const lang = project.slice(0, -4);
   let url: URL;
   try {
