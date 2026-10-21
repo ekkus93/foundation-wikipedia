@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { RequestEpoch } from "../src/requestEpoch.ts";
 import {
   appendReaderHistory, backReaderArticle, emptyReaderNavigation,
-  forwardReaderArticle, mountedReaderFrames, openReaderArticle, popReaderHistory,
+  forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, popReaderHistory,
 } from "../src/readerHistory.ts";
 
 const article = (pageId, revisionId = pageId * 10) => ({
@@ -96,4 +96,18 @@ test("offline transition invalidates an in-flight fetch without discarding loade
   const back = backReaderArticle(loaded);
   assert.deepEqual(back.current, first);
   assert.deepEqual(forwardReaderArticle(back).current, second);
+});
+
+test("bookmark navigation preserves same-edition Back but isolates another edition", () => {
+  const first = article(12, 120);
+  const latest = article(12, 121);
+  const old = openReaderArticle(emptyReaderNavigation(), first);
+  const sameEdition = openBookmarkedReaderArticle(old, "enwiki", "enwiki", latest);
+  assert.deepEqual(sameEdition.current, latest);
+  assert.deepEqual(backReaderArticle(sameEdition).current, first);
+  const otherEdition = openBookmarkedReaderArticle(old, "enwiki", "dewiki", latest);
+  assert.deepEqual(otherEdition.current, latest);
+  assert.deepEqual(otherEdition.back, []);
+  assert.deepEqual(otherEdition.forward, []);
+  assert.equal(backReaderArticle(otherEdition).current, null);
 });

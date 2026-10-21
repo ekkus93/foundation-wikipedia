@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
-import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openReaderArticle, type ReaderNavigation } from "./readerHistory";
+import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
@@ -94,9 +94,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest }: {
       if (!requestEpoch.current.matches(epoch)) return;
       const next = { frameId: nextFrameId.current++, pageId, revisionId, title, html,
         links: extractWikiArticleLinks(html, bookmarkRequest.project) };
-      setNavigation((previous) => openReaderArticle(
-        project === bookmarkRequest.project ? previous : emptyReaderNavigation<ArticlePreview>(), next,
-      ));
+      setNavigation((previous) => openBookmarkedReaderArticle(previous, project, bookmarkRequest.project, next));
       setProject(bookmarkRequest.project);
       setHits([]);
       setNotice("Opened the latest available online revision. This is not a complete offline article.");

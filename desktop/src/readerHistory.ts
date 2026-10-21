@@ -37,6 +37,14 @@ export function openReaderArticle<T extends { html: string }>(state: ReaderNavig
   };
 }
 
+/** A cross-edition bookmark replaces navigation; same-edition bookmarks keep
+ * the current revision on Back. Never mix history across Wikimedia projects. */
+export function openBookmarkedReaderArticle<T extends { html: string }>(
+  state: ReaderNavigation<T>, currentProject: string, savedProject: string, article: T,
+): ReaderNavigation<T> {
+  return openReaderArticle(currentProject === savedProject ? state : emptyReaderNavigation<T>(), article);
+}
+
 export function backReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>): ReaderNavigation<T> {
   if (!state.current) return state;
   const { previous, rest } = popReaderHistory(state.back);
