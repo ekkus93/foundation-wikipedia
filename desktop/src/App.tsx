@@ -125,7 +125,7 @@ export default function App() {
         setMessage("Open a Wikipedia article before bookmarking it.");
       } else if (!bookmarkInFlightRef.current) {
         bookmarkInFlightRef.current = true;
-        void invoke<boolean>("toggle_reader_bookmark", current)
+        void invoke<boolean>("toggle_reader_bookmark", { project: current.project, pageId: current.pageId, revisionId: current.revisionId })
           .then((saved) => setMessage(saved
             ? "Page bookmark saved. Article text and images were not downloaded for offline use."
             : "Page bookmark removed."))
