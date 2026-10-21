@@ -99,7 +99,10 @@ pub fn parse_search_results(
                 !title.trim().is_empty()
                     && *title == title.trim()
                     && title.len() <= MAX_TITLE_BYTES
-                    && !title.chars().any(char::is_control)
+                    && !title.chars().any(|ch| {
+                        ch.is_control()
+                            || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+                    })
             })
             .ok_or(OnlineSearchError::InvalidIdentity)?;
         if !seen.insert(page_id) {
@@ -227,6 +230,7 @@ mod tests {
             r#"{"query":{"search":[{"pageid":1,"ns":2147483648,"title":"A"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":" "} ]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"A\nB"}]}}"#,
+            r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"A\u202eB"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":1,"title":"Talk:Physics"}]}}"#,
             r#"{"query":{"search":[{"pageid":1,"ns":0,"title":" Physics "}]}}"#,
         ] {
