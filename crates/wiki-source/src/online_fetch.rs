@@ -135,18 +135,33 @@ pub fn fetch_article<T: MediaWikiTransport>(
 }
 
 /// Open a stable page identity obtained from search rather than resolving its
-/// mutable display title a second time. Offline mode never invokes transport.
+/// mutable display title a second time. Without caller-supplied local versions,
+/// an offline lookup cannot return an article.
 pub fn fetch_page_id<T: MediaWikiTransport>(
     client: &mut T,
     project: &str,
     page_id: u64,
     network: NetworkState,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_page_id_with_versions(client, project, page_id, network, &[])
+}
+
+/// Navigate from a stable page ID while honoring independently verified local
+/// versions. A complete installed/saved/cached article is usable offline;
+/// online failures preserve that older version as an explicitly local fallback.
+/// The caller must verify required media before setting local_complete.
+pub fn fetch_page_id_with_versions<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    page_id: u64,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     let key = ArticleKey {
         project: project.to_owned(),
         page_id,
     };
-    fetch_article(client, &key, network, &[])
+    fetch_article(client, &key, network, versions)
 }
 
 /// Resolve an explicitly online title through canonical redirect metadata,
@@ -349,6 +364,76 @@ mod tests {
             Ok(FetchOutcome::MissingOffline)
         );
         assert_eq!(client.requests.len(), 2);
+    }
+
+    #[test]
+    fn page_id_navigation_honors_verified_offline_copies_and_online_fallback() {
+        let mut client = FakeTransport::default();
+        let incomplete_cache = ArticleVersion {
+            key: key(),
+            revision_id: 201,
+            location: ArticleLocation::TemporaryCache,
+            local_complete: false,
+        };
+        assert_eq!(
+            fetch_page_id_with_versions(
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Offline,
+                &[incomplete_cache.clone()],
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(
+            fetch_page_id_with_versions(
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Offline,
+                &[incomplete_cache, local()],
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
+        assert!(client.requests.is_empty());
+
+        client.answers.push_back(Err("upstream unavailable"));
+        let error = fetch_page_id_with_versions(
+            &mut client,
+            "enwiki",
+            42,
+            NetworkState::Online,
+            &[local()],
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(error.cause, FetchCause::Transport("upstream unavailable"));
+        assert_eq!(client.requests.len(), 1);
+
+        let foreign = ArticleVersion {
+            key: ArticleKey {
+                project: "dewiki".into(),
+                page_id: 42,
+            },
+            ..local()
+        };
+        let error = fetch_page_id_with_versions(
+            &mut client,
+            "enwiki",
+            42,
+            NetworkState::Offline,
+            &[foreign],
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(
+            error.cause,
+            FetchCause::Flow(OnlineFlowError::Selection(
+                crate::online_selection::SelectionError::ForeignArticle
+            ))
+        );
+        assert_eq!(client.requests.len(), 1);
     }
 
     #[test]
