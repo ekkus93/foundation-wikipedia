@@ -174,6 +174,44 @@ async fn toggle_reader_bookmark(
     .map_err(|_| "Bookmark worker stopped".to_owned())?
 }
 
+
+fn saved_bookmark_rows(state: &UserState) -> Result<Vec<(String, u64, u64)>, UserStateError> {
+    Ok(state
+        .list_bookmarks(100)?
+        .into_iter()
+        .map(|item| (item.key.project, item.key.page_id, item.revision_id))
+        .collect())
+}
+
+/// Retrieve bounded saved identities only; no article HTML or offline media.
+#[tauri::command]
+async fn list_reader_bookmarks(app: tauri::AppHandle) -> Result<Vec<(String, u64, u64)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        saved_bookmark_rows(&state)
+            .map_err(|_| "Cannot read saved page identities".to_owned())
+    })
+    .await
+    .map_err(|_| "Bookmark reader stopped".to_owned())?
+}
+
+/// Remove a bookmark without deleting an installed pack or cached media.
+#[tauri::command]
+async fn remove_reader_bookmark(
+    app: tauri::AppHandle,
+    project: String,
+    page_id: u64,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        let key = ArticleKey { project, page_id };
+        state.remove_bookmark(&key)
+            .map_err(|_| "Cannot remove bookmark identity".to_owned())
+    })
+    .await
+    .map_err(|_| "Bookmark removal worker stopped".to_owned())?
+}
+
 #[cfg(test)]
 mod bookmark_tests {
     use super::*;
@@ -187,7 +225,9 @@ mod bookmark_tests {
         };
         assert_eq!(toggle_saved_bookmark(&state, &article, 333).unwrap(), true);
         assert_eq!(state.bookmark(&article).unwrap(), Some((333, String::new())));
+        assert_eq!(saved_bookmark_rows(&state).unwrap(), vec![("enwiki".to_owned(), 42, 333)]);
         assert_eq!(toggle_saved_bookmark(&state, &article, 334).unwrap(), false);
+        assert!(saved_bookmark_rows(&state).unwrap().is_empty());
         assert_eq!(state.bookmark(&article).unwrap(), None);
         assert!(toggle_saved_bookmark(&state, &article, 0).is_err());
         assert!(toggle_saved_bookmark(&state, &article, i64::MAX as u64 + 1).is_err());
@@ -200,7 +240,9 @@ pub fn run() {
             search_wikipedia,
             open_wikipedia_title,
             open_wikipedia_page,
-            toggle_reader_bookmark
+            toggle_reader_bookmark,
+            list_reader_bookmarks,
+            remove_reader_bookmark
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");

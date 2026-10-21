@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput } from "../src/readerResponse.ts";
+import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, validReaderTitleInput } from "../src/readerResponse.ts";
 
 test("accepts bounded revision-scoped article and search IPC responses", () => {
   assert.deepEqual(parseReaderSearchHits([[12, "Physics"], [13, "Mathematics"]]), [[12, "Physics"], [13, "Mathematics"]]);
@@ -63,4 +63,16 @@ test("exact-title user navigation validates directional marks and UTF-8 byte lim
   }
   assert.equal(validReaderTitleInput("é".repeat(256)), true);
   assert.equal(validReaderTitleInput(null), false);
+});
+
+test("bounded bookmark listing validates exact identities without treating them as article bytes", () => {
+  assert.deepEqual(parseReaderBookmarks([["enwiki", 42, 333], ["frwiki", 42, 991]]),
+    [["enwiki", 42, 333], ["frwiki", 42, 991]]);
+  const sparse = Array(2);
+  sparse[1] = ["enwiki", 42, 333];
+  for (const bad of [null, {}, sparse, [["dewiki", 0, 2]],
+    [["enwiki", 42, 0]], [["untrustedwiki", 42, 3]],
+    [["enwiki", 42, 3], ["enwiki", 42, 4]], Array(101).fill(["enwiki", 42, 3])]) {
+    assert.throws(() => parseReaderBookmarks(bad), /Invalid bookmark|Duplicate bookmark/);
+  }
 });

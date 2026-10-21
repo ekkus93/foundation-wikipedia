@@ -1,6 +1,8 @@
 /** Validate untrusted Tauri IPC results before rendering or navigation. */
 export type ReaderSearchHit = [pageId: number, title: string];
 export type ReaderArticle = [pageId: number, revisionId: number, title: string, html: string];
+export type ReaderBookmark = [project: string, pageId: number, revisionId: number];
+const SUPPORTED_PROJECTS = new Set(["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"]);
 
 const MAX_HTML_BYTES = 2_000_000;
 
@@ -58,4 +60,23 @@ export function parseReaderArticle(input: unknown, expectedPageId?: number): Rea
     throw new Error("Invalid Wikipedia article identity or preview");
   }
   return [input[0], input[1], input[2], input[3]];
+}
+
+/** Reject malformed or duplicate persisted bookmark IPC rows before display.
+ * Bookmarks identify pages only, never complete offline content.
+ */
+export function parseReaderBookmarks(value: unknown): ReaderBookmark[] {
+  if (!Array.isArray(value) || value.length > 100) throw new Error("Invalid bookmark list");
+  const seen = new Set<string>();
+  return Array.from(value, (row: unknown): ReaderBookmark => {
+    if (!Array.isArray(row) || row.length !== 3 ||
+        typeof row[0] !== "string" || !SUPPORTED_PROJECTS.has(row[0]) ||
+        !validId(row[1]) || !validId(row[2])) {
+      throw new Error("Invalid bookmark identity");
+    }
+    const identity = row[0] + ":" + row[1];
+    if (seen.has(identity)) throw new Error("Duplicate bookmark identity");
+    seen.add(identity);
+    return [row[0], row[1], row[2]];
+  });
 }

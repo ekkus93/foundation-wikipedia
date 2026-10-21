@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OnlineReader, { type ReaderArticleContext } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
+import { parseReaderBookmarks, type ReaderBookmark } from "./readerResponse";
 import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
@@ -10,6 +11,9 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [message, setMessage] = useState<string | null>(null);
+  const [savedBookmarks, setSavedBookmarks] = useState<ReaderBookmark[]>([]);
+  const [savedBusy, setSavedBusy] = useState(false);
+  const [savedError, setSavedError] = useState<string | null>(null);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
@@ -80,6 +84,34 @@ export default function App() {
       returnFocusRef.current = false;
     }
   }, [destination, settingsSection]);
+
+
+  useEffect(() => {
+    if (destination !== "settings" || settingsSection !== "History & Saved Content") return;
+    let active = true;
+    setSavedBusy(true);
+    setSavedError(null);
+    void invoke<unknown>("list_reader_bookmarks")
+      .then(parseReaderBookmarks)
+      .then((bookmarks) => { if (active) setSavedBookmarks(bookmarks); })
+      .catch(() => { if (active) setSavedError("Saved bookmark list is unavailable."); })
+      .finally(() => { if (active) setSavedBusy(false); });
+    return () => { active = false; };
+  }, [destination, settingsSection]);
+
+  async function removeSavedBookmark(project: string, pageId: number) {
+    if (savedBusy) return;
+    setSavedBusy(true);
+    setSavedError(null);
+    try {
+      await invoke<boolean>("remove_reader_bookmark", { project, pageId });
+      setSavedBookmarks((rows) => rows.filter(([p, id]) => p !== project || id !== pageId));
+    } catch {
+      setSavedError("Unable to remove the saved bookmark.");
+    } finally {
+      setSavedBusy(false);
+    }
+  }
 
   function rememberTabScroll() {
     tabScrollRef.current.set(readerTabs.activeId, window.scrollY);
@@ -197,7 +229,19 @@ export default function App() {
             <input type="radio" name="color-theme" value={choice} checked={theme === choice} onChange={() => setTheme(choice)} />
             {choice === "system" ? "Use system setting" : choice === "light" ? "Light" : "Dark"}
           </label>)}
-        </fieldset> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
+        </fieldset> : settingsSection === "History & Saved Content" ? <section aria-label="Saved page bookmarks">
+          <p>Saved Wikipedia page identities only. Bookmarks do not install article text or images for offline use.</p>
+          {savedBusy && <p role="status">Loading saved bookmarks…</p>}
+          {savedError && <p role="alert">{savedError}</p>}
+          {!savedBusy && !savedError && savedBookmarks.length === 0 && <p>No saved pages.</p>}
+          <ul>{savedBookmarks.map(([project, pageId, revisionId]) => <li key={project + ":" + pageId}>
+            {project} · page {pageId} · saved revision {revisionId}{" "}
+            <button type="button" disabled={savedBusy}
+              aria-label={`Remove bookmark for ${project} page ${pageId}`}
+              onClick={() => void removeSavedBookmark(project, pageId)}>Remove</button>
+          </li>)}</ul>
+          <p>Opening a bookmark at the latest revision and restoring its reading position are not available yet.</p>
+        </section> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>
