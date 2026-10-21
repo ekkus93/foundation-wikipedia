@@ -2,7 +2,7 @@
  * The isolated preview iframe remains sandboxed with scripts and clicks disabled.
  * Only validated, same-edition mainspace titles reach the existing Rust adapter.
  */
-import { navigationTitleKey } from "./readerResponse";
+import { navigationTitleKey } from "./readerResponse.ts";
 
 export interface WikiArticleLink {
   title: string;
