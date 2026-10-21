@@ -160,7 +160,16 @@ impl WikipediaRequests {
         if title.trim().is_empty()
             || title != title.trim()
             || title.len() > MAX_QUERY_BYTES
-            || title.chars().any(char::is_control)
+            || title.chars().any(|ch| {
+                ch.is_control()
+                    || matches!(
+                        ch,
+                        '\u{061c}'
+                            | '\u{200e}'..='\u{200f}'
+                            | '\u{202a}'..='\u{202e}'
+                            | '\u{2066}'..='\u{2069}'
+                    )
+            })
         {
             return Err(OnlineRequestError::InvalidTitle);
         }
@@ -256,6 +265,17 @@ mod tests {
                 api.resolve_title(bad),
                 Err(OnlineRequestError::InvalidTitle)
             );
+        }
+        for mark in ['\u{200e}', '\u{202e}', '\u{2066}'] {
+            let unsafe_title = format!("Physics{mark}");
+            assert_eq!(
+                api.resolve_title(&unsafe_title),
+                Err(OnlineRequestError::InvalidTitle)
+            );
+        }
+        for title in ["الفيزياء", "פיזיקה"] {
+            let lookup = query(&api.resolve_title(title).unwrap());
+            assert_eq!(lookup.get("titles").map(String::as_str), Some(title));
         }
     }
 
