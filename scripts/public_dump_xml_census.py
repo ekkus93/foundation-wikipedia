@@ -29,6 +29,13 @@ MAX_NON_PAGE_XML_BYTES = 8 * 1024**2
 MAX_XML_DEPTH = 128
 MAX_PAGE_ID = 2**63 - 1
 MAX_NAMESPACE_ID = 2**31 - 1
+# Titles must not contain bidirectional display overrides or invisible marks.
+BIDI_CONTROLS = set("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+
+def unsafe_title_character(value):
+    return any(ord(char) < 32 or 127 <= ord(char) <= 159 or char in BIDI_CONTROLS for char in value)
+
 
 
 class DumpDecodeError(ValueError):
@@ -64,7 +71,7 @@ def _positive(text):
 def _page_identity(page):
     title = _one(page, "title").text
     if (not title or len(title.encode("utf-8")) > 4096 or title != title.strip()
-            or any(ord(char) < 32 or ord(char) == 127 for char in title)):
+            or unsafe_title_character(title)):
         raise DumpDecodeError("invalid page title")
     namespace = _one(page, "ns").text
     if namespace is None or len(namespace) > 10 or not re.fullmatch(r"0|[1-9][0-9]*", namespace):
@@ -94,7 +101,7 @@ def _page_identity(page):
         redirect_target = redirect.attrib["title"]
         if (not redirect_target or redirect_target != redirect_target.strip()
                 or len(redirect_target.encode("utf-8")) > 4096
-                or any(ord(char) < 32 or ord(char) == 127 for char in redirect_target)):
+                or unsafe_title_character(redirect_target)):
             raise DumpDecodeError("invalid redirect title")
     return page_id, namespace_id, title, revision_id, timestamp, redirect_target
 

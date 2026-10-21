@@ -108,6 +108,27 @@ class DumpXmlTests(unittest.TestCase):
                 stage_observed_census(self.manifest, self.staging, self.output, "observed.ids")
             self.assertEqual(list(self.output.iterdir()), [])
 
+    def test_bidi_controls_in_page_or_redirect_titles_fail_before_publication(self):
+        for marker in ("\u061c", "\u200e", "\u200f", "\u202a", "\u202e", "\u2066", "\u2069", "\u0085"):
+            for redirect in (False, True):
+                with self.subTest(marker=repr(marker), redirect=redirect):
+                    self.manifest["files"].clear()
+                    sample = page(1)
+                    if redirect:
+                        sample = sample.replace("<revision>",
+                                                f'<redirect title="Physics{marker} redirection"/><revision>')
+                    else:
+                        sample = sample.replace("Page 1", f"Physics{marker} test")
+                    self.add(1, 100, f"<mediawiki>{sample}</mediawiki>")
+                    with self.assertRaisesRegex(DumpDecodeError, "(page title|redirect title)"):
+                        self.run_census()
+                    self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_ordinary_rtl_titles_remain_valid_without_directional_controls(self):
+        self.add(1, 100, f"<mediawiki>{page(1).replace('Page 1', 'الفيزياء')}</mediawiki>")
+        output, count = self.run_census()
+        self.assertEqual((output.read_bytes(), count), (b"1\\n", 1))
+
     def test_revision_content_jsonl_retains_legacy_and_main_slot_wikitext(self):
         first = page(1).replace("Sample", "MediaWiki &amp; Unicode: München\nSecond line")
         second = page(2).replace("<text>Sample</text>",
