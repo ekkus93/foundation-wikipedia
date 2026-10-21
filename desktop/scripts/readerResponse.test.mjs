@@ -76,3 +76,15 @@ test("bounded bookmark listing validates exact identities without treating them 
     assert.throws(() => parseReaderBookmarks(bad), /Invalid bookmark|Duplicate bookmark/);
   }
 });
+
+test("rejects malformed UTF-16 title identities before IPC or HTTP encoding", () => {
+  for (const invalidTitle of ["\\ud800", "\\udc00", "Phy\\ud800sics", "\\ud800\\ud800", "\\ud800A"]) {
+    const title = invalidTitle.replaceAll("\\ud800", "\uD800").replaceAll("\\udc00", "\uDC00");
+    assert.equal(validReaderTitleInput(title), false);
+    assert.throws(() => parseReaderSearchHits([[42, title]]), /Invalid Wikipedia search identity/);
+    assert.throws(() => parseReaderArticle([42, 80, title, "<p>preview</p>"]), /Invalid Wikipedia article identity/);
+  }
+  // Properly paired surrogate code units represent valid Unicode scalar values.
+  assert.equal(validReaderTitleInput("🐈"), true);
+  assert.deepEqual(parseReaderSearchHits([[42, "猫と🐈"]]), [[42, "猫と🐈"]]);
+});
