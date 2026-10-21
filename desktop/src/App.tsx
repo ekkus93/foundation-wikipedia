@@ -346,7 +346,7 @@ export default function App() {
               <button type="button" disabled={savedBusy || historyBusy}
                 onClick={() => setConfirmClearHistory(false)}>Cancel</button>
             </div>
-          )
+          )}
           {!confirmClearReading ? (
             <button type="button" disabled={savedBusy} onClick={() => {
               setSavedResult(null);
