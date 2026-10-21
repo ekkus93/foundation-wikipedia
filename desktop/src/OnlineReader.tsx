@@ -3,9 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
+import { parseReaderArticle, parseReaderSearchHits, type ReaderSearchHit } from "./readerResponse";
 
-type SearchHit = [pageId: number, title: string];
-type ArticleResponse = [pageId: number, revisionId: number, title: string, html: string];
 
 interface ArticlePreview {
   frameId: number;
@@ -40,7 +39,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
   const [connected, setConnected] = useState(() => navigator.onLine);
   const requestEpoch = useRef(new RequestEpoch());
   const nextFrameId = useRef(1);
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hits, setHits] = useState<ReaderSearchHit[]>([]);
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
   const mountedFrames = mountedReaderFrames(navigation);
@@ -76,7 +75,7 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
     setNotice(null);
     setNavigation(emptyReaderNavigation());
     try {
-      const result = await invoke<SearchHit[]>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine });
+      const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine }));
       if (!requestEpoch.current.matches(epoch)) return;
       setHits(result);
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
@@ -97,10 +96,10 @@ export default function OnlineReader({ onArticleChange }: { onArticleChange?: (t
     setNotice(null);
     // Keep the current article visible if the next fetch fails.
     try {
-      const [pageId, revisionId, canonicalTitle, html] = await invoke<ArticleResponse>(
+      const [pageId, revisionId, canonicalTitle, html] = parseReaderArticle(await invoke<unknown>(
         command,
         { ...args, project, offline: offline || !connected || !navigator.onLine },
-      );
+      ), args.pageId);
       if (!requestEpoch.current.matches(epoch)) return;
       setNavigation((state) => openReaderArticle(state, { frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) }));
     } catch (error) {
