@@ -39,6 +39,8 @@ jobs:
           toolchain: "1.90.0"
       - name: Build native desktop binary
         run: cargo +1.90.0 build --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Test native desktop service contracts
+        run: cargo +1.90.0 test --manifest-path desktop/src-tauri/Cargo.toml --lib
       - name: Start Vite development server
         working-directory: desktop
         run: |
