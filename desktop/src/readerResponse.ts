@@ -9,7 +9,7 @@ function validId(value: unknown): value is number {
 }
 
 /** Match wiki-model's first-Unicode-scalar title key (not locale-wide case folding). */
-function navigationTitleKey(title: string): string {
+export function navigationTitleKey(title: string): string {
   const spaced = title.replaceAll("_", " ");
   const scalars = [...spaced];
   if (!scalars.length) return spaced;

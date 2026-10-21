@@ -2,6 +2,8 @@
  * The isolated preview iframe remains sandboxed with scripts and clicks disabled.
  * Only validated, same-edition mainspace titles reach the existing Rust adapter.
  */
+import { navigationTitleKey } from "./readerResponse";
+
 export interface WikiArticleLink {
   title: string;
   label: string;
@@ -58,8 +60,10 @@ export function extractWikiArticleLinks(html: string, project: string): WikiArti
   const seen = new Set<string>();
   for (const anchor of template.content.querySelectorAll("a[href]")) {
     const title = normalizeWikiHref(anchor.getAttribute("href") ?? "", project);
-    if (!title || seen.has(title)) continue;
-    seen.add(title);
+    if (!title) continue;
+    const titleKey = navigationTitleKey(title);
+    if (seen.has(titleKey)) continue;
+    seen.add(titleKey);
     const label = (anchor.textContent ?? "")
       .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
       .replace(/[\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/gu, "")

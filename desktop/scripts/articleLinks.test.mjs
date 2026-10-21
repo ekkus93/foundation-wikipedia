@@ -47,6 +47,7 @@ test("extracts article links from an uninstantiated template rather than DOMPars
     anchor("./Physics", " Physics "),
     anchor("javascript:alert(1)", "unsafe"),
     anchor("./Physics", "duplicate"),
+    anchor("./physics", "case alias"),
     anchor("./Gravit%C3%A4t", " Gravität "),
     anchor("./Chemistry", "Che\u202emistry"),
     anchor("./Biology", "Bio\u0085logy"),
