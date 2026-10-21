@@ -1081,6 +1081,44 @@ mod tests {
     }
 
     #[test]
+    fn opt_in_history_and_disabled_preference_survive_reopen() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-history-reopen-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("user.sqlite");
+        {
+            let state = UserState::open(&db).unwrap();
+            assert!(!state.history_enabled().unwrap());
+            assert!(!state.record_visit(&key(), 123, 1700000000).unwrap());
+            state.set_history_enabled(true).unwrap();
+            assert!(state.record_visit(&key(), 123, 1700000001).unwrap());
+        }
+        {
+            let state = UserState::open(&db).unwrap();
+            assert!(state.history_enabled().unwrap());
+            let rows = state.recent_history(10).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].revision_id, 123);
+            assert_eq!(rows[0].visited_at, 1700000001);
+            state.set_history_enabled(false).unwrap();
+            assert!(!state.record_visit(&key(), 124, 1700000002).unwrap());
+        }
+        {
+            let state = UserState::open(&db).unwrap();
+            assert!(!state.history_enabled().unwrap());
+            assert_eq!(state.recent_history(10).unwrap().len(), 1);
+            assert_eq!(state.clear_history().unwrap(), 1);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn state_survives_snapshot_activation_and_process_reopen() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
