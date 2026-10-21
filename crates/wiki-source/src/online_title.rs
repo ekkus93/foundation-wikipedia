@@ -278,16 +278,21 @@ mod tests {
     #[test]
     fn rejects_directional_marks_in_requested_canonical_and_redirect_titles() {
         let valid = r#"{"query":{"pages":[{"pageid":1,"ns":0,"title":"A"}]}}"#;
-        for requested in ["A\u{061c}B", "A\u{200e}B", "A\u{200f}B", "A\u{202e}B", "A\u{2066}B"] {
+        for requested in [
+            "A\u{061c}B",
+            "A\u{200e}B",
+            "A\u{200f}B",
+            "A\u{202e}B",
+            "A\u{2066}B",
+        ] {
             assert_eq!(
                 parse_title_resolution(valid, "enwiki", requested),
                 Err(TitleResolutionError::InvalidTitle)
             );
         }
         for escaped in ["\\u061c", "\\u200e", "\\u200f", "\\u202e", "\\u2066"] {
-            let canonical = format!(
-                r#"{{"query":{{"pages":[{{"pageid":1,"ns":0,"title":"A{escaped}B"}}]}}}}"#
-            );
+            let canonical =
+                format!(r#"{{"query":{{"pages":[{{"pageid":1,"ns":0,"title":"A{escaped}B"}}]}}}}"#);
             assert_eq!(
                 parse_title_resolution(&canonical, "enwiki", "A"),
                 Err(TitleResolutionError::InvalidTitle)
