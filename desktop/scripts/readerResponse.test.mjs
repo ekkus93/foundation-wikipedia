@@ -15,6 +15,12 @@ test("rejects malformed, duplicate and unsafe search identities", () => {
   }
 });
 
+test("rejects sparse search result arrays rather than skipping missing identities", () => {
+  const sparse = new Array(2);
+  sparse[1] = [1, "Physics"];
+  assert.throws(() => parseReaderSearchHits(sparse), /Invalid Wikipedia search identity/);
+});
+
 test("rejects invalid revisions, mismatched page IDs and oversized previews", () => {
   for (const value of [null, [1, 2, "A"], [0, 2, "A", ""], [1, 0, "A", ""],
     [1, 2, "A\u202eB", ""], [1, 2, "A", 4], [1, 2, "A", "é".repeat(1_000_001)]]) {

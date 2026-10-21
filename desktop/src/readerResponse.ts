@@ -27,7 +27,8 @@ export function parseReaderSearchHits(input: unknown): ReaderSearchHit[] {
   if (!Array.isArray(input) || input.length > 100) throw new Error("Invalid Wikipedia search response");
   const seen = new Set<number>();
   const seenTitles = new Set<string>();
-  return input.map((item: unknown): ReaderSearchHit => {
+  // Array.from visits sparse slots; Array.prototype.map silently skips them.
+  return Array.from(input, (item: unknown): ReaderSearchHit => {
     if (!Array.isArray(item) || item.length !== 2 || !validId(item[0]) ||
         !validTitle(item[1]) || seen.has(item[0])) {
       throw new Error("Invalid Wikipedia search identity");
