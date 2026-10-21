@@ -1,6 +1,7 @@
 //! Thin desktop Tauri adapter around the shared revision-safe Rust source API.
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use wiki_model::ArticleKey;
 use wiki_store::user_state::{UserState, UserStateError};
@@ -226,9 +227,94 @@ async fn clear_reader_personal_data(app: tauri::AppHandle) -> Result<(), String>
     .map_err(|_| "Personal reading data worker stopped".to_owned())?
 }
 
+
+fn reader_history_rows(state: &UserState) -> Result<Vec<(String, u64, u64, i64)>, UserStateError> {
+    Ok(state.recent_history(50)?.into_iter()
+        .map(|entry| (entry.key.project, entry.key.page_id, entry.revision_id, entry.visited_at))
+        .collect())
+}
+
+/// Visit storage is strictly opt-in and records only an exact verified article
+/// identity following a user-initiated successful navigation. No HTML is stored.
+#[tauri::command]
+async fn record_reader_visit(app: tauri::AppHandle, project: String, page_id: u64, revision_id: u64) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        let key = ArticleKey { project, page_id };
+        let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|_| "System clock is invalid")?.as_secs();
+        let timestamp = i64::try_from(seconds).map_err(|_| "System clock is invalid")?;
+        state.record_visit(&key, revision_id, timestamp)
+            .map_err(|_| "Cannot record reading history".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading history worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn reader_history_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.history_enabled()
+            .map_err(|_| "Cannot read history preference".to_owned())
+    })
+    .await
+    .map_err(|_| "History preference worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn set_reader_history_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.set_history_enabled(enabled)
+            .map_err(|_| "Cannot save history preference".to_owned())
+    })
+    .await
+    .map_err(|_| "History preference worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn list_reader_history(app: tauri::AppHandle) -> Result<Vec<(String, u64, u64, i64)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        reader_history_rows(&state).map_err(|_| "Cannot load reading history".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading history worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn clear_reader_history(app: tauri::AppHandle) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_private_bookmark_store(&app)?.clear_history()
+            .map_err(|_| "Cannot clear reading history".to_owned())
+    })
+    .await
+    .map_err(|_| "Reading history worker stopped".to_owned())?
+}
+
 #[cfg(test)]
 mod bookmark_tests {
     use super::*;
+
+    #[test]
+    fn visit_history_is_opt_in_bounded_and_independent_of_bookmarks() {
+        let state = UserState::in_memory().unwrap();
+        let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
+        state.set_bookmark(&key, 333, "").unwrap();
+        assert!(!state.history_enabled().unwrap());
+        assert!(!state.record_visit(&key, 333, 1700000000).unwrap());
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        state.set_history_enabled(true).unwrap();
+        assert!(state.record_visit(&key, 333, 1700000001).unwrap());
+        assert!(state.record_visit(&key, 334, 1700000002).unwrap());
+        assert_eq!(reader_history_rows(&state).unwrap(),
+            vec![("enwiki".to_owned(), 42, 334, 1700000002),
+                 ("enwiki".to_owned(), 42, 333, 1700000001)]);
+        state.set_history_enabled(false).unwrap();
+        assert!(!state.record_visit(&key, 335, 1700000003).unwrap());
+        assert_eq!(state.clear_history().unwrap(), 2);
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        assert_eq!(state.bookmark(&key).unwrap(), Some((333, String::new())));
+    }
 
     #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
@@ -257,7 +343,12 @@ pub fn run() {
             toggle_reader_bookmark,
             list_reader_bookmarks,
             remove_reader_bookmark,
-            clear_reader_personal_data
+            clear_reader_personal_data,
+            record_reader_visit,
+            reader_history_enabled,
+            set_reader_history_enabled,
+            list_reader_history,
+            clear_reader_history
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");
