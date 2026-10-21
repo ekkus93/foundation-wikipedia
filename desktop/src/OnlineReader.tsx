@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isolatedReaderDocument, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
@@ -68,6 +69,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   }, [article?.title, article?.pageId, article?.revisionId, project, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   // Bookmark reopening is explicit user navigation. Never bypass offline mode,
   // and do not discard the active revision/history on a failed fetch.
@@ -169,6 +171,15 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     }
   }
 
+  async function copyRevisionSource(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyNotice("Exact-revision source URL copied.");
+    } catch {
+      setCopyNotice("Clipboard unavailable. Select and copy the revision URL manually.");
+    }
+  }
+
   function openTitle(title: string) {
     if (!validReaderTitleInput(title)) {
       setNotice("Invalid Wikipedia article title. Enter a mainspace title without control characters.");
@@ -249,6 +260,18 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
           }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
           <p>{offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
+          {(() => {
+            const url = revisionSourceUrl(project, article.pageId, article.revisionId);
+            return url && (
+              <div className="revision-source">
+                <label htmlFor={`${uniqueId}-revision-source`}>Exact Wikimedia revision source</label>
+                <input id={`${uniqueId}-revision-source`} type="text" readOnly value={url}
+                  aria-description="Source for this exact article revision, not a complete offline license notice." />
+                <button type="button" onClick={() => void copyRevisionSource(url)}>Copy source URL</button>
+                {copyNotice && <span role="status">{copyNotice}</span>}
+              </div>
+            );
+          })()}
         </div>
       )}
       {/* Hidden sandboxed iframes remain mounted for nearby navigation history.

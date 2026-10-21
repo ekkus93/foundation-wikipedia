@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "audit:licenses": "node scripts/audit-licenses.mjs",
-    "test": "node --experimental-strip-types scripts/check-reader-actions.mjs && node --test scripts/audit-licenses.test.mjs && node --experimental-strip-types --test scripts/requestEpoch.test.mjs scripts/articleLinks.test.mjs scripts/readerResponse.test.mjs scripts/readerLayout.test.mjs scripts/readerHistory.test.mjs scripts/readerTabs.test.mjs",
+    "test": "node --experimental-strip-types scripts/check-reader-actions.mjs && node --test scripts/audit-licenses.test.mjs && node --experimental-strip-types --test scripts/requestEpoch.test.mjs scripts/articleLinks.test.mjs scripts/readerResponse.test.mjs scripts/articleProvenance.test.mjs scripts/readerLayout.test.mjs scripts/readerHistory.test.mjs scripts/readerTabs.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
