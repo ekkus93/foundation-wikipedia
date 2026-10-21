@@ -59,7 +59,16 @@ fn valid_title(title: &str) -> bool {
     !title.is_empty()
         && title == title.trim()
         && title.len() <= 4096
-        && !title.chars().any(char::is_control)
+        && !title.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
 }
 
 fn digest(html: &str) -> String {
@@ -363,6 +372,40 @@ mod tests {
         assert!(matches!(
             cache.get(&bad.key, 123),
             Err(HtmlCacheError::DigestMismatch)
+        ));
+    }
+
+    #[test]
+    fn cached_title_rejects_directional_spoofing_without_disallowing_rtl_text() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        for (project, title) in [("arwiki", "الفيزياء"), ("hewiki", "פיזיקה")] {
+            let mut item = article(123);
+            item.key.project = project.into();
+            item.title = title.into();
+            cache.put(&item).unwrap();
+            assert_eq!(cache.get(&item.key, 123).unwrap(), Some(item));
+        }
+        for marker in [
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}',
+            '\u{202e}', '\u{2066}', '\u{2069}',
+        ] {
+            let mut item = article(125);
+            item.title = format!("Physics{marker}Spoof");
+            assert!(matches!(
+                cache.put(&item),
+                Err(HtmlCacheError::InvalidContent)
+            ));
+            assert_eq!(cache.get(&item.key, 125).unwrap(), None);
+        }
+        let normal = article(130);
+        cache.put(&normal).unwrap();
+        cache.conn.execute(
+            "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=130",
+            params!["Physics\u{202e}Spoof"],
+        ).unwrap();
+        assert!(matches!(
+            cache.get(&normal.key, 130),
+            Err(HtmlCacheError::InvalidContent)
         ));
     }
 
