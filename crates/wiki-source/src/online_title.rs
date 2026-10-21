@@ -207,10 +207,9 @@ mod tests {
 
     #[test]
     fn natural_right_to_left_titles_and_normalized_aliases_are_not_rejected() {
-        for (project, title, page_id) in [
-            ("arwiki", "الفيزياء", 91_u64),
-            ("hewiki", "פיזיקה", 92_u64),
-        ] {
+        for (project, title, page_id) in
+            [("arwiki", "الفيزياء", 91_u64), ("hewiki", "פיזיקה", 92_u64)]
+        {
             let response = serde_json::json!({
                 "batchcomplete": true,
                 "query": {
@@ -234,7 +233,10 @@ mod tests {
         .to_string();
         let resolved = parse_title_resolution(&normalized, "arwiki", "علم_الفيزياء").unwrap();
         assert_eq!(resolved.key.page_id, 93);
-        assert_eq!(resolved.edges, vec![("علم_الفيزياء".into(), "علم الفيزياء".into())]);
+        assert_eq!(
+            resolved.edges,
+            vec![("علم_الفيزياء".into(), "علم الفيزياء".into())]
+        );
     }
 
     #[test]
