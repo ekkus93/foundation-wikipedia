@@ -68,7 +68,16 @@ fn valid_title(title: &str) -> bool {
     !title.trim().is_empty()
         && title == title.trim()
         && title.len() <= MAX_TITLE_BYTES
-        && !title.chars().any(char::is_control)
+        && !title.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
 }
 
 pub(crate) fn valid_utc_timestamp(stamp: &str) -> bool {
@@ -261,6 +270,23 @@ mod tests {
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Énergie","revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
     const RENDER: &str = r#"{"parse":{"title":"Énergie","pageid":42,"revid":300,"text":"<p onclick=\"bad()\">Hello</p><script>bad()</script><a href=\"javascript:bad()\">bad link</a>"}}"#;
+
+    #[test]
+    fn rejects_directional_marks_in_revision_navigation_titles() {
+        for escaped in ["\\u061c", "\\u200e", "\\u200f", "\\u202e", "\\u2066"] {
+            let response = META.replace("Énergie", &format!("Énergie{escaped}"));
+            assert_eq!(
+                parse_current_revision(&response, "frwiki", 42),
+                Err(OnlineArticleError::InvalidIdentity)
+            );
+        }
+        let mut pinned = parse_current_revision(META, "frwiki", 42).unwrap();
+        pinned.title.push('\u{200e}');
+        assert_eq!(
+            parse_rendered_revision(RENDER, &pinned),
+            Err(OnlineArticleError::InvalidIdentity)
+        );
+    }
 
     #[test]
     fn rejects_explicitly_incomplete_revision_responses() {
