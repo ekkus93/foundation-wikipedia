@@ -21,6 +21,7 @@ export default function App() {
   const [savedError, setSavedError] = useState<string | null>(null);
   const [savedResult, setSavedResult] = useState<string | null>(null);
   const [confirmClearReading, setConfirmClearReading] = useState(false);
+  const [themeError, setThemeError] = useState<string | null>(null);
   const [destination, setDestination] = useState<"article" | "settings">("article");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
@@ -40,6 +41,30 @@ export default function App() {
   const hubRef = useRef<HTMLDivElement>(null);
   const mainActionRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
+  const themeChoiceRevision = useRef(0);
+
+  // SQLite is authoritative when available; preserve the existing browser
+  // preference as a fallback for the standalone Vite development shell.
+  useEffect(() => {
+    let active = true;
+    const revision = themeChoiceRevision.current;
+    void invoke<string | null>("read_reader_theme")
+      .then((saved) => {
+        if (active && revision === themeChoiceRevision.current && isTheme(saved)) setTheme(saved);
+      }).catch(() => {
+        // The standalone browser preview has no native backend.
+      });
+    return () => { active = false; };
+  }, []);
+
+  function chooseTheme(choice: Theme) {
+    themeChoiceRevision.current += 1;
+    setTheme(choice);
+    setThemeError(null);
+    void invoke<void>("set_reader_theme", { theme: choice }).catch(() => {
+      setThemeError("Theme applies in this session, but could not be saved to the private settings database.");
+    });
+  }
 
   useEffect(() => {
     if (!expanded) return;
@@ -303,9 +328,10 @@ export default function App() {
         </nav> : settingsSection === "Appearance & Reading" ? <fieldset className="theme-choice">
           <legend>Color theme</legend>
           {THEMES.map((choice) => <label key={choice}>
-            <input type="radio" name="color-theme" value={choice} checked={theme === choice} onChange={() => setTheme(choice)} />
+            <input type="radio" name="color-theme" value={choice} checked={theme === choice} onChange={() => chooseTheme(choice)} />
             {choice === "system" ? "Use system setting" : choice === "light" ? "Light" : "Dark"}
           </label>)}
+          {themeError && <p role="alert">{themeError}</p>}
         </fieldset> : settingsSection === "History & Saved Content" ? <section aria-label="Saved page bookmarks">
           <p>Saved Wikipedia page identities only. Bookmarks do not install article text or images for offline use.</p>
           {savedBusy && <p role="status">Loading saved bookmarks…</p>}
