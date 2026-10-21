@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, validReaderTitleInput } from "../src/readerResponse.ts";
+import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, parseReaderVisits, validReaderTitleInput } from "../src/readerResponse.ts";
 
 test("accepts bounded revision-scoped article and search IPC responses", () => {
   assert.deepEqual(parseReaderSearchHits([[12, "Physics"], [13, "Mathematics"]]), [[12, "Physics"], [13, "Mathematics"]]);
@@ -87,4 +87,17 @@ test("rejects malformed UTF-16 title identities before IPC or HTTP encoding", ()
   // Properly paired surrogate code units represent valid Unicode scalar values.
   assert.equal(validReaderTitleInput("🐈"), true);
   assert.deepEqual(parseReaderSearchHits([[42, "猫と🐈"]]), [[42, "猫と🐈"]]);
+});
+
+test("opt-in reading history IPC accepts repeated visits but rejects malformed records", () => {
+  const entries = [["enwiki", 42, 123, 1700000000], ["enwiki", 42, 123, 1700000001]];
+  assert.deepEqual(parseReaderVisits(entries), entries);
+  const sparse = new Array(2);
+  sparse[1] = entries[0];
+  for (const bad of [null, {}, sparse, [["enwiki", 42, 1]],
+    [["wrongwiki", 42, 1, 1]], [["enwiki", 0, 1, 1]], [["enwiki", 42, 0, 1]],
+    [["enwiki", 42, 1, 0]], [["enwiki", 42, 1, Number.NaN]],
+    [["enwiki", 42, 1, 253402300800]], Array(51).fill(entries[0])]) {
+    assert.throws(() => parseReaderVisits(bad), /Invalid reading history/);
+  }
 });

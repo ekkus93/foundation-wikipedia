@@ -59,6 +59,17 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest }: {
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
   const mountedFrames = mountedReaderFrames(navigation);
+
+  // Record user-visible article navigation only. The native SQLite API remains
+  // authoritative: history is disabled by default and never writes until opted in.
+  useEffect(() => {
+    if (!article) return;
+    void invoke<boolean>("record_reader_visit", {
+      project, pageId: article.pageId, revisionId: article.revisionId,
+    }).catch(() => {
+      // History recording cannot prevent navigation or disturb its provenance.
+    });
+  }, [article?.frameId, project]);
   useEffect(() => {
     onArticleChange?.(
       article?.title ?? null,

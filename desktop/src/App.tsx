@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
-import { parseReaderBookmarks, type ReaderBookmark } from "./readerResponse";
+import { parseReaderBookmarks, parseReaderVisits, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
 import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
@@ -12,6 +12,10 @@ export default function App() {
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [message, setMessage] = useState<string | null>(null);
   const [savedBookmarks, setSavedBookmarks] = useState<ReaderBookmark[]>([]);
+  const [recentVisits, setRecentVisits] = useState<ReaderVisit[]>([]);
+  const [historyEnabled, setHistoryEnabled] = useState<boolean | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState<(ReaderOpenPageRequest & { tabId: number }) | null>(null);
   const [savedBusy, setSavedBusy] = useState(false);
   const [savedError, setSavedError] = useState<string | null>(null);
@@ -95,13 +99,53 @@ export default function App() {
     let active = true;
     setSavedBusy(true);
     setSavedError(null);
-    void invoke<unknown>("list_reader_bookmarks")
-      .then(parseReaderBookmarks)
-      .then((bookmarks) => { if (active) setSavedBookmarks(bookmarks); })
-      .catch(() => { if (active) setSavedError("Saved bookmark list is unavailable."); })
-      .finally(() => { if (active) setSavedBusy(false); });
+    void Promise.all([
+      invoke<unknown>("list_reader_bookmarks").then(parseReaderBookmarks),
+      invoke<boolean>("reader_history_enabled"),
+      invoke<unknown>("list_reader_history").then(parseReaderVisits),
+    ]).then(([bookmarks, enabled, visits]) => {
+      if (!active) return;
+      if (typeof enabled !== "boolean") throw new Error("Invalid history preference");
+      setSavedBookmarks(bookmarks);
+      setHistoryEnabled(enabled);
+      setRecentVisits(visits);
+    }).catch(() => {
+      if (active) setSavedError("Saved pages or reading history is unavailable.");
+    }).finally(() => { if (active) setSavedBusy(false); });
     return () => { active = false; };
   }, [destination, settingsSection]);
+
+  async function changeHistoryEnabled(enabled: boolean) {
+    if (savedBusy || historyBusy || historyEnabled === null) return;
+    setHistoryBusy(true);
+    setSavedError(null);
+    try {
+      await invoke<void>("set_reader_history_enabled", { enabled });
+      setHistoryEnabled(enabled);
+      setSavedResult(enabled ? "Visit history enabled for future article navigation." :
+        "Visit history disabled. Previously saved visits remain until deleted.");
+    } catch {
+      setSavedError("History preference was not changed.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function clearVisitHistory() {
+    if (!confirmClearHistory || savedBusy || historyBusy) return;
+    setHistoryBusy(true);
+    setSavedError(null);
+    try {
+      await invoke<number>("clear_reader_history");
+      setRecentVisits([]);
+      setConfirmClearHistory(false);
+      setSavedResult("Saved visit history deleted. Bookmarks and installed packs are unchanged.");
+    } catch {
+      setSavedError("Unable to clear visit history.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
 
   async function removeSavedBookmark(project: string, pageId: number) {
     if (savedBusy) return;
@@ -134,6 +178,7 @@ export default function App() {
     try {
       await invoke<void>("clear_reader_personal_data");
       setSavedBookmarks([]);
+      setRecentVisits([]);
       setSavedResult("Saved bookmarks, reading positions, visit history and article chats were deleted. Installed packs and settings remain unchanged.");
       setConfirmClearReading(false);
     } catch {
@@ -166,6 +211,7 @@ export default function App() {
 
   function leaveSettings() {
     setConfirmClearReading(false);
+    setConfirmClearHistory(false);
     if (settingsSection !== null) {
       setSettingsSection(null);
     } else {
@@ -276,6 +322,31 @@ export default function App() {
               onClick={() => void removeSavedBookmark(project, pageId)}>Remove</button>
           </li>)}</ul>
           <p>Opening saved pages requires a connection and displays an online text preview, not a complete offline article. Restoring saved reading positions across revisions is not available yet.</p>
+          <h2>Visit history</h2>
+          <label><input type="checkbox" checked={historyEnabled === true}
+            disabled={savedBusy || historyBusy || historyEnabled === null}
+            onChange={(event) => void changeHistoryEnabled(event.target.checked)} />
+            Save article visits on this device (off by default)</label>
+          <p>Disabling history stops future recording; existing visits remain until cleared.
+            Saved visits contain edition, page ID, revision and visit time only.</p>
+          {!savedBusy && recentVisits.length === 0 && <p>No recorded visits.</p>}
+          <ul>{recentVisits.map(([project, pageId, revisionId, visitedAt], index) =>
+            <li key={index}>{project} · page {pageId} · revision {revisionId} · {new Date(visitedAt * 1000).toLocaleString()}{" "}
+              <button type="button" disabled={savedBusy || historyBusy}
+                onClick={() => openSavedBookmark(project, pageId)}>Open latest</button>
+            </li>)}</ul>
+          {!confirmClearHistory ? (
+            <button type="button" disabled={savedBusy || historyBusy || recentVisits.length === 0}
+              onClick={() => setConfirmClearHistory(true)}>Clear visit history…</button>
+          ) : (
+            <div role="group" aria-label="Confirm visit history deletion">
+              <p>Permanently delete recorded visits? Bookmarks and installed packs will remain.</p>
+              <button type="button" disabled={savedBusy || historyBusy}
+                onClick={() => void clearVisitHistory()}>Yes, clear visit history</button>
+              <button type="button" disabled={savedBusy || historyBusy}
+                onClick={() => setConfirmClearHistory(false)}>Cancel</button>
+            </div>
+          )
           {!confirmClearReading ? (
             <button type="button" disabled={savedBusy} onClick={() => {
               setSavedResult(null);

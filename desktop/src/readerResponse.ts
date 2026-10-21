@@ -2,6 +2,7 @@
 export type ReaderSearchHit = [pageId: number, title: string];
 export type ReaderArticle = [pageId: number, revisionId: number, title: string, html: string];
 export type ReaderBookmark = [project: string, pageId: number, revisionId: number];
+export type ReaderVisit = [project: string, pageId: number, revisionId: number, visitedAt: number];
 const SUPPORTED_PROJECTS = new Set(["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"]);
 
 const MAX_HTML_BYTES = 2_000_000;
@@ -95,5 +96,20 @@ export function parseReaderBookmarks(value: unknown): ReaderBookmark[] {
     if (seen.has(identity)) throw new Error("Duplicate bookmark identity");
     seen.add(identity);
     return [row[0], row[1], row[2]];
+  });
+}
+
+/** A bounded list of local, opt-in visits. Repeated page visits are valid. */
+export function parseReaderVisits(value: unknown): ReaderVisit[] {
+  if (!Array.isArray(value) || value.length > 50) throw new Error("Invalid reading history list");
+  return Array.from(value, (row: unknown): ReaderVisit => {
+    if (!Array.isArray(row) || row.length !== 4 ||
+        typeof row[0] !== "string" || !SUPPORTED_PROJECTS.has(row[0]) ||
+        !validId(row[1]) || !validId(row[2]) ||
+        typeof row[3] !== "number" || !Number.isSafeInteger(row[3]) ||
+        row[3] <= 0 || row[3] > 253402300799) {
+      throw new Error("Invalid reading history identity");
+    }
+    return [row[0], row[1], row[2], row[3]];
   });
 }
