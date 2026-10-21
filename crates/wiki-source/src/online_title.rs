@@ -37,7 +37,16 @@ fn valid_title(value: &str) -> bool {
     !value.trim().is_empty()
         && value == value.trim()
         && value.len() <= MAX_TITLE_BYTES
-        && !value.chars().any(char::is_control)
+        && !value.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
 }
 
 /// Reject unmatched, cyclic or truncated redirects instead of silently
@@ -264,6 +273,33 @@ mod tests {
             parse_title_resolution(response, "enwiki", "A"),
             Err(TitleResolutionError::InvalidResponse)
         );
+    }
+
+    #[test]
+    fn rejects_directional_marks_in_requested_canonical_and_redirect_titles() {
+        let valid = r#"{"query":{"pages":[{"pageid":1,"ns":0,"title":"A"}]}}"#;
+        for requested in ["A\u{061c}B", "A\u{200e}B", "A\u{200f}B", "A\u{202e}B", "A\u{2066}B"] {
+            assert_eq!(
+                parse_title_resolution(valid, "enwiki", requested),
+                Err(TitleResolutionError::InvalidTitle)
+            );
+        }
+        for escaped in ["\\u061c", "\\u200e", "\\u200f", "\\u202e", "\\u2066"] {
+            let canonical = format!(
+                r#"{{"query":{{"pages":[{{"pageid":1,"ns":0,"title":"A{escaped}B"}}]}}}}"#
+            );
+            assert_eq!(
+                parse_title_resolution(&canonical, "enwiki", "A"),
+                Err(TitleResolutionError::InvalidTitle)
+            );
+            let redirect = format!(
+                r#"{{"query":{{"redirects":[{{"from":"A","to":"A{escaped}B"}}],"pages":[{{"pageid":1,"ns":0,"title":"A{escaped}B"}}]}}}}"#
+            );
+            assert_eq!(
+                parse_title_resolution(&redirect, "enwiki", "A"),
+                Err(TitleResolutionError::InvalidTitle)
+            );
+        }
     }
 
     #[test]
