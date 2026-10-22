@@ -236,7 +236,12 @@ mod tests {
             page_id: 43,
         };
         assert_eq!(
-            reader.open_page(&redirect_key).unwrap().unwrap().key.page_id,
+            reader
+                .open_page(&redirect_key)
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
             42
         );
         let conn = rusqlite::Connection::open(&database).unwrap();
@@ -249,9 +254,17 @@ mod tests {
             1
         );
         drop(conn);
-        assert!(catalog.lookup_key("enwiki", "Planet Earth").unwrap().is_none());
+        assert!(catalog
+            .lookup_key("enwiki", "Planet Earth")
+            .unwrap()
+            .is_none());
         assert_eq!(
-            reader.open_page(&redirect_key).unwrap().unwrap().key.page_id,
+            reader
+                .open_page(&redirect_key)
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
             42
         );
         assert_eq!(
