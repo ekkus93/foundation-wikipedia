@@ -215,14 +215,41 @@ fn identity(record: &PageRecord) -> (ArticleKey, String, Option<u64>, Option<Str
     }
 }
 
+fn validate_catalog_path(path: &Path) -> Result<(), CatalogError> {
+    let parent = path
+        .parent()
+        .filter(|part| !part.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    validate_snapshot_root(parent)?;
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if !meta.is_file() || meta.file_type().is_symlink() {
+                return Err(CatalogError::InvalidCatalogEntry);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if meta.nlink() != 1 {
+                    return Err(CatalogError::InvalidCatalogEntry);
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CatalogError::Io(error)),
+    }
+}
+
 impl SnapshotCatalog {
     pub fn open(path: &Path) -> Result<Self, CatalogError> {
+        validate_catalog_path(path)?;
         Self::initialize(Connection::open(path)?)
     }
 
     /// Open an existing activated snapshot catalog for reader queries only.
     /// Never create a missing database, migrate schemas or permit mutation.
     pub fn open_read_only(path: &Path) -> Result<Self, CatalogError> {
+        validate_catalog_path(path)?;
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA query_only=ON;")?;
         for table in ["records", "title_index"] {
@@ -782,6 +809,40 @@ mod tests {
             SnapshotCatalog::open_read_only(&unrelated),
             Err(CatalogError::InvalidCatalogEntry)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sqlite_catalog_open_rejects_linked_paths() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root();
+        let database = root.join("catalog.sqlite");
+        drop(SnapshotCatalog::open(&database).unwrap());
+        let alias = root.join("alias.sqlite");
+        symlink(&database, &alias).unwrap();
+        assert!(matches!(
+            SnapshotCatalog::open_read_only(&alias),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            SnapshotCatalog::open(&alias),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        fs::remove_file(&alias).unwrap();
+        fs::hard_link(&database, &alias).unwrap();
+        assert!(matches!(
+            SnapshotCatalog::open_read_only(&database),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        fs::remove_file(&alias).unwrap();
+        let linked_parent = root.join("linked-parent");
+        symlink(&root, &linked_parent).unwrap();
+        assert!(matches!(
+            SnapshotCatalog::open_read_only(&linked_parent.join("catalog.sqlite")),
+            Err(CatalogError::InvalidFrame)
+        ));
+        assert!(SnapshotCatalog::open_read_only(&database).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
