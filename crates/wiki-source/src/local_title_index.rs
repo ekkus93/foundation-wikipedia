@@ -1,0 +1,313 @@
+//! Verified, in-memory title catalog for network-free article navigation.
+//!
+//! This is a bounded prefix/exact lookup over *caller-verified* local versions,
+//! not a persisted full-text search index or proof of pack/media integrity.
+//! Callers must authenticate and verify the complete article and mandatory
+//! visual dependencies before setting ArticleVersion::local_complete.
+
+use std::collections::{BTreeMap, HashSet};
+
+use wiki_model::{wikipedia_title_key, ArticleKey};
+
+use crate::online_requests::WikipediaRequests;
+use crate::online_search::OnlineSearchHit;
+use crate::online_selection::{ArticleLocation, ArticleVersion};
+
+const MAX_TITLE_BYTES: usize = 4096;
+const MAX_QUERY_BYTES: usize = 512;
+const MAX_RESULTS: usize = 100;
+const MAX_ENTRIES: usize = 10_000_000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalTitleEntry {
+    pub title: String,
+    pub version: ArticleVersion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalSearchHit {
+    pub hit: OnlineSearchHit,
+    /// Explicit pack/save/cache provenance; never labeled online-current.
+    pub version: ArticleVersion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalTitleIndexError {
+    InvalidProject,
+    InvalidTitle,
+    InvalidVersion,
+    ForeignProject,
+    NotOfflineComplete,
+    NonLocalVersion,
+    DuplicatePage,
+    DuplicateTitle,
+    TooManyEntries,
+    InvalidQuery,
+    InvalidLimit,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalTitleIndex {
+    project: String,
+    titles: BTreeMap<String, LocalSearchHit>,
+}
+
+fn safe_text(value: &str, max_bytes: usize) -> bool {
+    !value.trim().is_empty()
+        && value == value.trim()
+        && value.len() <= max_bytes
+        && !value.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
+}
+
+impl LocalTitleIndex {
+    /// Reject every conflicting/invalid entry before publishing an index.
+    /// A title is unique within a project after first-letter/underscore
+    /// normalization. All indexed articles must have independently verified
+    /// offline-complete media, including temporary caches.
+    pub fn new(
+        project: &str,
+        entries: impl IntoIterator<Item = LocalTitleEntry>,
+    ) -> Result<Self, LocalTitleIndexError> {
+        WikipediaRequests::new(project).map_err(|_| LocalTitleIndexError::InvalidProject)?;
+        let mut titles = BTreeMap::new();
+        let mut pages = HashSet::new();
+        for entry in entries {
+            if titles.len() >= MAX_ENTRIES {
+                return Err(LocalTitleIndexError::TooManyEntries);
+            }
+            if !safe_text(&entry.title, MAX_TITLE_BYTES) {
+                return Err(LocalTitleIndexError::InvalidTitle);
+            }
+            entry
+                .version
+                .key
+                .validate()
+                .map_err(|_| LocalTitleIndexError::InvalidVersion)?;
+            if entry.version.revision_id == 0 || entry.version.revision_id > i64::MAX as u64 {
+                return Err(LocalTitleIndexError::InvalidVersion);
+            }
+            if entry.version.key.project != project {
+                return Err(LocalTitleIndexError::ForeignProject);
+            }
+            if entry.version.location == ArticleLocation::OnlineCurrent {
+                return Err(LocalTitleIndexError::NonLocalVersion);
+            }
+            if !entry.version.local_complete {
+                return Err(LocalTitleIndexError::NotOfflineComplete);
+            }
+            if !pages.insert(entry.version.key.page_id) {
+                return Err(LocalTitleIndexError::DuplicatePage);
+            }
+            let key = wikipedia_title_key(&entry.title);
+            if titles.contains_key(&key) {
+                return Err(LocalTitleIndexError::DuplicateTitle);
+            }
+            let hit = OnlineSearchHit {
+                key: entry.version.key.clone(),
+                title: entry.title,
+                namespace: 0,
+            };
+            titles.insert(
+                key,
+                LocalSearchHit {
+                    hit,
+                    version: entry.version,
+                },
+            );
+        }
+        Ok(Self {
+            project: project.to_owned(),
+            titles,
+        })
+    }
+
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    pub fn len(&self) -> usize {
+        self.titles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.titles.is_empty()
+    }
+
+    /// Exact normalized title resolution, for offline navigation without HTTP.
+    pub fn resolve_title(
+        &self,
+        title: &str,
+    ) -> Result<Option<LocalSearchHit>, LocalTitleIndexError> {
+        if !safe_text(title, MAX_TITLE_BYTES) {
+            return Err(LocalTitleIndexError::InvalidTitle);
+        }
+        Ok(self.titles.get(&wikipedia_title_key(title)).cloned())
+    }
+
+    /// Deterministic prefix lookup, not full-text or fuzzy search. Wikipedia's
+    /// first-letter case normalization is used, not locale-wide case folding.
+    /// Results are bounded and preserve pack/save/cache location and revision.
+    pub fn search_prefix(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<LocalSearchHit>, LocalTitleIndexError> {
+        if !safe_text(query, MAX_QUERY_BYTES) {
+            return Err(LocalTitleIndexError::InvalidQuery);
+        }
+        if !(1..=MAX_RESULTS).contains(&limit) {
+            return Err(LocalTitleIndexError::InvalidLimit);
+        }
+        let prefix = wikipedia_title_key(query);
+        Ok(self
+            .titles
+            .range(prefix.clone()..)
+            .take_while(|(key, _)| key.starts_with(&prefix))
+            .take(limit)
+            .map(|(_, hit)| hit.clone())
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(page_id: u64, title: &str, location: ArticleLocation) -> LocalTitleEntry {
+        LocalTitleEntry {
+            title: title.into(),
+            version: ArticleVersion {
+                key: ArticleKey {
+                    project: "enwiki".into(),
+                    page_id,
+                },
+                revision_id: 100 + page_id,
+                location,
+                local_complete: true,
+            },
+        }
+    }
+
+    #[test]
+    fn offline_prefix_and_exact_title_navigation_preserve_provenance() {
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [
+                entry(1, "Physics", ArticleLocation::InstalledPack),
+                entry(2, "Physical chemistry", ArticleLocation::ExplicitOfflineSave),
+                entry(3, "Énergie", ArticleLocation::TemporaryCache),
+                entry(4, "رياضيات", ArticleLocation::InstalledPack),
+            ],
+        )
+        .unwrap();
+        assert_eq!(index.len(), 4);
+        assert_eq!(index.project(), "enwiki");
+        assert_eq!(
+            index.resolve_title("physics").unwrap().unwrap().hit.key.page_id,
+            1
+        );
+        assert_eq!(
+            index.resolve_title("Physical_chemistry").unwrap().unwrap().hit.key.page_id,
+            2
+        );
+        assert!(index.resolve_title("Missing").unwrap().is_none());
+        let hits = index.search_prefix("phys", 2).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].hit.title, "Physical chemistry");
+        assert_eq!(hits[1].hit.title, "Physics");
+        assert_eq!(hits[1].version.location, ArticleLocation::InstalledPack);
+        assert_eq!(hits[1].version.revision_id, 101);
+        assert_eq!(index.search_prefix("رياض", 5).unwrap().len(), 1);
+        assert_eq!(index.search_prefix("none", 5).unwrap(), vec![]);
+        assert_eq!(index.search_prefix("phys", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn refuses_incomplete_untrusted_or_ambiguous_local_catalogs() {
+        let mut incomplete = entry(1, "Physics", ArticleLocation::TemporaryCache);
+        incomplete.version.local_complete = false;
+        assert!(matches!(
+            LocalTitleIndex::new("enwiki", [incomplete]),
+            Err(LocalTitleIndexError::NotOfflineComplete)
+        ));
+        assert!(matches!(
+            LocalTitleIndex::new("enwiki", [entry(1, "Physics", ArticleLocation::OnlineCurrent)]),
+            Err(LocalTitleIndexError::NonLocalVersion)
+        ));
+        let mut foreign = entry(1, "Physics", ArticleLocation::InstalledPack);
+        foreign.version.key.project = "frwiki".into();
+        assert!(matches!(
+            LocalTitleIndex::new("enwiki", [foreign]),
+            Err(LocalTitleIndexError::ForeignProject)
+        ));
+        assert!(matches!(
+            LocalTitleIndex::new(
+                "enwiki",
+                [
+                    entry(1, "Physics", ArticleLocation::InstalledPack),
+                    entry(2, "physics", ArticleLocation::InstalledPack),
+                ]
+            ),
+            Err(LocalTitleIndexError::DuplicateTitle)
+        ));
+        assert!(matches!(
+            LocalTitleIndex::new(
+                "enwiki",
+                [
+                    entry(1, "Physics", ArticleLocation::InstalledPack),
+                    entry(1, "Chemistry", ArticleLocation::InstalledPack),
+                ]
+            ),
+            Err(LocalTitleIndexError::DuplicatePage)
+        ));
+        for title in [" A ", "Bad\u{202e}Title", "Bad\nTitle", ""] {
+            assert!(matches!(
+                LocalTitleIndex::new(
+                    "enwiki",
+                    [entry(1, title, ArticleLocation::InstalledPack)]
+                ),
+                Err(LocalTitleIndexError::InvalidTitle)
+            ));
+        }
+    }
+
+    #[test]
+    fn invalid_queries_fail_closed() {
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [entry(1, "Physics", ArticleLocation::InstalledPack)],
+        )
+        .unwrap();
+        for query in ["", " ", " phys", "bad\u{2066}query", "bad\nquery"] {
+            assert_eq!(
+                index.search_prefix(query, 5),
+                Err(LocalTitleIndexError::InvalidQuery)
+            );
+        }
+        assert_eq!(
+            index.search_prefix("phys", 0),
+            Err(LocalTitleIndexError::InvalidLimit)
+        );
+        assert_eq!(
+            index.search_prefix("phys", 101),
+            Err(LocalTitleIndexError::InvalidLimit)
+        );
+        assert_eq!(
+            index.resolve_title("bad\u{202e}title"),
+            Err(LocalTitleIndexError::InvalidTitle)
+        );
+        assert_eq!(
+            LocalTitleIndex::new("ENWIKI", Vec::<LocalTitleEntry>::new()).err(),
+            Some(LocalTitleIndexError::InvalidProject)
+        );
+    }
+}

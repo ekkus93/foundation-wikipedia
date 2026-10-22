@@ -13,6 +13,7 @@ pub mod online_article;
 pub mod online_curl;
 pub mod online_fetch;
 pub mod online_flow;
+pub mod local_title_index;
 pub mod online_requests;
 pub mod online_search;
 pub mod online_selection;
