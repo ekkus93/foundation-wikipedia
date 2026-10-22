@@ -18,3 +18,5 @@ pub mod offline_reader;
 pub mod online_cache;
 pub mod search_index;
 pub mod user_state;
+
+pub mod revision_lookup;
