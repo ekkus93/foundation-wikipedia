@@ -397,3 +397,22 @@ mod tests {
             "http://en.wikipedia.org/w/api.php?action=query",
             "https://en.wikipedia.org.evil.example/w/api.php?action=query",
             "https://de.wikipedia.org/w/api.php?action=query",
+            "https://en.wikipedia.org:444/w/api.php?action=query",
+            "https://user:pass@en.wikipedia.org/w/api.php?action=query",
+            "https://en.wikipedia.org/wiki/Physics?action=query",
+            "https://en.wikipedia.org/w/api.php?action=query#fragment",
+            "https://en.wikipedia.org/w/api.php?action=delete",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=allusers",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=search&srsearch=Physics&srnamespace=0&srlimit=1&uselang=en",
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&list=search&srsearch=Physics&srnamespace=0&srlimit=1&srlimit=2",
+            "https://en.wikipedia.org/w/api.php",
+            "file:///w/api.php",
+            "not-a-url",
+        ] {
+            assert!(
+                !api.accepts_transport_url(unsafe_url),
+                "unsafe candidate accepted: {unsafe_url}"
+            );
+        }
+    }
+}
