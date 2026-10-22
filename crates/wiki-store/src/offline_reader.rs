@@ -84,14 +84,7 @@ impl<'a> OfflineReader<'a> {
         expected: u64,
     ) -> Result<Option<Article>, ReaderError> {
         self.open_page(key)?
-            .map(|article| {
-                let actual = article.revision.revision_id;
-                if actual != expected {
-                    Err(ReaderError::StaleRevision { expected, actual })
-                } else {
-                    Ok(article)
-                }
-            })
+            .map(|article| Self::check_revision(article, expected))
             .transpose()
     }
 
@@ -102,6 +95,29 @@ impl<'a> OfflineReader<'a> {
             .resolve_title(self.root, project, title)?
             .map(|(_, record)| Self::require_article(record))
             .transpose()
+    }
+
+    /// Open an installed canonical title, alias or redirect only at the
+    /// caller's exact revision. A newer installed revision cannot silently
+    /// satisfy a historical citation or saved navigation target.
+    pub fn open_exact_title_revision(
+        &self,
+        project: &str,
+        title: &str,
+        expected: u64,
+    ) -> Result<Option<Article>, ReaderError> {
+        self.open_title(project, title)?
+            .map(|article| Self::check_revision(article, expected))
+            .transpose()
+    }
+
+    fn check_revision(article: Article, expected: u64) -> Result<Article, ReaderError> {
+        let actual = article.revision.revision_id;
+        if actual != expected {
+            Err(ReaderError::StaleRevision { expected, actual })
+        } else {
+            Ok(article)
+        }
     }
 
     /// Search installed articles, verifying all matched immutable frames
@@ -226,6 +242,26 @@ mod tests {
         assert!(matches!(
             reader.search_title_prefix("enwiki", "Earth", 0),
             Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
+
+        for title in ["Earth", "The_blue_planet", "Planet Earth"] {
+            let article = reader
+                .open_exact_title_revision("enwiki", title, 1042)
+                .unwrap()
+                .unwrap();
+            assert_eq!(article.key.page_id, 42);
+            assert_eq!(article.revision.revision_id, 1042);
+        }
+        assert!(reader
+            .open_exact_title_revision("enwiki", "Not installed", 1042)
+            .unwrap()
+            .is_none());
+        assert!(matches!(
+            reader.open_exact_title_revision("enwiki", "Planet Earth", 999),
+            Err(ReaderError::StaleRevision {
+                expected: 999,
+                actual: 1042
+            })
         ));
 
         // A page-ID redirect must not require a title-index entry. Removing
