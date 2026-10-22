@@ -130,6 +130,45 @@ def _mediawiki_base36_sha1(wikitext):
     return encoded.zfill(31)
 
 
+def _multislot_revision_sha1(slots, child_name):
+    """Reproduce MediaWiki's role-sorted hash-of-hashes for text-backed slots.
+
+    A diagnostic XML record must expose each primary slot's text to verify
+    the revision digest. Missing/deleted/non-text slot payloads fail closed;
+    this does not claim fidelity for arbitrary binary content models.
+    """
+    by_role = {}
+    for slot in slots:
+        if slot.tag != child_name("slot"):
+            raise DumpDecodeError("unrecognized revision slot")
+        role = slot.attrib.get("role")
+        if (not role or len(role) > 128
+                or not re.fullmatch(r"[A-Za-z][-+./A-Za-z0-9]*", role)
+                or role in by_role):
+            raise DumpDecodeError("missing or duplicate revision slot role")
+        text = _one(slot, "text")
+        if len(text) or "deleted" in text.attrib:
+            raise DumpDecodeError("unavailable revision slot text")
+        content = text.text or ""
+        if "bytes" in text.attrib:
+            declared_bytes = text.attrib["bytes"]
+            if (len(declared_bytes) > 10
+                    or not re.fullmatch(r"0|[1-9][0-9]*", declared_bytes)
+                    or int(declared_bytes) != len(content.encode("utf-8"))):
+                raise DumpDecodeError("revision slot byte length mismatch")
+        digest = _mediawiki_base36_sha1(content)
+        if "sha1" in text.attrib and text.attrib["sha1"] != digest:
+            raise DumpDecodeError("revision slot SHA-1 mismatch")
+        by_role[role] = digest
+    if not by_role:
+        raise DumpDecodeError("revision has no content slots")
+    combined = None
+    for role in sorted(by_role):
+        combined = (by_role[role] if combined is None
+                    else _mediawiki_base36_sha1(combined + by_role[role]))
+    return combined
+
+
 def _revision_wikitext(revision):
     """Extract one available main-slot wikitext body, not rendered HTML.
 
@@ -202,6 +241,9 @@ def _revision_wikitext(revision):
     single_content = not slots or len(slots[0]) == 1
     if single_content and rev_hash is not None and rev_hash != actual_hash:
         raise DumpDecodeError("revision SHA-1 mismatch")
+    if not single_content and rev_hash is not None:
+        if _multislot_revision_sha1(slots[0], child_name) != rev_hash:
+            raise DumpDecodeError("multi-slot revision SHA-1 mismatch")
     return decoded
 
 

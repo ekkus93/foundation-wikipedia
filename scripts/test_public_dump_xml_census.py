@@ -235,21 +235,40 @@ class DumpXmlTests(unittest.TestCase):
 
     def test_multislot_revision_hash_is_not_mislabeled_as_main_slot_hash(self):
         main_hash = "ae6cz48tvwwupsjx62rdyive54c8l3f"
-        # A real multi-slot revision hash combines slot hashes, rather
-        # than hashing the main wikitext alone.
+        # Known MediaWiki role-sorted SHA-1: data slot before main slot.
+        # This independently calculated golden value does not call the
+        # production hash converter.
         multi = page(1).replace(
             "<text>Sample</text>",
             '<slots><slot role="main"><model>wikitext</model>'
             f'<text sha1="{main_hash}">Sample</text></slot>'
             '<slot role="data"><model>json</model>'
             '<text>{"key":true}</text></slot></slots>'
-            '<sha1>' + "0" * 31 + '</sha1>')
+            '<sha1>fl39thm1cca195v7bxgogkuwuk3vec4</sha1>')
         self.add(1, 100, f"<mediawiki>{multi}</mediawiki>")
         result, count = stage_observed_census(
             self.manifest, self.staging, self.output, "content.jsonl",
             output_format="revision-content-jsonl")
         self.assertEqual((count, json.loads(result.read_text())["wikitext"]),
                          (1, "Sample"))
+        result.unlink()
+
+        for broken in (
+            multi.replace("fl39thm1cca195v7bxgogkuwuk3vec4", "0" * 31),
+            multi.replace('{"key":true}', '{"key":false}'),
+            multi.replace('<slot role="data">', '<slot role="main">'),
+            multi.replace('<slot role="data">', '<slot role="data"><text>duplicate</text>'),
+            multi.replace('<text>{"key":true}</text>',
+                          '<text bytes="1">{"key":true}</text>'),
+        ):
+            with self.subTest(broken=broken[:100]):
+                self.manifest["files"].clear()
+                self.add(1, 100, f"<mediawiki>{broken}</mediawiki>")
+                with self.assertRaises(DumpDecodeError):
+                    stage_observed_census(
+                        self.manifest, self.staging, self.output, "content.jsonl",
+                        output_format="revision-content-jsonl")
+                self.assertEqual(list(self.output.iterdir()), [])
 
     def test_revision_content_jsonl_enforces_declared_utf8_text_bytes(self):
         legacy = page(1).replace("<text>Sample</text>",
