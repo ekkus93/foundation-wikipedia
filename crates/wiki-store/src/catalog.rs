@@ -374,8 +374,7 @@ impl SnapshotCatalog {
         let rows = stmt.query_map(params![project, normalized], |row| row.get::<_, String>(0))?;
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
-        let mut scanned = 0;
-        for row in rows {
+        for (scanned, row) in rows.enumerate() {
             let title = row?;
             if !title.starts_with(&normalized) {
                 break;
@@ -383,7 +382,6 @@ impl SnapshotCatalog {
             if scanned >= MAX_TITLE_PREFIX_SCAN {
                 return Err(CatalogError::InvalidCatalogEntry);
             }
-            scanned += 1;
             let (key, record) = self
                 .resolve_title(root, project, &title)?
                 .ok_or(CatalogError::InvalidCatalogEntry)?;
