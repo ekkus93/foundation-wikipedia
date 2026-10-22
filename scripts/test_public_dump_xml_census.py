@@ -218,6 +218,8 @@ class DumpXmlTests(unittest.TestCase):
         for corrupted in (
             first.replace(sample, "0" * 31, 1),
             first.replace(f"<sha1>{sample}</sha1>", "<sha1>0</sha1>"),
+            first.replace(f"<sha1>{sample}</sha1>", "<sha1/>"),
+            first.replace(f"<sha1>{sample}</sha1>", "<sha1></sha1>"),
             second.replace(f"<sha1>{munich}</sha1>", "<sha1>" + "0" * 31 + "</sha1>"),
             first.replace(f"<sha1>{sample}</sha1>",
                           f"<sha1>{sample}</sha1><sha1>{sample}</sha1>"),

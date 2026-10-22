@@ -188,6 +188,8 @@ def _revision_wikitext(revision):
     if len(rev_hashes) > 1 or any(item.attrib or len(item) for item in rev_hashes):
         raise DumpDecodeError("ambiguous revision SHA-1")
     rev_hash = rev_hashes[0].text if rev_hashes else None
+    if rev_hashes and rev_hash is None:
+        raise DumpDecodeError("invalid MediaWiki SHA-1")
     for declared in (text_hash, rev_hash):
         if declared is not None and not re.fullmatch(r"[0-9a-z]{31}", declared):
             raise DumpDecodeError("invalid MediaWiki SHA-1")
