@@ -143,6 +143,18 @@ impl<'a> OfflineReader<'a> {
             .search_title_prefix(self.root, project, prefix, limit)?)
     }
 
+    /// Return bounded, verified local articles matching a Wikidata item.
+    pub fn open_wikidata(
+        &self,
+        project: &str,
+        item: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, ReaderError> {
+        self.catalog
+            .lookup_wikidata_verified(self.root, project, item, limit)
+            .map_err(ReaderError::from)
+    }
+
     fn require_article(record: PageRecord) -> Result<Article, ReaderError> {
         match record {
             PageRecord::Article(article) => Ok(*article),
