@@ -290,7 +290,7 @@ mod tests {
             ))
         );
         assert!(matches!(
-            begin_offline_title_open("enwiki", "Ph\\u{202e}ysics", Some(&catalog)),
+            begin_offline_title_open("enwiki", "Ph\u{202e}ysics", Some(&catalog)),
             Err(OnlineFlowError::Request(OnlineRequestError::InvalidTitle))
         ));
     }
