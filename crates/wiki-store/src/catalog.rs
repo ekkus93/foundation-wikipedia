@@ -265,7 +265,9 @@ impl SnapshotCatalog {
                FOREIGN KEY(project, page_id) REFERENCES records(project, page_id)
              );
              CREATE INDEX IF NOT EXISTS records_wikidata
-               ON records(project, wikidata_id);",
+               ON records(project, wikidata_id);
+             CREATE INDEX IF NOT EXISTS title_index_by_page
+               ON title_index(project, page_id);",
         )?;
         Ok(Self { conn })
     }
@@ -492,7 +494,26 @@ impl SnapshotCatalog {
             };
             // Rehash and decode the exact frame, including the catalog's
             // revision/title/Wikidata identity checks.
-            if self.read_record(root, &key)?.is_none() {
+            let record = self
+                .read_record(root, &key)?
+                .ok_or(CatalogError::InvalidCatalogEntry)?;
+            // The title index is derived state. Audit every canonical title
+            // and alias against the authenticated record, including omissions
+            // and injected aliases, before activating a snapshot.
+            let (_, title, _, _, aliases) = identity(&record);
+            let expected_titles: BTreeSet<String> = std::iter::once(title.as_str())
+                .chain(aliases.iter().map(String::as_str))
+                .map(title_key)
+                .collect::<Result<_, _>>()?;
+            let mut title_stmt = self.conn.prepare(
+                "SELECT normalized_title FROM title_index WHERE project=?1 AND page_id=?2",
+            )?;
+            let actual_titles: BTreeSet<String> = title_stmt
+                .query_map(params![&key.project, as_i64(key.page_id)?], |row| {
+                    row.get(0)
+                })?
+                .collect::<Result<_, _>>()?;
+            if actual_titles != expected_titles {
                 return Err(CatalogError::InvalidCatalogEntry);
             }
             next_offset = offset
@@ -502,6 +523,18 @@ impl SnapshotCatalog {
         }
         let last = current_shard.ok_or(CatalogError::InvalidCatalogEntry)?;
         verify_shard_length(root, &last, next_offset)?;
+        // A corrupted SQLite file could also carry orphaned index rows that
+        // the per-record audit above would never encounter.
+        let orphaned: Option<i64> = self.conn.query_row(
+            "SELECT 1 FROM title_index AS t LEFT JOIN records AS r
+             ON r.project=t.project AND r.page_id=t.page_id
+             WHERE r.page_id IS NULL LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).optional()?;
+        if orphaned.is_some() {
+            return Err(CatalogError::InvalidCatalogEntry);
+        }
         Ok(verified)
     }
 
@@ -1171,6 +1204,65 @@ mod tests {
             .insert_verified(&root, shard_name, first_len, bytes.len() as u64 - first_len)
             .unwrap();
         assert_eq!(catalog.verify_shard_coverage(&root).unwrap(), 2);
+
+        // Missing aliases, forged aliases and cross-record title mappings
+        // must all fail activation even when the compressed frames are sound.
+        catalog
+            .conn
+            .execute(
+                "DELETE FROM title_index WHERE project='enwiki' AND normalized_title='The blue planet'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        catalog
+            .conn
+            .execute(
+                "INSERT INTO title_index(project, normalized_title, page_id) VALUES ('enwiki', 'The blue planet', 42)",
+                [],
+            )
+            .unwrap();
+        catalog
+            .conn
+            .execute(
+                "INSERT INTO title_index(project, normalized_title, page_id) VALUES ('enwiki', 'Forged alias', 42)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        catalog
+            .conn
+            .execute(
+                "DELETE FROM title_index WHERE project='enwiki' AND normalized_title='Forged alias'",
+                [],
+            )
+            .unwrap();
+        catalog
+            .conn
+            .execute(
+                "UPDATE title_index SET page_id=43 WHERE project='enwiki' AND normalized_title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        catalog
+            .conn
+            .execute(
+                "UPDATE title_index SET page_id=42 WHERE project='enwiki' AND normalized_title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(catalog.verify_shard_coverage(&root).unwrap(), 2);
+
         fs::write(root.join(shard_name), [&bytes[..], b"trailing"].concat()).unwrap();
         assert!(matches!(
             catalog.verify_shard_coverage(&root),
