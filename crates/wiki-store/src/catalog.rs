@@ -525,13 +525,16 @@ impl SnapshotCatalog {
         verify_shard_length(root, &last, next_offset)?;
         // A corrupted SQLite file could also carry orphaned index rows that
         // the per-record audit above would never encounter.
-        let orphaned: Option<i64> = self.conn.query_row(
-            "SELECT 1 FROM title_index AS t LEFT JOIN records AS r
+        let orphaned: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM title_index AS t LEFT JOIN records AS r
              ON r.project=t.project AND r.page_id=t.page_id
              WHERE r.page_id IS NULL LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).optional()?;
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
         if orphaned.is_some() {
             return Err(CatalogError::InvalidCatalogEntry);
         }
