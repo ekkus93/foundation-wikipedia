@@ -26,6 +26,11 @@ async fn search_wikipedia(query: String, project: String, offline: bool) -> Resu
             SearchOutcome::OfflineNeedsLocalIndex => {
                 Err("Offline search requires an installed local index; no network request was made".to_owned())
             }
+            // The desktop adapter has not yet been wired to a verified local catalog.
+            // Never present an offline result without its required media objects.
+            SearchOutcome::LocalResults(_) => {
+                Err("Offline search integration is not yet available".to_owned())
+            }
         }
     })
     .await

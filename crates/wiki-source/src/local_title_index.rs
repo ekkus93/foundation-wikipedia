@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use wiki_model::{wikipedia_title_key, ArticleKey};
+use wiki_model::wikipedia_title_key;
 
 use crate::online_requests::WikipediaRequests;
 use crate::online_search::OnlineSearchHit;
@@ -181,6 +181,7 @@ impl LocalTitleIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiki_model::ArticleKey;
 
     fn entry(page_id: u64, title: &str, location: ArticleLocation) -> LocalTitleEntry {
         LocalTitleEntry {
