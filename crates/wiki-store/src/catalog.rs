@@ -610,6 +610,7 @@ impl SnapshotCatalog {
         project: &str,
         title: &str,
     ) -> Result<Option<(ArticleKey, PageRecord)>, CatalogError> {
+        let requested_title = title_key(title)?;
         let Some(mut key) = self.lookup_key(project, title)? else {
             return Ok(None);
         };
@@ -621,6 +622,18 @@ impl SnapshotCatalog {
             let Some(record) = self.read_record(root, &key)? else {
                 return Err(CatalogError::DanglingRedirect);
             };
+            if visited.len() == 1 {
+                // The title index is derived SQLite state, not a verified
+                // source of article identity. Reject a forged index mapping
+                // even when it points at an otherwise valid immutable frame.
+                let (_, canonical, _, _, aliases) = identity(&record);
+                let matches_indexed_title = std::iter::once(canonical.as_str())
+                    .chain(aliases.iter().map(String::as_str))
+                    .any(|name| title_key(name).is_ok_and(|value| value == requested_title));
+                if !matches_indexed_title {
+                    return Err(CatalogError::InvalidCatalogEntry);
+                }
+            }
             match record {
                 PageRecord::Redirect(redirect) => key = redirect.to,
                 article @ PageRecord::Article(_) => return Ok(Some((key, article))),
@@ -993,6 +1006,33 @@ mod tests {
             catalog.search_title_prefix(&root, "enwiki", "Earth", 101),
             Err(CatalogError::InvalidCatalogEntry)
         ));
+
+        // The immutable redirect and article frames remain valid, but a
+        // corrupted derived index must not substitute a different identity.
+        catalog
+            .conn
+            .execute(
+                "UPDATE title_index SET page_id=43 WHERE project='enwiki' AND normalized_title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.resolve_title(&root, "enwiki", "Earth"),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            catalog.search_title_prefix(&root, "enwiki", "Earth", 10),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        catalog
+            .conn
+            .execute(
+                "UPDATE title_index SET page_id=42 WHERE project='enwiki' AND normalized_title='Earth'",
+                [],
+            )
+            .unwrap();
+        let resolved = catalog.resolve_title(&root, "enwiki", "Earth").unwrap().unwrap();
+        assert_eq!(resolved.0.page_id, 42);
 
         bytes[12] ^= 1;
         fs::write(root.join("titles.shard"), &bytes).unwrap();
