@@ -860,6 +860,49 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn verified_wikidata_lookup_rejects_spoofed_index_and_bad_input() {
+        let root = temp_root();
+        let mut frame = Vec::new();
+        append_record_frame(&mut frame, &article(42, "Earth")).unwrap();
+        fs::write(root.join("wikidata.shard"), &frame).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "wikidata.shard", 0, frame.len() as u64)
+            .unwrap();
+        let hits = catalog
+            .lookup_wikidata_verified(&root, "enwiki", "Q2", 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].key.page_id, 42);
+        assert!(catalog
+            .lookup_wikidata_verified(&root, "enwiki", "Q999", 10)
+            .unwrap()
+            .is_empty());
+        for invalid in ["", "Q", "Q0", "Q01", "q2", "Q-1", "Q2x"] {
+            assert!(matches!(
+                catalog.lookup_wikidata_verified(&root, "enwiki", invalid, 10),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+        }
+        assert!(matches!(
+            catalog.lookup_wikidata_verified(&root, "enwiki", "Q2", 0),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        catalog
+            .conn
+            .execute(
+                "UPDATE records SET wikidata_id='Q999' WHERE project='enwiki' AND page_id=42",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.lookup_wikidata_verified(&root, "enwiki", "Q999", 10),
+            Err(CatalogError::IdentityMismatch)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn sqlite_catalog_open_rejects_linked_paths() {
