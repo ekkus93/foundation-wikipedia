@@ -356,10 +356,10 @@ impl SnapshotCatalog {
                 ch.is_control()
                     || matches!(
                         ch,
-                        '\\u{061c}'
-                            | '\\u{200e}'..='\\u{200f}'
-                            | '\\u{202a}'..='\\u{202e}'
-                            | '\\u{2066}'..='\\u{2069}'
+                        '\u{061c}'
+                            | '\u{200e}'..='\u{200f}'
+                            | '\u{202a}'..='\u{202e}'
+                            | '\u{2066}'..='\u{2069}'
                     )
             })
         {
@@ -979,7 +979,7 @@ mod tests {
             .search_title_prefix(&root, "frwiki", "Earth", 5)
             .unwrap()
             .is_empty());
-        for bad in ["", " E", "E\\u{202e}arth", "E\\narth"] {
+        for bad in ["", " E", "E\u{202e}arth", "E\narth"] {
             assert!(matches!(
                 catalog.search_title_prefix(&root, "enwiki", bad, 5),
                 Err(CatalogError::InvalidCatalogEntry)
