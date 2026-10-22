@@ -4,6 +4,7 @@
 //! corrupt frames and dangling redirects return errors, never a stale article.
 //! Source-publisher authentication and pack activation are caller obligations.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use wiki_model::{Article, ArticleKey, PageRecord};
@@ -55,18 +56,23 @@ impl<'a> OfflineReader<'a> {
     /// Open an installed page by stable project/page ID, including redirects.
     /// Only a genuinely absent key reports `None`.
     pub fn open_page(&self, key: &ArticleKey) -> Result<Option<Article>, ReaderError> {
-        match self.catalog.read_record(self.root, key)? {
-            None => Ok(None),
-            Some(PageRecord::Article(article)) => Ok(Some(*article)),
-            Some(PageRecord::Redirect(redirect)) => {
-                // Redirect traversal is bounded and cycle-checked in catalog.
-                let resolved = self
-                    .catalog
-                    .resolve_title(self.root, &key.project, &redirect.title)?
-                    .ok_or(CatalogError::DanglingRedirect)?;
-                Ok(Some(Self::require_article(resolved.1)?))
+        // A redirect has a stable target page ID. Resolving its mutable title
+        // again would incorrectly depend on a separate title-index entry.
+        // Every hop must still pass the catalog's digest and identity checks.
+        let mut current = key.clone();
+        let mut visited = HashSet::new();
+        for _ in 0..32 {
+            if !visited.insert(current.clone()) {
+                return Err(CatalogError::RedirectCycle.into());
+            }
+            match self.catalog.read_record(self.root, &current)? {
+                None if current == *key => return Ok(None),
+                None => return Err(CatalogError::DanglingRedirect.into()),
+                Some(PageRecord::Article(article)) => return Ok(Some(*article)),
+                Some(PageRecord::Redirect(redirect)) => current = redirect.to,
             }
         }
+        Err(CatalogError::RedirectTooDeep.into())
     }
 
     /// Open a page only when its installed canonical revision still matches
@@ -191,7 +197,8 @@ mod tests {
         append_record_frame(&mut bytes, &redirect).unwrap();
         fs::write(root.join("reader.shard"), &bytes).unwrap();
 
-        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        let database = root.join("catalog.sqlite");
+        let mut catalog = SnapshotCatalog::open(&database).unwrap();
         catalog
             .insert_verified(&root, "reader.shard", 0, redirect_offset)
             .unwrap();
@@ -221,12 +228,53 @@ mod tests {
             Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
         ));
 
+        // A page-ID redirect must not require a title-index entry. Removing
+        // that secondary row models a stale derived index independently of
+        // the already verified immutable redirect frame.
+        let redirect_key = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 43,
+        };
+        assert_eq!(
+            reader.open_page(&redirect_key).unwrap().unwrap().key.page_id,
+            42
+        );
+        let conn = rusqlite::Connection::open(&database).unwrap();
+        assert_eq!(
+            conn.execute(
+                "DELETE FROM title_index WHERE project='enwiki' AND page_id=43",
+                [],
+            )
+            .unwrap(),
+            1
+        );
+        drop(conn);
+        assert!(catalog.lookup_key("enwiki", "Planet Earth").unwrap().is_none());
+        assert_eq!(
+            reader.open_page(&redirect_key).unwrap().unwrap().key.page_id,
+            42
+        );
+        assert_eq!(
+            reader
+                .open_exact_revision(&redirect_key, 1042)
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
+            42
+        );
+
         bytes[12] ^= 1;
         fs::write(root.join("reader.shard"), &bytes).unwrap();
         assert!(matches!(
             reader.search_title_prefix("enwiki", "Earth", 10),
             Err(ReaderError::Catalog(CatalogError::DigestMismatch))
         ));
+        assert!(matches!(
+            reader.open_page(&redirect_key),
+            Err(ReaderError::Catalog(CatalogError::DigestMismatch))
+        ));
+        drop(catalog);
         fs::remove_dir_all(root).unwrap();
     }
 }
