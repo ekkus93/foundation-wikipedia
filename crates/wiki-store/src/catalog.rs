@@ -1031,7 +1031,10 @@ mod tests {
                 [],
             )
             .unwrap();
-        let resolved = catalog.resolve_title(&root, "enwiki", "Earth").unwrap().unwrap();
+        let resolved = catalog
+            .resolve_title(&root, "enwiki", "Earth")
+            .unwrap()
+            .unwrap();
         assert_eq!(resolved.0.page_id, 42);
 
         bytes[12] ^= 1;
