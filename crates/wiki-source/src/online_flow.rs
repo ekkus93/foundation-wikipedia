@@ -6,6 +6,8 @@
 
 use wiki_model::ArticleKey;
 
+use crate::local_title_index::{LocalTitleIndex, LocalTitleIndexError};
+
 use crate::online_article::{
     parse_current_revision, parse_rendered_revision, OnlineArticleError, OnlineRenderedRevision,
     OnlineRevision,
@@ -53,6 +55,7 @@ pub enum OnlineFlowError {
     Request(OnlineRequestError),
     Article(OnlineArticleError),
     Title(TitleResolutionError),
+    LocalIndex(LocalTitleIndexError),
 }
 
 /// Never create an online URL if the network is disabled. For an online fetch,
@@ -96,6 +99,34 @@ pub fn begin_title_open(
         NetworkState::Online => Ok(OpenTitle::Resolve { title_url }),
         NetworkState::Offline => Ok(OpenTitle::MissingOffline),
     }
+}
+
+/// Resolve a title against an independently verified local catalog without
+/// network transport, and carry the exact local revision into article selection.
+/// This is not an offline-media verifier or a filesystem index loader.
+pub fn begin_offline_title_open(
+    project: &str,
+    title: &str,
+    index: Option<&LocalTitleIndex>,
+) -> Result<OpenArticle, OnlineFlowError> {
+    // Use the same request-boundary title and project validation as online
+    // navigation, but do not execute the constructed URL.
+    begin_title_open(project, title, NetworkState::Offline)?;
+    let Some(index) = index else {
+        return Ok(OpenArticle::MissingOffline);
+    };
+    if index.project() != project {
+        return Err(OnlineFlowError::LocalIndex(
+            LocalTitleIndexError::ForeignProject,
+        ));
+    }
+    let Some(found) = index
+        .resolve_title(title)
+        .map_err(OnlineFlowError::LocalIndex)?
+    else {
+        return Ok(OpenArticle::MissingOffline);
+    };
+    begin_open(&found.hit.key, NetworkState::Offline, &[found.version])
 }
 
 /// Interpret a trusted-transport title-resolution response as a stable page
@@ -220,6 +251,48 @@ mod tests {
             panic!("online metadata must not be guessed from a saved revision");
         };
         assert_eq!(fallback, Some(saved));
+    }
+
+    #[test]
+    fn verified_offline_title_navigation_uses_exact_local_revision_without_http() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
+
+        let saved = ArticleVersion {
+            key: key(),
+            revision_id: 290,
+            location: ArticleLocation::InstalledPack,
+            local_complete: true,
+        };
+        let catalog = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".to_owned(),
+                version: saved.clone(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            begin_offline_title_open("enwiki", "physics", Some(&catalog)),
+            Ok(OpenArticle::Local(saved))
+        );
+        assert_eq!(
+            begin_offline_title_open("enwiki", "Missing", Some(&catalog)),
+            Ok(OpenArticle::MissingOffline)
+        );
+        assert_eq!(
+            begin_offline_title_open("enwiki", "Physics", None),
+            Ok(OpenArticle::MissingOffline)
+        );
+        assert_eq!(
+            begin_offline_title_open("frwiki", "Physics", Some(&catalog)),
+            Err(OnlineFlowError::LocalIndex(
+                LocalTitleIndexError::ForeignProject
+            ))
+        );
+        assert!(matches!(
+            begin_offline_title_open("enwiki", "Ph\\u{202e}ysics", Some(&catalog)),
+            Err(OnlineFlowError::Request(OnlineRequestError::InvalidTitle))
+        ));
     }
 
     #[test]
