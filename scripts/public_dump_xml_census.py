@@ -119,6 +119,17 @@ def _verify_siteinfo_project(siteinfo, project):
         raise DumpDecodeError("siteinfo database name does not match source project")
 
 
+def _mediawiki_base36_sha1(wikitext):
+    """MediaWiki content SHA-1 uses lowercase base36, zero-padded to 31 chars."""
+    value = int.from_bytes(hashlib.sha1(wikitext.encode("utf-8")).digest(), "big")
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    encoded = ""
+    while value:
+        value, digit = divmod(value, 36)
+        encoded = digits[digit] + encoded
+    return encoded.zfill(31)
+
+
 def _revision_wikitext(revision):
     """Extract one available main-slot wikitext body, not rendered HTML.
 
@@ -168,6 +179,27 @@ def _revision_wikitext(revision):
             raise DumpDecodeError("invalid declared revision wikitext byte length")
         if int(declared) != len(decoded.encode("utf-8")):
             raise DumpDecodeError("revision wikitext byte length mismatch")
+    # The dump's optional hash is MediaWiki's 31-character base36 SHA-1,
+    # not the hexadecimal SHA-1 published by some MediaWiki JSON APIs.
+    # For multi-slot revisions, the revision-level sha1 combines the
+    # individual slot hashes and must NOT be compared to main-slot text.
+    text_hash = text.attrib.get("sha1")
+    rev_hashes = [item for item in revision if item.tag == child_name("sha1")]
+    if len(rev_hashes) > 1 or any(item.attrib or len(item) for item in rev_hashes):
+        raise DumpDecodeError("ambiguous revision SHA-1")
+    rev_hash = rev_hashes[0].text if rev_hashes else None
+    for declared in (text_hash, rev_hash):
+        if declared is not None and not re.fullmatch(r"[0-9a-z]{31}", declared):
+            raise DumpDecodeError("invalid MediaWiki SHA-1")
+    actual_hash = _mediawiki_base36_sha1(decoded)
+    if text_hash is not None and text_hash != actual_hash:
+        raise DumpDecodeError("main-slot SHA-1 mismatch")
+    # Legacy direct text, or exactly one slot, has the same revision
+    # and content digest. Multiple slots require separate hash-of-hashes
+    # verification and are not falsely represented as single-slot data.
+    single_content = not slots or len(slots[0]) == 1
+    if single_content and rev_hash is not None and rev_hash != actual_hash:
+        raise DumpDecodeError("revision SHA-1 mismatch")
     return decoded
 
 
