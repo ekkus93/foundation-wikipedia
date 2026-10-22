@@ -445,6 +445,54 @@ impl SnapshotCatalog {
         Ok(matches)
     }
 
+    /// Resolve bounded Wikidata matches from digest-verified immutable records.
+    /// Source authenticity and required media remain separate caller checks.
+    pub fn lookup_wikidata_verified(
+        &self,
+        root: &Path,
+        project: &str,
+        item: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, CatalogError> {
+        ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        }
+        .validate()?;
+        let digits = item.strip_prefix('Q').unwrap_or("");
+        if !(1..=100).contains(&limit)
+            || item.len() > 64
+            || digits.is_empty()
+            || digits.starts_with('0')
+            || !digits.bytes().all(|digit| digit.is_ascii_digit())
+        {
+            return Err(CatalogError::InvalidCatalogEntry);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT page_id FROM records WHERE project=?1 AND wikidata_id=?2
+             ORDER BY page_id LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![project, item, limit as i64], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        let mut articles = Vec::new();
+        for row in rows {
+            let key = ArticleKey {
+                project: project.to_owned(),
+                page_id: as_u64(row?)?,
+            };
+            match self.read_record(root, &key)? {
+                Some(PageRecord::Article(article))
+                    if article.wikidata_id.as_deref() == Some(item) =>
+                {
+                    articles.push(*article);
+                }
+                _ => return Err(CatalogError::InvalidCatalogEntry),
+            }
+        }
+        Ok(articles)
+    }
+
     pub fn lookup_entry(&self, key: &ArticleKey) -> Result<Option<CatalogEntry>, CatalogError> {
         key.validate()?;
         let row: Option<CatalogRow> =
