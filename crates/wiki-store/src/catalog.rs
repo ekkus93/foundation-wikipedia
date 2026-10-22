@@ -11,11 +11,12 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use wiki_model::{wikipedia_title_key, ArticleKey, ModelError, PageRecord};
+use wiki_model::{wikipedia_title_key, Article, ArticleKey, ModelError, PageRecord};
 
 use crate::record_codec::{decode_record_at, RecordCodecError, MAX_COMPRESSED_RECORD_BYTES};
 
 const MAX_FRAME_BYTES: u64 = MAX_COMPRESSED_RECORD_BYTES + 40;
+const MAX_TITLE_PREFIX_SCAN: usize = 10_000;
 
 #[derive(Debug)]
 pub enum CatalogError {
@@ -328,6 +329,75 @@ impl SnapshotCatalog {
                 })
             })
             .transpose()
+    }
+
+    /// Prefix-search already indexed snapshot titles, aliases and redirects.
+    /// Results are exact decoded articles with frame digests verified through
+    /// resolve_title. Snapshot trust and required media are separate gates.
+    /// A bounded scan fails instead of silently returning a misleading subset
+    /// if one prefix maps to too many aliases of a small set of pages.
+    pub fn search_title_prefix(
+        &self,
+        root: &Path,
+        project: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, CatalogError> {
+        ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        }
+        .validate()?;
+        if !(1..=100).contains(&limit)
+            || prefix.is_empty()
+            || prefix != prefix.trim()
+            || prefix.len() > 512
+            || prefix.chars().any(|ch| {
+                ch.is_control()
+                    || matches!(
+                        ch,
+                        '\\u{061c}'
+                            | '\\u{200e}'..='\\u{200f}'
+                            | '\\u{202a}'..='\\u{202e}'
+                            | '\\u{2066}'..='\\u{2069}'
+                    )
+            })
+        {
+            return Err(CatalogError::InvalidCatalogEntry);
+        }
+        let normalized = title_key(prefix)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT normalized_title FROM title_index
+             WHERE project=?1 AND normalized_title>=?2
+             ORDER BY normalized_title",
+        )?;
+        let rows = stmt.query_map(params![project, normalized], |row| row.get::<_, String>(0))?;
+        let mut result = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut scanned = 0;
+        for row in rows {
+            let title = row?;
+            if !title.starts_with(&normalized) {
+                break;
+            }
+            if scanned >= MAX_TITLE_PREFIX_SCAN {
+                return Err(CatalogError::InvalidCatalogEntry);
+            }
+            scanned += 1;
+            let (key, record) = self
+                .resolve_title(root, project, &title)?
+                .ok_or(CatalogError::InvalidCatalogEntry)?;
+            if seen.insert(key.page_id) {
+                match record {
+                    PageRecord::Article(article) => result.push(*article),
+                    PageRecord::Redirect(_) => return Err(CatalogError::DanglingRedirect),
+                }
+            }
+            if result.len() == limit {
+                break;
+            }
+        }
+        Ok(result)
     }
 
     pub fn lookup_wikidata(
@@ -854,6 +924,80 @@ mod tests {
         fs::write(&path, &tampered).unwrap();
         assert!(matches!(
             catalog.read_record(&root, &second_key),
+            Err(CatalogError::DigestMismatch)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prefix_title_lookup_verifies_frames_and_redirect_targets() {
+        let root = temp_root();
+        let mut source = article(42, "Earth");
+        if let PageRecord::Article(ref mut article) = source {
+            article.aliases.push("Earth science".to_owned());
+        }
+        let redirect = PageRecord::Redirect(Redirect {
+            from: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 43,
+            },
+            title: "Planet Earth".into(),
+            to: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
+        });
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &source).unwrap();
+        let second_start = bytes.len() as u64;
+        append_record_frame(&mut bytes, &redirect).unwrap();
+        fs::write(root.join("titles.shard"), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "titles.shard", 0, second_start)
+            .unwrap();
+        catalog
+            .insert_verified(
+                &root,
+                "titles.shard",
+                second_start,
+                bytes.len() as u64 - second_start,
+            )
+            .unwrap();
+
+        for query in ["earth", "Earth_", "Planet_", "The_blue_"] {
+            let matches = catalog.search_title_prefix(&root, "enwiki", query, 10).unwrap();
+            assert_eq!(matches.len(), 1, "{query}");
+            assert_eq!(matches[0].key.page_id, 42);
+            assert_eq!(matches[0].revision.revision_id, 1042);
+        }
+        assert!(catalog
+            .search_title_prefix(&root, "enwiki", "Missing", 10)
+            .unwrap()
+            .is_empty());
+        assert!(catalog
+            .search_title_prefix(&root, "frwiki", "Earth", 5)
+            .unwrap()
+            .is_empty());
+        for bad in ["", " E", "E\\u{202e}arth", "E\\narth"] {
+            assert!(matches!(
+                catalog.search_title_prefix(&root, "enwiki", bad, 5),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+        }
+        assert!(matches!(
+            catalog.search_title_prefix(&root, "enwiki", "Earth", 0),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            catalog.search_title_prefix(&root, "enwiki", "Earth", 101),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+
+        bytes[12] ^= 1;
+        fs::write(root.join("titles.shard"), &bytes).unwrap();
+        assert!(matches!(
+            catalog.search_title_prefix(&root, "enwiki", "Earth", 10),
             Err(CatalogError::DigestMismatch)
         ));
         fs::remove_dir_all(root).unwrap();
