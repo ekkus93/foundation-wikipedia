@@ -138,7 +138,16 @@ impl WikipediaRequests {
         if text.trim().is_empty()
             || text != text.trim()
             || text.len() > MAX_QUERY_BYTES
-            || text.chars().any(char::is_control)
+            || text.chars().any(|ch| {
+                ch.is_control()
+                    || matches!(
+                        ch,
+                        '\u{061c}'
+                            | '\u{200e}'..='\u{200f}'
+                            | '\u{202a}'..='\u{202e}'
+                            | '\u{2066}'..='\u{2069}'
+                    )
+            })
         {
             return Err(OnlineRequestError::InvalidSearch);
         }
@@ -277,6 +286,30 @@ mod tests {
             let lookup = query(&api.resolve_title(title).unwrap());
             assert_eq!(lookup.get("titles").map(String::as_str), Some(title));
         }
+    }
+
+    #[test]
+    fn search_rejects_directional_spoofing_but_accepts_rtl_language() {
+        let api = WikipediaRequests::new("enwiki").unwrap();
+        for mark in [
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}', '\u{2066}',
+            '\u{2069}',
+        ] {
+            let unsafe_search = format!("Physics{mark}");
+            assert_eq!(
+                api.search(&unsafe_search, 1),
+                Err(OnlineRequestError::InvalidSearch)
+            );
+        }
+        for term in ["الفيزياء", "פיזיקה"] {
+            let parameters = query(&api.search(term, 1).unwrap());
+            assert_eq!(parameters.get("srsearch").map(String::as_str), Some(term));
+        }
+        let unsafe_url = api
+            .search("Physics", 1)
+            .unwrap()
+            .replace("srsearch=Physics", "srsearch=Physics%E2%80%AE");
+        assert!(!api.accepts_transport_url(&unsafe_url));
     }
 
     #[test]
