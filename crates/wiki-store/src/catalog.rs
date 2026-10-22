@@ -966,7 +966,9 @@ mod tests {
             .unwrap();
 
         for query in ["earth", "Earth_", "Planet_", "The_blue_"] {
-            let matches = catalog.search_title_prefix(&root, "enwiki", query, 10).unwrap();
+            let matches = catalog
+                .search_title_prefix(&root, "enwiki", query, 10)
+                .unwrap();
             assert_eq!(matches.len(), 1, "{query}");
             assert_eq!(matches[0].key.page_id, 42);
             assert_eq!(matches[0].revision.revision_id, 1042);
