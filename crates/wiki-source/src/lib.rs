@@ -8,12 +8,12 @@ pub mod enterprise_pinned;
 pub mod enterprise_pinned_deletions;
 pub mod enterprise_verified;
 pub mod join;
+pub mod local_title_index;
 pub mod online_article;
 #[cfg(not(target_os = "android"))]
 pub mod online_curl;
 pub mod online_fetch;
 pub mod online_flow;
-pub mod local_title_index;
 pub mod online_requests;
 pub mod online_search;
 pub mod online_selection;

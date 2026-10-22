@@ -203,7 +203,11 @@ mod tests {
             "enwiki",
             [
                 entry(1, "Physics", ArticleLocation::InstalledPack),
-                entry(2, "Physical chemistry", ArticleLocation::ExplicitOfflineSave),
+                entry(
+                    2,
+                    "Physical chemistry",
+                    ArticleLocation::ExplicitOfflineSave,
+                ),
                 entry(3, "Énergie", ArticleLocation::TemporaryCache),
                 entry(4, "رياضيات", ArticleLocation::InstalledPack),
             ],
@@ -212,11 +216,23 @@ mod tests {
         assert_eq!(index.len(), 4);
         assert_eq!(index.project(), "enwiki");
         assert_eq!(
-            index.resolve_title("physics").unwrap().unwrap().hit.key.page_id,
+            index
+                .resolve_title("physics")
+                .unwrap()
+                .unwrap()
+                .hit
+                .key
+                .page_id,
             1
         );
         assert_eq!(
-            index.resolve_title("Physical_chemistry").unwrap().unwrap().hit.key.page_id,
+            index
+                .resolve_title("Physical_chemistry")
+                .unwrap()
+                .unwrap()
+                .hit
+                .key
+                .page_id,
             2
         );
         assert!(index.resolve_title("Missing").unwrap().is_none());
@@ -240,7 +256,10 @@ mod tests {
             Err(LocalTitleIndexError::NotOfflineComplete)
         ));
         assert!(matches!(
-            LocalTitleIndex::new("enwiki", [entry(1, "Physics", ArticleLocation::OnlineCurrent)]),
+            LocalTitleIndex::new(
+                "enwiki",
+                [entry(1, "Physics", ArticleLocation::OnlineCurrent)]
+            ),
             Err(LocalTitleIndexError::NonLocalVersion)
         ));
         let mut foreign = entry(1, "Physics", ArticleLocation::InstalledPack);
@@ -271,10 +290,7 @@ mod tests {
         ));
         for title in [" A ", "Bad\u{202e}Title", "Bad\nTitle", ""] {
             assert!(matches!(
-                LocalTitleIndex::new(
-                    "enwiki",
-                    [entry(1, title, ArticleLocation::InstalledPack)]
-                ),
+                LocalTitleIndex::new("enwiki", [entry(1, title, ArticleLocation::InstalledPack)]),
                 Err(LocalTitleIndexError::InvalidTitle)
             ));
         }

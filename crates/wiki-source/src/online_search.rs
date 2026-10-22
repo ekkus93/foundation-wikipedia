@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 use wiki_model::{wikipedia_title_key, ArticleKey};
 
-use crate::online_fetch::MediaWikiTransport;
 use crate::local_title_index::{LocalSearchHit, LocalTitleIndex, LocalTitleIndexError};
+use crate::online_fetch::MediaWikiTransport;
 use crate::online_requests::{OnlineRequestError, WikipediaRequests};
 use crate::online_selection::NetworkState;
 
@@ -483,5 +483,4 @@ mod tests {
             Err(SearchFetchError::Request(OnlineRequestError::InvalidSearch))
         );
     }
-
 }
