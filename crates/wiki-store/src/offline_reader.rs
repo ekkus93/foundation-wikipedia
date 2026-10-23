@@ -156,6 +156,19 @@ impl<'a> OfflineReader<'a> {
             .search_verified(self.catalog, self.root, query, limit)?)
     }
 
+    /// Query installed FTS entries for one edition only; all returned pages
+    /// are rechecked against their immutable catalog frames and revisions.
+    pub fn search_project_articles(
+        &self,
+        project: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, ReaderError> {
+        Ok(self
+            .index
+            .search_verified_project(self.catalog, self.root, project, query, limit)?)
+    }
+
     /// Prefix-search installed canonical titles, aliases and redirects without
     /// requiring a full-text index rebuild or making any network request.
     /// Every returned article is read from a digest-verified immutable frame.

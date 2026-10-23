@@ -164,11 +164,33 @@ impl CorpusLexicalIndex {
 
     /// Return a stable global ranking, bounded to 100 results.
     pub fn search(&self, query: &str, limit: usize) -> Vec<CorpusHit> {
+        self.search_scoped(None, query, limit)
+    }
+
+    /// Restrict to one Wikipedia project BEFORE ranking and truncating.
+    /// Filtering global top-100 results afterward would lose valid hits.
+    pub fn search_project(&self, project: &str, query: &str, limit: usize) -> Vec<CorpusHit> {
+        if (ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        })
+        .validate()
+        .is_err()
+        {
+            return Vec::new();
+        }
+        self.search_scoped(Some(project), query, limit)
+    }
+
+    fn search_scoped(&self, scope: Option<&str>, query: &str, limit: usize) -> Vec<CorpusHit> {
         if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
             return Vec::new();
         }
         let mut hits = Vec::new();
         for ((project, page_id), index) in &self.articles {
+            if scope.is_some_and(|wanted| project.as_str() != wanted) {
+                continue;
+            }
             for evidence in index.search(query, 100) {
                 hits.push(CorpusHit {
                     article: ArticleKey {
@@ -194,6 +216,24 @@ impl CorpusLexicalIndex {
     /// Search installed article titles and aliases for navigation.
     /// This does not provide evidence passages for grounded AI answers.
     pub fn search_titles(&self, query: &str, limit: usize) -> Vec<TitleHit> {
+        self.search_titles_scoped(None, query, limit)
+    }
+
+    /// Navigation titles are filtered by edition before the result cap.
+    pub fn search_titles_project(&self, project: &str, query: &str, limit: usize) -> Vec<TitleHit> {
+        if (ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        })
+        .validate()
+        .is_err()
+        {
+            return Vec::new();
+        }
+        self.search_titles_scoped(Some(project), query, limit)
+    }
+
+    fn search_titles_scoped(&self, scope: Option<&str>, query: &str, limit: usize) -> Vec<TitleHit> {
         if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
             return Vec::new();
         }
@@ -203,6 +243,9 @@ impl CorpusLexicalIndex {
         }
         let mut hits = Vec::new();
         for ((project, page_id), index) in &self.articles {
+            if scope.is_some_and(|wanted| project.as_str() != wanted) {
+                continue;
+            }
             let mut best = title_match_score(&index.title, &terms);
             if best > 0 {
                 best += 20; // Prefer the canonical title on an equal textual match.
@@ -742,6 +785,43 @@ mod tests {
         assert!(left.search("", 50).is_empty());
         assert!(left.search("physics", 0).is_empty());
         assert_eq!(left.search("physics", 1).len(), 1);
+    }
+
+    #[test]
+    fn project_search_filters_before_corpus_and_title_result_caps() {
+        let mut pages = Vec::new();
+        for page_id in 1..=110 {
+            let mut other = sample();
+            other.key.project = "arwiki".into();
+            other.key.page_id = page_id;
+            pages.push(other);
+        }
+        let mut local = sample();
+        local.key.project = "enwiki".into();
+        local.key.page_id = 999;
+        pages.push(local);
+        let index = CorpusLexicalIndex::build(&pages).unwrap();
+        let all = index.search("physics", 100);
+        assert_eq!(all.len(), 100);
+        assert!(all.iter().all(|hit| hit.article.project == "arwiki"));
+        let scoped = index.search_project("enwiki", "physics", 100);
+        assert!(!scoped.is_empty());
+        assert!(scoped.iter().all(|hit| hit.article.page_id == 999));
+        assert_eq!(index.search_project("missingwiki", "physics", 100).len(), 0);
+        assert!(index.search_project("ENWIKI", "physics", 100).is_empty());
+        assert!(index.search_project("enwiki", "physics", 0).is_empty());
+        assert!(index.search_project("enwiki", "physics", 101).len() <= 100);
+        let global_titles = index.search_titles("physics", 100);
+        assert_eq!(global_titles.len(), 100);
+        assert!(global_titles
+            .iter()
+            .all(|hit| hit.article.project == "arwiki"));
+        let titles = index.search_titles_project("enwiki", "physics", 100);
+        assert_eq!(titles.len(), 1);
+        assert_eq!(titles[0].article.page_id, 999);
+        assert!(index
+            .search_titles_project("ENWIKI", "physics", 100)
+            .is_empty());
     }
 
     #[test]

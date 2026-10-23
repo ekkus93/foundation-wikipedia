@@ -464,6 +464,80 @@ impl OfflineSearchIndex {
             .collect()
     }
 
+    /// Full-text search confined to one validated Wikipedia edition.
+    /// The SQLite WHERE clause applies the project filter before ORDER BY
+    /// and LIMIT; filtering global search hits afterward is unsafe.
+    pub fn search_project(
+        &self,
+        project: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, SearchError> {
+        ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        }
+        .validate()
+        .map_err(|_| SearchError::InvalidIdentity)?;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(expression) = query_expression(query) else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT project,page_id,revision_id,title FROM offline_article_fts
+             WHERE offline_article_fts MATCH ?1 AND project=?2
+             ORDER BY bm25(offline_article_fts, 0.0, 0.0, 0.0, 8.0, 1.0),
+                      CAST(page_id AS INTEGER) LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![expression, project, limit.min(100) as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut hits = Vec::new();
+        for row in rows {
+            let (actual_project, page, revision, title) = row?;
+            if actual_project != project {
+                return Err(SearchError::InvalidIdentity);
+            }
+            let key = ArticleKey {
+                project: actual_project,
+                page_id: u64::try_from(page).map_err(|_| SearchError::InvalidIdentity)?,
+            };
+            key.validate().map_err(|_| SearchError::InvalidIdentity)?;
+            let revision_id = u64::try_from(revision).map_err(|_| SearchError::InvalidIdentity)?;
+            if revision_id == 0 {
+                return Err(SearchError::InvalidIdentity);
+            }
+            hits.push(SearchHit {
+                key,
+                revision_id,
+                title,
+            });
+        }
+        Ok(hits)
+    }
+
+    /// Resolve project-scoped hits against digest-verified immutable frames.
+    pub fn search_verified_project(
+        &self,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+        project: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<Article>, SearchError> {
+        self.search_project(project, query, limit)?
+            .iter()
+            .map(|hit| self.resolve_hit(catalog, root, hit))
+            .collect()
+    }
+
     /// Local-only title-boosted lexical ranking, at most 100 results.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, SearchError> {
         if limit == 0 {
@@ -511,6 +585,60 @@ impl OfflineSearchIndex {
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+
+    #[test]
+    fn project_filter_precedes_fts_limit_and_ignores_foreign_corruption() {
+        let index = OfflineSearchIndex::in_memory().unwrap();
+        for page in 1..=110 {
+            index
+                .conn
+                .execute(
+                    "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                     VALUES ('arwiki',?1,42,'Needle','needle')",
+                    params![page],
+                )
+                .unwrap();
+        }
+        index
+            .conn
+            .execute(
+                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                 VALUES ('enwiki',999,42,'Quiet','needle')",
+                [],
+            )
+            .unwrap();
+        let global = index.search("needle", 100).unwrap();
+        assert_eq!(global.len(), 100);
+        assert!(global.iter().all(|hit| hit.key.project == "arwiki"));
+        let en = index.search_project("enwiki", "needle", 100).unwrap();
+        assert_eq!(en.len(), 1);
+        assert_eq!(en[0].key.page_id, 999);
+        assert_eq!(en[0].revision_id, 42);
+        assert!(index.search_project("enwiki", "needle", 0).unwrap().is_empty());
+        assert!(index
+            .search_project("missingwiki", "needle", 100)
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            index.search_project("ENWIKI", "needle", 10),
+            Err(SearchError::InvalidIdentity)
+        ));
+        // Invalid foreign-edition row identities must not poison valid
+        // edition-scoped search, but are still rejected globally.
+        index
+            .conn
+            .execute(
+                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                 VALUES ('arwiki',0,42,'Needle','needle')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(index.search_project("enwiki", "needle", 10).unwrap().len(), 1);
+        assert!(matches!(
+            index.search("needle", 100),
+            Err(SearchError::InvalidIdentity)
+        ));
+    }
 
     #[test]
     fn rejects_corrupted_fts_page_revision_and_project_identities() {
