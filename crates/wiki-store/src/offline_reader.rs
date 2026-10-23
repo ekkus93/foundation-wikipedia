@@ -279,8 +279,17 @@ mod tests {
                 bytes.len() as u64 - redirect_offset,
             )
             .unwrap();
-        let index = OfflineSearchIndex::in_memory().unwrap();
+        let mut index = OfflineSearchIndex::in_memory().unwrap();
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
         let reader = OfflineReader::new(&catalog, &index, &root);
+        let scoped = reader.search_project_articles("enwiki", "Earth", 10).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].key.page_id, 42);
+        assert_eq!(scoped[0].revision.revision_id, 1042);
+        assert!(reader
+            .search_project_articles("frwiki", "Earth", 10)
+            .unwrap()
+            .is_empty());
 
         for prefix in ["earth", "The_blue", "Planet_"] {
             let hits = reader.search_title_prefix("enwiki", prefix, 10).unwrap();
@@ -408,6 +417,12 @@ mod tests {
         assert!(matches!(
             reader.search_title_prefix("enwiki", "Earth", 10),
             Err(ReaderError::Catalog(CatalogError::DigestMismatch))
+        ));
+        assert!(matches!(
+            reader.search_project_articles("enwiki", "Earth", 10),
+            Err(ReaderError::Search(SearchError::Catalog(
+                CatalogError::DigestMismatch
+            )))
         ));
         assert!(matches!(
             reader.open_page(&redirect_key),

@@ -294,12 +294,42 @@ impl CorpusLexicalIndex {
         limit: usize,
         budget: usize,
     ) -> Vec<CorpusHit> {
+        self.search_with_word_budget_scoped(None, query, limit, budget)
+    }
+
+    /// Apply the requested edition filter before selecting budgeted evidence.
+    pub fn search_with_word_budget_project(
+        &self,
+        project: &str,
+        query: &str,
+        limit: usize,
+        budget: usize,
+    ) -> Vec<CorpusHit> {
+        if (ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        })
+        .validate()
+        .is_err()
+        {
+            return Vec::new();
+        }
+        self.search_with_word_budget_scoped(Some(project), query, limit, budget)
+    }
+
+    fn search_with_word_budget_scoped(
+        &self,
+        scope: Option<&str>,
+        query: &str,
+        limit: usize,
+        budget: usize,
+    ) -> Vec<CorpusHit> {
         if limit == 0 || budget == 0 {
             return Vec::new();
         }
         let mut used = 0usize;
         let mut selected = Vec::new();
-        for hit in self.search(query, 100) {
+        for hit in self.search_scoped(scope, query, 100) {
             if selected.len() >= limit {
                 break;
             }
@@ -826,6 +856,17 @@ mod tests {
         assert_eq!(titles[0].article.page_id, 999);
         assert!(index
             .search_titles_project("ENWIKI", "physics", 100)
+            .is_empty());
+        let budgeted = index.search_with_word_budget_project("enwiki", "physics", 100, 100);
+        assert!(!budgeted.is_empty());
+        assert!(budgeted
+            .iter()
+            .all(|hit| hit.article.project == "enwiki"));
+        assert!(index
+            .search_with_word_budget_project("ENWIKI", "physics", 100, 100)
+            .is_empty());
+        assert!(index
+            .search_with_word_budget_project("enwiki", "physics", 100, 0)
             .is_empty());
     }
 
