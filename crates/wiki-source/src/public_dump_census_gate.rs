@@ -440,15 +440,9 @@ mod tests {
                 .unwrap();
             Ok::<_, io::Error>(Cursor::new(compressed[index].as_slice()))
         };
-        let (ready, delta) = stage_and_audit_native_bzip2_census(
-            &root,
-            "ready.ids",
-            &pinned,
-            0,
-            audit,
-            open,
-        )
-        .unwrap();
+        let (ready, delta) =
+            stage_and_audit_native_bzip2_census(&root, "ready.ids", &pinned, 0, audit, open)
+                .unwrap();
         assert_eq!(delta.expected_count, 2);
         assert_eq!(delta.observed_count, 2);
         assert_eq!(fs::read(&ready).unwrap(), b"1\n201\n");
