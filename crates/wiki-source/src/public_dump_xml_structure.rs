@@ -35,7 +35,7 @@ pub struct XmlNestingGuard<W> {
     pages: u64,
     // XML 1.0 forbids the CDATA terminator in ordinary character data.
     text_right_brackets: u8,
-    failed: bool;
+    failed: bool,
 }
 
 impl<W: Write> XmlNestingGuard<W> {
@@ -486,7 +486,10 @@ mod tests {
         ] {
             for size in [1, 2, 3, 8192] {
                 let mut guard = XmlNestingGuard::new(Vec::new());
-                let result = bad.as_bytes().chunks(size).try_for_each(|chunk| guard.write_all(chunk));
+                let result = bad
+                    .as_bytes()
+                    .chunks(size)
+                    .try_for_each(|chunk| guard.write_all(chunk));
                 assert!(result.is_err() || guard.finish().is_err(), "{bad}");
             }
         }
