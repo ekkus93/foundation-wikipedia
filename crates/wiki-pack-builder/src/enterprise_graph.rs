@@ -66,7 +66,7 @@ fn category_title(raw: &str) -> Result<String, GraphBuildError> {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
     let name = raw.strip_prefix("Category:").unwrap_or(raw);
-    if name.is_empty() {
+    if name.is_empty() || name.trim() != name {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
     Ok(format!("Category:{name}"))
