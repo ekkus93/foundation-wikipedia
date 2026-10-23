@@ -255,13 +255,16 @@ fn valid_media_mime(value: &str) -> bool {
 
 impl ArticleKey {
     pub fn validate(&self) -> Result<(), ModelError> {
+        let bytes = self.project.as_bytes();
         if self.page_id == 0
             || self.page_id > i64::MAX as u64
-            || self.project.is_empty()
-            || !self
-                .project
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+            || bytes.is_empty()
+            || bytes.len() > 255
+            || !bytes.first().is_some_and(u8::is_ascii_lowercase)
+            || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+            || !bytes
+                .iter()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
         {
             return Err(ModelError::InvalidIdentity);
         }
@@ -1221,6 +1224,26 @@ mod record_contract_tests {
             project: "enwiki".into(),
             page_id,
         }
+    }
+
+    #[test]
+    fn article_key_project_matches_canonical_source_and_pack_identity() {
+        let mut candidate = key(10);
+        for project in [
+            "ENWIKI",
+            "en-wiki",
+            "en wiki",
+            "_enwiki",
+            "enwiki_",
+            "éwiki",
+        ] {
+            candidate.project = project.into();
+            assert_eq!(candidate.validate(), Err(ModelError::InvalidIdentity));
+        }
+        candidate.project = "a".repeat(256);
+        assert_eq!(candidate.validate(), Err(ModelError::InvalidIdentity));
+        candidate.project = "zh_min_nanwiki".into();
+        assert_eq!(candidate.validate(), Ok(()));
     }
 
     #[test]
