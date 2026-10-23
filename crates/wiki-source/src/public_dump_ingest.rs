@@ -46,6 +46,10 @@ impl<'a> PinnedPageIngest<'a> {
         }
     }
 
+    fn matches_next_member(&self, member: &crate::public_dump::DumpChecksum) -> bool {
+        !self.failed && !self.active && !self.in_page && self.audit.matches_next_member(member)
+    }
+
     pub fn begin_member(&mut self, relative_path: &str) -> Result<(), PageIngestError> {
         if self.failed || self.active || self.in_page {
             self.failed = true;
@@ -153,6 +157,7 @@ impl<'a> PinnedPageIngest<'a> {
 /// Error from decoding and auditing one provisional bzip2 shard.
 #[derive(Debug)]
 pub enum PinnedDecodeError {
+    UnpinnedMember,
     Ingest(PageIngestError),
     Decode(crate::public_dump_checked_read::CheckedMemberError<std::io::Error>),
 }
@@ -170,6 +175,12 @@ pub fn ingest_pinned_bzip2_member<R: std::io::Read>(
     max_compressed_bytes: u64,
     max_decoded_bytes: u64,
 ) -> Result<(u64, u64), PinnedDecodeError> {
+    // A caller-supplied descriptor with a correct filename but forged SHA-256
+    // must not override the inventory's authenticated digest.
+    if !ingest.matches_next_member(member) {
+        ingest.abort_member();
+        return Err(PinnedDecodeError::UnpinnedMember);
+    }
     ingest
         .begin_member(&member.relative_path)
         .map_err(PinnedDecodeError::Ingest)?;
@@ -369,6 +380,42 @@ mod tests {
             Err(PinnedDecodeError::Decode(
                 crate::public_dump_checked_read::CheckedMemberError::DigestMismatch
             ))
+        ));
+        assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
+    }
+
+    #[test]
+    fn rejects_caller_forged_checksum_before_decoding_or_publishing() {
+        let pinned = inventory();
+        let expected = &pinned.members()[0];
+        let mut forged = expected.clone();
+        forged.sha256 = "f".repeat(64);
+        assert_ne!(forged.sha256, expected.sha256);
+        let mut ingest = PinnedPageIngest::new(&pinned);
+        assert!(matches!(
+            ingest_pinned_bzip2_member(
+                &mut ingest,
+                &forged,
+                Cursor::new(b"not even bzip2"),
+                4096,
+                4096,
+            ),
+            Err(PinnedDecodeError::UnpinnedMember)
+        ));
+        assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
+
+        let mut wrong_path = expected.clone();
+        wrong_path.relative_path = pinned.members()[1].relative_path.clone();
+        let mut ingest = PinnedPageIngest::new(&pinned);
+        assert!(matches!(
+            ingest_pinned_bzip2_member(
+                &mut ingest,
+                &wrong_path,
+                Cursor::new(b""),
+                4096,
+                4096,
+            ),
+            Err(PinnedDecodeError::UnpinnedMember)
         ));
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
     }

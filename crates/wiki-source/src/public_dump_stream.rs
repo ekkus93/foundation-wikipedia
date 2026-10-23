@@ -67,6 +67,18 @@ impl<'a> StreamShardAudit<'a> {
         }
     }
 
+    /// Check the complete descriptor, including SHA-256, against the next
+    /// inventory member before a caller-controlled decoder is allowed to run.
+    pub(crate) fn matches_next_member(&self, member: &crate::public_dump::DumpChecksum) -> bool {
+        !self.failed
+            && !self.active
+            && self
+                .inventory
+                .members()
+                .get(self.next_member)
+                .is_some_and(|expected| expected == member)
+    }
+
     /// Start one already-verified member. The caller owns decoding and I/O.
     /// A failed operation permanently invalidates this audit instance.
     pub fn begin_member(&mut self, relative_path: &str) -> Result<(), StreamAuditError> {
