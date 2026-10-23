@@ -441,15 +441,10 @@ mod tests {
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
         let pinned =
             parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
-        let result = stage_pinned_native_bzip2_census(
-            &root,
-            "observed.ids",
-            &pinned,
-            0,
-            4096,
-            4096,
-            |_| Ok(Cursor::new(bytes.as_slice())),
-        );
+        let result =
+            stage_pinned_native_bzip2_census(&root, "observed.ids", &pinned, 0, 4096, 4096, |_| {
+                Ok(Cursor::new(bytes.as_slice()))
+            });
         assert!(matches!(
             result,
             Err(CensusStageError::Census(PinnedCensusError::NativeDecode(_)))
