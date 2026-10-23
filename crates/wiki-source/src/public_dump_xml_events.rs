@@ -574,10 +574,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_root_children_and_siteinfo_after_page() {
-        let without_siteinfo = VALID.replace(
-            "<siteinfo><sitename>Wiki</sitename></siteinfo>",
-            "",
-        );
+        let without_siteinfo = VALID.replace("<siteinfo><sitename>Wiki</sitename></siteinfo>", "");
         for invalid in [
             VALID.replace(
                 "<siteinfo><sitename>Wiki</sitename></siteinfo>",
@@ -587,10 +584,7 @@ mod tests {
                 "</page></mediawiki>",
                 "</page><siteinfo><dbname>enwiki</dbname></siteinfo></mediawiki>",
             ),
-            VALID.replace(
-                "</page></mediawiki>",
-                "</page><other/></mediawiki>",
-            ),
+            VALID.replace("</page></mediawiki>", "</page><other/></mediawiki>"),
         ] {
             for chunk_size in [1, 3, 8192] {
                 let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
