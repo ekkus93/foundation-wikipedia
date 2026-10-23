@@ -444,7 +444,7 @@ mod tests {
             })
             .collect();
         let sums = format!(
-            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n{:x}  enwiki-2026-10-01-p201p300.xml.bz2\\n",
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n{:x}  enwiki-2026-10-01-p201p300.xml.bz2\n",
             Sha256::digest(&compressed[0]),
             Sha256::digest(&compressed[1])
         );
@@ -463,12 +463,12 @@ mod tests {
             stage_pinned_native_bzip2_census(&root, "native.ids", &pinned, 0, 4096, 4096, open)
                 .unwrap();
         assert_eq!(count, 2);
-        assert_eq!(fs::read(&published).unwrap(), b"1\\n201\\n");
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
 
         // The first shard is valid, but the second has a forged pinned digest.
         // Its failure must leave no second published file or temporary bytes.
         let bad_sums = format!(
-            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n{}  enwiki-2026-10-01-p201p300.xml.bz2\\n",
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n{}  enwiki-2026-10-01-p201p300.xml.bz2\n",
             Sha256::digest(&compressed[0]),
             "0".repeat(64)
         );
@@ -514,7 +514,7 @@ mod tests {
                 if error.kind() == io::ErrorKind::NotFound
         ));
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        assert_eq!(fs::read(&published).unwrap(), b"1\\n201\\n");
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
         fs::remove_dir_all(root).unwrap();
     }
 
