@@ -86,7 +86,12 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         // Obtain the complete trusted descriptor from the pinned inventory.
         // Accepting a caller-supplied checksum for the same filename would
         // allow a forged digest to authorize arbitrary compressed bytes.
-        let Some(member) = self.inventory.members().get(self.next_member_index).cloned() else {
+        let Some(member) = self
+            .inventory
+            .members()
+            .get(self.next_member_index)
+            .cloned()
+        else {
             self.failed = true;
             return Err(CheckedCensusError::Census(PinnedCensusError::InvalidState));
         };
@@ -302,18 +307,14 @@ mod tests {
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         for (index, payload) in payloads.into_iter().enumerate() {
             pipeline
-                .decode_checked_member(
-                    Cursor::new(payload),
-                    1024,
-                    |reader, census| {
-                        let mut consumed = Vec::new();
-                        reader
-                            .read_to_end(&mut consumed)
-                            .map_err(|_| PinnedCensusError::InvalidState)?;
-                        assert_eq!(consumed, payload);
-                        push_page(census, if index == 0 { 1 } else { 201 }, 0)
-                    },
-                )
+                .decode_checked_member(Cursor::new(payload), 1024, |reader, census| {
+                    let mut consumed = Vec::new();
+                    reader
+                        .read_to_end(&mut consumed)
+                        .map_err(|_| PinnedCensusError::InvalidState)?;
+                    assert_eq!(consumed, payload);
+                    push_page(census, if index == 0 { 1 } else { 201 }, 0)
+                })
                 .unwrap();
         }
         let (bytes, count) = pipeline.finish().unwrap();

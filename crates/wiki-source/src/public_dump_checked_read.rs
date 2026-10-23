@@ -52,9 +52,7 @@ impl<R: Read> Read for HashingReader<R> {
         let count = loop {
             match self.input.read(buf) {
                 Ok(count) => break count,
-                Err(error)
-                    if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 =>
-                {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 => {
                     interrupted += 1;
                 }
                 Err(error) => {
