@@ -408,13 +408,7 @@ mod tests {
         wrong_path.relative_path = pinned.members()[1].relative_path.clone();
         let mut ingest = PinnedPageIngest::new(&pinned);
         assert!(matches!(
-            ingest_pinned_bzip2_member(
-                &mut ingest,
-                &wrong_path,
-                Cursor::new(b""),
-                4096,
-                4096,
-            ),
+            ingest_pinned_bzip2_member(&mut ingest, &wrong_path, Cursor::new(b""), 4096, 4096,),
             Err(PinnedDecodeError::UnpinnedMember)
         ));
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
