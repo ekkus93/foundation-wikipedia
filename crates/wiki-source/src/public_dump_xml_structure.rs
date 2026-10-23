@@ -28,6 +28,8 @@ pub struct XmlNestingGuard<W> {
     output: W,
     mode: Mode,
     token: Vec<u8>,
+    // Track attribute quoting incrementally so '>' in a long value is O(n).
+    tag_quote: Option<u8>,
     entity: Vec<u8>,
     stack: Vec<String>,
     root_seen: bool,
@@ -46,6 +48,7 @@ impl<W: Write> XmlNestingGuard<W> {
             output,
             mode: Mode::Text,
             token: Vec::new(),
+            tag_quote: None,
             entity: Vec::new(),
             stack: Vec::new(),
             root_seen: false,
@@ -322,6 +325,7 @@ impl<W: Write> XmlNestingGuard<W> {
                     self.mode = Mode::Tag;
                     self.token.clear();
                     self.token.push(byte);
+                    self.tag_quote = None;
                 } else if self.stack.is_empty() && !byte.is_ascii_whitespace() {
                     return Err(self.invalid());
                 }
@@ -347,22 +351,16 @@ impl<W: Write> XmlNestingGuard<W> {
                     }
                 } else if self.token.starts_with(b"<?") {
                     self.mode = Mode::ProcessingInstruction;
+                } else if let Some(quote) = self.tag_quote {
+                    if byte == quote {
+                        self.tag_quote = None;
+                    }
+                } else if byte == b'\'' || byte == b'"' {
+                    self.tag_quote = Some(byte);
                 } else if byte == b'>' {
-                    let mut quote = None;
-                    for &b in &self.token[1..self.token.len() - 1] {
-                        if let Some(q) = quote {
-                            if b == q {
-                                quote = None;
-                            }
-                        } else if b == b'\'' || b == b'"' {
-                            quote = Some(b);
-                        }
-                    }
-                    if quote.is_none() {
-                        let token = std::mem::take(&mut self.token);
-                        self.parse_tag(&token)?;
-                        self.mode = Mode::Text;
-                    }
+                    let token = std::mem::take(&mut self.token);
+                    self.parse_tag(&token)?;
+                    self.mode = Mode::Text;
                 }
             }
             Mode::ProcessingInstruction => {
@@ -673,6 +671,36 @@ mod tests {
             let mut guard = XmlNestingGuard::new(Vec::new());
             let written = guard.write_all(bad.as_bytes());
             assert!(written.is_err() || guard.finish().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn quoted_greater_than_is_streamed_in_linear_time() {
+        // A near-limit attribute containing many '>' characters previously
+        // caused a full-token quote rescan for every one of them (quadratic
+        // work). Both quote styles must survive arbitrary chunk boundaries.
+        let xml = format!(
+            r#"<mediawiki><page data="{}" other='" >'><text>ok</text></page></mediawiki>"#,
+            ">".repeat(60_000)
+        );
+        for chunk_size in [1, 2, 7, 8192] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            for chunk in xml.as_bytes().chunks(chunk_size) {
+                guard.write_all(chunk).unwrap();
+            }
+            assert_eq!(guard.finish().unwrap(), xml.as_bytes());
+        }
+
+        // A quote that never closes must not let an embedded '>' terminate
+        // the opening tag, even if the writer receives a complete document.
+        let invalid = "<mediawiki><page data='>></page></mediawiki>";
+        for chunk_size in [1, 2, 7, 8192] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            let result = invalid
+                .as_bytes()
+                .chunks(chunk_size)
+                .try_for_each(|chunk| guard.write_all(chunk));
+            assert!(result.is_err() || guard.finish().is_err());
         }
     }
 
