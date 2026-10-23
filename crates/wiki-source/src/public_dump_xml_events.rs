@@ -43,6 +43,7 @@ pub struct XmlPageMetadataWriter<F> {
     expected_project: Option<String>,
     siteinfo_seen: bool,
     dbname_seen: bool,
+    pages_started: bool,
     path: Vec<String>,
     mode: Mode,
     markup: Vec<u8>,
@@ -62,6 +63,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             expected_project: None,
             siteinfo_seen: false,
             dbname_seen: false,
+            pages_started: false,
             path: Vec::new(),
             mode: Mode::Text,
             markup: Vec::new(),
@@ -299,17 +301,23 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             let target = Self::redirect_title(&body[end..]).ok_or_else(|| self.invalid())?;
             return self.emit(PageEvent::RedirectTarget(&target));
         }
-        if self.at(&["mediawiki"]) && name == "siteinfo" {
-            if self_closing || self.siteinfo_seen {
-                return Err(self.invalid());
+        if self.at(&["mediawiki"]) {
+            match name {
+                "siteinfo" => {
+                    if self_closing || self.siteinfo_seen || self.pages_started {
+                        return Err(self.invalid());
+                    }
+                    self.siteinfo_seen = true;
+                }
+                "page" => {
+                    if self_closing {
+                        return Err(self.invalid());
+                    }
+                    self.pages_started = true;
+                    self.emit(PageEvent::BeginPage)?;
+                }
+                _ => return Err(self.invalid()),
             }
-            self.siteinfo_seen = true;
-        }
-        if self.at(&["mediawiki"]) && name == "page" {
-            if self_closing {
-                return Err(self.invalid());
-            }
-            self.emit(PageEvent::BeginPage)?;
         } else if self.at(&["mediawiki", "page"]) && name == "revision" {
             if self_closing {
                 return Err(self.invalid());
@@ -562,6 +570,43 @@ mod tests {
         let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
         writer.write_all(VALID.as_bytes()).unwrap();
         assert_eq!(writer.finish().unwrap().1, 1);
+    }
+
+    #[test]
+    fn rejects_unknown_root_children_and_siteinfo_after_page() {
+        let without_siteinfo = VALID.replace(
+            "<siteinfo><sitename>Wiki</sitename></siteinfo>",
+            "",
+        );
+        for invalid in [
+            VALID.replace(
+                "<siteinfo><sitename>Wiki</sitename></siteinfo>",
+                "<unknown/>",
+            ),
+            without_siteinfo.replace(
+                "</page></mediawiki>",
+                "</page><siteinfo><dbname>enwiki</dbname></siteinfo></mediawiki>",
+            ),
+            VALID.replace(
+                "</page></mediawiki>",
+                "</page><other/></mediawiki>",
+            ),
+        ] {
+            for chunk_size in [1, 3, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = invalid
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "invalid root child accepted"
+                );
+            }
+        }
+        let mut legacy = XmlPageMetadataWriter::new(|_| Ok(()));
+        legacy.write_all(without_siteinfo.as_bytes()).unwrap();
+        assert_eq!(legacy.finish().unwrap().1, 1);
     }
 
     #[test]
