@@ -49,10 +49,7 @@ impl<W: Write> XmlTextGuard<W> {
         if self.failed || !self.pending.is_empty() {
             return Err(self.reject(io::ErrorKind::InvalidData));
         }
-        self.output.flush().map_err(|error| {
-            self.failed = true;
-            error
-        })?;
+        self.output.flush().inspect_err(|_| self.failed = true)?;
         Ok((self.output, self.accepted))
     }
 }
