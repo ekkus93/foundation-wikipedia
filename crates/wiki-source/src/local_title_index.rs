@@ -17,11 +17,22 @@ const MAX_TITLE_BYTES: usize = 4096;
 const MAX_QUERY_BYTES: usize = 512;
 const MAX_RESULTS: usize = 100;
 const MAX_ENTRIES: usize = 10_000_000;
+const MAX_REDIRECTS: usize = 10_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalTitleEntry {
     pub title: String,
     pub version: ArticleVersion,
+}
+
+/// A redirect from the SAME independently verified snapshot as the indexed
+/// target. The page ID guards against rebinding a historical alias to a
+/// different article after a rename or pack update.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalTitleRedirect {
+    pub alias: String,
+    pub canonical_title: String,
+    pub target_page_id: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +53,10 @@ pub enum LocalTitleIndexError {
     DuplicatePage,
     DuplicateTitle,
     TooManyEntries,
+    InvalidRedirect,
+    UnknownRedirectTarget,
+    ConflictingRedirect,
+    TooManyRedirects,
     InvalidQuery,
     InvalidLimit,
 }
@@ -50,6 +65,7 @@ pub enum LocalTitleIndexError {
 pub struct LocalTitleIndex {
     project: String,
     titles: BTreeMap<String, LocalSearchHit>,
+    redirects: BTreeMap<String, String>,
 }
 
 fn safe_text(value: &str, max_bytes: usize) -> bool {
@@ -127,7 +143,51 @@ impl LocalTitleIndex {
         Ok(Self {
             project: project.to_owned(),
             titles,
+            redirects: BTreeMap::new(),
         })
+    }
+
+
+    /// Attach independently verified redirect aliases without changing article
+    /// provenance or adding duplicate records to prefix search results.
+    ///
+    /// Redirects must point directly to a canonical title present in this
+    /// verified catalog; cycles, chains, stale target IDs and ambiguous title
+    /// normalization fail closed. A partially validated mapping is never
+    /// published because this method consumes the original index.
+    pub fn with_redirects(
+        mut self,
+        redirects: impl IntoIterator<Item = LocalTitleRedirect>,
+    ) -> Result<Self, LocalTitleIndexError> {
+        for redirect in redirects {
+            if self.redirects.len() >= MAX_REDIRECTS {
+                return Err(LocalTitleIndexError::TooManyRedirects);
+            }
+            if !safe_text(&redirect.alias, MAX_TITLE_BYTES)
+                || !safe_text(&redirect.canonical_title, MAX_TITLE_BYTES)
+                || redirect.target_page_id == 0
+                || redirect.target_page_id > i64::MAX as u64
+            {
+                return Err(LocalTitleIndexError::InvalidRedirect);
+            }
+            let alias_key = wikipedia_title_key(&redirect.alias);
+            let target_key = wikipedia_title_key(&redirect.canonical_title);
+            if alias_key == target_key
+                || self.titles.contains_key(&alias_key)
+                || self.redirects.contains_key(&alias_key)
+            {
+                return Err(LocalTitleIndexError::ConflictingRedirect);
+            }
+            let target = self
+                .titles
+                .get(&target_key)
+                .ok_or(LocalTitleIndexError::UnknownRedirectTarget)?;
+            if target.hit.key.page_id != redirect.target_page_id {
+                return Err(LocalTitleIndexError::UnknownRedirectTarget);
+            }
+            self.redirects.insert(alias_key, target_key);
+        }
+        Ok(self)
     }
 
     pub fn project(&self) -> &str {
@@ -150,7 +210,9 @@ impl LocalTitleIndex {
         if !safe_text(title, MAX_TITLE_BYTES) {
             return Err(LocalTitleIndexError::InvalidTitle);
         }
-        Ok(self.titles.get(&wikipedia_title_key(title)).cloned())
+        let key = wikipedia_title_key(title);
+        let canonical = self.redirects.get(&key).unwrap_or(&key);
+        Ok(self.titles.get(canonical).cloned())
     }
 
     /// Deterministic prefix lookup, not full-text or fuzzy search. Wikipedia's
@@ -295,6 +357,90 @@ mod tests {
                 Err(LocalTitleIndexError::InvalidTitle)
             ));
         }
+    }
+
+
+    #[test]
+    fn verified_offline_redirects_resolve_without_creating_duplicate_search_hits() {
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [
+                entry(1, "Physics", ArticleLocation::InstalledPack),
+                entry(2, "رياضيات", ArticleLocation::ExplicitOfflineSave),
+            ],
+        )
+        .unwrap()
+        .with_redirects([
+            LocalTitleRedirect {
+                alias: "Physical_science".into(),
+                canonical_title: "Physics".into(),
+                target_page_id: 1,
+            },
+            LocalTitleRedirect {
+                alias: "علم_الرياضيات".into(),
+                canonical_title: "رياضيات".into(),
+                target_page_id: 2,
+            },
+        ])
+        .unwrap();
+        let resolved = index.resolve_title("physical science").unwrap().unwrap();
+        assert_eq!(resolved.hit.key.page_id, 1);
+        assert_eq!(resolved.hit.title, "Physics");
+        assert_eq!(resolved.version.revision_id, 101);
+        assert_eq!(index.resolve_title("علم الرياضيات").unwrap().unwrap().hit.key.page_id, 2);
+        assert_eq!(index.len(), 2);
+        assert!(index.search_prefix("Physical science", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn offline_redirects_reject_unverified_or_ambiguous_targets() {
+        let base = || {
+            LocalTitleIndex::new(
+                "enwiki",
+                [entry(1, "Physics", ArticleLocation::InstalledPack)],
+            )
+            .unwrap()
+        };
+        let alias = |name: &str, target: &str, page_id| LocalTitleRedirect {
+            alias: name.into(),
+            canonical_title: target.into(),
+            target_page_id: page_id,
+        };
+        for bad in [
+            alias("Physics", "Physics", 1),
+            alias("physics", "Physics", 1),
+        ] {
+            assert!(matches!(
+                base().with_redirects([bad]),
+                Err(LocalTitleIndexError::ConflictingRedirect)
+            ));
+        }
+        assert!(matches!(
+            base().with_redirects([alias("Legacy", "Other", 1)]),
+            Err(LocalTitleIndexError::UnknownRedirectTarget)
+        ));
+        assert!(matches!(
+            base().with_redirects([alias("Legacy", "Physics", 2)]),
+            Err(LocalTitleIndexError::UnknownRedirectTarget)
+        ));
+        for bad in ["", " Bad", "Bad\\nAlias", "Bad\\u{202e}Alias"] {
+            assert!(matches!(
+                base().with_redirects([alias(bad, "Physics", 1)]),
+                Err(LocalTitleIndexError::InvalidRedirect)
+            ));
+        }
+        assert!(matches!(
+            base().with_redirects([alias("Alias", "Physics", 0)]),
+            Err(LocalTitleIndexError::InvalidRedirect)
+        ));
+        assert!(matches!(
+            base().with_redirects([alias("Alias", "Physics", 1), alias("alias", "Physics", 1)]),
+            Err(LocalTitleIndexError::ConflictingRedirect)
+        ));
+        assert!(matches!(
+            base().with_redirects([alias("First", "Second", 1), alias("Second", "Physics", 1)]),
+            Err(LocalTitleIndexError::UnknownRedirectTarget)
+        ));
     }
 
     #[test]
