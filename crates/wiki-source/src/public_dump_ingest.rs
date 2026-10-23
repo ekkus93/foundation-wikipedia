@@ -98,6 +98,31 @@ impl<'a> PinnedPageIngest<'a> {
         Ok(page)
     }
 
+
+    /// Re-feed a decoded page through the existing revision and shard audit.
+    /// This remains provisional until the entire compressed member qualifies.
+    pub fn push_complete_page(&mut self, page: &PublicDumpPage) -> Result<(), PageIngestError> {
+        self.push(PageEvent::BeginPage)?;
+        self.push(PageEvent::Title(&page.title))?;
+        self.push(PageEvent::Namespace(page.namespace))?;
+        self.push(PageEvent::PageId(page.page_id))?;
+        if let Some(target) = &page.redirect_target {
+            self.push(PageEvent::RedirectTarget(target))?;
+        }
+        self.push(PageEvent::BeginRevision)?;
+        self.push(PageEvent::RevisionId(page.revision_id))?;
+        self.push(PageEvent::Timestamp(&page.timestamp))?;
+        self.push(PageEvent::EndRevision)?;
+        self.push(PageEvent::EndPage)?;
+        Ok(())
+    }
+
+    /// A failed decoder or checksum must poison the active shard audit even
+    /// if some provisional pages were observed before the failure.
+    pub fn abort_member(&mut self) {
+        self.failed = true;
+    }
+
     pub fn end_member(&mut self) -> Result<(), PageIngestError> {
         if self.failed || !self.active {
             self.failed = true;
@@ -126,11 +151,69 @@ impl<'a> PinnedPageIngest<'a> {
     }
 }
 
+
+/// Error from decoding and auditing one provisional bzip2 shard.
+#[derive(Debug)]
+pub enum PinnedDecodeError {
+    Ingest(PageIngestError),
+    Decode(crate::public_dump_checked_read::CheckedMemberError<std::io::Error>),
+}
+
+/// Compose actual multistream bzip2 decoding, bounded XML semantics and
+/// pinned shard ordering. A checksum/EOF/semantic failure poisons the audit.
+///
+/// This is not independently authenticated publication completeness or a
+/// renderer. Do not activate output until every member and the independent
+/// census, source identity and required offline media have qualified.
+pub fn ingest_pinned_bzip2_member<R: std::io::Read>(
+    ingest: &mut PinnedPageIngest<'_>,
+    member: &crate::public_dump::DumpChecksum,
+    input: R,
+    max_compressed_bytes: u64,
+    max_decoded_bytes: u64,
+) -> Result<(u64, u64), PinnedDecodeError> {
+    ingest
+        .begin_member(&member.relative_path)
+        .map_err(PinnedDecodeError::Ingest)?;
+    let mut callback_error = None;
+    let decoded = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata(
+        input,
+        member,
+        max_compressed_bytes,
+        max_decoded_bytes,
+        |page| {
+            if let Err(error) = ingest.push_complete_page(&page) {
+                callback_error = Some(error);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "pinned shard rejected decoded page",
+                ));
+            }
+            Ok(())
+        },
+    );
+    if let Some(error) = callback_error {
+        ingest.abort_member();
+        return Err(PinnedDecodeError::Ingest(error));
+    }
+    match decoded {
+        Ok(receipt) => {
+            ingest.end_member().map_err(PinnedDecodeError::Ingest)?;
+            Ok(receipt)
+        }
+        Err(error) => {
+            ingest.abort_member();
+            Err(PinnedDecodeError::Decode(error))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::public_dump_pinned::parse_pinned_inventory;
     use sha2::{Digest, Sha256};
+    use std::io::{Cursor, Write};
 
     fn inventory() -> PinnedInventory {
         let sums = format!(
@@ -237,6 +320,57 @@ mod tests {
             Err(PageIngestError::RevisionAfterGeneration)
         );
         assert_eq!(ingest.end_member(), Err(PageIngestError::InvalidState));
+        assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
+    }
+
+
+    #[test]
+    fn native_bzip2_metadata_feeds_pinned_shard_audit() {
+        let xml = "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>22</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>999</id></contributor><text>test</text></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let checksum = format!("{:x}", Sha256::digest(&compressed));
+        let sums = format!("{checksum}  enwiki-2026-10-01-p1p100.xml.bz2\n");
+        let sums_digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let inventory = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
+        let mut ingest = PinnedPageIngest::new(&inventory);
+        let (decoded, count) = ingest_pinned_bzip2_member(
+            &mut ingest,
+            &inventory.members()[0],
+            Cursor::new(&compressed),
+            4096,
+            4096,
+        )
+        .unwrap();
+        assert_eq!(decoded, xml.len() as u64);
+        assert_eq!(count, 1);
+        assert_eq!(ingest.finish(), Ok(1));
+    }
+
+    #[test]
+    fn digest_mismatch_poisoning_prevents_false_shard_completion() {
+        let xml = "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>22</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let sums = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
+        let sums_digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let inventory = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
+        let mut ingest = PinnedPageIngest::new(&inventory);
+        let result = ingest_pinned_bzip2_member(
+            &mut ingest,
+            &inventory.members()[0],
+            Cursor::new(&compressed),
+            4096,
+            4096,
+        );
+        assert!(matches!(
+            result,
+            Err(PinnedDecodeError::Decode(
+                crate::public_dump_checked_read::CheckedMemberError::DigestMismatch
+            ))
+        ));
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
     }
 
