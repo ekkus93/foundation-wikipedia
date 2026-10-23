@@ -250,7 +250,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 }
                 self.dbname_seen = true;
                 Ok(())
-            },
+            }
         }
     }
 
@@ -499,11 +499,14 @@ mod tests {
         let base = VALID.replace("<sitename>Wiki</sitename>", "<dbname>enwiki</dbname>");
         for chunk_size in [1, 2, 7, 8192] {
             let mut records = Vec::new();
-            let mut writer =
-                XmlPageMetadataWriter::with_expected_project(|page| {
+            let mut writer = XmlPageMetadataWriter::with_expected_project(
+                |page| {
                     records.push(page);
                     Ok(())
-                }, "enwiki").unwrap();
+                },
+                "enwiki",
+            )
+            .unwrap();
             for chunk in base.as_bytes().chunks(chunk_size) {
                 writer.write_all(chunk).unwrap();
             }
@@ -525,8 +528,8 @@ mod tests {
 
         // Legacy test dumps can omit optional siteinfo database metadata;
         // absence does not by itself prove project identity.
-        let mut legacy = XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki")
-            .unwrap();
+        let mut legacy =
+            XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki").unwrap();
         legacy.write_all(VALID.as_bytes()).unwrap();
         assert_eq!(legacy.finish().unwrap().1, 1);
     }

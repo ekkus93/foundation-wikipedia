@@ -100,9 +100,12 @@ where
     F: FnMut(crate::public_dump_page_meta::PublicDumpPage) -> io::Result<()>,
 {
     let output = match project {
-        Some(project) => crate::public_dump_xml_events::XmlPageMetadataWriter::with_expected_project(
-            on_page, project,
-        ).map_err(|_| CheckedMemberError::InvalidXmlDocument)?,
+        Some(project) => {
+            crate::public_dump_xml_events::XmlPageMetadataWriter::with_expected_project(
+                on_page, project,
+            )
+            .map_err(|_| CheckedMemberError::InvalidXmlDocument)?
+        }
         None => crate::public_dump_xml_events::XmlPageMetadataWriter::new(on_page),
     };
     let (output, decoded) = decode_bzip2_xml_envelope(
