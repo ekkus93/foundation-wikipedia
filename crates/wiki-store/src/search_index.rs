@@ -639,6 +639,13 @@ mod identity_tests {
         assert!(OfflineSearchIndex::open_read_only(&root.join("missing.sqlite")).is_err());
         let unrelated = root.join("not-fts.sqlite");
         drop(Connection::open(&unrelated).unwrap());
+        // A foreign SQLite file must pass the private-file permission gate
+        // before we can assert the separate missing-FTS-schema error.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&unrelated, fs::Permissions::from_mode(0o600)).unwrap();
+        }
         assert!(matches!(
             OfflineSearchIndex::open_read_only(&unrelated),
             Err(SearchError::StaleIndex)
