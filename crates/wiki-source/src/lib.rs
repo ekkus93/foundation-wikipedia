@@ -36,6 +36,7 @@ pub mod public_dump_stage;
 pub mod public_dump_stream;
 pub mod public_dump_strict;
 pub mod public_dump_verify;
+pub mod public_dump_xml_text;
 
 mod strict_json;
 
