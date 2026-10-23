@@ -33,7 +33,9 @@ pub struct XmlNestingGuard<W> {
     root_seen: bool,
     root_closed: bool,
     pages: u64,
-    failed: bool,
+    // XML 1.0 forbids the CDATA terminator in ordinary character data.
+    text_right_brackets: u8,
+    failed: bool;
 }
 
 impl<W: Write> XmlNestingGuard<W> {
@@ -47,6 +49,7 @@ impl<W: Write> XmlNestingGuard<W> {
             root_seen: false,
             root_closed: false,
             pages: 0,
+            text_right_brackets: 0,
             failed: false,
         }
     }
@@ -221,6 +224,16 @@ impl<W: Write> XmlNestingGuard<W> {
     fn byte(&mut self, byte: u8) -> io::Result<()> {
         match self.mode {
             Mode::Text => {
+                // Track raw text across write/chunk boundaries. Entity references
+                // and markup reset the sequence; CDATA is handled separately.
+                if byte == b'>' && self.text_right_brackets == 2 {
+                    return Err(self.invalid());
+                }
+                self.text_right_brackets = if byte == b']' {
+                    (self.text_right_brackets + 1).min(2)
+                } else {
+                    0
+                };
                 if !self.entity.is_empty() {
                     self.entity.push(byte);
                     if self.entity.len() > MAX_ENTITY_BYTES {
@@ -462,6 +475,30 @@ mod tests {
                 guard.write_all(chunk).unwrap();
             }
             assert_eq!(guard.finish().unwrap(), xml.as_bytes());
+        }
+    }
+
+    #[test]
+    fn rejects_raw_cdata_terminator_in_text_across_chunks() {
+        for bad in [
+            "<mediawiki><page><text>bad ]]></text></page></mediawiki>",
+            "<mediawiki><page><text>bad ]]]></text></page></mediawiki>",
+        ] {
+            for size in [1, 2, 3, 8192] {
+                let mut guard = XmlNestingGuard::new(Vec::new());
+                let result = bad.as_bytes().chunks(size).try_for_each(|chunk| guard.write_all(chunk));
+                assert!(result.is_err() || guard.finish().is_err(), "{bad}");
+            }
+        }
+        for good in [
+            "<mediawiki><page><text>literal ]]&gt;</text></page></mediawiki>",
+            "<mediawiki><page><text><![CDATA[literal ]]>]]&gt;</text></page></mediawiki>",
+        ] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            for chunk in good.as_bytes().chunks(1) {
+                guard.write_all(chunk).unwrap();
+            }
+            assert_eq!(guard.finish().unwrap(), good.as_bytes());
         }
     }
 
