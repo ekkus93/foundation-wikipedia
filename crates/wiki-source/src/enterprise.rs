@@ -846,21 +846,22 @@ mod tests {
 
     #[test]
     fn public_parsers_and_single_article_join_reject_invalid_identity() {
-        for invalid in ["0", "9223372036854775808", "18446744073709551615"] {
-            let structured_json = structured_json().replace(
-                "\"identifier\":42",
-                &format!("\"identifier\":{invalid}"),
-            );
+        for invalid in ["9223372036854775808", "18446744073709551615"] {
+            let structured_json = structured_json()
+                .replace("\"identifier\":42", &format!("\"identifier\":{invalid}"));
             assert_eq!(
                 parse_structured_article(&structured_json, "2026-10-01"),
                 Err(EnterpriseError::InvalidIdentity)
             );
         }
+        let zero_page = structured_json().replace("\"identifier\":42", "\"identifier\":0");
+        assert_eq!(
+            parse_structured_article(&zero_page, "2026-10-01"),
+            Err(EnterpriseError::InvalidField("identifier"))
+        );
         for invalid in ["0", "9223372036854775808"] {
-            let regular_json = regular_json().replace(
-                "\"identifier\":99",
-                &format!("\"identifier\":{invalid}"),
-            );
+            let regular_json =
+                regular_json().replace("\"identifier\":99", &format!("\"identifier\":{invalid}"));
             assert_eq!(
                 parse_regular_companion(&regular_json, "2026-10-01"),
                 Err(EnterpriseError::InvalidField("version.identifier"))
