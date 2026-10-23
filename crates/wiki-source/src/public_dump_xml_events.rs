@@ -260,8 +260,27 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             let Some(end) = attrs.iter().position(|byte| *byte == quote) else {
                 return false;
             };
-            if key == b"xmlns" && (!root || !Self::official_export_namespace(&attrs[..end])) {
-                return false;
+            let value = &attrs[..end];
+            if key == b"xmlns" {
+                if !root || !Self::official_export_namespace(value) {
+                    return false;
+                }
+            } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                // Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
+                // A forged binding must not change the meaning of xml:space
+                // or turn another prefix into a namespace declaration.
+                const XML_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
+                const XMLNS_URI: &[u8] = b"http://www.w3.org/2000/xmlns/";
+                if prefix.is_empty()
+                    || prefix.contains(&b':')
+                    || prefix == b"xmlns"
+                    || value.is_empty()
+                    || value == XMLNS_URI
+                    || (prefix == b"xml" && value != XML_URI)
+                    || (prefix != b"xml" && value == XML_URI)
+                {
+                    return false;
+                }
             }
             attrs = &attrs[end + 1..];
         }
@@ -729,4 +748,47 @@ mod tests {
             assert!(result.is_err() || writer.finish().is_err());
         }
     }
+    #[test]
+    fn rejects_reserved_namespace_prefix_rebindings() {
+        let official = VALID.replace(
+            "<mediawiki>",
+            "<mediawiki xmlns=\"http://www.mediawiki.org/xml/export-0.11/\" \
+             xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+        );
+        let valid_explicit_xml = official.replace(
+            "<page>",
+            "<page xmlns:xml=\"http://www.w3.org/XML/1998/namespace\">",
+        );
+        for xml in [&official, &valid_explicit_xml] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                for chunk in xml.as_bytes().chunks(chunk_size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+            }
+        }
+
+        for bad in [
+            official.replace("<page>", "<page xmlns:xml=\"urn:forged\">"),
+            official.replace("<page>", "<page xmlns:xmlns=\"urn:forged\">"),
+            official.replace("<page>", "<page xmlns:evil=\"http://www.w3.org/XML/1998/namespace\">"),
+            official.replace("<page>", "<page xmlns:evil=\"http://www.w3.org/2000/xmlns/\">"),
+            official.replace("<page>", "<page xmlns:evil=\"\">"),
+            official.replace("<page>", "<page xmlns:evil:extra=\"urn:forged\">"),
+        ] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "reserved namespace rebinding accepted: {bad}"
+                );
+            }
+        }
+    }
+
 }
