@@ -459,16 +459,9 @@ mod tests {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown member"))?;
             Ok(Cursor::new(compressed[index].as_slice()))
         };
-        let (published, count) = stage_pinned_native_bzip2_census(
-            &root,
-            "native.ids",
-            &pinned,
-            0,
-            4096,
-            4096,
-            open,
-        )
-        .unwrap();
+        let (published, count) =
+            stage_pinned_native_bzip2_census(&root, "native.ids", &pinned, 0, 4096, 4096, open)
+                .unwrap();
         assert_eq!(count, 2);
         assert_eq!(fs::read(&published).unwrap(), b"1\\n201\\n");
 
