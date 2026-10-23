@@ -186,9 +186,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
 
     // XML 1.0 attribute-value normalization happens before entity expansion:
     // literal tabs/newlines/CRLF become spaces, whereas character references
-    // such as &#xA; retain their decoded character. Namespace identity and
-    // expanded-name duplicate detection must compare the normalized value.
-    fn decode_namespace_uri(raw: &[u8]) -> Option<String> {
+    // such as &#xA; retain their decoded character. Both namespace identity
+    // and redirect title identity must use the normalized attribute value.
+    fn decode_attribute_value(raw: &[u8]) -> Option<String> {
         let mut normalized = Vec::with_capacity(raw.len());
         let mut pos = 0;
         while pos < raw.len() {
@@ -236,7 +236,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             if key != b"title" || title.is_some() {
                 return None;
             }
-            title = Some(Self::decode_entities(&attrs[..end])?);
+            title = Some(Self::decode_attribute_value(&attrs[..end])?);
             attrs = &attrs[end + 1..];
         }
         title
@@ -290,12 +290,12 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             if key == b"xmlns" {
                 // Namespace URIs are XML attribute values, so character
                 // references must be expanded before comparing their identity.
-                let decoded = Self::decode_namespace_uri(value)?;
+                let decoded = Self::decode_attribute_value(value)?;
                 if !root || !Self::official_export_namespace(decoded.as_bytes()) {
                     return None;
                 }
             } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
-                let decoded = Self::decode_namespace_uri(value)?;
+                let decoded = Self::decode_attribute_value(value)?;
                 let value = decoded.as_bytes();
                 // XML Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
                 const XML_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
@@ -734,6 +734,47 @@ mod tests {
         let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
         writer.write_all(VALID.as_bytes()).unwrap();
         assert_eq!(writer.finish().unwrap().1, 1);
+    }
+
+    #[test]
+    fn redirect_attribute_whitespace_is_xml_normalized_before_title_validation() {
+        // XML 1.0 normalizes literal attribute whitespace to spaces before
+        // entity expansion. The normalized title, not the raw bytes, is the
+        // navigation identity exposed by the provisional page record.
+        for raw in ["Science\tMath", "Science\nMath", "Science\rMath", "Science\r\nMath"] {
+            let xml = VALID.replace(
+                r#"<redirect title="Science &amp; Math"/>"#,
+                &format!(r#"<redirect title="{raw}"/>"#),
+            );
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut pages = Vec::new();
+                let mut writer = XmlPageMetadataWriter::new(|page| {
+                    pages.push(page);
+                    Ok(())
+                });
+                for chunk in xml.as_bytes().chunks(chunk_size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+                assert_eq!(pages[0].redirect_target.as_deref(), Some("Science Math"));
+            }
+        }
+
+        // A numeric character reference is expanded *after* literal
+        // whitespace normalization. It retains its tab, and the conservative
+        // page-title validator rejects that control character.
+        let encoded_tab = VALID.replace(
+            r#"<redirect title="Science &amp; Math"/>"#,
+            r#"<redirect title="Science&#x9;Math"/>"#,
+        );
+        for chunk_size in [1, 2, 7, 8192] {
+            let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+            let result = encoded_tab
+                .as_bytes()
+                .chunks(chunk_size)
+                .try_for_each(|chunk| writer.write_all(chunk));
+            assert!(result.is_err() || writer.finish().is_err());
+        }
     }
 
     #[test]
