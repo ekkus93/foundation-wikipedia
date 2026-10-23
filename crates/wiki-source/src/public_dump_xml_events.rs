@@ -7,6 +7,7 @@
 //! Callbacks are PROVISIONAL until compressed digest, complete XML, shard
 //! census and upstream authenticity have all been verified.
 
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 use crate::public_dump_page_meta::{PageEvent, PageMetadataCollector, PublicDumpPage};
@@ -45,6 +46,8 @@ pub struct XmlPageMetadataWriter<F> {
     dbname_seen: bool,
     pages_started: bool,
     path: Vec<String>,
+    // Namespace prefix scopes are kept in lockstep with open elements.
+    prefixes: Vec<BTreeSet<Vec<u8>>>,
     mode: Mode,
     markup: Vec<u8>,
     quote: Option<u8>,
@@ -65,6 +68,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             dbname_seen: false,
             pages_started: false,
             path: Vec::new(),
+            prefixes: Vec::new(),
             mode: Mode::Text,
             markup: Vec::new(),
             quote: None,
@@ -231,7 +235,13 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         !version.is_empty() && version.len() <= 3 && version.iter().all(u8::is_ascii_digit)
     }
 
-    fn valid_namespace_attributes(mut attrs: &[u8], root: bool) -> bool {
+    fn namespace_scope(
+        mut attrs: &[u8],
+        root: bool,
+        inherited: &BTreeSet<Vec<u8>>,
+    ) -> Option<BTreeSet<Vec<u8>>> {
+        let mut scope = inherited.clone();
+        let mut names = Vec::new();
         while !attrs.is_empty() {
             attrs = attrs.trim_ascii_start();
             if attrs.is_empty() {
@@ -242,33 +252,24 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 .position(|byte| byte.is_ascii_whitespace() || *byte == b'=')
                 .unwrap_or(attrs.len());
             if end == 0 {
-                return false;
+                return None;
             }
             let key = &attrs[..end];
             attrs = attrs[end..].trim_ascii_start();
-            let Some(rest) = attrs.strip_prefix(b"=") else {
-                return false;
-            };
-            attrs = rest.trim_ascii_start();
-            let Some(&quote) = attrs.first() else {
-                return false;
-            };
+            attrs = attrs.strip_prefix(b"=")?.trim_ascii_start();
+            let &quote = attrs.first()?;
             if quote != b'\'' && quote != b'"' {
-                return false;
+                return None;
             }
             attrs = &attrs[1..];
-            let Some(end) = attrs.iter().position(|byte| *byte == quote) else {
-                return false;
-            };
+            let end = attrs.iter().position(|byte| *byte == quote)?;
             let value = &attrs[..end];
             if key == b"xmlns" {
                 if !root || !Self::official_export_namespace(value) {
-                    return false;
+                    return None;
                 }
             } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
-                // Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
-                // A forged binding must not change the meaning of xml:space
-                // or turn another prefix into a namespace declaration.
+                // XML Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
                 const XML_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
                 const XMLNS_URI: &[u8] = b"http://www.w3.org/2000/xmlns/";
                 if prefix.is_empty()
@@ -279,12 +280,40 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                     || (prefix == b"xml" && value != XML_URI)
                     || (prefix != b"xml" && value == XML_URI)
                 {
-                    return false;
+                    return None;
                 }
+                scope.insert(prefix.to_vec());
             }
+            names.push(key);
             attrs = &attrs[end + 1..];
         }
-        true
+        // Namespace declarations apply to the entire opening tag, even if
+        // they appear after a prefixed attribute in source order.
+        for name in names {
+            if !Self::qualified_name_bound(name, &scope, true) {
+                return None;
+            }
+        }
+        Some(scope)
+    }
+
+    fn qualified_name_bound(
+        name: &[u8],
+        scope: &BTreeSet<Vec<u8>>,
+        attribute: bool,
+    ) -> bool {
+        let Some(colon) = name.iter().position(|byte| *byte == b':') else {
+            return true;
+        };
+        let prefix = &name[..colon];
+        let local = &name[colon + 1..];
+        if prefix.is_empty() || local.is_empty() || local.contains(&b':') {
+            return false;
+        }
+        if attribute && prefix == b"xmlns" {
+            return true;
+        }
+        prefix != b"xmlns" && (prefix == b"xml" || scope.contains(prefix))
     }
 
     fn finish_field(&mut self) -> io::Result<()> {
@@ -348,9 +377,17 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         if name.is_empty() {
             return Err(self.invalid());
         }
-        if !closing && !Self::valid_namespace_attributes(&body[end..], self.path.is_empty()) {
-            return Err(self.invalid());
-        }
+        let scope = if closing {
+            None
+        } else {
+            let inherited = self.prefixes.last().cloned().unwrap_or_default();
+            let scope = Self::namespace_scope(&body[end..], self.path.is_empty(), &inherited)
+                .ok_or_else(|| self.invalid())?;
+            if !Self::qualified_name_bound(name.as_bytes(), &scope, false) {
+                return Err(self.invalid());
+            }
+            Some(scope)
+        };
         if closing {
             if self.path.last().is_none_or(|last| last != name) {
                 return Err(self.invalid());
@@ -363,6 +400,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 self.emit(PageEvent::EndPage)?;
             }
             self.path.pop();
+            self.prefixes.pop();
             return Ok(());
         }
 
@@ -426,6 +464,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 return Err(self.invalid());
             }
             self.path.push(name.to_owned());
+            self.prefixes.push(scope.ok_or_else(|| self.invalid())?);
             self.field = field;
             if field.is_some() {
                 self.field_bytes.clear();
@@ -792,6 +831,58 @@ mod tests {
                 assert!(
                     result.is_err() || writer.finish().is_err(),
                     "reserved namespace rebinding accepted: {bad}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validates_qualified_xml_names_in_lexical_namespace_scope() {
+        let base = VALID.replace(
+            "<mediawiki>",
+            "<mediawiki xmlns=\"http://www.mediawiki.org/xml/export-0.11/\">",
+        );
+        let valid = base.replace(
+            "<siteinfo>",
+            "<siteinfo xmlns:xsi=\"urn:extension\"><xsi:extra/><xsi:extra xsi:hint=\"yes\"/>",
+        );
+        let valid_late_declaration = base.replace(
+            "<siteinfo>",
+            "<siteinfo xsi:hint=\"yes\" xmlns:xsi=\"urn:extension\">",
+        );
+        for xml in [&valid, &valid_late_declaration] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                for chunk in xml.as_bytes().chunks(chunk_size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+            }
+        }
+
+        for bad in [
+            base.replace("<siteinfo>", "<siteinfo><xsi:extra/>"),
+            base.replace("<siteinfo>", "<siteinfo xsi:hint=\"unbound\">"),
+            base.replace(
+                "</siteinfo><page>",
+                "</siteinfo><page xsi:hint=\"leaked\">",
+            ).replace(
+                "<siteinfo>",
+                "<siteinfo xmlns:xsi=\"urn:extension\">",
+            ),
+            base.replace("<siteinfo>", "<siteinfo><xsi:extra xmlns:xsi=\"\">"),
+            base.replace("<siteinfo>", "<siteinfo><xsi:extra:bad xmlns:xsi=\"urn:extension\"/>"),
+            base.replace("<siteinfo>", "<siteinfo><xmlns:extra/>"),
+        ] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "unbound or malformed qualified name accepted: {bad}"
                 );
             }
         }
