@@ -463,8 +463,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             if self.path.len() >= 64 {
                 return Err(self.invalid());
             }
+            let scope = scope.ok_or_else(|| self.invalid())?;
             self.path.push(name.to_owned());
-            self.prefixes.push(scope.ok_or_else(|| self.invalid())?);
+            self.prefixes.push(scope);
             self.field = field;
             if field.is_some() {
                 self.field_bytes.clear();
@@ -863,15 +864,13 @@ mod tests {
         for bad in [
             base.replace("<siteinfo>", "<siteinfo><xsi:extra/>"),
             base.replace("<siteinfo>", "<siteinfo xsi:hint=\"unbound\">"),
+            base.replace("</siteinfo><page>", "</siteinfo><page xsi:hint=\"leaked\">")
+                .replace("<siteinfo>", "<siteinfo xmlns:xsi=\"urn:extension\">"),
+            base.replace("<siteinfo>", "<siteinfo><xsi:extra xmlns:xsi=\"\"/>"),
             base.replace(
-                "</siteinfo><page>",
-                "</siteinfo><page xsi:hint=\"leaked\">",
-            ).replace(
                 "<siteinfo>",
-                "<siteinfo xmlns:xsi=\"urn:extension\">",
+                "<siteinfo><xsi:extra:bad xmlns:xsi=\"urn:extension\"/>",
             ),
-            base.replace("<siteinfo>", "<siteinfo><xsi:extra xmlns:xsi=\"\">"),
-            base.replace("<siteinfo>", "<siteinfo><xsi:extra:bad xmlns:xsi=\"urn:extension\"/>"),
             base.replace("<siteinfo>", "<siteinfo><xmlns:extra/>"),
         ] {
             for chunk_size in [1, 2, 7, 8192] {
