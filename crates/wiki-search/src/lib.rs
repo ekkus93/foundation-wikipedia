@@ -233,7 +233,12 @@ impl CorpusLexicalIndex {
         self.search_titles_scoped(Some(project), query, limit)
     }
 
-    fn search_titles_scoped(&self, scope: Option<&str>, query: &str, limit: usize) -> Vec<TitleHit> {
+    fn search_titles_scoped(
+        &self,
+        scope: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Vec<TitleHit> {
         if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
             return Vec::new();
         }

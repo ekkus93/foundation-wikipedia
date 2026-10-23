@@ -614,7 +614,10 @@ mod identity_tests {
         assert_eq!(en.len(), 1);
         assert_eq!(en[0].key.page_id, 999);
         assert_eq!(en[0].revision_id, 42);
-        assert!(index.search_project("enwiki", "needle", 0).unwrap().is_empty());
+        assert!(index
+            .search_project("enwiki", "needle", 0)
+            .unwrap()
+            .is_empty());
         assert!(index
             .search_project("missingwiki", "needle", 100)
             .unwrap()
@@ -633,7 +636,10 @@ mod identity_tests {
                 [],
             )
             .unwrap();
-        assert_eq!(index.search_project("enwiki", "needle", 10).unwrap().len(), 1);
+        assert_eq!(
+            index.search_project("enwiki", "needle", 10).unwrap().len(),
+            1
+        );
         assert!(matches!(
             index.search("needle", 100),
             Err(SearchError::InvalidIdentity)
