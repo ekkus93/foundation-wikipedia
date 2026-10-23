@@ -20,6 +20,9 @@ ALLOWED = {
     "BSD-2-Clause OR Apache-2.0 OR MIT",
     "MPL-2.0",
     "Zlib OR Apache-2.0 OR MIT",
+    # SPDX bzip2-1.0.6: permissive redistribution with retained notice;
+    # see https://spdx.org/licenses/bzip2-1.0.6.html
+    "bzip2-1.0.6",
 }
 
 

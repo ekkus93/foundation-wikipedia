@@ -59,6 +59,13 @@ class LicenseAuditTests(unittest.TestCase):
         ]
         self.assertEqual(check(packages), [])
 
+    def test_portable_bzip2_backend_license_is_approved(self):
+        packages = [
+            {"name": "bzip2", "version": "0.6.1", "license": "MIT OR Apache-2.0"},
+            {"name": "libbz2-rs-sys", "version": "0.2.1", "license": "bzip2-1.0.6"},
+        ]
+        self.assertEqual(check(packages), [])
+
     def test_missing_or_unapproved_license_fails(self):
         packages = [
             {"name": "missing", "version": "1.0", "license": None},
