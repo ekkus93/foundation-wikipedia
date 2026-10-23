@@ -98,7 +98,6 @@ impl<'a> PinnedPageIngest<'a> {
         Ok(page)
     }
 
-
     /// Re-feed a decoded page through the existing revision and shard audit.
     /// This remains provisional until the entire compressed member qualifies.
     pub fn push_complete_page(&mut self, page: &PublicDumpPage) -> Result<(), PageIngestError> {
@@ -150,7 +149,6 @@ impl<'a> PinnedPageIngest<'a> {
         self.audit.finish().map_err(PageIngestError::Shard)
     }
 }
-
 
 /// Error from decoding and auditing one provisional bzip2 shard.
 #[derive(Debug)]
@@ -323,7 +321,6 @@ mod tests {
         assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
     }
 
-
     #[test]
     fn native_bzip2_metadata_feeds_pinned_shard_audit() {
         let xml = "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>22</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>999</id></contributor><text>test</text></revision></page></mediawiki>";
@@ -333,7 +330,8 @@ mod tests {
         let checksum = format!("{:x}", Sha256::digest(&compressed));
         let sums = format!("{checksum}  enwiki-2026-10-01-p1p100.xml.bz2\n");
         let sums_digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let inventory = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
+        let inventory =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
         let mut ingest = PinnedPageIngest::new(&inventory);
         let (decoded, count) = ingest_pinned_bzip2_member(
             &mut ingest,
@@ -356,7 +354,8 @@ mod tests {
         let compressed = encoder.finish().unwrap();
         let sums = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
         let sums_digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let inventory = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
+        let inventory =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &sums_digest).unwrap();
         let mut ingest = PinnedPageIngest::new(&inventory);
         let result = ingest_pinned_bzip2_member(
             &mut ingest,
