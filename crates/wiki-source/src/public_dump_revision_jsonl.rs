@@ -405,15 +405,13 @@ mod tests {
                 )
                 .unwrap();
                 assert!(
-                    matches!(
-                        reader.next(),
-                        Some(Err(RevisionRecordError::InvalidRecord))
-                    ),
+                    matches!(reader.next(), Some(Err(RevisionRecordError::InvalidRecord))),
                     "{field} accepted forbidden label: {rejected:?}"
                 );
                 assert!(reader.next().is_none(), "invalid record must poison reader");
             }
-            for accepted in ["می‌روم", "क्‍ष", "العربية", "עברית", "日本語"] {
+            for accepted in ["می‌روم", "क्‍ष", "العربية", "עברית", "日本語"]
+            {
                 let mut row = baseline.clone();
                 row[field] = serde_json::json!(accepted);
                 let input = format!("{row}\n");
