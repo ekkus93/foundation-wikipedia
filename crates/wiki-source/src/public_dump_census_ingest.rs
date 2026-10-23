@@ -144,9 +144,10 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         self.begin_member(&member.relative_path)
             .map_err(NativeCensusError::Census)?;
         let mut callback_error = None;
-        let result = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata(
+        let result = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata_for_project(
             input,
             &member,
+            self.inventory.project(),
             max_compressed_bytes,
             max_decoded_bytes,
             |page| {
