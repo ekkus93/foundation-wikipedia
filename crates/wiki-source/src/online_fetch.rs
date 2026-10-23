@@ -7,9 +7,12 @@
 
 use wiki_model::ArticleKey;
 
+use crate::local_title_index::{LocalTitleIndex, LocalTitleIndexError};
+
 use crate::online_article::OnlineRenderedRevision;
 use crate::online_flow::{
-    begin_open, begin_title_open, finish_render, finish_title_resolution, plan_render,
+    begin_offline_title_open, begin_open, begin_title_open, finish_render,
+    finish_title_resolution, plan_render,
     OnlineFlowError, OpenArticle, OpenTitle,
 };
 use crate::online_selection::{ArticleVersion, NetworkState};
@@ -216,6 +219,57 @@ pub fn fetch_title_with_versions<T: MediaWikiTransport>(
         })?;
 
     fetch_article(client, &resolved.key, NetworkState::Online, versions)
+}
+
+/// Open by title using a caller-verified local title index when available.
+///
+/// Offline lookup resolves the canonical page ID and exact installed revision
+/// without calling the network transport. Online lookup still resolves the
+/// current page identity upstream and may use a matching local index entry as
+/// an explicitly noncurrent fallback. If the publisher resolves the title to
+/// a different page ID, do not silently substitute the local article.
+///
+/// Index construction does not authenticate publisher data or check offline
+/// media completeness: callers must verify those dependencies independently.
+pub fn fetch_title_with_local_index<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    index: Option<&LocalTitleIndex>,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    let failure = |cause| FetchFailure {
+        stage: FetchStage::Selection,
+        fallback: None,
+        cause: FetchCause::Flow(cause),
+    };
+    if network == NetworkState::Offline {
+        return match begin_offline_title_open(project, requested_title, index)
+            .map_err(failure)?
+        {
+            OpenArticle::Local(version) => Ok(FetchOutcome::Local(version)),
+            OpenArticle::MissingOffline => Ok(FetchOutcome::MissingOffline),
+            _ => Err(failure(OnlineFlowError::LocalIndex(
+                LocalTitleIndexError::InvalidVersion,
+            ))),
+        };
+    }
+
+    let candidate = if let Some(index) = index {
+        if index.project() != project {
+            return Err(failure(OnlineFlowError::LocalIndex(
+                LocalTitleIndexError::ForeignProject,
+            )));
+        }
+        index
+            .resolve_title(requested_title)
+            .map_err(|error| failure(OnlineFlowError::LocalIndex(error)))?
+            .map(|hit| hit.version)
+    } else {
+        None
+    };
+    let versions: Vec<_> = candidate.into_iter().collect();
+    fetch_title_with_versions(client, project, requested_title, network, &versions)
 }
 
 #[cfg(test)]
@@ -452,6 +506,129 @@ mod tests {
             ))
         );
         assert_eq!(client.requests.len(), 1);
+    }
+
+
+    #[test]
+    fn title_index_opens_verified_offline_article_without_http() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
+
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: local(),
+            }],
+        )
+        .unwrap();
+        let mut client = FakeTransport::default();
+        assert_eq!(
+            fetch_title_with_local_index(
+                &mut client,
+                "enwiki",
+                "physics",
+                NetworkState::Offline,
+                Some(&index),
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
+        assert_eq!(
+            fetch_title_with_local_index(
+                &mut client,
+                "enwiki",
+                "Missing",
+                NetworkState::Offline,
+                Some(&index),
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(
+            fetch_title_with_local_index(
+                &mut client,
+                "enwiki",
+                "Physics",
+                NetworkState::Offline,
+                None,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert!(client.requests.is_empty());
+
+        let wrong_project = fetch_title_with_local_index(
+            &mut client,
+            "dewiki",
+            "Physics",
+            NetworkState::Offline,
+            Some(&index),
+        )
+        .unwrap_err();
+        assert_eq!(wrong_project.stage, FetchStage::Selection);
+        assert_eq!(
+            wrong_project.cause,
+            FetchCause::Flow(OnlineFlowError::LocalIndex(
+                LocalTitleIndexError::ForeignProject
+            ))
+        );
+        assert!(client.requests.is_empty());
+    }
+
+    #[test]
+    fn title_index_preserves_local_fallback_online_and_rejects_identity_drift() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
+
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: local(),
+            }],
+        )
+        .unwrap();
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#
+                .as_bytes()
+                .to_vec(),
+        ));
+        client.answers.push_back(Err("revision temporarily unavailable"));
+        let error = fetch_title_with_local_index(
+            &mut client,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(
+            error.cause,
+            FetchCause::Transport("revision temporarily unavailable")
+        );
+        assert_eq!(client.requests.len(), 2);
+
+        let mut drift = FakeTransport::default();
+        drift.answers.push_back(Ok(
+            r#"{"query":{"pages":[{"pageid":43,"ns":0,"title":"Physics"}]}}"#
+                .as_bytes()
+                .to_vec(),
+        ));
+        let error = fetch_title_with_local_index(
+            &mut drift,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(
+            error.cause,
+            FetchCause::Flow(OnlineFlowError::Selection(
+                crate::online_selection::SelectionError::ForeignArticle
+            ))
+        );
+        assert_eq!(drift.requests.len(), 1);
     }
 
     #[test]
