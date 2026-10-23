@@ -7,8 +7,8 @@
 use std::io::{Read, Write};
 
 use crate::public_dump::DumpChecksum;
-use crate::public_dump_checked_read::CheckedMemberError;
 use crate::public_dump_census_export::{CensusExportError, ObservedCensusWriter};
+use crate::public_dump_checked_read::CheckedMemberError;
 use crate::public_dump_ingest::{PageIngestError, PinnedPageIngest};
 use crate::public_dump_page_meta::PageEvent;
 use crate::public_dump_pinned::PinnedInventory;
@@ -286,8 +286,8 @@ mod tests {
             Sha256::digest(payloads[1])
         );
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest)
-            .unwrap();
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         for (index, payload) in payloads.into_iter().enumerate() {
             pipeline
