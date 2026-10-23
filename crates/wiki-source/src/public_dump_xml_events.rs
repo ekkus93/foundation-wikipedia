@@ -69,12 +69,19 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
 
     fn invalid(&mut self) -> io::Error {
         self.failed = true;
-        io::Error::new(io::ErrorKind::InvalidData, "invalid MediaWiki page semantics")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid MediaWiki page semantics",
+        )
     }
 
     fn at(&self, path: &[&str]) -> bool {
         self.path.len() == path.len()
-            && self.path.iter().zip(path).all(|(actual, expected)| actual == expected)
+            && self
+                .path
+                .iter()
+                .zip(path)
+                .all(|(actual, expected)| actual.as_str() == *expected)
     }
 
     fn emit(&mut self, event: PageEvent<'_>) -> io::Result<()> {
@@ -338,8 +345,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                     self.tail.clear();
                     self.markup.clear();
                 } else if self.markup.starts_with(b"<!") {
-                    if !b"<!--".starts_with(&self.markup)
-                        && !b"<![CDATA[".starts_with(&self.markup)
+                    if !b"<!--".starts_with(&self.markup) && !b"<![CDATA[".starts_with(&self.markup)
                     {
                         return Err(self.invalid());
                     }
@@ -389,10 +395,12 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             || !self.path.is_empty()
             || self.field.is_some()
             || self.pages == 0
-            || self.collector.finish().is_err()
         {
             return Err(self.invalid());
         }
+        self.collector
+            .finish()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "incomplete page metadata"))?;
         Ok((self.callback, self.pages))
     }
 }
@@ -464,9 +472,7 @@ mod tests {
 
     #[test]
     fn poisoned_after_callback_failure_even_if_caller_swallows_it() {
-        let mut writer = XmlPageMetadataWriter::new(|_| {
-            Err(io::Error::other("sink failed"))
-        });
+        let mut writer = XmlPageMetadataWriter::new(|_| Err(io::Error::other("sink failed")));
         assert!(writer.write_all(VALID.as_bytes()).is_err());
         assert!(writer.write_all(b"<mediawiki/>").is_err());
         assert!(writer.finish().is_err());
