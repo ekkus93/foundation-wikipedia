@@ -265,10 +265,15 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             let end = attrs.iter().position(|byte| *byte == quote)?;
             let value = &attrs[..end];
             if key == b"xmlns" {
-                if !root || !Self::official_export_namespace(value) {
+                // Namespace URIs are XML attribute values, so character
+                // references must be expanded before comparing their identity.
+                let decoded = Self::decode_entities(value)?;
+                if !root || !Self::official_export_namespace(decoded.as_bytes()) {
                     return None;
                 }
             } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                let decoded = Self::decode_entities(value)?;
+                let value = decoded.as_bytes();
                 // XML Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
                 const XML_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
                 const XMLNS_URI: &[u8] = b"http://www.w3.org/2000/xmlns/";
@@ -828,6 +833,62 @@ mod tests {
                 assert!(
                     result.is_err() || writer.finish().is_err(),
                     "reserved namespace rebinding accepted: {bad}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn namespace_uri_character_references_cannot_hide_reserved_bindings() {
+        let official = VALID.replace(
+            "<mediawiki>",
+            "<mediawiki xmlns=\\\"http://www.mediawiki.org/xml/export-0.11/\\\">",
+        );
+        let encoded_default = official.replace(
+            "export-0.11/",
+            "export-0.&#x31;1/",
+        );
+        let encoded_xml = official.replace(
+            "<page>",
+            "<page xmlns:xml=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce\\\">",
+        );
+        let encoded_extension = official.replace(
+            "<page>",
+            "<page xmlns:ext=\\\"urn:foo&amp;bar\\\" ext:note=\\\"ok\\\">",
+        );
+        for valid in [&encoded_default, &encoded_xml, &encoded_extension] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                for chunk in valid.as_bytes().chunks(chunk_size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+            }
+        }
+
+        for bad in [
+            official.replace(
+                "<page>",
+                "<page xmlns:evil=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce\\\">",
+            ),
+            official.replace(
+                "<page>",
+                "<page xmlns:evil=\\\"http://www.w3.org/2000/xmln&#x73;/\\\">",
+            ),
+            official.replace(
+                "<page>",
+                "<page xmlns:xml=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce-evil\\\">",
+            ),
+        ] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "encoded reserved namespace binding accepted: {bad}"
                 );
             }
         }
