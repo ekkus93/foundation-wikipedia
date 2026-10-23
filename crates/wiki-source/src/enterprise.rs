@@ -670,8 +670,7 @@ pub fn join_enterprise_article(
 fn valid_page_key(page: &PageKey) -> bool {
     // Public DTO callers bypass the JSON parser. Enforce the same source and
     // SQLite identity range at every entry point, including deletion markers.
-    (1..=i64::MAX as u64).contains(&page.page_id)
-        && crate::valid_wiki_project(&page.project)
+    (1..=i64::MAX as u64).contains(&page.page_id) && crate::valid_wiki_project(&page.project)
 }
 
 /// Join complete Structured Contents and regular-article collections in stable
