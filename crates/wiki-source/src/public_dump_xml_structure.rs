@@ -3,8 +3,8 @@
 //! This deliberately accepts a conservative ASCII-element-name subset used by
 //! Wikimedia dump envelopes. It checks nesting, quoted attributes, comments,
 //! CDATA, and one nonempty <mediawiki> root. It rejects DTDs and external
-//! entities. It is NOT a complete XML parser: entity references, namespaces,
-//! page semantics, and publisher completeness require independent validation.
+//! entities. It is NOT a complete XML parser: namespace semantics, page
+//! metadata and publisher completeness require independent validation.
 //! Use behind XmlTextGuard and never publish provisional output on its own.
 
 use std::collections::BTreeSet;
@@ -13,6 +13,7 @@ use std::io::{self, Write};
 const MAX_TAG_BYTES: usize = 64 * 1024;
 const MAX_DEPTH: usize = 64;
 const MAX_WRITE: usize = 8192;
+const MAX_ENTITY_BYTES: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -27,6 +28,7 @@ pub struct XmlNestingGuard<W> {
     output: W,
     mode: Mode,
     token: Vec<u8>,
+    entity: Vec<u8>,
     stack: Vec<String>,
     root_seen: bool,
     root_closed: bool,
@@ -40,6 +42,7 @@ impl<W: Write> XmlNestingGuard<W> {
             output,
             mode: Mode::Text,
             token: Vec::new(),
+            entity: Vec::new(),
             stack: Vec::new(),
             root_seen: false,
             root_closed: false,
@@ -59,6 +62,65 @@ impl<W: Write> XmlNestingGuard<W> {
             && bytes.iter().skip(1).all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b':' | b'.' | b'-')
             })
+    }
+
+    fn valid_entity(bytes: &[u8]) -> bool {
+        if [b"&amp;".as_slice(), b"&lt;", b"&gt;", b"&apos;", b"&quot;"]
+            .contains(&bytes)
+        {
+            return true;
+        }
+        let Some(raw) = bytes.strip_prefix(b"&#").and_then(|b| b.strip_suffix(b";")) else {
+            return false;
+        };
+        let (digits, radix) = if let Some(hex) = raw.strip_prefix(b"x") {
+            (hex, 16)
+        } else {
+            (raw, 10)
+        };
+        if digits.is_empty()
+            || !digits.iter().all(|b| {
+                if radix == 16 {
+                    b.is_ascii_hexdigit()
+                } else {
+                    b.is_ascii_digit()
+                }
+            })
+        {
+            return false;
+        }
+        let Ok(text) = std::str::from_utf8(digits) else {
+            return false;
+        };
+        let Ok(code) = u32::from_str_radix(text, radix) else {
+            return false;
+        };
+        matches!(code, 9 | 10 | 13)
+            || (0x20..=0xd7ff).contains(&code)
+            || (0xe000..=0xfffd).contains(&code)
+            || (0x10000..=0x10ffff).contains(&code)
+    }
+
+    fn valid_attribute_value(bytes: &[u8]) -> bool {
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'<' {
+                return false;
+            }
+            if bytes[index] == b'&' {
+                let Some(end) = bytes[index..].iter().position(|b| *b == b';') else {
+                    return false;
+                };
+                let end = index + end + 1;
+                if end - index > MAX_ENTITY_BYTES || !Self::valid_entity(&bytes[index..end]) {
+                    return false;
+                }
+                index = end;
+            } else {
+                index += 1;
+            }
+        }
+        true
     }
 
     fn attributes(mut bytes: &[u8]) -> bool {
@@ -98,7 +160,7 @@ impl<W: Write> XmlNestingGuard<W> {
             let Some(end) = bytes.iter().position(|b| *b == quote) else {
                 return false;
             };
-            if bytes[..end].contains(&b'<') {
+            if !Self::valid_attribute_value(&bytes[..end]) {
                 return false;
             }
             bytes = &bytes[end + 1..];
@@ -161,7 +223,25 @@ impl<W: Write> XmlNestingGuard<W> {
     fn byte(&mut self, byte: u8) -> io::Result<()> {
         match self.mode {
             Mode::Text => {
-                if byte == b'<' {
+                if !self.entity.is_empty() {
+                    self.entity.push(byte);
+                    if self.entity.len() > MAX_ENTITY_BYTES {
+                        return Err(self.invalid());
+                    }
+                    if byte == b';' {
+                        if !Self::valid_entity(&self.entity) {
+                            return Err(self.invalid());
+                        }
+                        self.entity.clear();
+                    } else if !byte.is_ascii_alphanumeric() && byte != b'#' {
+                        return Err(self.invalid());
+                    }
+                } else if byte == b'&' {
+                    if self.stack.is_empty() {
+                        return Err(self.invalid());
+                    }
+                    self.entity.push(byte);
+                } else if byte == b'<' {
                     self.mode = Mode::Tag;
                     self.token.clear();
                     self.token.push(byte);
@@ -221,6 +301,9 @@ impl<W: Write> XmlNestingGuard<W> {
                 }
             }
             Mode::Comment | Mode::Cdata => {
+                if self.mode == Mode::Comment && self.token.ends_with(b"--") && byte != b'>' {
+                    return Err(self.invalid());
+                }
                 self.token.push(byte);
                 let terminator = if self.mode == Mode::Comment {
                     b"-->".as_slice()
@@ -246,6 +329,7 @@ impl<W: Write> XmlNestingGuard<W> {
             || !self.root_seen
             || !self.root_closed
             || !self.stack.is_empty()
+            || !self.entity.is_empty()
             || self.pages == 0
         {
             return Err(self.invalid());
@@ -364,6 +448,39 @@ mod tests {
             "<mediawiki><page a='1' a='2'></page></mediawiki>",
             "<mediawiki><page a=1></page></mediawiki>",
             "<mediawiki><page><!-- unfinished",
+        ] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            let written = guard.write_all(bad.as_bytes());
+            assert!(written.is_err() || guard.finish().is_err(), "{bad}");
+        }
+    }
+
+
+    #[test]
+    fn accepts_named_and_numeric_entities_split_at_all_boundaries() {
+        let xml = "<mediawiki lang='fr&amp;ar'><page><text>&lt;&gt;&quot;&apos;&amp;&#65;&#x1F600;</text></page></mediawiki>";
+        for size in [1, 2, 3, 11] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            for chunk in xml.as_bytes().chunks(size) {
+                guard.write_all(chunk).unwrap();
+            }
+            assert_eq!(guard.finish().unwrap(), xml.as_bytes());
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_entities_and_comment_double_hyphen() {
+        for bad in [
+            "<mediawiki><page><text>bare &amp</text></page></mediawiki>",
+            "<mediawiki><page><text>&bogus;</text></page></mediawiki>",
+            "<mediawiki><page><text>&#0;</text></page></mediawiki>",
+            "<mediawiki><page><text>&#xD800;</text></page></mediawiki>",
+            "<mediawiki><page><text>&#x110000;</text></page></mediawiki>",
+            "<mediawiki><page><text>&#xGG;</text></page></mediawiki>",
+            "<mediawiki><page><text>&#;</text></page></mediawiki>",
+            "<mediawiki><page title='bare &amp'></page></mediawiki>",
+            "<mediawiki><page title='&bogus;'></page></mediawiki>",
+            "<mediawiki><!-- illegal -- text --><page></page></mediawiki>",
         ] {
             let mut guard = XmlNestingGuard::new(Vec::new());
             let written = guard.write_all(bad.as_bytes());
