@@ -1230,12 +1230,7 @@ mod record_contract_tests {
     fn article_key_project_matches_canonical_source_and_pack_identity() {
         let mut candidate = key(10);
         for project in [
-            "ENWIKI",
-            "en-wiki",
-            "en wiki",
-            "_enwiki",
-            "enwiki_",
-            "éwiki",
+            "ENWIKI", "en-wiki", "en wiki", "_enwiki", "enwiki_", "éwiki",
         ] {
             candidate.project = project.into();
             assert_eq!(candidate.validate(), Err(ModelError::InvalidIdentity));
