@@ -17,6 +17,7 @@ pub enum GraphBuildError {
     DuplicatePage(u64),
     DuplicateCategory(String),
     InvalidCategory(String),
+    InvalidRedirect(String),
     MissingCategory(String),
 }
 
@@ -31,9 +32,37 @@ pub struct JoinedCategoryGraph {
     pub unresolved_redirect_titles: BTreeSet<String>,
 }
 
+// Typed JoinedEnterpriseArticle records are public DTOs: callers can bypass
+// the upstream JSON parser. Reapply its bounded, anti-spoof membership rules
+// at the topic-selection trust boundary before hashing or traversing labels.
+fn valid_membership_label(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.trim() == value
+        && value.len() <= 4096
+        && !value.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
+}
+
+fn valid_generation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 fn category_title(raw: &str) -> Result<String, GraphBuildError> {
-    if raw.is_empty() || raw.trim() != raw || raw.chars().any(char::is_control) || raw.contains('#')
-    {
+    if !valid_membership_label(raw) || raw.contains('#') {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
     let name = raw.strip_prefix("Category:").unwrap_or(raw);
@@ -54,7 +83,14 @@ pub fn graph_from_joined(
     let first = records.first().ok_or(GraphBuildError::Empty)?;
     let project = first.structured.page.project.clone();
     let generation_id = first.structured.generation_id.clone();
-    if project.is_empty() || generation_id.is_empty() {
+    if wiki_model::ArticleKey {
+        project: project.clone(),
+        page_id: 1,
+    }
+    .validate()
+    .is_err()
+        || !valid_generation_id(&generation_id)
+    {
         return Err(GraphBuildError::InvalidIdentity);
     }
     let mut graph = BTreeMap::new();
@@ -81,7 +117,17 @@ pub fn graph_from_joined(
         {
             return Err(GraphBuildError::DuplicatePage(page.page.page_id));
         }
-        unresolved_redirect_titles.extend(record.redirects.iter().cloned());
+        for redirect in &record.redirects {
+            if !valid_membership_label(redirect) {
+                return Err(GraphBuildError::InvalidRedirect(redirect.clone()));
+            }
+            unresolved_redirect_titles.insert(redirect.clone());
+        }
+        // Validate even membership labels on pages that will not contribute
+        // edges, so forged typed inputs cannot evade validation by namespace.
+        for category in &record.categories {
+            category_title(category)?;
+        }
         if page.namespace == 14 {
             let title = category_title(&page.name)?;
             let node = Category {
@@ -362,6 +408,119 @@ fn validate_redirect_identities(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn joined_page(
+        id: u64,
+        namespace: i32,
+        name: &str,
+        categories: Vec<String>,
+        redirects: Vec<String>,
+    ) -> JoinedEnterpriseArticle {
+        use wiki_source::enterprise::StructuredArticle;
+        use wiki_source::join::PageKey;
+
+        JoinedEnterpriseArticle {
+            structured: StructuredArticle {
+                page: PageKey {
+                    project: "enwiki".into(),
+                    page_id: id,
+                },
+                revision_id: id + 100,
+                date_modified: "2026-10-23T00:00:00Z".into(),
+                generation_id: "20261023".into(),
+                namespace,
+                language: "en".into(),
+                name: name.into(),
+                wikidata_id: None,
+                description: None,
+                infoboxes: Vec::new(),
+                sections: Vec::new(),
+                references: Vec::new(),
+                tables: Vec::new(),
+            },
+            rendered_html: "<p>Verified elsewhere</p>".into(),
+            categories,
+            redirects,
+        }
+    }
+
+    #[test]
+    fn typed_joined_graph_revalidates_memberships_and_source_identity() {
+        let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
+        let article = joined_page(
+            42,
+            0,
+            "Physics",
+            vec!["Science".into()],
+            vec!["علم الفيزياء".into()],
+        );
+        let graph = graph_from_joined(&[root.clone(), article.clone()], &BTreeSet::new()).unwrap();
+        assert_eq!(graph.graph["Category:Science"].articles, vec![42]);
+        assert!(graph.unresolved_redirect_titles.contains("علم الفيزياء"));
+
+        for invalid in [
+            " Science".to_owned(),
+            "Science ".to_owned(),
+            format!("Sci{}ence", '\u{202e}'),
+            format!("Sci{}ence", '\u{200f}'),
+            "x".repeat(4097),
+            "Science#fragment".to_owned(),
+        ] {
+            let mut bad = article.clone();
+            bad.categories = vec![invalid.clone()];
+            assert!(
+                matches!(
+                    graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
+                    Err(GraphBuildError::InvalidCategory(_))
+                ),
+                "invalid category accepted: {invalid}"
+            );
+        }
+        for invalid in [
+            " Physics".to_owned(),
+            "Physics ".to_owned(),
+            format!("Phy{}sics", '\u{2066}'),
+            "x".repeat(4097),
+        ] {
+            let mut bad = article.clone();
+            bad.redirects = vec![invalid.clone()];
+            assert!(
+                matches!(
+                    graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
+                    Err(GraphBuildError::InvalidRedirect(_))
+                ),
+                "invalid redirect accepted: {invalid}"
+            );
+        }
+        let mut bad_root = root.clone();
+        bad_root.structured.name = "Category:Sci\u{202e}ence".into();
+        assert!(matches!(
+            graph_from_joined(&[bad_root, article.clone()], &BTreeSet::new()),
+            Err(GraphBuildError::InvalidCategory(_))
+        ));
+
+        for project in ["Enwiki", "bad/wiki", "enwiki_"] {
+            let mut bad = article.clone();
+            bad.structured.page.project = project.into();
+            assert!(matches!(
+                graph_from_joined(&[bad], &BTreeSet::new()),
+                Err(GraphBuildError::InvalidIdentity)
+            ));
+        }
+        for generation in [
+            ".hidden".to_owned(),
+            "2026/10/23".to_owned(),
+            "bad ".to_owned(),
+            "x".repeat(256),
+        ] {
+            let mut bad = article.clone();
+            bad.structured.generation_id = generation;
+            assert!(matches!(
+                graph_from_joined(&[bad], &BTreeSet::new()),
+                Err(GraphBuildError::InvalidIdentity)
+            ));
+        }
+    }
 
     #[test]
     fn streaming_revision_receipt_matches_legacy_v2_bytes() {
