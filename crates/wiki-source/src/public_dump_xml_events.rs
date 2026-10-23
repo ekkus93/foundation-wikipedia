@@ -291,9 +291,18 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 // Namespace URIs are XML attribute values, so character
                 // references must be expanded before comparing their identity.
                 let decoded = Self::decode_attribute_value(value)?;
-                if !root || !Self::official_export_namespace(decoded.as_bytes()) {
+                if !Self::official_export_namespace(decoded.as_bytes())
+                    || (!root
+                        && inherited
+                            .get(b"".as_slice())
+                            .is_none_or(|uri| uri.as_slice() != decoded.as_bytes()))
+                {
                     return None;
                 }
+                // Keep the default binding in the lexical scope so a child
+                // can redundantly redeclare the SAME official URI without
+                // changing the namespace identity of its page fields.
+                scope.insert(Vec::new(), decoded.into_bytes());
             } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
                 let decoded = Self::decode_attribute_value(value)?;
                 let value = decoded.as_bytes();
@@ -796,8 +805,33 @@ mod tests {
             assert_eq!(writer.finish().unwrap().1, 1);
         }
 
+        // XML permits a descendant to repeat the inherited default
+        // namespace. That does not rebind MediaWiki page semantics.
+        for valid in [
+            official.replace(
+                "<page>",
+                r#"<page xmlns="http://www.mediawiki.org/xml/export-0.11/">"#,
+            ),
+            official.replace(
+                "<page>",
+                r#"<page xmlns="http://www.mediawiki.org/xml/export-0.&#x31;1/">"#,
+            ),
+        ] {
+            for size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                for chunk in valid.as_bytes().chunks(size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+            }
+        }
+
         for bad in [
             official.replace("export-0.11/", "other-0.11/"),
+            official.replace(
+                "<page>",
+                r#"<page xmlns="http://www.mediawiki.org/xml/export-0.10/">"#,
+            ),
             official.replace("<page>", "<page xmlns=\"\">"),
             official.replace("<title>", "<title xmlns=\"urn:forged\">"),
             VALID.replace("<page>", "<page xmlns=\"urn:foreign\">"),
