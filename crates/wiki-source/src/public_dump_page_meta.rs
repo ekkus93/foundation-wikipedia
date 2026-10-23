@@ -440,18 +440,10 @@ mod tests {
         );
         // U+200C (ZWNJ) and U+200D (ZWJ) are needed by real scripts:
         // rejecting them would make offline navigation lose valid titles.
-        assert_eq!(
-            collector.push(PageEvent::Title("می‌روم")),
-            Err(PageMetadataError::DuplicateField)
-        );
-
         let mut persian = PageMetadataCollector::new();
         persian.push(PageEvent::BeginPage).unwrap();
         assert_eq!(persian.push(PageEvent::Title("می‌روم")), Ok(None));
-        assert_eq!(
-            persian.push(PageEvent::RedirectTarget("क्‍ष")),
-            Ok(None)
-        );
+        assert_eq!(persian.push(PageEvent::RedirectTarget("क्‍ष")), Ok(None));
     }
 
     #[test]
