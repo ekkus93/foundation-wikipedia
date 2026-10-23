@@ -20,6 +20,13 @@ pub enum PinnedCensusError {
     CountMismatch,
 }
 
+
+#[derive(Debug)]
+pub enum NativeCensusError {
+    Census(PinnedCensusError),
+    Decode(CheckedMemberError<std::io::Error>),
+}
+
 #[derive(Debug)]
 pub enum CheckedCensusError {
     Census(PinnedCensusError),
@@ -108,6 +115,76 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             return Err(CheckedCensusError::Member(error));
         }
         self.end_member().map_err(CheckedCensusError::Census)
+    }
+
+
+    /// Decode the next inventory-pinned bzip2 shard using native Rust XML
+    /// page events. Output stays in private staging until finish succeeds.
+    ///
+    /// The expected SHA-256 comes from the inventory, never the caller.
+    /// On any decoder, metadata or checksum failure, the census is poisoned.
+    pub fn decode_native_bzip2_member<R: Read>(
+        &mut self,
+        input: R,
+        max_compressed_bytes: u64,
+        max_decoded_bytes: u64,
+    ) -> Result<(u64, u64), NativeCensusError> {
+        if self.failed {
+            return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
+        }
+        let Some(member) = self.inventory.members().get(self.next_member_index).cloned() else {
+            self.failed = true;
+            return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
+        };
+        self.begin_member(&member.relative_path)
+            .map_err(NativeCensusError::Census)?;
+        let mut callback_error = None;
+        let result = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata(
+            input,
+            &member,
+            max_compressed_bytes,
+            max_decoded_bytes,
+            |page| {
+                let push = (|| {
+                    self.push(PageEvent::BeginPage)?;
+                    self.push(PageEvent::Title(&page.title))?;
+                    self.push(PageEvent::Namespace(page.namespace))?;
+                    self.push(PageEvent::PageId(page.page_id))?;
+                    if let Some(target) = &page.redirect_target {
+                        self.push(PageEvent::RedirectTarget(target))?;
+                    }
+                    self.push(PageEvent::BeginRevision)?;
+                    self.push(PageEvent::RevisionId(page.revision_id))?;
+                    self.push(PageEvent::Timestamp(&page.timestamp))?;
+                    self.push(PageEvent::EndRevision)?;
+                    self.push(PageEvent::EndPage)
+                })();
+                if let Err(error) = push {
+                    callback_error = Some(error);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "native XML page rejected by pinned census",
+                    ));
+                }
+                Ok(())
+            },
+        );
+        if let Some(error) = callback_error {
+            self.failed = true;
+            self.ingest.abort_member();
+            return Err(NativeCensusError::Census(error));
+        }
+        match result {
+            Ok(receipt) => {
+                self.end_member().map_err(NativeCensusError::Census)?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                self.failed = true;
+                self.ingest.abort_member();
+                Err(NativeCensusError::Decode(error))
+            }
+        }
     }
 
     pub fn push(&mut self, event: PageEvent<'_>) -> Result<(), PinnedCensusError> {
@@ -289,6 +366,66 @@ mod tests {
         pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
         pipeline.push(PageEvent::EndRevision)?;
         pipeline.push(PageEvent::EndPage)
+    }
+
+
+    #[test]
+    fn native_multistream_bzip2_produces_staged_two_shard_census() {
+        use std::io::Cursor;
+
+        let xml = [
+            "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>9001</id></contributor><text><![CDATA[{{x}}]]></text></revision></page></mediawiki>",
+            "<mediawiki><page><title>Biology</title><ns>0</ns><id>201</id><revision><id>1201</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>",
+        ];
+        let compressed: Vec<Vec<u8>> = xml
+            .iter()
+            .map(|text| {
+                let mut encoder =
+                    bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+                encoder.write_all(text.as_bytes()).unwrap();
+                encoder.finish().unwrap()
+            })
+            .collect();
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n{:x}  enwiki-2026-10-01-p201p300.xml.bz2\n",
+            Sha256::digest(&compressed[0]),
+            Sha256::digest(&compressed[1])
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        for (index, bytes) in compressed.iter().enumerate() {
+            let (decoded, count) = pipeline
+                .decode_native_bzip2_member(Cursor::new(bytes), 4096, 4096)
+                .unwrap();
+            assert_eq!(decoded, xml[index].len() as u64);
+            assert_eq!(count, 1);
+        }
+        let (bytes, count) = pipeline.finish().unwrap();
+        assert_eq!(bytes, b"1\n201\n");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn native_census_digest_failure_cannot_return_partial_census() {
+        use std::io::Cursor;
+
+        let xml = "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let sums = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        assert!(matches!(
+            pipeline.decode_native_bzip2_member(Cursor::new(&compressed), 4096, 4096),
+            Err(NativeCensusError::Decode(CheckedMemberError::DigestMismatch))
+        ));
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
     }
 
     #[test]
