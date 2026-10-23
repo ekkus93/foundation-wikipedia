@@ -63,11 +63,10 @@ fn valid_xml_text(value: &str) -> bool {
 }
 
 fn valid_title(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 4096
-        && value.trim() == value
-        && !value.chars().any(char::is_control)
-        && valid_xml_text(value)
+    // Match the semantic XML collector's Unicode policy exactly. A diagnostic
+    // JSONL export must not reintroduce invisible or spoofed page identities.
+    // Keep legitimate Persian ZWNJ and Indic ZWJ spellings readable.
+    crate::public_dump_page_meta::valid_text(value, 4096) && valid_xml_text(value)
 }
 
 /// Fail-closed, streaming adapter for *already audited* diagnostic JSONL.
@@ -380,6 +379,45 @@ mod tests {
         row["redirect_target"] = serde_json::json!("東京");
         let input = format!("{row}\n");
         assert_eq!(parse(input.as_bytes()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn diagnostic_titles_and_redirects_match_xml_unicode_identity_policy() {
+        let baseline: serde_json::Value =
+            serde_json::from_str(&record(1, "Valid wikitext")).unwrap();
+        for field in ["title", "redirect_target"] {
+            for rejected in [
+                "A\\u{200b}B",
+                "A\\u{202e}B",
+                "A\\u{2060}B",
+                "A\\u{feff}B",
+                "A\\u{1fffe}B",
+                "A\\u{10ffff}B",
+            ] {
+                let mut row = baseline.clone();
+                row[field] = serde_json::json!(rejected);
+                let input = format!("{row}\\n");
+                let mut reader = DiagnosticRevisionLines::new(
+                    Cursor::new(input.as_bytes()),
+                    "enwiki",
+                    "2026-10-01",
+                    0,
+                )
+                .unwrap();
+                assert!(
+                    matches!(reader.next(), Some(Err(RevisionRecordError::InvalidRecord))),
+                    "{field} accepted forbidden label: {rejected:?}"
+                );
+                assert!(reader.next().is_none(), "invalid record must poison reader");
+            }
+            for accepted in ["می‌روم", "क्‍ष", "العربية", "עברית", "日本語"] {
+                let mut row = baseline.clone();
+                row[field] = serde_json::json!(accepted);
+                let input = format!("{row}\\n");
+                let rows = parse(input.as_bytes()).unwrap();
+                assert_eq!(rows.len(), 1, "{field}: {accepted}");
+            }
+        }
     }
 
     #[test]

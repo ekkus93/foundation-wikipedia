@@ -211,7 +211,7 @@ impl PageMetadataCollector {
     }
 }
 
-fn valid_text(value: &str, max_bytes: usize) -> bool {
+pub(crate) fn valid_text(value: &str, max_bytes: usize) -> bool {
     !value.trim().is_empty()
         && value == value.trim()
         && value.len() <= max_bytes
