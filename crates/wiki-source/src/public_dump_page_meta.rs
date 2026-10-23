@@ -215,10 +215,18 @@ fn valid_text(value: &str, max_bytes: usize) -> bool {
     !value.trim().is_empty()
         && value == value.trim()
         && value.len() <= max_bytes
-        && !value.chars().any(char::is_control)
-        && value
-            .chars()
-            .all(|ch| !matches!(ch, '\u{FFFE}' | '\u{FFFF}'))
+        && !value.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{FFFE}'
+                        | '\u{FFFF}'
+                )
+        })
 }
 
 #[cfg(test)]
@@ -391,4 +399,34 @@ mod tests {
         );
         assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
     }
+
+    #[test]
+    fn rejects_directional_format_controls_in_dump_titles_and_redirects() {
+        for ch in [
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}',
+            '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+        ] {
+            let spoofed = format!("Physics{ch}History");
+            for redirect in [false, true] {
+                let mut collector = PageMetadataCollector::new();
+                collector.push(PageEvent::BeginPage).unwrap();
+                let event = if redirect {
+                    PageEvent::RedirectTarget(&spoofed)
+                } else {
+                    PageEvent::Title(&spoofed)
+                };
+                assert_eq!(collector.push(event), Err(PageMetadataError::InvalidField));
+                assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
+            }
+        }
+
+        let mut collector = PageMetadataCollector::new();
+        collector.push(PageEvent::BeginPage).unwrap();
+        assert_eq!(collector.push(PageEvent::Title("رياضيات")), Ok(None));
+        assert_eq!(
+            collector.push(PageEvent::RedirectTarget("עברית")),
+            Ok(None)
+        );
+    }
+
 }
