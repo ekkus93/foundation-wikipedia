@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
-import unicodedata
+from public_dump_text_policy import valid_dump_label, valid_xml_text
 
 MAX_FILE_BYTES = 2_000_000_000
 MAX_RECORD_BYTES = 128 * 1024 * 1024
@@ -44,10 +44,7 @@ def _reject_constant(value):
 
 
 def _valid_title(value):
-    return (isinstance(value, str) and value
-            and value == value.strip()
-            and len(value.encode("utf-8")) <= 4096
-            and not any(unicodedata.category(c) == "Cc" for c in value))
+    return valid_dump_label(value)
 
 
 def _valid_timestamp(value):
@@ -94,6 +91,8 @@ def _audit_record(line, project, generation, namespace, content, previous):
         raw = text.encode("utf-8")
         if len(raw) > MAX_TEXT_BYTES:
             raise RevisionAuditError("oversized decoded wikitext")
+        if not valid_xml_text(text):
+            raise RevisionAuditError("XML-forbidden decoded wikitext")
         if (not isinstance(digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", digest)
                 or hashlib.sha256(raw).hexdigest() != digest):
@@ -108,7 +107,7 @@ def audit_revision_jsonl(path, project, generation, namespace, content=False):
     The caller must separately establish source authority and completeness.
     """
     if (not isinstance(project, str) or not 0 < len(project) <= 255
-            or not re.fullmatch(r"[a-z0-9_]+", project)
+            or not re.fullmatch(r"[a-z](?:[a-z0-9_]*[a-z0-9])?", project)
             or not isinstance(generation, str)
             or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", generation)
             or type(namespace) is not int or not 0 <= namespace <= 2**31 - 1):

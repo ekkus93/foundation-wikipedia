@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from strict_bzip2_reader import StrictBzip2Reader
+from public_dump_text_policy import valid_dump_label
 from audit_public_dump_revision_jsonl import MAX_RECORD_BYTES, RevisionAuditError, audit_revision_jsonl
 from verify_source_staging import SourceVerificationError, load_source_manifest, verify_source_bytes
 
@@ -29,15 +30,6 @@ MAX_NON_PAGE_XML_BYTES = 8 * 1024**2
 MAX_XML_DEPTH = 128
 MAX_PAGE_ID = 2**63 - 1
 MAX_NAMESPACE_ID = 2**31 - 1
-# Titles must not contain bidirectional display overrides or invisible marks.
-BIDI_CONTROLS = set("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
-
-
-def unsafe_title_character(value):
-    return any(ord(char) < 32 or 127 <= ord(char) <= 159 or char in BIDI_CONTROLS for char in value)
-
-
-
 class DumpDecodeError(ValueError):
     """Invalid dump input; never publish a partial observed census."""
 
@@ -70,8 +62,7 @@ def _positive(text):
 
 def _page_identity(page):
     title = _one(page, "title").text
-    if (not title or len(title.encode("utf-8")) > 4096 or title != title.strip()
-            or unsafe_title_character(title)):
+    if not valid_dump_label(title):
         raise DumpDecodeError("invalid page title")
     namespace = _one(page, "ns").text
     if namespace is None or len(namespace) > 10 or not re.fullmatch(r"0|[1-9][0-9]*", namespace):
@@ -99,9 +90,7 @@ def _page_identity(page):
         if set(redirect.attrib) != {"title"}:
             raise DumpDecodeError("invalid redirect attributes")
         redirect_target = redirect.attrib["title"]
-        if (not redirect_target or redirect_target != redirect_target.strip()
-                or len(redirect_target.encode("utf-8")) > 4096
-                or unsafe_title_character(redirect_target)):
+        if not valid_dump_label(redirect_target):
             raise DumpDecodeError("invalid redirect title")
     return page_id, namespace_id, title, revision_id, timestamp, redirect_target
 
