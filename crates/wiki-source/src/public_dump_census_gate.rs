@@ -108,10 +108,17 @@ fn sha256_bounded<R: Read>(reader: &mut R, max_bytes: u64) -> Result<String, Cen
     let mut hash = Sha256::new();
     let mut total = 0u64;
     let mut buffer = [0u8; 64 * 1024];
+    let mut interrupted = 0u8;
     loop {
         let size = match reader.read(&mut buffer) {
-            Ok(size) => size,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Ok(size) => {
+                interrupted = 0;
+                size
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 => {
+                interrupted += 1;
+                continue;
+            }
             Err(error) => return Err(CensusGateError::Io(error)),
         };
         if size == 0 {
@@ -375,6 +382,59 @@ mod tests {
         fs::write(&observed, b"1\n201\n").unwrap();
         let digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
         (root, expected, observed, digest)
+    }
+
+    struct InterruptingCensusInput<'a> {
+        bytes: &'a [u8],
+        offset: usize,
+        interrupted: u8,
+        reset_once: bool,
+    }
+
+    impl Read for InterruptingCensusInput<'_> {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            if self.interrupted > 0 {
+                self.interrupted -= 1;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            if self.offset == self.bytes.len() {
+                return Ok(0);
+            }
+            let count = (self.bytes.len() - self.offset).min(out.len()).min(2);
+            out[..count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
+            self.offset += count;
+            if !self.reset_once {
+                self.reset_once = true;
+                self.interrupted = 8;
+            }
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn bounded_census_hash_retries_interruptions_and_fails_persistently() {
+        let bytes = b"1\\n201\\n";
+        let mut transient = InterruptingCensusInput {
+            bytes,
+            offset: 0,
+            interrupted: 8,
+            reset_once: false,
+        };
+        assert_eq!(
+            sha256_bounded(&mut transient, 1024).unwrap(),
+            format!("{:x}", Sha256::digest(bytes))
+        );
+        let mut persistent = InterruptingCensusInput {
+            bytes,
+            offset: 0,
+            interrupted: 9,
+            reset_once: true,
+        };
+        assert!(matches!(
+            sha256_bounded(&mut persistent, 1024),
+            Err(CensusGateError::Io(error)) if error.kind() == io::ErrorKind::Interrupted
+        ));
+        assert_eq!(persistent.offset, 0);
     }
 
     #[test]
