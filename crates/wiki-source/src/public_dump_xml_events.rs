@@ -772,8 +772,14 @@ mod tests {
         for bad in [
             official.replace("<page>", "<page xmlns:xml=\"urn:forged\">"),
             official.replace("<page>", "<page xmlns:xmlns=\"urn:forged\">"),
-            official.replace("<page>", "<page xmlns:evil=\"http://www.w3.org/XML/1998/namespace\">"),
-            official.replace("<page>", "<page xmlns:evil=\"http://www.w3.org/2000/xmlns/\">"),
+            official.replace(
+                "<page>",
+                "<page xmlns:evil=\"http://www.w3.org/XML/1998/namespace\">",
+            ),
+            official.replace(
+                "<page>",
+                "<page xmlns:evil=\"http://www.w3.org/2000/xmlns/\">",
+            ),
             official.replace("<page>", "<page xmlns:evil=\"\">"),
             official.replace("<page>", "<page xmlns:evil:extra=\"urn:forged\">"),
         ] {
@@ -790,5 +796,4 @@ mod tests {
             }
         }
     }
-
 }
