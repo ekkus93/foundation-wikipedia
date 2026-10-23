@@ -147,7 +147,6 @@ impl LocalTitleIndex {
         })
     }
 
-
     /// Attach independently verified redirect aliases without changing article
     /// provenance or adding duplicate records to prefix search results.
     ///
@@ -359,7 +358,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn verified_offline_redirects_resolve_without_creating_duplicate_search_hits() {
         let index = LocalTitleIndex::new(
@@ -387,9 +385,21 @@ mod tests {
         assert_eq!(resolved.hit.key.page_id, 1);
         assert_eq!(resolved.hit.title, "Physics");
         assert_eq!(resolved.version.revision_id, 101);
-        assert_eq!(index.resolve_title("علم الرياضيات").unwrap().unwrap().hit.key.page_id, 2);
+        assert_eq!(
+            index
+                .resolve_title("علم الرياضيات")
+                .unwrap()
+                .unwrap()
+                .hit
+                .key
+                .page_id,
+            2
+        );
         assert_eq!(index.len(), 2);
-        assert!(index.search_prefix("Physical science", 5).unwrap().is_empty());
+        assert!(index
+            .search_prefix("Physical science", 5)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -423,7 +433,7 @@ mod tests {
             base().with_redirects([alias("Legacy", "Physics", 2)]),
             Err(LocalTitleIndexError::UnknownRedirectTarget)
         ));
-        for bad in ["", " Bad", "Bad\\nAlias", "Bad\\u{202e}Alias"] {
+        for bad in ["", " Bad", "Bad\nAlias", "Bad\u{202e}Alias"] {
             assert!(matches!(
                 base().with_redirects([alias(bad, "Physics", 1)]),
                 Err(LocalTitleIndexError::InvalidRedirect)
