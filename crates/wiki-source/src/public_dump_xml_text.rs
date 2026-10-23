@@ -104,6 +104,58 @@ impl<W: Write> Write for XmlTextGuard<W> {
     }
 }
 
+
+/**
+ * Validate the entire provisional decoded text stream while checking the
+ * compressed member's pinned digest, EOF and both byte budgets.
+ *
+ * Unlike a decoder-owned XmlTextGuard, this wrapper always calls finish(),
+ * so a decoder that swallows a malformed-UTF-8/XML-character write error or
+ * leaves a trailing partial UTF-8 scalar cannot qualify its output.
+ *
+ * The decoder must actually decompress bzip2, consume compressed input to
+ * EOF, and validate XML structure/page semantics independently. Success is
+ * not evidence of source authenticity, completeness, or publishable output.
+ */
+pub fn decode_checked_member_with_xml_text<R, W, F, T, E>(
+    input: R,
+    member: &crate::public_dump::DumpChecksum,
+    max_compressed_bytes: u64,
+    output: W,
+    max_decoded_bytes: u64,
+    decoder: F,
+) -> Result<(W, u64, T), crate::public_dump_checked_read::CheckedMemberError<E>>
+where
+    R: std::io::Read,
+    W: Write,
+    F: FnOnce(&mut dyn std::io::Read, &mut dyn Write) -> Result<T, E>,
+{
+    use crate::public_dump_checked_read::{
+        decode_checked_member_with_bounded_output, CheckedMemberError,
+    };
+
+    let mut invalid_text = false;
+    let result = decode_checked_member_with_bounded_output(
+        input,
+        member,
+        max_compressed_bytes,
+        output,
+        max_decoded_bytes,
+        |reader, writer| {
+            let mut guard = XmlTextGuard::new(writer);
+            let decoded = decoder(reader, &mut guard);
+            if guard.finish().is_err() {
+                invalid_text = true;
+            }
+            decoded
+        },
+    );
+    match result {
+        Ok(_) if invalid_text => Err(CheckedMemberError::InvalidXmlText),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +247,131 @@ mod tests {
         .unwrap();
         assert_eq!(bytes, "<page>日</page>".as_bytes());
         assert_eq!(decoded, bytes.len() as u64);
+    }
+
+    #[test]
+    fn checked_xml_member_qualifies_multilingual_text_only_after_complete_input() {
+        use crate::public_dump::DumpChecksum;
+        use sha2::{Digest, Sha256};
+
+        let compressed = b"synthetic compressed fixture, not bzip2";
+        let member = DumpChecksum {
+            relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+            sha256: format!("{:x}", Sha256::digest(compressed)),
+        };
+        let (output, decoded_bytes, value) = decode_checked_member_with_xml_text(
+            Cursor::new(compressed),
+            &member,
+            1024,
+            Vec::new(),
+            128,
+            |reader, writer| {
+                writer.write_all(b"<page>")?;
+                writer.write_all("日本語".as_bytes())?;
+                writer.write_all(b"</page>")?;
+                io::copy(reader, &mut io::sink())?;
+                Ok::<_, io::Error>(7)
+            },
+        )
+        .unwrap();
+        assert_eq!(output, "<page>日本語</page>".as_bytes());
+        assert_eq!(decoded_bytes, output.len() as u64);
+        assert_eq!(value, 7);
+    }
+
+    #[test]
+    fn swallowed_xml_validation_errors_and_truncated_utf8_cannot_qualify() {
+        use crate::public_dump::DumpChecksum;
+        use crate::public_dump_checked_read::CheckedMemberError;
+        use sha2::{Digest, Sha256};
+
+        let compressed = b"synthetic member";
+        let member = DumpChecksum {
+            relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+            sha256: format!("{:x}", Sha256::digest(compressed)),
+        };
+        for bad in [
+            b"<page>\0</page>".as_slice(),
+            b"<page>\xc0\xaf</page>",
+            b"<page>\xe2\x82",
+        ] {
+            let result = decode_checked_member_with_xml_text(
+                Cursor::new(compressed),
+                &member,
+                1024,
+                Vec::new(),
+                128,
+                |reader, writer| {
+                    // A decoder that ignores the writer error must still fail.
+                    let _ = writer.write_all(bad);
+                    io::copy(reader, &mut io::sink())?;
+                    Ok::<_, io::Error>(())
+                },
+            );
+            assert!(matches!(result, Err(CheckedMemberError::InvalidXmlText)));
+        }
+    }
+
+    #[test]
+    fn checked_xml_member_preserves_digest_eof_and_output_budget_failures() {
+        use crate::public_dump::DumpChecksum;
+        use crate::public_dump_checked_read::CheckedMemberError;
+        use sha2::{Digest, Sha256};
+
+        let compressed = b"synthetic member";
+        let member = DumpChecksum {
+            relative_path: "enwiki-2026-10-01-p1p100.xml.bz2".into(),
+            sha256: format!("{:x}", Sha256::digest(compressed)),
+        };
+        let bad_digest = DumpChecksum {
+            sha256: format!("{:x}", Sha256::digest(b"different")),
+            ..member.clone()
+        };
+        let mismatch = decode_checked_member_with_xml_text(
+            Cursor::new(compressed),
+            &bad_digest,
+            1024,
+            Vec::new(),
+            128,
+            |reader, writer| {
+                writer.write_all(b"<page/>")?;
+                io::copy(reader, &mut io::sink())?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(mismatch, Err(CheckedMemberError::DigestMismatch)));
+
+        let early = decode_checked_member_with_xml_text(
+            Cursor::new(compressed),
+            &member,
+            1024,
+            Vec::new(),
+            128,
+            |_reader, writer| {
+                writer.write_all(b"<page/>")?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(
+            early,
+            Err(CheckedMemberError::IncompleteConsumption)
+        ));
+
+        let over_budget = decode_checked_member_with_xml_text(
+            Cursor::new(compressed),
+            &member,
+            1024,
+            Vec::new(),
+            4,
+            |reader, writer| {
+                let _ = writer.write_all(b"<page/>");
+                io::copy(reader, &mut io::sink())?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(
+            over_budget,
+            Err(CheckedMemberError::OutputLimitExceeded)
+        ));
     }
 }

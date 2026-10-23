@@ -27,6 +27,7 @@ pub enum CheckedMemberError<E> {
     DigestMismatch,
     OutputFailure,
     OutputLimitExceeded,
+    InvalidXmlText,
 }
 
 struct HashingReader<R> {
