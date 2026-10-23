@@ -17,6 +17,7 @@ pub enum ReaderError {
     Catalog(CatalogError),
     Search(SearchError),
     StaleRevision { expected: u64, actual: u64 },
+    PageIdentityMismatch { expected: u64, actual: u64 },
 }
 
 impl From<CatalogError> for ReaderError {
@@ -108,6 +109,33 @@ impl<'a> OfflineReader<'a> {
     ) -> Result<Option<Article>, ReaderError> {
         self.open_title(project, title)?
             .map(|article| Self::check_revision(article, expected))
+            .transpose()
+    }
+
+    /// Resolve a saved title/alias/redirect only when both the stable page ID
+    /// and exact revision agree with the caller's recorded identity. A title
+    /// reassigned to a different page must never satisfy an old citation,
+    /// even if the two articles happen to share a revision number.
+    pub fn open_exact_title_page_revision(
+        &self,
+        project: &str,
+        title: &str,
+        expected_page_id: u64,
+        expected_revision: u64,
+    ) -> Result<Option<Article>, ReaderError> {
+        if expected_page_id == 0 || expected_page_id > i64::MAX as u64 {
+            return Err(CatalogError::InvalidCatalogEntry.into());
+        }
+        self.open_title(project, title)?
+            .map(|article| {
+                if article.key.page_id != expected_page_id {
+                    return Err(ReaderError::PageIdentityMismatch {
+                        expected: expected_page_id,
+                        actual: article.key.page_id,
+                    });
+                }
+                Self::check_revision(article, expected_revision)
+            })
             .transpose()
     }
 
@@ -268,6 +296,43 @@ mod tests {
             .open_exact_title_revision("enwiki", "Not installed", 1042)
             .unwrap()
             .is_none());
+        for title in ["Earth", "The_blue_planet", "Planet Earth"] {
+            assert_eq!(
+                reader
+                    .open_exact_title_page_revision("enwiki", title, 42, 1042)
+                    .unwrap()
+                    .unwrap()
+                    .key
+                    .page_id,
+                42
+            );
+        }
+        assert!(matches!(
+            reader.open_exact_title_page_revision("enwiki", "Planet Earth", 43, 1042),
+            Err(ReaderError::PageIdentityMismatch {
+                expected: 43,
+                actual: 42
+            })
+        ));
+        assert!(matches!(
+            reader.open_exact_title_page_revision("enwiki", "Earth", 42, 999),
+            Err(ReaderError::StaleRevision {
+                expected: 999,
+                actual: 1042
+            })
+        ));
+        assert!(reader
+            .open_exact_title_page_revision("enwiki", "Not installed", 42, 1042)
+            .unwrap()
+            .is_none());
+        assert!(matches!(
+            reader.open_exact_title_page_revision("enwiki", "Earth", 0, 1042),
+            Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
+        assert!(matches!(
+            reader.open_exact_title_page_revision("enwiki", "Earth", u64::MAX, 1042),
+            Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
         assert!(matches!(
             reader.open_exact_title_revision("enwiki", "Planet Earth", 999),
             Err(ReaderError::StaleRevision {
@@ -333,6 +398,10 @@ mod tests {
         ));
         assert!(matches!(
             reader.open_page(&redirect_key),
+            Err(ReaderError::Catalog(CatalogError::DigestMismatch))
+        ));
+        assert!(matches!(
+            reader.open_exact_title_page_revision("enwiki", "Earth", 42, 1042),
             Err(ReaderError::Catalog(CatalogError::DigestMismatch))
         ));
         drop(catalog);
