@@ -130,7 +130,6 @@ where
     Ok(result)
 }
 
-
 struct BoundedOutput<W> {
     output: W,
     max_bytes: u64,
