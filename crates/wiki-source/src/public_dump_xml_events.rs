@@ -7,7 +7,7 @@
 //! Callbacks are PROVISIONAL until compressed digest, complete XML, shard
 //! census and upstream authenticity have all been verified.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
 
 use crate::public_dump_page_meta::{PageEvent, PageMetadataCollector, PublicDumpPage};
@@ -47,7 +47,7 @@ pub struct XmlPageMetadataWriter<F> {
     pages_started: bool,
     path: Vec<String>,
     // Namespace prefix scopes are kept in lockstep with open elements.
-    prefixes: Vec<BTreeSet<Vec<u8>>>,
+    prefixes: Vec<BTreeMap<Vec<u8>, Vec<u8>>>,
     mode: Mode,
     markup: Vec<u8>,
     quote: Option<u8>,
@@ -238,8 +238,8 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
     fn namespace_scope(
         mut attrs: &[u8],
         root: bool,
-        inherited: &BTreeSet<Vec<u8>>,
-    ) -> Option<BTreeSet<Vec<u8>>> {
+        inherited: &BTreeMap<Vec<u8>, Vec<u8>>,
+    ) -> Option<BTreeMap<Vec<u8>, Vec<u8>>> {
         let mut scope = inherited.clone();
         let mut names = Vec::new();
         while !attrs.is_empty() {
@@ -287,22 +287,44 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 {
                     return None;
                 }
-                scope.insert(prefix.to_vec());
+                scope.insert(prefix.to_vec(), value.to_vec());
             }
             names.push(key);
             attrs = &attrs[end + 1..];
         }
         // Namespace declarations apply to the entire opening tag, even if
-        // they appear after a prefixed attribute in source order.
+        // they appear after a prefixed attribute in source order. XML
+        // forbids duplicate attributes by expanded (namespace URI, local)
+        // name, even when two different prefixes alias the same URI.
+        let mut expanded = BTreeSet::new();
         for name in names {
             if !Self::qualified_name_bound(name, &scope, true) {
+                return None;
+            }
+            if name == b"xmlns" || name.starts_with(b"xmlns:") {
+                continue;
+            }
+            let (uri, local): (&[u8], &[u8]) = if let Some(colon) =
+                name.iter().position(|byte| *byte == b':')
+            {
+                let prefix = &name[..colon];
+                let uri = if prefix == b"xml" {
+                    b"http://www.w3.org/XML/1998/namespace".as_slice()
+                } else {
+                    scope.get(prefix)?.as_slice()
+                };
+                (uri, &name[colon + 1..])
+            } else {
+                (b"", name)
+            };
+            if !expanded.insert((uri.to_vec(), local.to_vec())) {
                 return None;
             }
         }
         Some(scope)
     }
 
-    fn qualified_name_bound(name: &[u8], scope: &BTreeSet<Vec<u8>>, attribute: bool) -> bool {
+    fn qualified_name_bound(name: &[u8], scope: &BTreeMap<Vec<u8>, Vec<u8>>, attribute: bool) -> bool {
         let Some(colon) = name.iter().position(|byte| *byte == b':') else {
             return true;
         };
@@ -314,7 +336,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         if attribute && prefix == b"xmlns" {
             return true;
         }
-        prefix != b"xmlns" && (prefix == b"xml" || scope.contains(prefix))
+        prefix != b"xmlns" && (prefix == b"xml" || scope.contains_key(prefix))
     }
 
     fn finish_field(&mut self) -> io::Result<()> {
@@ -886,6 +908,59 @@ mod tests {
                 assert!(
                     result.is_err() || writer.finish().is_err(),
                     "encoded reserved namespace binding accepted: {bad}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_expanded_attribute_names_even_with_alias_prefixes() {
+        let base = VALID.replace(
+            "<mediawiki>",
+            r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">"#,
+        );
+        let distinct = base.replace(
+            "<page>",
+            r#"<page xmlns:a="urn:a" xmlns:b="urn:b" a:hint="one" b:hint="two">"#,
+        );
+        let same_uri_distinct_local = base.replace(
+            "<page>",
+            r#"<page xmlns:a="urn:shared" xmlns:b="urn:shared" a:first="one" b:second="two">"#,
+        );
+        for valid in [&distinct, &same_uri_distinct_local] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                for chunk in valid.as_bytes().chunks(chunk_size) {
+                    writer.write_all(chunk).unwrap();
+                }
+                assert_eq!(writer.finish().unwrap().1, 1);
+            }
+        }
+
+        let aliased = base.replace(
+            "<page>",
+            r#"<page xmlns:a="urn:shared" xmlns:b="urn:shared" a:hint="one" b:hint="two">"#,
+        );
+        let escaped_alias = base.replace(
+            "<page>",
+            r#"<page xmlns:a="urn:shared" xmlns:b="urn:sh&#x61;red" a:hint="one" b:hint="two">"#,
+        );
+        let inherited_alias = base
+            .replace(
+                r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">"#,
+                r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xmlns:a="urn:shared" xmlns:b="urn:shared">"#,
+            )
+            .replace("<page>", r#"<page a:hint="one" b:hint="two">"#);
+        for bad in [&aliased, &escaped_alias, &inherited_alias] {
+            for chunk_size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(chunk_size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "duplicate expanded attribute accepted: {bad}"
                 );
             }
         }
