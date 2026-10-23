@@ -20,6 +20,7 @@ pub mod online_selection;
 pub mod online_title;
 pub mod public_dump;
 pub mod public_dump_census_export;
+pub mod public_dump_checked_read;
 pub mod public_dump_census_gate;
 pub mod public_dump_census_ingest;
 pub mod public_dump_census_stream;
