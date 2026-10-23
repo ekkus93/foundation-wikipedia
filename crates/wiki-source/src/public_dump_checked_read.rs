@@ -42,7 +42,10 @@ impl<R: Read> Read for HashingReader<R> {
             return Ok(0);
         }
         if self.failed {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "previous input failure"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "previous input failure",
+            ));
         }
         let count = match self.input.read(buf) {
             Ok(count) => count,
@@ -136,13 +139,8 @@ mod tests {
     #[test]
     fn returns_decoded_result_only_after_full_digest_checked_eof() {
         let bytes = b"simulated compressed member";
-        let result = decode_checked_member(
-            Cursor::new(bytes),
-            &member(bytes),
-            1024,
-            consume_all,
-        )
-        .unwrap();
+        let result =
+            decode_checked_member(Cursor::new(bytes), &member(bytes), 1024, consume_all).unwrap();
         assert_eq!(result, bytes);
     }
 
@@ -201,7 +199,10 @@ mod tests {
                 out[0] = b'x';
                 Ok(1)
             } else {
-                Err(io::Error::new(io::ErrorKind::BrokenPipe, "synthetic I/O failure"))
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "synthetic I/O failure",
+                ))
             }
         }
     }
@@ -225,8 +226,12 @@ mod tests {
     #[test]
     fn reports_decoder_failure_without_claiming_member_integrity() {
         assert!(matches!(
-            decode_checked_member(Cursor::new(b"xml invalid"), &member(b"xml invalid"), 1024,
-                |_reader| Err::<(), _>("XML error")),
+            decode_checked_member(
+                Cursor::new(b"xml invalid"),
+                &member(b"xml invalid"),
+                1024,
+                |_reader| Err::<(), _>("XML error")
+            ),
             Err(CheckedMemberError::Decode("XML error"))
         ));
     }
