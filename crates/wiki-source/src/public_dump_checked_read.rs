@@ -11,7 +11,7 @@
 //! rendering, or required offline media. Do not publish any callback output
 //! until the enclosing multi-member import and all checks have succeeded.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 use sha2::{Digest, Sha256};
 
@@ -25,6 +25,8 @@ pub enum CheckedMemberError<E> {
     ReadFailure,
     IncompleteConsumption,
     DigestMismatch,
+    OutputFailure,
+    OutputLimitExceeded,
 }
 
 struct HashingReader<R> {
@@ -126,6 +128,113 @@ where
         return Err(CheckedMemberError::DigestMismatch);
     }
     Ok(result)
+}
+
+
+struct BoundedOutput<W> {
+    output: W,
+    max_bytes: u64,
+    written: u64,
+    failed: bool,
+    over_limit: bool,
+}
+
+impl<W: Write> Write for BoundedOutput<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.failed {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "previous decoded output failure",
+            ));
+        }
+        if (buf.len() as u64) > self.max_bytes - self.written {
+            self.failed = true;
+            self.over_limit = true;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "decoded output byte budget exceeded",
+            ));
+        }
+        match self.output.write(buf) {
+            Ok(count) if count > 0 && count <= buf.len() => {
+                self.written += count as u64;
+                Ok(count)
+            }
+            Ok(_) => {
+                self.failed = true;
+                Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "decoded output writer made no progress",
+                ))
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.failed {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "previous decoded output failure",
+            ));
+        }
+        self.output.flush().inspect_err(|_| self.failed = true)
+    }
+}
+
+/// Check both the pinned compressed bytes and a decoder's emitted byte budget.
+///
+/// The decoder must route ALL decompressed output through the supplied writer,
+/// and consume the compressed reader through EOF. It must independently verify
+/// the compression format and XML semantics. A swallowed output write error
+/// cannot yield success. The output writer must be private/provisional: an
+/// unsuccessful call may already have written bytes and MUST NOT publish them.
+///
+/// This is a composable safety boundary, NOT a bzip2/XML decoder or evidence
+/// of upstream authenticity, completeness, or required offline media.
+pub fn decode_checked_member_with_bounded_output<R, W, F, T, E>(
+    input: R,
+    member: &DumpChecksum,
+    max_compressed_bytes: u64,
+    output: W,
+    max_decoded_bytes: u64,
+    decoder: F,
+) -> Result<(W, u64, T), CheckedMemberError<E>>
+where
+    R: Read,
+    W: Write,
+    F: FnOnce(&mut dyn Read, &mut dyn Write) -> Result<T, E>,
+{
+    if max_decoded_bytes == 0 || max_decoded_bytes > (1_u64 << 42) {
+        return Err(CheckedMemberError::InvalidLimit);
+    }
+    let mut bounded = BoundedOutput {
+        output,
+        max_bytes: max_decoded_bytes,
+        written: 0,
+        failed: false,
+        over_limit: false,
+    };
+    let result = decode_checked_member(input, member, max_compressed_bytes, |reader| {
+        decoder(reader, &mut bounded)
+    });
+    if bounded.over_limit {
+        return Err(CheckedMemberError::OutputLimitExceeded);
+    }
+    if bounded.failed {
+        return Err(CheckedMemberError::OutputFailure);
+    }
+    let decoded = result?;
+    bounded
+        .flush()
+        .map_err(|_| CheckedMemberError::OutputFailure)?;
+    Ok((bounded.output, bounded.written, decoded))
 }
 
 #[cfg(test)]
@@ -253,4 +362,127 @@ mod tests {
             Err(CheckedMemberError::Decode("XML error"))
         ));
     }
+
+    #[test]
+    fn bounded_decoder_returns_output_only_after_checked_compressed_eof() {
+        let compressed = b"compressed fixture";
+        let (output, decoded_bytes, value) = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(compressed),
+            1024,
+            Vec::new(),
+            64,
+            |reader, writer| {
+                let mut input = Vec::new();
+                reader.read_to_end(&mut input)?;
+                writer.write_all(b"expanded content")?;
+                Ok::<_, io::Error>(input.len())
+            },
+        )
+        .unwrap();
+        assert_eq!(output, b"expanded content");
+        assert_eq!(decoded_bytes, 16);
+        assert_eq!(value, compressed.len());
+    }
+
+    #[test]
+    fn swallowed_output_budget_error_cannot_qualify() {
+        let compressed = b"compressed fixture";
+        let result = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(compressed),
+            1024,
+            Vec::new(),
+            4,
+            |reader, writer| {
+                let _ = writer.write_all(b"too much decoded data");
+                let mut input = Vec::new();
+                reader.read_to_end(&mut input)?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(CheckedMemberError::OutputLimitExceeded)
+        ));
+    }
+
+    struct BrokenOutput;
+
+    impl Write for BrokenOutput {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn swallowed_output_io_error_cannot_qualify() {
+        let compressed = b"compressed fixture";
+        let result = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(compressed),
+            1024,
+            BrokenOutput,
+            1024,
+            |reader, writer| {
+                let _ = writer.write_all(b"decoded");
+                let mut input = Vec::new();
+                reader.read_to_end(&mut input)?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(result, Err(CheckedMemberError::OutputFailure)));
+    }
+
+    #[test]
+    fn decoded_output_does_not_override_digest_or_consumption_checks() {
+        let compressed = b"compressed fixture";
+        let bad_digest = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(b"different"),
+            1024,
+            Vec::new(),
+            1024,
+            |reader, writer| {
+                reader.read_to_end(&mut Vec::new())?;
+                writer.write_all(b"decoded")?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(
+            bad_digest,
+            Err(CheckedMemberError::DigestMismatch)
+        ));
+
+        let early = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(compressed),
+            1024,
+            Vec::new(),
+            1024,
+            |_reader, writer| {
+                writer.write_all(b"decoded")?;
+                Ok::<_, io::Error>(())
+            },
+        );
+        assert!(matches!(
+            early,
+            Err(CheckedMemberError::IncompleteConsumption)
+        ));
+
+        let invalid = decode_checked_member_with_bounded_output(
+            Cursor::new(compressed),
+            &member(compressed),
+            1024,
+            Vec::new(),
+            0,
+            |_reader, _writer| Ok::<_, io::Error>(()),
+        );
+        assert!(matches!(invalid, Err(CheckedMemberError::InvalidLimit)));
+    }
+
 }
