@@ -105,7 +105,11 @@ mod tests {
 
     #[test]
     fn accepts_ordinary_multilingual_json_and_exact_integer_values() {
-        let source = r#"{"name":"München","nested":[null,true,-3,0.25,{"id":9223372036854775807}]}"#;
-        assert_eq!(parse(source).unwrap(), serde_json::from_str::<Value>(source).unwrap());
+        let source =
+            r#"{"name":"München","nested":[null,true,-3,0.25,{"id":9223372036854775807}]}"#;
+        assert_eq!(
+            parse(source).unwrap(),
+            serde_json::from_str::<Value>(source).unwrap()
+        );
     }
 }

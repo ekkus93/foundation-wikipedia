@@ -898,10 +898,8 @@ mod tests {
 
     #[test]
     fn duplicate_json_fields_cannot_override_enterprise_provenance() {
-        let outer = structured_json().replace(
-            "\"identifier\":42",
-            "\"identifier\":42,\"identifier\":43",
-        );
+        let outer =
+            structured_json().replace("\"identifier\":42", "\"identifier\":42,\"identifier\":43");
         let nested = regular_json().replace(
             "\"version\":{\"identifier\":99}",
             "\"version\":{\"identifier\":99,\"identifier\":100}",
