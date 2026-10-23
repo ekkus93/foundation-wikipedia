@@ -704,3 +704,83 @@ mod tests {
             Err(CensusStageError::Io(error))
                 if error.kind() == io::ErrorKind::AlreadyExists
         ));
+        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_or_incomplete_ingest_never_publishes_a_census() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!(
+            "wiki-census-fail-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let pinned = inventory();
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "incomplete.ids", &pinned, 0, |pipeline| {
+                pipeline.begin_member(&pinned.members()[0].relative_path)?;
+                push_page(pipeline, 1, 0)?;
+                pipeline.end_member()
+            }),
+            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
+        ));
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "rejected.ids", &pinned, 0, |pipeline| {
+                pipeline.begin_member(&pinned.members()[0].relative_path)?;
+                push_page(pipeline, 1, 0)?;
+                push_page(pipeline, 1, 0)
+            }),
+            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
+        ));
+        for bad in ["../escape", "CON", ".hidden", "file/name", "a\\b"] {
+            assert!(matches!(
+                stage_pinned_observed_census(&root, bad, &pinned, 0, |_| Ok(())),
+                Err(CensusStageError::UnsafePath)
+            ));
+        }
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_staging_root_is_rejected_before_file_creation() {
+        use std::fs;
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("wiki-census-link-{}", std::process::id()));
+        let linked = root.with_extension("link");
+        fs::create_dir(&root).unwrap();
+        symlink(&root, &linked).unwrap();
+        assert!(matches!(
+            stage_pinned_observed_census(&linked, "observed.ids", &inventory(), 0, |_| Ok(())),
+            Err(CensusStageError::UnsafePath)
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_file(linked).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_staging_directory_is_rejected_before_writing() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("wiki-census-public-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(matches!(
+            stage_pinned_observed_census(&root, "observed.ids", &inventory(), 0, |_| Ok(())),
+            Err(CensusStageError::UnsafePath)
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
