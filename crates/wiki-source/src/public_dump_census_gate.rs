@@ -317,11 +317,7 @@ where
                 let input =
                     open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
                 pipeline
-                    .decode_native_bzip2_member(
-                        input,
-                        max_compressed_bytes,
-                        max_decoded_bytes,
-                    )
+                    .decode_native_bzip2_member(input, max_compressed_bytes, max_decoded_bytes)
                     .map_err(|error| match error {
                         NativeCensusError::Census(error) => error,
                         NativeCensusError::Decode(error) => PinnedCensusError::NativeDecode(error),
@@ -421,11 +417,22 @@ mod tests {
         fs::write(&expected, b"1\n201\n").unwrap();
         let expected_digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
         let open = |name: &str| {
-            let index = names.iter().position(|candidate| *candidate == name).unwrap();
+            let index = names
+                .iter()
+                .position(|candidate| *candidate == name)
+                .unwrap();
             Ok::<_, io::Error>(Cursor::new(compressed[index].as_slice()))
         };
         let (ready, delta) = stage_and_audit_native_bzip2_census(
-            &root, "ready.ids", &pinned, 0, &expected, &expected_digest, 4096, 4096, open,
+            &root,
+            "ready.ids",
+            &pinned,
+            0,
+            &expected,
+            &expected_digest,
+            4096,
+            4096,
+            open,
         )
         .unwrap();
         assert_eq!(delta.expected_count, 2);
@@ -435,7 +442,15 @@ mod tests {
         // An existing published census is never overwritten.
         assert!(matches!(
             stage_and_audit_native_bzip2_census(
-                &root, "ready.ids", &pinned, 0, &expected, &expected_digest, 4096, 4096, open,
+                &root,
+                "ready.ids",
+                &pinned,
+                0,
+                &expected,
+                &expected_digest,
+                4096,
+                4096,
+                open,
             ),
             Err(VerifiedCensusStageError::Io(error))
                 if error.kind() == io::ErrorKind::AlreadyExists
@@ -446,7 +461,15 @@ mod tests {
         let different_digest = format!("{:x}", Sha256::digest(b"1\n202\n"));
         assert!(matches!(
             stage_and_audit_native_bzip2_census(
-                &root, "mismatch.ids", &pinned, 0, &expected, &different_digest, 4096, 4096, open,
+                &root,
+                "mismatch.ids",
+                &pinned,
+                0,
+                &expected,
+                &different_digest,
+                4096,
+                4096,
+                open,
             ),
             Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
                 StreamCoverageError::MissingOrUnexpected(_)
@@ -470,8 +493,15 @@ mod tests {
         .unwrap();
         assert!(matches!(
             stage_and_audit_native_bzip2_census(
-                &root, "corrupt.ids", &bad_pinned, 0, &expected, &different_digest,
-                4096, 4096, open,
+                &root,
+                "corrupt.ids",
+                &bad_pinned,
+                0,
+                &expected,
+                &different_digest,
+                4096,
+                4096,
+                open,
             ),
             Err(VerifiedCensusStageError::Stage(
                 crate::public_dump_census_ingest::CensusStageError::Census(
