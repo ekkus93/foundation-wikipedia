@@ -184,6 +184,29 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         Some(result)
     }
 
+    // XML 1.0 attribute-value normalization happens before entity expansion:
+    // literal tabs/newlines/CRLF become spaces, whereas character references
+    // such as &#xA; retain their decoded character. Namespace identity and
+    // expanded-name duplicate detection must compare the normalized value.
+    fn decode_namespace_uri(raw: &[u8]) -> Option<String> {
+        let mut normalized = Vec::with_capacity(raw.len());
+        let mut pos = 0;
+        while pos < raw.len() {
+            match raw[pos] {
+                b'\r' => {
+                    normalized.push(b' ');
+                    if raw.get(pos + 1) == Some(&b'\n') {
+                        pos += 1;
+                    }
+                }
+                b'\n' | b'\t' => normalized.push(b' '),
+                byte => normalized.push(byte),
+            }
+            pos += 1;
+        }
+        Self::decode_entities(&normalized)
+    }
+
     fn redirect_title(mut attrs: &[u8]) -> Option<String> {
         let mut title = None;
         while !attrs.is_empty() {
@@ -267,12 +290,12 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             if key == b"xmlns" {
                 // Namespace URIs are XML attribute values, so character
                 // references must be expanded before comparing their identity.
-                let decoded = Self::decode_entities(value)?;
+                let decoded = Self::decode_namespace_uri(value)?;
                 if !root || !Self::official_export_namespace(decoded.as_bytes()) {
                     return None;
                 }
             } else if let Some(prefix) = key.strip_prefix(b"xmlns:") {
-                let decoded = Self::decode_entities(value)?;
+                let decoded = Self::decode_namespace_uri(value)?;
                 let value = decoded.as_bytes();
                 // XML Namespace 1.0 reserves the xml/xmlns prefixes and URIs.
                 const XML_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
@@ -948,13 +971,27 @@ mod tests {
             "<page>",
             r#"<page xmlns:a="urn:shared" xmlns:b="urn:sh&#x61;red" a:hint="one" b:hint="two">"#,
         );
+        let normalized_crlf_alias = base.replace(
+            "<page>",
+            "<page xmlns:a=\"urn:sha\\r\\nred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
+        );
+        let normalized_tab_alias = base.replace(
+            "<page>",
+            "<page xmlns:a=\"urn:sha\\tred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
+        );
         let inherited_alias = base
             .replace(
                 r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">"#,
                 r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" xmlns:a="urn:shared" xmlns:b="urn:shared">"#,
             )
             .replace("<page>", r#"<page a:hint="one" b:hint="two">"#);
-        for bad in [&aliased, &escaped_alias, &inherited_alias] {
+        for bad in [
+            &aliased,
+            &escaped_alias,
+            &inherited_alias,
+            &normalized_crlf_alias,
+            &normalized_tab_alias,
+        ] {
             for chunk_size in [1, 2, 7, 8192] {
                 let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
                 let result = bad
