@@ -288,15 +288,22 @@ where
 /// The caller must authenticate the inventory and expected census separately,
 /// including publisher identity, snapshot cutoff and namespace semantics.
 /// Matching hashes or page IDs alone do not establish that independence.
+#[derive(Clone, Copy)]
+pub struct NativeCensusAudit<'a> {
+    pub expected_path: &'a Path,
+    pub expected_sha256: &'a str,
+    pub max_compressed_bytes: u64,
+    pub max_decoded_bytes: u64,
+}
+
+/// The independently pinned expected census and resource limits travel as
+/// one configuration, keeping the native audit boundary explicit.
 pub fn stage_and_audit_native_bzip2_census<R, F>(
     root: &Path,
     filename: &str,
     inventory: &PinnedInventory,
     namespace: i32,
-    expected_path: &Path,
-    expected_sha256: &str,
-    max_compressed_bytes: u64,
-    max_decoded_bytes: u64,
+    audit: NativeCensusAudit<'_>,
     mut open_member: F,
 ) -> Result<(std::path::PathBuf, PageCoverageDelta), VerifiedCensusStageError>
 where
@@ -310,14 +317,18 @@ where
         filename,
         inventory,
         namespace,
-        expected_path,
-        expected_sha256,
+        audit.expected_path,
+        audit.expected_sha256,
         |pipeline| {
             for member in inventory.members() {
                 let input =
                     open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
                 pipeline
-                    .decode_native_bzip2_member(input, max_compressed_bytes, max_decoded_bytes)
+                    .decode_native_bzip2_member(
+                        input,
+                        audit.max_compressed_bytes,
+                        audit.max_decoded_bytes,
+                    )
                     .map_err(|error| match error {
                         NativeCensusError::Census(error) => error,
                         NativeCensusError::Decode(error) => PinnedCensusError::NativeDecode(error),
@@ -416,6 +427,12 @@ mod tests {
         let expected = root.join("expected.ids");
         fs::write(&expected, b"1\n201\n").unwrap();
         let expected_digest = format!("{:x}", Sha256::digest(b"1\n201\n"));
+        let audit = NativeCensusAudit {
+            expected_path: &expected,
+            expected_sha256: &expected_digest,
+            max_compressed_bytes: 4096,
+            max_decoded_bytes: 4096,
+        };
         let open = |name: &str| {
             let index = names
                 .iter()
@@ -428,10 +445,7 @@ mod tests {
             "ready.ids",
             &pinned,
             0,
-            &expected,
-            &expected_digest,
-            4096,
-            4096,
+            audit,
             open,
         )
         .unwrap();
@@ -446,10 +460,7 @@ mod tests {
                 "ready.ids",
                 &pinned,
                 0,
-                &expected,
-                &expected_digest,
-                4096,
-                4096,
+                audit,
                 open,
             ),
             Err(VerifiedCensusStageError::Io(error))
@@ -465,10 +476,10 @@ mod tests {
                 "mismatch.ids",
                 &pinned,
                 0,
-                &expected,
-                &different_digest,
-                4096,
-                4096,
+                NativeCensusAudit {
+                    expected_sha256: &different_digest,
+                    ..audit
+                },
                 open,
             ),
             Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
@@ -497,10 +508,10 @@ mod tests {
                 "corrupt.ids",
                 &bad_pinned,
                 0,
-                &expected,
-                &different_digest,
-                4096,
-                4096,
+                NativeCensusAudit {
+                    expected_sha256: &different_digest,
+                    ..audit
+                },
                 open,
             ),
             Err(VerifiedCensusStageError::Stage(
