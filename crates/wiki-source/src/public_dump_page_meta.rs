@@ -224,7 +224,8 @@ fn valid_text(value: &str, max_bytes: usize) -> bool {
                 || matches!(
                     ch,
                     '\u{061c}'
-                        | '\u{200b}'..='\u{200f}'
+                        | '\u{200b}'
+                        | '\u{200e}'..='\u{200f}'
                         | '\u{202a}'..='\u{202e}'
                         | '\u{2060}'
                         | '\u{2066}'..='\u{206f}'
@@ -408,8 +409,6 @@ mod tests {
     fn rejects_zero_width_spoofing_and_unicode_noncharacters_in_dump_labels() {
         for ch in [
             '\u{200b}',
-            '\u{200c}',
-            '\u{200d}',
             '\u{2060}',
             '\u{206a}',
             '\u{feff}',
@@ -437,6 +436,20 @@ mod tests {
         assert_eq!(collector.push(PageEvent::Title("رياضيات 日本語")), Ok(None));
         assert_eq!(
             collector.push(PageEvent::RedirectTarget("פיזיקה")),
+            Ok(None)
+        );
+        // U+200C (ZWNJ) and U+200D (ZWJ) are needed by real scripts:
+        // rejecting them would make offline navigation lose valid titles.
+        assert_eq!(
+            collector.push(PageEvent::Title("می‌روم")),
+            Err(PageMetadataError::DuplicateField)
+        );
+
+        let mut persian = PageMetadataCollector::new();
+        persian.push(PageEvent::BeginPage).unwrap();
+        assert_eq!(persian.push(PageEvent::Title("می‌روم")), Ok(None));
+        assert_eq!(
+            persian.push(PageEvent::RedirectTarget("क्‍ष")),
             Ok(None)
         );
     }
