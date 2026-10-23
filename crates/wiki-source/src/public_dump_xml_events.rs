@@ -45,6 +45,8 @@ pub struct XmlPageMetadataWriter<F> {
     siteinfo_seen: bool,
     dbname_seen: bool,
     pages_started: bool,
+    root_seen: bool,
+    root_closed: bool,
     path: Vec<String>,
     // Namespace prefix scopes are kept in lockstep with open elements.
     prefixes: Vec<BTreeMap<Vec<u8>, Vec<u8>>>,
@@ -67,6 +69,8 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             siteinfo_seen: false,
             dbname_seen: false,
             pages_started: false,
+            root_seen: false,
+            root_closed: false,
             path: Vec::new(),
             prefixes: Vec::new(),
             mode: Mode::Text,
@@ -435,6 +439,25 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         if name.is_empty() {
             return Err(self.invalid());
         }
+        // Page and revision element identities have structural meaning only
+        // at their declared MediaWiki positions. Do not silently ignore a
+        // nested page/revision/siteinfo as unrelated extension metadata.
+        // Also reject concatenated or foreign-root XML when this semantic
+        // writer is exercised directly (the envelope guard checks too).
+        if !closing {
+            if self.path.is_empty() {
+                if name != "mediawiki" || self.root_seen || self_closing {
+                    return Err(self.invalid());
+                }
+                self.root_seen = true;
+            } else if (name == "page" && !self.at(&["mediawiki"]))
+                || (name == "revision" && !self.at(&["mediawiki", "page"]))
+                || (name == "siteinfo" && !self.at(&["mediawiki"]))
+                || name == "mediawiki"
+            {
+                return Err(self.invalid());
+            }
+        }
         let scope = if closing {
             None
         } else {
@@ -456,6 +479,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 self.emit(PageEvent::EndRevision)?;
             } else if self.at(&["mediawiki", "page"]) {
                 self.emit(PageEvent::EndPage)?;
+            }
+            if self.at(&["mediawiki"]) {
+                self.root_closed = true;
             }
             self.path.pop();
             self.prefixes.pop();
@@ -614,6 +640,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
     pub fn finish(mut self) -> io::Result<(F, u64)> {
         if self.failed
             || self.mode != Mode::Text
+            || !self.root_closed
             || !self.path.is_empty()
             || self.field.is_some()
             || self.pages == 0
@@ -880,6 +907,67 @@ mod tests {
         let mut legacy = XmlPageMetadataWriter::new(|_| Ok(()));
         legacy.write_all(without_siteinfo.as_bytes()).unwrap();
         assert_eq!(legacy.finish().unwrap().1, 1);
+    }
+
+    #[test]
+    fn rejects_nested_structural_elements_and_multiple_documents() {
+        let nested_page = VALID.replace(
+            "<sitename>Wiki</sitename>",
+            "<sitename>Wiki</sitename><page><id>123</id></page>",
+        );
+        let nested_revision = VALID.replace(
+            "<contributor><id>9999</id></contributor>",
+            "<contributor><revision><id>888</id></revision><id>9999</id></contributor>",
+        );
+        let nested_siteinfo = VALID.replace(
+            "<contributor><id>9999</id></contributor>",
+            "<contributor><siteinfo/><id>9999</id></contributor>",
+        );
+        let nested_root = VALID.replace(
+            "<contributor><id>9999</id></contributor>",
+            "<contributor><mediawiki/><id>9999</id></contributor>",
+        );
+        let concatenated = format!("{VALID}{VALID}");
+        let invalid_root = VALID.replacen("<mediawiki>", "<notwiki>", 1);
+        for bad in [
+            &nested_page,
+            &nested_revision,
+            &nested_siteinfo,
+            &nested_root,
+            &concatenated,
+            &invalid_root,
+        ] {
+            for size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "invalid MediaWiki structure accepted: {bad}"
+                );
+            }
+        }
+
+        // Multiple legitimate pages in one root remain valid.
+        let second_page = VALID.replace(
+            "</page></mediawiki>",
+            "</page><page><title>Second</title><ns>0</ns><id>43</id><revision><id>901</id><timestamp>2026-10-02T12:00:00Z</timestamp></revision></page></mediawiki>",
+        );
+        for size in [1, 2, 7, 8192] {
+            let mut pages = Vec::new();
+            let mut writer = XmlPageMetadataWriter::new(|page| {
+                pages.push(page);
+                Ok(())
+            });
+            for chunk in second_page.as_bytes().chunks(size) {
+                writer.write_all(chunk).unwrap();
+            }
+            assert_eq!(writer.finish().unwrap().1, 2);
+            assert_eq!(pages[1].page_id, 43);
+            assert_eq!(pages[1].revision_id, 901);
+        }
     }
 
     #[test]
