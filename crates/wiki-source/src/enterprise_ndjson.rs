@@ -204,8 +204,8 @@ pub fn join_enterprise_ndjson_scoped<S: BufRead, R: BufRead>(
     let mut tombstones = Vec::with_capacity(deleted.len());
     for marker in deleted {
         if marker.page.page_id == 0
+            || marker.page.page_id > i64::MAX as u64
             || marker.page.project != project
-            || marker.page.project.len() > 255
         {
             return Err(BatchImportError::Join(EnterpriseError::InvalidIdentity));
         }
@@ -244,6 +244,29 @@ mod tests {
         format!(
             r#"{{"name":"Example","identifier":{page},"version":{{"identifier":{revision}}},"is_part_of":{{"identifier":"enwiki"}},"in_language":{{"identifier":"en"}},"namespace":{{"identifier":0}},"date_modified":"2026-10-10T00:00:00Z","article_body":{{"html":"<article>Example</article>"}},"categories":[{{"name":"Science"}}],"redirects":[]}}"#
         )
+    }
+
+    #[test]
+    fn scoped_tombstones_reject_page_id_overflow_before_source_parsing() {
+        for page_id in [0, i64::MAX as u64 + 1, u64::MAX] {
+            let tombstone = DeletionMarker {
+                page: PageKey {
+                    project: "enwiki".into(),
+                    page_id,
+                },
+                generation_id: "20261010".into(),
+            };
+            assert_eq!(
+                join_enterprise_ndjson_scoped(
+                    Cursor::new(vec![0xff]),
+                    Cursor::new(vec![0xff]),
+                    "enwiki",
+                    "20261010",
+                    vec![tombstone],
+                ),
+                Err(BatchImportError::Join(EnterpriseError::InvalidIdentity))
+            );
+        }
     }
 
     #[test]

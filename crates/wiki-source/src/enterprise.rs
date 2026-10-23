@@ -668,13 +668,10 @@ pub fn join_enterprise_article(
 }
 
 fn valid_page_key(page: &PageKey) -> bool {
-    page.page_id != 0
-        && !page.project.is_empty()
-        && page.project.len() <= 255
-        && page
-            .project
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    // Public DTO callers bypass the JSON parser. Enforce the same source and
+    // SQLite identity range at every entry point, including deletion markers.
+    (1..=i64::MAX as u64).contains(&page.page_id)
+        && crate::valid_wiki_project(&page.project)
 }
 
 /// Join complete Structured Contents and regular-article collections in stable
@@ -791,6 +788,53 @@ mod tests {
           "redirects":[{"name":"Gravity (physics)"}]
         }"#
         .to_owned()
+    }
+
+    #[test]
+    fn batch_join_rejects_noncanonical_caller_supplied_page_identities() {
+        let structured = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular = parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
+        let invalid = [
+            PageKey {
+                project: "enwiki".into(),
+                page_id: 0,
+            },
+            PageKey {
+                project: "enwiki".into(),
+                page_id: i64::MAX as u64 + 1,
+            },
+            PageKey {
+                project: "123wiki".into(),
+                page_id: 42,
+            },
+            PageKey {
+                project: "_enwiki".into(),
+                page_id: 42,
+            },
+            PageKey {
+                project: "enwiki_".into(),
+                page_id: 42,
+            },
+        ];
+        for page in invalid {
+            let mut source = structured.clone();
+            source.page = page.clone();
+            assert_eq!(
+                join_enterprise_batch(vec![source], vec![regular.clone()], vec![]),
+                Err(EnterpriseError::InvalidIdentity)
+            );
+            let mut companion = regular.clone();
+            companion.page = page.clone();
+            assert_eq!(
+                join_enterprise_batch(vec![structured.clone()], vec![companion], vec![]),
+                Err(EnterpriseError::InvalidIdentity)
+            );
+            assert_eq!(
+                join_enterprise_batch(vec![], vec![], vec![page]),
+                Err(EnterpriseError::InvalidIdentity)
+            );
+        }
+        assert!(join_enterprise_batch(vec![structured], vec![regular], vec![]).is_ok());
     }
 
     #[test]
