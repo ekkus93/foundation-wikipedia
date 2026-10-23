@@ -40,7 +40,6 @@ pub fn decode_bzip2_xml_envelope<R: Read, W: Write>(
     .map(|(output, decoded, ())| (output, decoded))
 }
 
-
 /// Stream page and revision identities from a pinned bzip2 member.
 ///
 /// The callback receives provisional records before the final member digest
@@ -112,7 +111,6 @@ mod tests {
             assert_eq!(size, XML.len() as u64);
         }
     }
-
 
     #[test]
     fn decodes_real_bzip2_page_metadata_and_ignores_contributor_ids() {
