@@ -216,15 +216,19 @@ fn valid_text(value: &str, max_bytes: usize) -> bool {
         && value == value.trim()
         && value.len() <= max_bytes
         && !value.chars().any(|ch| {
+            let code = ch as u32;
             ch.is_control()
+                || (0xfdd0..=0xfdef).contains(&code)
+                || code & 0xffff == 0xfffe
+                || code & 0xffff == 0xffff
                 || matches!(
                     ch,
                     '\u{061c}'
-                        | '\u{200e}'..='\u{200f}'
+                        | '\u{200b}'..='\u{200f}'
                         | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                        | '\u{FFFE}'
-                        | '\u{FFFF}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{206f}'
+                        | '\u{feff}'
                 )
         })
 }
@@ -398,6 +402,43 @@ mod tests {
             Err(PageMetadataError::InvalidState)
         );
         assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
+    }
+
+    #[test]
+    fn rejects_zero_width_spoofing_and_unicode_noncharacters_in_dump_labels() {
+        for ch in [
+            '\u{200b}',
+            '\u{200c}',
+            '\u{200d}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{feff}',
+            '\u{fdd0}',
+            '\u{fdef}',
+            '\u{1fffe}',
+            '\u{10ffff}',
+        ] {
+            let spoofed = format!("Physics{ch}history");
+            for redirect in [false, true] {
+                let mut collector = PageMetadataCollector::new();
+                collector.push(PageEvent::BeginPage).unwrap();
+                let event = if redirect {
+                    PageEvent::RedirectTarget(&spoofed)
+                } else {
+                    PageEvent::Title(&spoofed)
+                };
+                assert_eq!(collector.push(event), Err(PageMetadataError::InvalidField));
+                assert_eq!(collector.finish(), Err(PageMetadataError::InvalidState));
+            }
+        }
+        // Ordinary Unicode scripts must still work for international dumps.
+        let mut collector = PageMetadataCollector::new();
+        collector.push(PageEvent::BeginPage).unwrap();
+        assert_eq!(collector.push(PageEvent::Title("رياضيات 日本語")), Ok(None));
+        assert_eq!(
+            collector.push(PageEvent::RedirectTarget("פיזיקה")),
+            Ok(None)
+        );
     }
 
     #[test]
