@@ -142,9 +142,7 @@ impl Manifest {
         {
             return Err(ManifestError::MissingMetadata);
         }
-        if !safe_id(&self.pack_id)
-            || !valid_wiki_project(&self.project)
-            || !safe_id(&self.snapshot)
+        if !safe_id(&self.pack_id) || !valid_wiki_project(&self.project) || !safe_id(&self.snapshot)
         {
             return Err(ManifestError::UnsafeMetadata);
         }
