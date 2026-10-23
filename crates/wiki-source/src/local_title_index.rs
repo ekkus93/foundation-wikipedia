@@ -438,7 +438,11 @@ mod tests {
             "enwiki",
             [
                 entry(1, "Physics", ArticleLocation::InstalledPack),
-                entry(2, "Physical chemistry", ArticleLocation::ExplicitOfflineSave),
+                entry(
+                    2,
+                    "Physical chemistry",
+                    ArticleLocation::ExplicitOfflineSave,
+                ),
             ],
         )
         .unwrap()
