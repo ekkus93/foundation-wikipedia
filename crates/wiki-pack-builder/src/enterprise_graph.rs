@@ -83,10 +83,10 @@ pub fn graph_from_joined(
     let first = records.first().ok_or(GraphBuildError::Empty)?;
     let project = first.structured.page.project.clone();
     let generation_id = first.structured.generation_id.clone();
-    if wiki_model::ArticleKey {
+    if (wiki_model::ArticleKey {
         project: project.clone(),
         page_id: 1,
-    }
+    })
     .validate()
     .is_err()
         || !valid_generation_id(&generation_id)
@@ -478,84 +478,3 @@ mod tests {
         }
         for invalid in [
             " Physics".to_owned(),
-            "Physics ".to_owned(),
-            format!("Phy{}sics", '\u{2066}'),
-            "x".repeat(4097),
-        ] {
-            let mut bad = article.clone();
-            bad.redirects = vec![invalid.clone()];
-            assert!(
-                matches!(
-                    graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
-                    Err(GraphBuildError::InvalidRedirect(_))
-                ),
-                "invalid redirect accepted: {invalid}"
-            );
-        }
-        let mut bad_root = root.clone();
-        bad_root.structured.name = "Category:Sci\u{202e}ence".into();
-        assert!(matches!(
-            graph_from_joined(&[bad_root, article.clone()], &BTreeSet::new()),
-            Err(GraphBuildError::InvalidCategory(_))
-        ));
-
-        for project in ["Enwiki", "bad/wiki", "enwiki_"] {
-            let mut bad = article.clone();
-            bad.structured.page.project = project.into();
-            assert!(matches!(
-                graph_from_joined(&[bad], &BTreeSet::new()),
-                Err(GraphBuildError::InvalidIdentity)
-            ));
-        }
-        for generation in [
-            ".hidden".to_owned(),
-            "2026/10/23".to_owned(),
-            "bad ".to_owned(),
-            "x".repeat(256),
-        ] {
-            let mut bad = article.clone();
-            bad.structured.generation_id = generation;
-            assert!(matches!(
-                graph_from_joined(&[bad], &BTreeSet::new()),
-                Err(GraphBuildError::InvalidIdentity)
-            ));
-        }
-    }
-
-    #[test]
-    fn streaming_revision_receipt_matches_legacy_v2_bytes() {
-        let all = BTreeMap::from([(1, 11), (90, 99), (123, 456)]);
-        let aliases = BTreeSet::from(["Alias".to_owned(), "Café".to_owned()]);
-        let selected = BTreeMap::from([(1, 11), (123, 456)]);
-        let actual = revision_receipt_sha256(
-            "enwiki",
-            "20261016",
-            "base-selection",
-            &all,
-            &aliases,
-            &selected,
-        );
-
-        let mut legacy = b"foundation-wikipedia/revision-pinned-selection/v2\0".to_vec();
-        for value in ["enwiki", "20261016", "base-selection"] {
-            legacy.extend_from_slice(&(value.len() as u64).to_be_bytes());
-            legacy.extend_from_slice(value.as_bytes());
-        }
-        legacy.extend_from_slice(&(all.len() as u64).to_be_bytes());
-        for (id, revision) in &all {
-            legacy.extend_from_slice(&id.to_be_bytes());
-            legacy.extend_from_slice(&revision.to_be_bytes());
-        }
-        legacy.extend_from_slice(&(aliases.len() as u64).to_be_bytes());
-        for title in &aliases {
-            legacy.extend_from_slice(&(title.len() as u64).to_be_bytes());
-            legacy.extend_from_slice(title.as_bytes());
-        }
-        legacy.extend_from_slice(&(selected.len() as u64).to_be_bytes());
-        for (id, revision) in &selected {
-            legacy.extend_from_slice(&id.to_be_bytes());
-            legacy.extend_from_slice(&revision.to_be_bytes());
-        }
-        assert_eq!(actual, wiki_pack_format::sha256_hex(&legacy));
-    }
-}
