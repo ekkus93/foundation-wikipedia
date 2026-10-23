@@ -467,9 +467,17 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].hit.key.page_id, 2);
         assert_eq!(hits[1].hit.key.page_id, 1);
-        assert_eq!(hits[0].version.location, ArticleLocation::ExplicitOfflineSave);
+        assert_eq!(
+            hits[0].version.location,
+            ArticleLocation::ExplicitOfflineSave
+        );
         assert_eq!(hits[1].version.location, ArticleLocation::InstalledPack);
-        assert_eq!(index.search_prefix("Physics basics", 1).unwrap()[0].hit.title, "Physics");
+        assert_eq!(
+            index.search_prefix("Physics basics", 1).unwrap()[0]
+                .hit
+                .title,
+            "Physics"
+        );
         assert_eq!(index.search_prefix("Phys", 1).unwrap().len(), 1);
     }
 
