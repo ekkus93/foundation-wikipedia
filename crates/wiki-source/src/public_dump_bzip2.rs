@@ -40,6 +40,36 @@ pub fn decode_bzip2_xml_envelope<R: Read, W: Write>(
     .map(|(output, decoded, ())| (output, decoded))
 }
 
+
+/// Stream page and revision identities from a pinned bzip2 member.
+///
+/// The callback receives provisional records before the final member digest
+/// and EOF have been checked. It MUST only stage records, never publish them.
+/// The returned count is not an independently authenticated page census.
+pub fn decode_bzip2_xml_page_metadata<R: Read, F>(
+    input: R,
+    member: &DumpChecksum,
+    max_compressed_bytes: u64,
+    max_decoded_bytes: u64,
+    on_page: F,
+) -> Result<(u64, u64), CheckedMemberError<io::Error>>
+where
+    F: FnMut(crate::public_dump_page_meta::PublicDumpPage) -> io::Result<()>,
+{
+    let output = crate::public_dump_xml_events::XmlPageMetadataWriter::new(on_page);
+    let (output, decoded) = decode_bzip2_xml_envelope(
+        input,
+        member,
+        max_compressed_bytes,
+        output,
+        max_decoded_bytes,
+    )?;
+    let (_, pages) = output
+        .finish()
+        .map_err(|_| CheckedMemberError::InvalidXmlDocument)?;
+    Ok((decoded, pages))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +111,49 @@ mod tests {
             assert_eq!(xml, XML.as_bytes());
             assert_eq!(size, XML.len() as u64);
         }
+    }
+
+
+    #[test]
+    fn decodes_real_bzip2_page_metadata_and_ignores_contributor_ids() {
+        let xml = "<?xml version='1.0'?><mediawiki><page><title>Physics &amp; 日本語</title><ns>0</ns><id>42</id><revision><id>900</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>12345</id></contributor><text><![CDATA[{{x}}]]></text></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let mut pages = Vec::new();
+        let (decoded, count) = decode_bzip2_xml_page_metadata(
+            Cursor::new(&bytes),
+            &member(&bytes),
+            4096,
+            4096,
+            |page| {
+                pages.push(page);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(decoded, xml.len() as u64);
+        assert_eq!(count, 1);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].page_id, 42);
+        assert_eq!(pages[0].revision_id, 900);
+        assert_eq!(pages[0].title, "Physics & 日本語");
+    }
+
+    #[test]
+    fn rejects_semantically_incomplete_bzip2_pages() {
+        let xml = "<mediawiki><page><title>X</title><ns>0</ns><revision><id>2</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let bytes = encoder.finish().unwrap();
+        assert!(decode_bzip2_xml_page_metadata(
+            Cursor::new(&bytes),
+            &member(&bytes),
+            4096,
+            4096,
+            |_| Ok(()),
+        )
+        .is_err());
     }
 
     #[test]
