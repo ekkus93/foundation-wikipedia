@@ -128,24 +128,64 @@ pub fn verify_pinned_staged_export(
         &inventory.date,
         max_member_bytes,
     )?;
-    // When publication sidecars are staged, bind the raw SHA256SUMS bytes
-    // to the already-pinned inventory digest. An arbitrary checksum sidecar
-    // must not accompany otherwise verified member payloads.
+    // When publication sidecars are staged, bind the exact SHA256SUMS bytes
+    // to the already-pinned inventory. Stream with a hard byte cap instead of
+    // reading the whole file: an attacker must not inflate a sidecar between
+    // metadata inspection and read into an unbounded allocation. Recheck the
+    // opened file identity to catch replacement by a link or another inode.
     let sidecar = root.join("SHA256SUMS");
-    if sidecar.exists() {
-        const MAX_SIDECAR_BYTES: u64 = 32 * 1024 * 1024;
-        let size = std::fs::metadata(&sidecar)
-            .map_err(crate::public_dump_stage::StagedDumpError::Io)?
-            .len();
-        if size == 0 || size > MAX_SIDECAR_BYTES {
-            return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
-        }
-        let raw = std::fs::read(sidecar).map_err(crate::public_dump_stage::StagedDumpError::Io)?;
-        if raw.len() as u64 != size
-            || format!("{:x}", Sha256::digest(&raw)) != inventory.inventory_sha256
+    let prior = match std::fs::symlink_metadata(&sidecar) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(bytes),
+        Err(error) => return Err(crate::public_dump_stage::StagedDumpError::Io(error)),
+    };
+    if !prior.file_type().is_file() {
+        return Err(crate::public_dump_stage::StagedDumpError::UnsafeStagingPath);
+    }
+    const MAX_SIDECAR_BYTES: u64 = 32 * 1024 * 1024;
+    if !(1..=MAX_SIDECAR_BYTES).contains(&prior.len()) {
+        return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
+    }
+    let mut file = std::fs::File::open(&sidecar)
+        .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+    let opened = file
+        .metadata()
+        .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+    if !opened.is_file() || opened.len() != prior.len() {
+        return Err(crate::public_dump_stage::StagedDumpError::UnsafeStagingPath);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if prior.dev() != opened.dev()
+            || prior.ino() != opened.ino()
+            || prior.nlink() != 1
+            || opened.nlink() != 1
         {
-            return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
+            return Err(crate::public_dump_stage::StagedDumpError::UnsafeStagingPath);
         }
+    }
+    use std::io::Read;
+    let mut digest = Sha256::new();
+    let mut count = 0u64;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut chunk)
+            .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+        if n == 0 {
+            break;
+        }
+        count = count
+            .checked_add(n as u64)
+            .filter(|size| *size <= MAX_SIDECAR_BYTES)
+            .ok_or(crate::public_dump_stage::StagedDumpError::InvalidInventory)?;
+        digest.update(&chunk[..n]);
+    }
+    if count != prior.len()
+        || format!("{:x}", digest.finalize()) != inventory.inventory_sha256
+    {
+        return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
     }
     Ok(bytes)
 }
@@ -237,6 +277,55 @@ mod tests {
             ),
             Err(PinnedInventoryError::DigestMismatch),
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pinned_staging_refuses_linked_checksum_sidecars() {
+        use std::os::unix::fs::symlink;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-pinned-sidecar-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let member = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let payload = b"verified fixture member";
+        let sums = format!("{:x}  {member}\\n", Sha256::digest(payload));
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let inventory =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        std::fs::write(root.join(member), payload).unwrap();
+        std::fs::write(root.join("PUBLICATION.json"), b"{}").unwrap();
+        let external = root.with_extension("external");
+        std::fs::write(&external, sums.as_bytes()).unwrap();
+
+        symlink(&external, root.join("SHA256SUMS")).unwrap();
+        assert!(matches!(
+            verify_pinned_staged_export(&root, &inventory, 4096),
+            Err(crate::public_dump_stage::StagedDumpError::UnsafeStagingPath)
+        ));
+        std::fs::remove_file(root.join("SHA256SUMS")).unwrap();
+
+        std::fs::hard_link(&external, root.join("SHA256SUMS")).unwrap();
+        assert!(matches!(
+            verify_pinned_staged_export(&root, &inventory, 4096),
+            Err(crate::public_dump_stage::StagedDumpError::UnsafeStagingPath)
+        ));
+        std::fs::remove_file(root.join("SHA256SUMS")).unwrap();
+        std::fs::write(root.join("SHA256SUMS"), sums.as_bytes()).unwrap();
+        assert_eq!(
+            verify_pinned_staged_export(&root, &inventory, 4096).unwrap(),
+            payload.len() as u64
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_file(external).unwrap();
     }
 
     #[test]
