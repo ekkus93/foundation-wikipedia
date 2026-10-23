@@ -11,9 +11,8 @@ use crate::local_title_index::{LocalTitleIndex, LocalTitleIndexError};
 
 use crate::online_article::OnlineRenderedRevision;
 use crate::online_flow::{
-    begin_offline_title_open, begin_open, begin_title_open, finish_render,
-    finish_title_resolution, plan_render,
-    OnlineFlowError, OpenArticle, OpenTitle,
+    begin_offline_title_open, begin_open, begin_title_open, finish_render, finish_title_resolution,
+    plan_render, OnlineFlowError, OpenArticle, OpenTitle,
 };
 use crate::online_selection::{ArticleVersion, NetworkState};
 
@@ -244,9 +243,7 @@ pub fn fetch_title_with_local_index<T: MediaWikiTransport>(
         cause: FetchCause::Flow(cause),
     };
     if network == NetworkState::Offline {
-        return match begin_offline_title_open(project, requested_title, index)
-            .map_err(failure)?
-        {
+        return match begin_offline_title_open(project, requested_title, index).map_err(failure)? {
             OpenArticle::Local(version) => Ok(FetchOutcome::Local(version)),
             OpenArticle::MissingOffline => Ok(FetchOutcome::MissingOffline),
             _ => Err(failure(OnlineFlowError::LocalIndex(
@@ -508,7 +505,6 @@ mod tests {
         assert_eq!(client.requests.len(), 1);
     }
 
-
     #[test]
     fn title_index_opens_verified_offline_article_without_http() {
         use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
@@ -590,7 +586,9 @@ mod tests {
                 .as_bytes()
                 .to_vec(),
         ));
-        client.answers.push_back(Err("revision temporarily unavailable"));
+        client
+            .answers
+            .push_back(Err("revision temporarily unavailable"));
         let error = fetch_title_with_local_index(
             &mut client,
             "enwiki",
