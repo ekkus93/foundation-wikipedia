@@ -2,7 +2,7 @@
 //! Source authority and complete pack membership are verified elsewhere.
 
 use crate::catalog::{CatalogError, SnapshotCatalog};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -207,6 +207,26 @@ fn validate_index_path(path: &Path) -> Result<(), SearchError> {
 }
 
 impl OfflineSearchIndex {
+    /// Read a published FTS database without creating or migrating the index.
+    pub fn open_read_only(path: &Path) -> Result<Self, SearchError> {
+        validate_index_path(path)?;
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.execute_batch("PRAGMA query_only=ON;")?;
+        let schema: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='offline_article_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if !schema.is_some_and(|ddl| {
+            ddl.starts_with("CREATE VIRTUAL TABLE") && ddl.contains(" USING fts5(")
+        }) {
+            return Err(SearchError::StaleIndex);
+        }
+        Ok(Self { conn })
+    }
+
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
         validate_index_path(path)?;
         #[cfg(unix)]
@@ -585,6 +605,48 @@ impl OfflineSearchIndex {
 #[cfg(test)]
 mod identity_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn published_index_is_read_only_and_missing_schema_fails_closed() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-fts-readonly-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.join("derived.sqlite");
+        {
+            let writer = OfflineSearchIndex::open(&database).unwrap();
+            writer
+                .conn
+                .execute(
+                    "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                     VALUES ('enwiki',42,1042,'Earth','planet ocean')",
+                    [],
+                )
+                .unwrap();
+        }
+        let reader = OfflineSearchIndex::open_read_only(&database).unwrap();
+        let hits = reader.search_project("enwiki", "ocean", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].key.page_id, 42);
+        assert!(reader
+            .conn
+            .execute("DELETE FROM offline_article_fts", [])
+            .is_err());
+        assert!(OfflineSearchIndex::open_read_only(&root.join("missing.sqlite")).is_err());
+        let unrelated = root.join("not-fts.sqlite");
+        drop(Connection::open(&unrelated).unwrap());
+        assert!(matches!(
+            OfflineSearchIndex::open_read_only(&unrelated),
+            Err(SearchError::StaleIndex)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn project_filter_precedes_fts_limit_and_ignores_foreign_corruption() {
