@@ -184,10 +184,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 if title.is_some() {
                     return None;
                 }
-                title = Self::decode_entities(&attrs[..end]);
-                if title.is_none() {
-                    return None;
-                }
+                title = Some(Self::decode_entities(&attrs[..end])?);
             }
             attrs = &attrs[end + 1..];
         }
