@@ -741,7 +741,12 @@ mod tests {
         // XML 1.0 normalizes literal attribute whitespace to spaces before
         // entity expansion. The normalized title, not the raw bytes, is the
         // navigation identity exposed by the provisional page record.
-        for raw in ["Science\tMath", "Science\nMath", "Science\rMath", "Science\r\nMath"] {
+        for raw in [
+            "Science\tMath",
+            "Science\nMath",
+            "Science\rMath",
+            "Science\r\nMath",
+        ] {
             let xml = VALID.replace(
                 r#"<redirect title="Science &amp; Math"/>"#,
                 &format!(r#"<redirect title="{raw}"/>"#),
