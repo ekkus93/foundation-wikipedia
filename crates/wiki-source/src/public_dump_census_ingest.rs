@@ -413,6 +413,52 @@ mod tests {
     }
 
     #[test]
+    fn native_staging_rejects_wrong_siteinfo_project_without_publication() {
+        use std::fs;
+        use std::io::Cursor;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "wiki-native-project-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let xml = "<mediawiki><siteinfo><dbname>frwiki</dbname></siteinfo><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>2</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let bytes = encoder.finish().unwrap();
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n",
+            Sha256::digest(&bytes)
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let result = stage_pinned_native_bzip2_census(
+            &root,
+            "observed.ids",
+            &pinned,
+            0,
+            4096,
+            4096,
+            |_| Ok(Cursor::new(bytes.as_slice())),
+        );
+        assert!(matches!(
+            result,
+            Err(CensusStageError::Census(PinnedCensusError::NativeDecode(_)))
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn native_staging_decodes_all_pinned_members_and_never_publishes_failed_shards() {
         use std::fs;
         use std::io::Cursor;
