@@ -20,6 +20,7 @@ use crate::public_dump::DumpChecksum;
 #[derive(Debug)]
 pub enum CheckedMemberError<E> {
     InvalidLimit,
+    EmptyMember,
     Decode(E),
     ReadFailure,
     IncompleteConsumption,
@@ -47,11 +48,19 @@ impl<R: Read> Read for HashingReader<R> {
                 "previous input failure",
             ));
         }
-        let count = match self.input.read(buf) {
-            Ok(count) => count,
-            Err(error) => {
-                self.failed = true;
-                return Err(error);
+        let mut interrupted = 0u8;
+        let count = loop {
+            match self.input.read(buf) {
+                Ok(count) => break count,
+                Err(error)
+                    if error.kind() == io::ErrorKind::Interrupted && interrupted < 8 =>
+                {
+                    interrupted += 1;
+                }
+                Err(error) => {
+                    self.failed = true;
+                    return Err(error);
+                }
             }
         };
         if count == 0 {
@@ -112,6 +121,9 @@ where
     if !tracking.eof {
         return Err(CheckedMemberError::IncompleteConsumption);
     }
+    if tracking.consumed == 0 {
+        return Err(CheckedMemberError::EmptyMember);
+    }
     if format!("{:x}", tracking.digest.finalize()) != member.sha256 {
         return Err(CheckedMemberError::DigestMismatch);
     }
@@ -142,6 +154,14 @@ mod tests {
         let result =
             decode_checked_member(Cursor::new(bytes), &member(bytes), 1024, consume_all).unwrap();
         assert_eq!(result, bytes);
+    }
+
+    #[test]
+    fn empty_member_cannot_qualify_even_with_matching_empty_digest() {
+        assert!(matches!(
+            decode_checked_member(Cursor::new(b""), &member(b""), 1024, consume_all),
+            Err(CheckedMemberError::EmptyMember)
+        ));
     }
 
     #[test]

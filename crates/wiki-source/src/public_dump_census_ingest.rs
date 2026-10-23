@@ -6,7 +6,6 @@
 
 use std::io::{Read, Write};
 
-use crate::public_dump::DumpChecksum;
 use crate::public_dump_census_export::{CensusExportError, ObservedCensusWriter};
 use crate::public_dump_checked_read::CheckedMemberError;
 use crate::public_dump_ingest::{PageIngestError, PinnedPageIngest};
@@ -31,6 +30,8 @@ pub enum CheckedCensusError {
 /// page revisions pass their validation and the output stream flush succeeds.
 /// Any unsuccessful input operation permanently poisons the pipeline.
 pub struct PinnedObservedCensus<'a, W: Write> {
+    inventory: &'a PinnedInventory,
+    next_member_index: usize,
     ingest: PinnedPageIngest<'a>,
     writer: ObservedCensusWriter<W>,
     observed_pages: usize,
@@ -44,6 +45,8 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         namespace: i32,
     ) -> Result<Self, PinnedCensusError> {
         Ok(Self {
+            inventory,
+            next_member_index: 0,
             ingest: PinnedPageIngest::new(inventory),
             writer: ObservedCensusWriter::new(output, namespace)
                 .map_err(PinnedCensusError::Export)?,
@@ -72,7 +75,6 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
     /// This is a composition seam, not a bzip2 or XML decoder.
     pub fn decode_checked_member<R, F>(
         &mut self,
-        member: &DumpChecksum,
         input: R,
         max_bytes: u64,
         decoder: F,
@@ -81,11 +83,18 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         R: Read,
         F: FnOnce(&mut dyn Read, &mut Self) -> Result<(), PinnedCensusError>,
     {
+        // Obtain the complete trusted descriptor from the pinned inventory.
+        // Accepting a caller-supplied checksum for the same filename would
+        // allow a forged digest to authorize arbitrary compressed bytes.
+        let Some(member) = self.inventory.members().get(self.next_member_index).cloned() else {
+            self.failed = true;
+            return Err(CheckedCensusError::Census(PinnedCensusError::InvalidState));
+        };
         self.begin_member(&member.relative_path)
             .map_err(CheckedCensusError::Census)?;
         let result = crate::public_dump_checked_read::decode_checked_member(
             input,
-            member,
+            &member,
             max_bytes,
             |reader| decoder(reader, self),
         );
@@ -124,7 +133,9 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         self.ingest.end_member().map_err(|error| {
             self.failed = true;
             PinnedCensusError::Ingest(error)
-        })
+        })?;
+        self.next_member_index += 1;
+        Ok(())
     }
 
     pub fn finish(self) -> Result<(W, usize), PinnedCensusError> {
@@ -292,7 +303,6 @@ mod tests {
         for (index, payload) in payloads.into_iter().enumerate() {
             pipeline
                 .decode_checked_member(
-                    &pinned.members()[index],
                     Cursor::new(payload),
                     1024,
                     |reader, census| {
@@ -318,7 +328,6 @@ mod tests {
         let pinned = inventory();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         let bad = pipeline.decode_checked_member(
-            &pinned.members()[0],
             Cursor::new(b"not a valid pinned member"),
             1024,
             |reader, census| {
@@ -347,7 +356,6 @@ mod tests {
         let mut early = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         assert!(matches!(
             early.decode_checked_member(
-                &pinned.members()[0],
                 Cursor::new(b"unexpected trailing data"),
                 1024,
                 |_reader, census| push_page(census, 1, 0),
