@@ -55,7 +55,56 @@ pub fn decode_bzip2_xml_page_metadata<R: Read, F>(
 where
     F: FnMut(crate::public_dump_page_meta::PublicDumpPage) -> io::Result<()>,
 {
-    let output = crate::public_dump_xml_events::XmlPageMetadataWriter::new(on_page);
+    decode_bzip2_xml_page_metadata_impl(
+        input,
+        member,
+        max_compressed_bytes,
+        max_decoded_bytes,
+        None,
+        on_page,
+    )
+}
+
+/// Cross-check the optional <siteinfo><dbname> with the pinned project.
+/// The caller still must authenticate the official publication and census.
+pub fn decode_bzip2_xml_page_metadata_for_project<R: Read, F>(
+    input: R,
+    member: &DumpChecksum,
+    project: &str,
+    max_compressed_bytes: u64,
+    max_decoded_bytes: u64,
+    on_page: F,
+) -> Result<(u64, u64), CheckedMemberError<io::Error>>
+where
+    F: FnMut(crate::public_dump_page_meta::PublicDumpPage) -> io::Result<()>,
+{
+    decode_bzip2_xml_page_metadata_impl(
+        input,
+        member,
+        max_compressed_bytes,
+        max_decoded_bytes,
+        Some(project),
+        on_page,
+    )
+}
+
+fn decode_bzip2_xml_page_metadata_impl<R: Read, F>(
+    input: R,
+    member: &DumpChecksum,
+    max_compressed_bytes: u64,
+    max_decoded_bytes: u64,
+    project: Option<&str>,
+    on_page: F,
+) -> Result<(u64, u64), CheckedMemberError<io::Error>>
+where
+    F: FnMut(crate::public_dump_page_meta::PublicDumpPage) -> io::Result<()>,
+{
+    let output = match project {
+        Some(project) => crate::public_dump_xml_events::XmlPageMetadataWriter::with_expected_project(
+            on_page, project,
+        ).map_err(|_| CheckedMemberError::InvalidXmlDocument)?,
+        None => crate::public_dump_xml_events::XmlPageMetadataWriter::new(on_page),
+    };
     let (output, decoded) = decode_bzip2_xml_envelope(
         input,
         member,
@@ -152,6 +201,36 @@ mod tests {
             |_| Ok(()),
         )
         .is_err());
+    }
+
+    #[test]
+    fn native_scoped_decoder_checks_siteinfo_project_identity() {
+        let xml = "<mediawiki><siteinfo><dbname>frwiki</dbname></siteinfo><page><title>Physics</title><ns>0</ns><id>42</id><revision><id>900</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let bytes = encoder.finish().unwrap();
+        assert!(decode_bzip2_xml_page_metadata_for_project(
+            Cursor::new(&bytes),
+            &member(&bytes),
+            "enwiki",
+            4096,
+            4096,
+            |_| Ok(()),
+        )
+        .is_err());
+        assert_eq!(
+            decode_bzip2_xml_page_metadata_for_project(
+                Cursor::new(&bytes),
+                &member(&bytes),
+                "frwiki",
+                4096,
+                4096,
+                |_| Ok(()),
+            )
+            .unwrap()
+            .1,
+            1
+        );
     }
 
     #[test]

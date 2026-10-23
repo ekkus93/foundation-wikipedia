@@ -32,6 +32,7 @@ enum Field {
     PageId,
     RevisionId,
     Timestamp,
+    DatabaseName,
 }
 
 /// Converts validated XML bytes into provisional, bounded page records.
@@ -39,6 +40,9 @@ enum Field {
 pub struct XmlPageMetadataWriter<F> {
     callback: F,
     collector: PageMetadataCollector,
+    expected_project: Option<String>,
+    siteinfo_seen: bool,
+    dbname_seen: bool,
     path: Vec<String>,
     mode: Mode,
     markup: Vec<u8>,
@@ -55,6 +59,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         Self {
             callback,
             collector: PageMetadataCollector::new(),
+            expected_project: None,
+            siteinfo_seen: false,
+            dbname_seen: false,
             path: Vec::new(),
             mode: Mode::Text,
             markup: Vec::new(),
@@ -65,6 +72,20 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             pages: 0,
             failed: false,
         }
+    }
+
+    /// Bind optional siteinfo database identity to the pinned export project.
+    /// This is a consistency check, not authentication of the publication.
+    pub fn with_expected_project(callback: F, project: &str) -> io::Result<Self> {
+        if !crate::valid_wiki_project(project) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid Wikimedia project",
+            ));
+        }
+        let mut writer = Self::new(callback);
+        writer.expected_project = Some(project.to_owned());
+        Ok(writer)
     }
 
     fn invalid(&mut self) -> io::Error {
@@ -216,6 +237,20 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
                 }
             }
             Field::Timestamp => self.emit(PageEvent::Timestamp(&value)),
+            Field::DatabaseName => {
+                if self.dbname_seen || !crate::valid_wiki_project(&value) {
+                    return Err(self.invalid());
+                }
+                if self
+                    .expected_project
+                    .as_deref()
+                    .is_some_and(|expected| expected != value)
+                {
+                    return Err(self.invalid());
+                }
+                self.dbname_seen = true;
+                Ok(())
+            },
         }
     }
 
@@ -263,6 +298,12 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             let target = Self::redirect_title(&body[end..]).ok_or_else(|| self.invalid())?;
             return self.emit(PageEvent::RedirectTarget(&target));
         }
+        if self.at(&["mediawiki"]) && name == "siteinfo" {
+            if self_closing || self.siteinfo_seen {
+                return Err(self.invalid());
+            }
+            self.siteinfo_seen = true;
+        }
         if self.at(&["mediawiki"]) && name == "page" {
             if self_closing {
                 return Err(self.invalid());
@@ -275,7 +316,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             self.emit(PageEvent::BeginRevision)?;
         }
 
-        let field = if self.at(&["mediawiki", "page"]) {
+        let field = if self.at(&["mediawiki", "siteinfo"]) && name == "dbname" {
+            Some(Field::DatabaseName)
+        } else if self.at(&["mediawiki", "page"]) {
             match name {
                 "title" => Some(Field::Title),
                 "ns" => Some(Field::Namespace),
@@ -449,6 +492,43 @@ mod tests {
             assert_eq!(pages[0].title, "Physics & 日本語");
             assert_eq!(pages[0].redirect_target.as_deref(), Some("Science & Math"));
         }
+    }
+
+    #[test]
+    fn checks_optional_siteinfo_database_against_pinned_project() {
+        let base = VALID.replace("<sitename>Wiki</sitename>", "<dbname>enwiki</dbname>");
+        for chunk_size in [1, 2, 7, 8192] {
+            let mut records = Vec::new();
+            let mut writer =
+                XmlPageMetadataWriter::with_expected_project(|page| {
+                    records.push(page);
+                    Ok(())
+                }, "enwiki").unwrap();
+            for chunk in base.as_bytes().chunks(chunk_size) {
+                writer.write_all(chunk).unwrap();
+            }
+            assert_eq!(writer.finish().unwrap().1, 1);
+            assert_eq!(records[0].page_id, 42);
+        }
+        for bad in [
+            base.replace("enwiki</dbname>", "frwiki</dbname>"),
+            base.replace("enwiki</dbname>", "EnWiki</dbname>"),
+            base.replace("</dbname>", "</dbname><dbname>enwiki</dbname>"),
+            base.replace("</siteinfo>", "</siteinfo><siteinfo/>"),
+        ] {
+            let mut writer =
+                XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki").unwrap();
+            let result = writer.write_all(bad.as_bytes());
+            assert!(result.is_err() || writer.finish().is_err(), "{bad}");
+        }
+        assert!(XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki_").is_err());
+
+        // Legacy test dumps can omit optional siteinfo database metadata;
+        // absence does not by itself prove project identity.
+        let mut legacy = XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki")
+            .unwrap();
+        legacy.write_all(VALID.as_bytes()).unwrap();
+        assert_eq!(legacy.finish().unwrap().1, 1);
     }
 
     #[test]
