@@ -146,8 +146,8 @@ pub fn verify_pinned_staged_export(
     if !(1..=MAX_SIDECAR_BYTES).contains(&prior.len()) {
         return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
     }
-    let mut file = std::fs::File::open(&sidecar)
-        .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
+    let mut file =
+        std::fs::File::open(&sidecar).map_err(crate::public_dump_stage::StagedDumpError::Io)?;
     let opened = file
         .metadata()
         .map_err(crate::public_dump_stage::StagedDumpError::Io)?;
@@ -182,9 +182,7 @@ pub fn verify_pinned_staged_export(
             .ok_or(crate::public_dump_stage::StagedDumpError::InvalidInventory)?;
         digest.update(&chunk[..n]);
     }
-    if count != prior.len()
-        || format!("{:x}", digest.finalize()) != inventory.inventory_sha256
-    {
+    if count != prior.len() || format!("{:x}", digest.finalize()) != inventory.inventory_sha256 {
         return Err(crate::public_dump_stage::StagedDumpError::InvalidInventory);
     }
     Ok(bytes)
@@ -296,7 +294,7 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let member = "enwiki-2026-10-01-p1p100.xml.bz2";
         let payload = b"verified fixture member";
-        let sums = format!("{:x}  {member}\\n", Sha256::digest(payload));
+        let sums = format!("{:x}  {member}\n", Sha256::digest(payload));
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
         let inventory =
             parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
