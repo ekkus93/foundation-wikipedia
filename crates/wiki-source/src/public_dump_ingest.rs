@@ -373,7 +373,7 @@ mod tests {
             encoder.write_all(xml.as_bytes()).unwrap();
             let compressed = encoder.finish().unwrap();
             let sums = format!(
-                "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n",
+                "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n",
                 Sha256::digest(&compressed)
             );
             let pinned = parse_pinned_inventory(
