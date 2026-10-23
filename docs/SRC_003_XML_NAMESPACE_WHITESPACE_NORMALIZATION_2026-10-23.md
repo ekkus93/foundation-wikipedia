@@ -22,12 +22,14 @@ general-purpose XML parser.
 
 ## Evidence
 
-- Source commit: `1549ce9bd5918efb0f27bc7cf3f7af7b1a1561f9`.
+- Initial implementation: `1549ce9bd5918efb0f27bc7cf3f7af7b1a1561f9`; the first Rust test run failed because a new fixture used literal backslash escapes instead of actual CRLF/tab characters.
+- Corrected and qualified code commit: `fbef40ec06062a38d940319ddaf276942c6f325b`.
 - Regression cases create two aliased namespace prefixes using raw CRLF
   or tab versus an ordinary space, then require rejection of repeated
   expanded attribute names. Tests run at chunk sizes 1, 2, 7 and 8192.
-- Exact code SHA [Rust workspace CI 40023142919](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40023142919).
-- Exact code SHA [Platform shells CI 40023142952](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40023142952).
+- First fixture-error evidence: [Rust workspace CI 40023142919](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40023142919), failed on the initial code SHA.
+- Qualified corrected SHA: [Rust workspace CI 40023515414](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40023515414) (passed format, strict Clippy and tests).
+- Qualified corrected SHA: [Platform shells CI 40023515254](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40023515254) (passed).
 
 ## Remaining acceptance requirements
 
