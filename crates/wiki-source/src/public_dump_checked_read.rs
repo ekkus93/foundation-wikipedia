@@ -28,6 +28,7 @@ pub enum CheckedMemberError<E> {
     OutputFailure,
     OutputLimitExceeded,
     InvalidXmlText,
+    InvalidXmlDocument,
 }
 
 struct HashingReader<R> {
