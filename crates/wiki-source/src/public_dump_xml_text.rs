@@ -104,7 +104,6 @@ impl<W: Write> Write for XmlTextGuard<W> {
     }
 }
 
-
 /**
  * Validate the entire provisional decoded text stream while checking the
  * compressed member's pinned digest, EOF and both byte budgets.
