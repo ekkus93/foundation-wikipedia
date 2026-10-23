@@ -65,9 +65,7 @@ impl<W: Write> XmlNestingGuard<W> {
     }
 
     fn valid_entity(bytes: &[u8]) -> bool {
-        if [b"&amp;".as_slice(), b"&lt;", b"&gt;", b"&apos;", b"&quot;"]
-            .contains(&bytes)
-        {
+        if [b"&amp;".as_slice(), b"&lt;", b"&gt;", b"&apos;", b"&quot;"].contains(&bytes) {
             return true;
         }
         let Some(raw) = bytes.strip_prefix(b"&#").and_then(|b| b.strip_suffix(b";")) else {
@@ -454,7 +452,6 @@ mod tests {
             assert!(written.is_err() || guard.finish().is_err(), "{bad}");
         }
     }
-
 
     #[test]
     fn accepts_named_and_numeric_entities_split_at_all_boundaries() {
