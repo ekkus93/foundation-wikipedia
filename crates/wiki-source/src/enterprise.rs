@@ -534,6 +534,22 @@ pub fn parse_structured_article(
     })
 }
 
+fn valid_membership_label(text: &str) -> bool {
+    !text.trim().is_empty()
+        && text.trim() == text
+        && text.len() <= 4096
+        && !text.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+        })
+}
+
 fn parse_string_array(
     map: &Map<String, Value>,
     field: &'static str,
@@ -559,7 +575,7 @@ fn parse_string_array(
         } else {
             return Err(EnterpriseError::InvalidField(field));
         };
-        if text.trim().is_empty() {
+        if !valid_membership_label(&text) {
             return Err(EnterpriseError::InvalidField(field));
         }
         if !seen.insert(text.clone()) {
@@ -920,6 +936,39 @@ mod tests {
         );
         assert!(parse_structured_article(&structured_json(), "2026-10-01").is_ok());
         assert!(parse_regular_companion_complete(&regular_json(), "2026-10-01").is_ok());
+    }
+
+    #[test]
+    fn rejects_spoofed_or_unbounded_category_and_redirect_labels() {
+        for invalid in [
+            " Physics".to_owned(),
+            "Physics ".to_owned(),
+            format!("Phy{}sics", '\u{202e}'),
+            format!("Phy{}sics", '\u{200f}'),
+            "x".repeat(4097),
+        ] {
+            let input = regular_json().replace(
+                "\"name\":\"Physics\"",
+                &format!("\"name\":\"{invalid}\""),
+            );
+            assert_eq!(
+                parse_regular_companion_complete(&input, "2026-10-01"),
+                Err(EnterpriseError::InvalidField("categories"))
+            );
+        }
+        let invalid_redirect = regular_json().replace(
+            "\"name\":\"Gravity (physics)\"",
+            "\"name\":\" Gravity (physics)\"",
+        );
+        assert_eq!(
+            parse_regular_companion_complete(&invalid_redirect, "2026-10-01"),
+            Err(EnterpriseError::InvalidField("redirects"))
+        );
+        let legitimate_rtl = regular_json().replace(
+            "\"name\":\"Physics\"",
+            "\"name\":\"فيزياء\"",
+        );
+        assert!(parse_regular_companion_complete(&legitimate_rtl, "2026-10-01").is_ok());
     }
 
     #[test]
