@@ -225,28 +225,22 @@ fn identity(
     map: &Map<String, Value>,
     generation_id: &str,
 ) -> Result<(PageKey, u64, i32, String, String), EnterpriseError> {
-    if generation_id.trim().is_empty()
-        || generation_id != generation_id.trim()
-        || generation_id.len() > 255
-        || generation_id.chars().any(char::is_control)
-    {
+    if !crate::enterprise_ndjson::valid_generation_id(generation_id) {
         return Err(EnterpriseError::InvalidGeneration);
     }
     let page_id = required_u64(map, "identifier")?;
+    if page_id > i64::MAX as u64 {
+        return Err(EnterpriseError::InvalidIdentity);
+    }
     let revision_id = nested_identifier(map, "version")?
         .as_u64()
-        .filter(|value| *value > 0)
+        .filter(|value| (1..=i64::MAX as u64).contains(value))
         .ok_or(EnterpriseError::InvalidField("version.identifier"))?;
     let project = nested_identifier(map, "is_part_of")?
         .as_str()
         .ok_or(EnterpriseError::InvalidField("is_part_of.identifier"))?
         .to_owned();
-    if project.is_empty()
-        || project.len() > 255
-        || !project
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-    {
+    if !crate::valid_wiki_project(&project) {
         return Err(EnterpriseError::InvalidIdentity);
     }
     let namespace_i64 = nested_identifier(map, "namespace")?
@@ -641,6 +635,20 @@ pub fn join_enterprise_article(
     structured: StructuredArticle,
     regular: RegularArticleCompanion,
 ) -> Result<JoinedEnterpriseArticle, EnterpriseError> {
+    // Typed DTOs are public, so the join cannot assume a parser validated
+    // canonical project/page/revision bounds or source generation identity.
+    if !valid_page_key(&structured.page)
+        || !valid_page_key(&regular.page)
+        || !(1..=i64::MAX as u64).contains(&structured.revision_id)
+        || !(1..=i64::MAX as u64).contains(&regular.revision_id)
+    {
+        return Err(EnterpriseError::InvalidIdentity);
+    }
+    if !crate::enterprise_ndjson::valid_generation_id(&structured.generation_id)
+        || !crate::enterprise_ndjson::valid_generation_id(&regular.generation_id)
+    {
+        return Err(EnterpriseError::InvalidGeneration);
+    }
     if structured.page != regular.page || structured.name != regular.name {
         return Err(EnterpriseError::IdentityMismatch);
     }
@@ -834,6 +842,57 @@ mod tests {
             );
         }
         assert!(join_enterprise_batch(vec![structured], vec![regular], vec![]).is_ok());
+    }
+
+    #[test]
+    fn public_parsers_and_single_article_join_reject_invalid_identity() {
+        for invalid in ["0", "9223372036854775808", "18446744073709551615"] {
+            let structured_json = structured_json().replace(
+                "\"identifier\":42",
+                &format!("\"identifier\":{invalid}"),
+            );
+            assert_eq!(
+                parse_structured_article(&structured_json, "2026-10-01"),
+                Err(EnterpriseError::InvalidIdentity)
+            );
+        }
+        for invalid in ["0", "9223372036854775808"] {
+            let regular_json = regular_json().replace(
+                "\"identifier\":99",
+                &format!("\"identifier\":{invalid}"),
+            );
+            assert_eq!(
+                parse_regular_companion(&regular_json, "2026-10-01"),
+                Err(EnterpriseError::InvalidField("version.identifier"))
+            );
+        }
+        for invalid in ["_enwiki", "123wiki", "enwiki_"] {
+            let input = structured_json().replace(
+                "\"identifier\":\"enwiki\"",
+                &format!("\"identifier\":\"{invalid}\""),
+            );
+            assert_eq!(
+                parse_structured_article(&input, "2026-10-01"),
+                Err(EnterpriseError::InvalidIdentity)
+            );
+        }
+        let mut structured = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular = parse_regular_companion(&regular_json(), "2026-10-01").unwrap();
+        structured.revision_id = i64::MAX as u64 + 1;
+        assert_eq!(
+            join_enterprise_article(structured.clone(), regular.clone()),
+            Err(EnterpriseError::InvalidIdentity)
+        );
+        structured.revision_id = regular.revision_id;
+        structured.generation_id = "../another-generation".into();
+        assert_eq!(
+            join_enterprise_article(structured, regular),
+            Err(EnterpriseError::InvalidGeneration)
+        );
+        assert_eq!(
+            parse_structured_article(&structured_json(), "../another-generation"),
+            Err(EnterpriseError::InvalidGeneration)
+        );
     }
 
     #[test]
