@@ -201,12 +201,13 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             }
             attrs = &attrs[1..];
             let end = attrs.iter().position(|byte| *byte == quote)?;
-            if key == b"title" {
-                if title.is_some() {
-                    return None;
-                }
-                title = Some(Self::decode_entities(&attrs[..end])?);
+            // Match the strict public-dump diagnostic schema. Unknown
+            // redirect attributes must not be silently discarded because
+            // downstream navigation identity is taken only from "title".
+            if key != b"title" || title.is_some() {
+                return None;
             }
+            title = Some(Self::decode_entities(&attrs[..end])?);
             attrs = &attrs[end + 1..];
         }
         title
@@ -532,6 +533,35 @@ mod tests {
             XmlPageMetadataWriter::with_expected_project(|_| Ok(()), "enwiki").unwrap();
         legacy.write_all(VALID.as_bytes()).unwrap();
         assert_eq!(legacy.finish().unwrap().1, 1);
+    }
+
+    #[test]
+    fn redirect_attributes_must_match_strict_diagnostic_contract() {
+        for invalid in [
+            r#"<redirect title="Science" extra="ignored"/>"#,
+            r#"<redirect bogus="Science" title="Science"/>"#,
+            r#"<redirect title="Science" title="Physics"/>"#,
+            r#"<redirect xml:lang="en"/>"#,
+        ] {
+            let xml = VALID.replace(r#"<redirect title="Science &amp; Math"/>"#, invalid);
+            for chunk_size in [1, 3, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let mut observed_error = false;
+                for chunk in xml.as_bytes().chunks(chunk_size) {
+                    if writer.write_all(chunk).is_err() {
+                        observed_error = true;
+                        break;
+                    }
+                }
+                assert!(
+                    observed_error || writer.finish().is_err(),
+                    "accepted {invalid}"
+                );
+            }
+        }
+        let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+        writer.write_all(VALID.as_bytes()).unwrap();
+        assert_eq!(writer.finish().unwrap().1, 1);
     }
 
     #[test]
