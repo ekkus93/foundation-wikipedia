@@ -859,9 +859,7 @@ mod tests {
             .is_empty());
         let budgeted = index.search_with_word_budget_project("enwiki", "physics", 100, 100);
         assert!(!budgeted.is_empty());
-        assert!(budgeted
-            .iter()
-            .all(|hit| hit.article.project == "enwiki"));
+        assert!(budgeted.iter().all(|hit| hit.article.project == "enwiki"));
         assert!(index
             .search_with_word_budget_project("ENWIKI", "physics", 100, 100)
             .is_empty());

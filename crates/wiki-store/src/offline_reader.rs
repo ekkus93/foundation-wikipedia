@@ -282,7 +282,9 @@ mod tests {
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
         let reader = OfflineReader::new(&catalog, &index, &root);
-        let scoped = reader.search_project_articles("enwiki", "Earth", 10).unwrap();
+        let scoped = reader
+            .search_project_articles("enwiki", "Earth", 10)
+            .unwrap();
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].key.page_id, 42);
         assert_eq!(scoped[0].revision.revision_id, 1042);
