@@ -297,11 +297,7 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         Some(scope)
     }
 
-    fn qualified_name_bound(
-        name: &[u8],
-        scope: &BTreeSet<Vec<u8>>,
-        attribute: bool,
-    ) -> bool {
+    fn qualified_name_bound(name: &[u8], scope: &BTreeSet<Vec<u8>>, attribute: bool) -> bool {
         let Some(colon) = name.iter().position(|byte| *byte == b':') else {
             return true;
         };
