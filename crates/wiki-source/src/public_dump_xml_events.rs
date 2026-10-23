@@ -304,19 +304,18 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             if name == b"xmlns" || name.starts_with(b"xmlns:") {
                 continue;
             }
-            let (uri, local): (&[u8], &[u8]) = if let Some(colon) =
-                name.iter().position(|byte| *byte == b':')
-            {
-                let prefix = &name[..colon];
-                let uri = if prefix == b"xml" {
-                    b"http://www.w3.org/XML/1998/namespace".as_slice()
+            let (uri, local): (&[u8], &[u8]) =
+                if let Some(colon) = name.iter().position(|byte| *byte == b':') {
+                    let prefix = &name[..colon];
+                    let uri = if prefix == b"xml" {
+                        b"http://www.w3.org/XML/1998/namespace".as_slice()
+                    } else {
+                        scope.get(prefix)?.as_slice()
+                    };
+                    (uri, &name[colon + 1..])
                 } else {
-                    scope.get(prefix)?.as_slice()
+                    (b"", name)
                 };
-                (uri, &name[colon + 1..])
-            } else {
-                (b"", name)
-            };
             if !expanded.insert((uri.to_vec(), local.to_vec())) {
                 return None;
             }
@@ -324,7 +323,11 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         Some(scope)
     }
 
-    fn qualified_name_bound(name: &[u8], scope: &BTreeMap<Vec<u8>, Vec<u8>>, attribute: bool) -> bool {
+    fn qualified_name_bound(
+        name: &[u8],
+        scope: &BTreeMap<Vec<u8>, Vec<u8>>,
+        attribute: bool,
+    ) -> bool {
         let Some(colon) = name.iter().position(|byte| *byte == b':') else {
             return true;
         };
