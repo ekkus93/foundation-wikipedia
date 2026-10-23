@@ -69,7 +69,7 @@ pub fn parse_title_resolution(
     .validate()
     .map_err(|_| TitleResolutionError::InvalidIdentity)?;
     let response: Value =
-        serde_json::from_str(body).map_err(|_| TitleResolutionError::InvalidResponse)?;
+        crate::strict_json::parse(body).map_err(|_| TitleResolutionError::InvalidResponse)?;
     if response.get("error").is_some() {
         return Err(TitleResolutionError::ApiError);
     }
@@ -184,6 +184,33 @@ pub fn parse_title_resolution(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_duplicate_json_keys_in_title_resolution() {
+        for body in [
+            r#"{"query":{"pages":[{"pageid":42,"pageid":43,"ns":0,"title":"Physics"}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","t\u0069tle":"Chemistry"}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","extra":{"x":1,"x":2}}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics"}]},"query":{"pages":[]}}"#,
+        ] {
+            assert_eq!(
+                parse_title_resolution(body, "enwiki", "Physics"),
+                Err(TitleResolutionError::InvalidResponse),
+                "{body}"
+            );
+        }
+        assert_eq!(
+            parse_title_resolution(
+                r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#,
+                "enwiki",
+                "Physics"
+            )
+            .unwrap()
+            .key
+            .page_id,
+            42
+        );
+    }
 
     #[test]
     fn exact_title_alias_chain_resolves_to_stable_id() {

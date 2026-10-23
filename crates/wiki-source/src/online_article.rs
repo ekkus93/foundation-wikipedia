@@ -46,7 +46,7 @@ fn parse_response(body: &str, bound: usize) -> Result<Value, OnlineArticleError>
         return Err(OnlineArticleError::ResponseTooLarge);
     }
     let value: Value =
-        serde_json::from_str(body).map_err(|_| OnlineArticleError::InvalidResponse)?;
+        crate::strict_json::parse(body).map_err(|_| OnlineArticleError::InvalidResponse)?;
     if !value.is_object() {
         return Err(OnlineArticleError::InvalidResponse);
     }
@@ -267,6 +267,41 @@ pub fn parse_rendered_revision(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_revision_and_render_reject_ambiguous_json_keys() {
+        let valid_metadata = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
+        let pinned = parse_current_revision(valid_metadata, "enwiki", 42).unwrap();
+        for body in [
+            r#"{"query":{"pages":[{"pageid":42,"pageid":43,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"r\u0065vid":334,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}],"extra":{"a":1,"a":2}}]}}"#,
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]},"query":{"pages":[]}}"#,
+        ] {
+            assert_eq!(
+                parse_current_revision(body, "enwiki", 42),
+                Err(OnlineArticleError::InvalidResponse),
+                "{body}"
+            );
+        }
+        for body in [
+            r#"{"parse":{"pageid":42,"pageid":43,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#,
+            r#"{"parse":{"pageid":42,"revid":333,"r\u0065vid":334,"title":"Physics","text":"<p>Physics</p>"}}"#,
+            r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>","text":"<p>Other</p>"}}"#,
+            r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>","extra":{"x":1,"x":2}}}"#,
+        ] {
+            assert_eq!(
+                parse_rendered_revision(body, &pinned),
+                Err(OnlineArticleError::InvalidResponse),
+                "{body}"
+            );
+        }
+        assert!(parse_rendered_revision(
+            r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#,
+            &pinned
+        )
+        .is_ok());
+    }
 
     const META: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Énergie","revisions":[{"revid":300,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
     const RENDER: &str = r#"{"parse":{"title":"Énergie","pageid":42,"revid":300,"text":"<p onclick=\"bad()\">Hello</p><script>bad()</script><a href=\"javascript:bad()\">bad link</a>"}}"#;

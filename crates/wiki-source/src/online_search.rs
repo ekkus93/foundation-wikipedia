@@ -59,7 +59,7 @@ pub fn parse_search_results(
         .map_err(|_| OnlineSearchError::InvalidIdentity)?;
 
     let value: Value =
-        serde_json::from_str(body).map_err(|_| OnlineSearchError::InvalidResponse)?;
+        crate::strict_json::parse(body).map_err(|_| OnlineSearchError::InvalidResponse)?;
     if value.get("error").is_some() {
         return Err(OnlineSearchError::ApiError);
     }
@@ -215,6 +215,32 @@ pub fn fetch_search_with_local<T: MediaWikiTransport>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_duplicate_json_keys_in_online_search() {
+        for body in [
+            r#"{"query":{"search":[{"pageid":42,"pageid":43,"ns":0,"title":"Physics"}]}}"#,
+            r#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Physics","t\u0069tle":"Chemistry"}]}}"#,
+            r#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Physics","snippet":{"x":1,"x":2}}]}}"#,
+            r#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Physics"}]},"query":{"search":[]}}"#,
+        ] {
+            assert_eq!(
+                parse_search_results(body, "enwiki", 1),
+                Err(OnlineSearchError::InvalidResponse),
+                "{body}"
+            );
+        }
+        assert_eq!(
+            parse_search_results(
+                r#"{"query":{"search":[{"pageid":42,"ns":0,"title":"Énergie"}]}}"#,
+                "enwiki",
+                1
+            )
+            .unwrap()[0]
+                .title,
+            "Énergie"
+        );
+    }
 
     #[test]
     fn parses_bounded_navigation_without_rendering_untrusted_snippets() {
