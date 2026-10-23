@@ -79,3 +79,32 @@ MediaWiki XML decoding before this becomes an operational dump importer.
 The digest expected by the pinned inventory must be independently authenticated;
 no check in this module proves completeness, publisher authenticity or
 offline article/media fidelity. **SRC-003 remains unchecked.**
+
+## Pinned-inventory trust-boundary correction (2026-10-23)
+
+The initial integrated API accepted a caller-supplied `DumpChecksum`.
+Even with strict page ordering, that would let a caller give the expected
+member filename paired with an independently forged digest, bypassing the
+already pinned publication's bytes. The API now selects the next member
+descriptor *exclusively* from its own `PinnedInventory`. The method
+accepts only the compressed input stream, size budget and semantic decoder.
+The same object tracks verified member order, including members consumed
+by the existing lower-level event API.
+
+The compressed reader also rejects zero-byte inputs despite a matching
+empty SHA-256 and retries up to eight transient interrupted reads. A new
+synthetic regression covers the empty-member failure. All previous
+multi-member, corruption and partial-decoder tests remain in the workspace
+suite. This closes a caller-digest substitution risk in the new composition
+seam; it does not validate actual bzip2 framing or XML documents.
+
+- Initial correction commit `7b0e7df1d8c39b916d674b084022899f70446142`:
+  [Rust CI 39939761242](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39939761242)
+  failed formatting.
+- Corrected code SHA **`faa74885767bb8451c8054054c0f4cc32aa1ff81`**:
+  [Rust workspace CI 39940054347](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39940054347)
+  passed, and [Platform shells CI 39940054398](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39940054398)
+  was running when this note was written. Verify its final conclusion independently.
+
+**SRC-003 remains unchecked** until the real source, completeness, renderer,
+mandatory offline media and device acceptance gates pass.
