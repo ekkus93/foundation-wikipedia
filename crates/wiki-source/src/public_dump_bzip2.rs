@@ -46,7 +46,8 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::io::Cursor;
 
-    const XML: &str = "<?xml version=\"1.0\"?><mediawiki><page><title>Physics</title></page></mediawiki>";
+    const XML: &str =
+        "<?xml version=\"1.0\"?><mediawiki><page><title>Physics</title></page></mediawiki>";
     const SINGLE: &str = "425a68313141592653595afe8d560000061b805001e007c0002eefdde0200054354d1b40989a681ea64da8254d43083207a8c8686f073e0c7bef3a40e75164960e83a8358d1648933c51684cd2a254443f3074c7cc5ae97442260c6e0d3f1772453850905afe8d56";
     const MULTI: &str = "425a68313141592653595e731abe000003998050016007a6afd9c02000314000d03264144c7a48f44d3d348f2992a802d6941307901675f35f22ab37246ed49dddee9f8bb9229c28482f398d5f00425a683131415926535967232ba50000119b800000800540002eee4ca02000314c989906460d26803d43d410670acc629c44ec2256cf7a0c021cf3f260fbe2ee48a70a120ce46574a0";
 
@@ -64,14 +65,12 @@ mod tests {
         }
     }
 
-    fn decode(bytes: &[u8], pinned: &DumpChecksum, limit: u64) -> Result<(Vec<u8>, u64), CheckedMemberError<io::Error>> {
-        decode_bzip2_xml_envelope(
-            Cursor::new(bytes),
-            pinned,
-            4096,
-            Vec::new(),
-            limit,
-        )
+    fn decode(
+        bytes: &[u8],
+        pinned: &DumpChecksum,
+        limit: u64,
+    ) -> Result<(Vec<u8>, u64), CheckedMemberError<io::Error>> {
+        decode_bzip2_xml_envelope(Cursor::new(bytes), pinned, 4096, Vec::new(), limit)
     }
 
     #[test]
