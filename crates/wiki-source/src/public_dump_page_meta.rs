@@ -403,8 +403,8 @@ mod tests {
     #[test]
     fn rejects_directional_format_controls_in_dump_titles_and_redirects() {
         for ch in [
-            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}',
-            '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}',
+            '\u{202e}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
         ] {
             let spoofed = format!("Physics{ch}History");
             for redirect in [false, true] {
@@ -423,10 +423,6 @@ mod tests {
         let mut collector = PageMetadataCollector::new();
         collector.push(PageEvent::BeginPage).unwrap();
         assert_eq!(collector.push(PageEvent::Title("رياضيات")), Ok(None));
-        assert_eq!(
-            collector.push(PageEvent::RedirectTarget("עברית")),
-            Ok(None)
-        );
+        assert_eq!(collector.push(PageEvent::RedirectTarget("עברית")), Ok(None));
     }
-
 }
