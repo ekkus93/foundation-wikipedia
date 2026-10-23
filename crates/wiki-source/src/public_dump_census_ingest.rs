@@ -4,8 +4,10 @@
 //! well-formed XML, and stage the output privately before atomic publication.
 //! This bridge cannot supply an *independent* expected page census.
 
-use std::io::Write;
+use std::io::{Read, Write};
 
+use crate::public_dump::DumpChecksum;
+use crate::public_dump_checked_read::CheckedMemberError;
 use crate::public_dump_census_export::{CensusExportError, ObservedCensusWriter};
 use crate::public_dump_ingest::{PageIngestError, PinnedPageIngest};
 use crate::public_dump_page_meta::PageEvent;
@@ -17,6 +19,12 @@ pub enum PinnedCensusError {
     Ingest(PageIngestError),
     Export(CensusExportError),
     CountMismatch,
+}
+
+#[derive(Debug)]
+pub enum CheckedCensusError {
+    Census(PinnedCensusError),
+    Member(CheckedMemberError<PinnedCensusError>),
 }
 
 /// The census bytes are returned only after all pinned members and decoded
@@ -52,6 +60,40 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             self.failed = true;
             PinnedCensusError::Ingest(error)
         })
+    }
+
+    /// Accept one pinned compressed member only after its decoder has consumed
+    /// and SHA-256-verified the exact input bytes. A failed or prematurely
+    /// returning decoder permanently poisons this census pipeline, even if it
+    /// emitted otherwise valid page events before failure.
+    ///
+    /// The callback must independently verify bzip2/XML correctness and feed
+    /// well-formed page events. It must not publish outputs or call end_member.
+    /// This is a composition seam, not a bzip2 or XML decoder.
+    pub fn decode_checked_member<R, F>(
+        &mut self,
+        member: &DumpChecksum,
+        input: R,
+        max_bytes: u64,
+        decoder: F,
+    ) -> Result<(), CheckedCensusError>
+    where
+        R: Read,
+        F: FnOnce(&mut dyn Read, &mut Self) -> Result<(), PinnedCensusError>,
+    {
+        self.begin_member(&member.relative_path)
+            .map_err(CheckedCensusError::Census)?;
+        let result = crate::public_dump_checked_read::decode_checked_member(
+            input,
+            member,
+            max_bytes,
+            |reader| decoder(reader, self),
+        );
+        if let Err(error) = result {
+            self.failed = true;
+            return Err(CheckedCensusError::Member(error));
+        }
+        self.end_member().map_err(CheckedCensusError::Census)
     }
 
     pub fn push(&mut self, event: PageEvent<'_>) -> Result<(), PinnedCensusError> {
@@ -231,6 +273,93 @@ mod tests {
         pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
         pipeline.push(PageEvent::EndRevision)?;
         pipeline.push(PageEvent::EndPage)
+    }
+
+    #[test]
+    fn checked_compressed_members_can_complete_the_pinned_census() {
+        use std::io::Cursor;
+
+        let payloads: [&[u8]; 2] = [b"compressed first fixture", b"compressed second fixture"];
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n{:x}  enwiki-2026-10-01-p201p300.xml.bz2\n",
+            Sha256::digest(payloads[0]),
+            Sha256::digest(payloads[1])
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest)
+            .unwrap();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        for (index, payload) in payloads.into_iter().enumerate() {
+            pipeline
+                .decode_checked_member(
+                    &pinned.members()[index],
+                    Cursor::new(payload),
+                    1024,
+                    |reader, census| {
+                        let mut consumed = Vec::new();
+                        reader
+                            .read_to_end(&mut consumed)
+                            .map_err(|_| PinnedCensusError::InvalidState)?;
+                        assert_eq!(consumed, payload);
+                        push_page(census, if index == 0 { 1 } else { 201 }, 0)
+                    },
+                )
+                .unwrap();
+        }
+        let (bytes, count) = pipeline.finish().unwrap();
+        assert_eq!(bytes, b"1\n201\n");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn failed_compressed_receipt_poisoned_even_after_valid_page_events() {
+        use std::io::Cursor;
+
+        let pinned = inventory();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        let bad = pipeline.decode_checked_member(
+            &pinned.members()[0],
+            Cursor::new(b"not a valid pinned member"),
+            1024,
+            |reader, census| {
+                let mut bytes = Vec::new();
+                reader
+                    .read_to_end(&mut bytes)
+                    .map_err(|_| PinnedCensusError::InvalidState)?;
+                push_page(census, 1, 0)
+            },
+        );
+        assert!(matches!(
+            bad,
+            Err(CheckedCensusError::Member(
+                CheckedMemberError::DigestMismatch
+            ))
+        ));
+        assert!(matches!(
+            pipeline.begin_member(&pinned.members()[1].relative_path),
+            Err(PinnedCensusError::InvalidState)
+        ));
+        assert!(matches!(
+            pipeline.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
+
+        let mut early = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        assert!(matches!(
+            early.decode_checked_member(
+                &pinned.members()[0],
+                Cursor::new(b"unexpected trailing data"),
+                1024,
+                |_reader, census| push_page(census, 1, 0),
+            ),
+            Err(CheckedCensusError::Member(
+                CheckedMemberError::IncompleteConsumption
+            ))
+        ));
+        assert!(matches!(
+            early.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
     }
 
     #[test]
