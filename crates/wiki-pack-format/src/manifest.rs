@@ -62,6 +62,18 @@ fn safe_id(value: &str) -> bool {
             .any(|c| c.is_control() || unsafe_directional_mark(c))
 }
 
+/// Pack project identity must match the source and article-key edition syntax.
+fn valid_wiki_project(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 255
+        && bytes.first().is_some_and(u8::is_ascii_lowercase)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
+}
+
 fn unsafe_component(component: &str) -> bool {
     if component.is_empty()
         || component == "."
@@ -130,7 +142,10 @@ impl Manifest {
         {
             return Err(ManifestError::MissingMetadata);
         }
-        if !safe_id(&self.pack_id) || !safe_id(&self.project) || !safe_id(&self.snapshot) {
+        if !safe_id(&self.pack_id)
+            || !valid_wiki_project(&self.project)
+            || !safe_id(&self.snapshot)
+        {
             return Err(ManifestError::UnsafeMetadata);
         }
         let origin_valid = match &self.origin {
@@ -245,6 +260,31 @@ mod transcript_tests {
             original.identity_transcript(),
             permutation.identity_transcript()
         );
+    }
+
+    #[test]
+    fn pack_project_must_use_canonical_wikimedia_edition_identity() {
+        let long = "a".repeat(256);
+        for project in [
+            "ENWIKI",
+            "en-wiki",
+            "en wiki",
+            "_enwiki",
+            "enwiki_",
+            "éwiki",
+            long.as_str(),
+        ] {
+            let mut invalid = sample();
+            invalid.project = project.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            assert_eq!(
+                invalid.identity_transcript(),
+                Err(ManifestError::UnsafeMetadata)
+            );
+        }
+        let mut valid = sample();
+        valid.project = "zh_min_nanwiki".into();
+        assert_eq!(valid.validate(), Ok(()));
     }
 
     #[test]
