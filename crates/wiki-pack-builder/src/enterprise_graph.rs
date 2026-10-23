@@ -406,75 +406,47 @@ fn validate_redirect_identities(
 }
 
 #[cfg(test)]
+#[path = "enterprise_graph_hardening_tests.rs"]
+mod hardening_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn joined_page(
-        id: u64,
-        namespace: i32,
-        name: &str,
-        categories: Vec<String>,
-        redirects: Vec<String>,
-    ) -> JoinedEnterpriseArticle {
-        use wiki_source::enterprise::StructuredArticle;
-        use wiki_source::join::PageKey;
-
-        JoinedEnterpriseArticle {
-            structured: StructuredArticle {
-                page: PageKey {
-                    project: "enwiki".into(),
-                    page_id: id,
-                },
-                revision_id: id + 100,
-                date_modified: "2026-10-23T00:00:00Z".into(),
-                generation_id: "20261023".into(),
-                namespace,
-                language: "en".into(),
-                name: name.into(),
-                wikidata_id: None,
-                description: None,
-                infoboxes: Vec::new(),
-                sections: Vec::new(),
-                references: Vec::new(),
-                tables: Vec::new(),
-            },
-            rendered_html: "<p>Verified elsewhere</p>".into(),
-            categories,
-            redirects,
-        }
-    }
-
     #[test]
-    fn typed_joined_graph_revalidates_memberships_and_source_identity() {
-        let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
-        let article = joined_page(
-            42,
-            0,
-            "Physics",
-            vec!["Science".into()],
-            vec!["علم الفيزياء".into()],
+    fn streaming_revision_receipt_matches_legacy_v2_bytes() {
+        let all = BTreeMap::from([(1, 11), (90, 99), (123, 456)]);
+        let aliases = BTreeSet::from(["Alias".to_owned(), "Café".to_owned()]);
+        let selected = BTreeMap::from([(1, 11), (123, 456)]);
+        let actual = revision_receipt_sha256(
+            "enwiki",
+            "20261016",
+            "base-selection",
+            &all,
+            &aliases,
+            &selected,
         );
-        let graph = graph_from_joined(&[root.clone(), article.clone()], &BTreeSet::new()).unwrap();
-        assert_eq!(graph.graph["Category:Science"].articles, vec![42]);
-        assert!(graph.unresolved_redirect_titles.contains("علم الفيزياء"));
 
-        for invalid in [
-            " Science".to_owned(),
-            "Science ".to_owned(),
-            format!("Sci{}ence", '\u{202e}'),
-            format!("Sci{}ence", '\u{200f}'),
-            "x".repeat(4097),
-            "Science#fragment".to_owned(),
-        ] {
-            let mut bad = article.clone();
-            bad.categories = vec![invalid.clone()];
-            assert!(
-                matches!(
-                    graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
-                    Err(GraphBuildError::InvalidCategory(_))
-                ),
-                "invalid category accepted: {invalid}"
-            );
+        let mut legacy = b"foundation-wikipedia/revision-pinned-selection/v2\0".to_vec();
+        for value in ["enwiki", "20261016", "base-selection"] {
+            legacy.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            legacy.extend_from_slice(value.as_bytes());
         }
-        for invalid in [
-            " Physics".to_owned(),
+        legacy.extend_from_slice(&(all.len() as u64).to_be_bytes());
+        for (id, revision) in &all {
+            legacy.extend_from_slice(&id.to_be_bytes());
+            legacy.extend_from_slice(&revision.to_be_bytes());
+        }
+        legacy.extend_from_slice(&(aliases.len() as u64).to_be_bytes());
+        for title in &aliases {
+            legacy.extend_from_slice(&(title.len() as u64).to_be_bytes());
+            legacy.extend_from_slice(title.as_bytes());
+        }
+        legacy.extend_from_slice(&(selected.len() as u64).to_be_bytes());
+        for (id, revision) in &selected {
+            legacy.extend_from_slice(&id.to_be_bytes());
+            legacy.extend_from_slice(&revision.to_be_bytes());
+        }
+        assert_eq!(actual, wiki_pack_format::sha256_hex(&legacy));
+    }
+}
