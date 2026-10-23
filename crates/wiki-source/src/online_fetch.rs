@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn title_index_opens_verified_offline_article_without_http() {
-        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex, LocalTitleRedirect};
 
         let index = LocalTitleIndex::new(
             "enwiki",
@@ -516,6 +516,12 @@ mod tests {
                 version: local(),
             }],
         )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Introduction to physics".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 42,
+        }])
         .unwrap();
         let mut client = FakeTransport::default();
         assert_eq!(
@@ -523,6 +529,16 @@ mod tests {
                 &mut client,
                 "enwiki",
                 "physics",
+                NetworkState::Offline,
+                Some(&index),
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
+        assert_eq!(
+            fetch_title_with_local_index(
+                &mut client,
+                "enwiki",
+                "Introduction to physics",
                 NetworkState::Offline,
                 Some(&index),
             ),

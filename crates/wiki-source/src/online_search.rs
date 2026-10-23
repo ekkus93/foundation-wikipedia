@@ -405,7 +405,7 @@ mod tests {
     }
     #[test]
     fn verified_offline_title_search_never_invokes_http() {
-        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex};
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex, LocalTitleRedirect};
         use crate::online_selection::{ArticleLocation, ArticleVersion};
 
         struct NoNetwork;
@@ -430,6 +430,12 @@ mod tests {
                 },
             }],
         )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Introduction to physics".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 42,
+        }])
         .unwrap();
         let mut client = NoNetwork;
         let result = fetch_search_with_local(
@@ -446,6 +452,21 @@ mod tests {
         };
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].hit.key.page_id, 42);
+        assert_eq!(hits[0].version.revision_id, 99);
+        let aliased = fetch_search_with_local(
+            &mut client,
+            "enwiki",
+            "Introduction to phys",
+            5,
+            NetworkState::Offline,
+            Some(&index),
+        )
+        .unwrap();
+        let SearchOutcome::LocalResults(hits) = aliased else {
+            panic!("verified offline redirect must return local results");
+        };
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].hit.title, "Physics");
         assert_eq!(hits[0].version.revision_id, 99);
         assert_eq!(
             fetch_search_with_local(
