@@ -973,11 +973,11 @@ mod tests {
         );
         let normalized_crlf_alias = base.replace(
             "<page>",
-            "<page xmlns:a=\"urn:sha\\r\\nred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
+            "<page xmlns:a=\"urn:sha\r\nred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
         );
         let normalized_tab_alias = base.replace(
             "<page>",
-            "<page xmlns:a=\"urn:sha\\tred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
+            "<page xmlns:a=\"urn:sha\tred\" xmlns:b=\"urn:sha red\" a:hint=\"one\" b:hint=\"two\">",
         );
         let inherited_alias = base
             .replace(
