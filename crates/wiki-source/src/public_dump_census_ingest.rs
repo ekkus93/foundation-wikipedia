@@ -18,6 +18,8 @@ pub enum PinnedCensusError {
     Ingest(PageIngestError),
     Export(CensusExportError),
     CountMismatch,
+    Source(std::io::Error),
+    NativeDecode(CheckedMemberError<std::io::Error>),
 }
 
 #[derive(Debug)]
@@ -235,6 +237,44 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
     }
 }
 
+/// Stage a complete observed namespace census from real, inventory-pinned
+/// bzip2/XML members, without exposing the manual semantic-event feed seam.
+///
+/// `open_member` supplies a readable stream for each inventory path in order.
+/// Every stream is decoded against the inventory's own digest and bounded by
+/// both byte budgets. A failed open, decode, semantic audit, or final flush
+/// removes the private staging file and cannot publish a partial census.
+///
+/// This is still an *observed* census, not independently authenticated expected
+/// coverage or a qualified source snapshot. The caller must authenticate the
+/// inventory and independently audit source completeness before activation.
+pub fn stage_pinned_native_bzip2_census<R, F>(
+    root: &std::path::Path,
+    filename: &str,
+    inventory: &PinnedInventory,
+    namespace: i32,
+    max_compressed_bytes: u64,
+    max_decoded_bytes: u64,
+    mut open_member: F,
+) -> Result<(std::path::PathBuf, usize), CensusStageError>
+where
+    R: Read,
+    F: FnMut(&str) -> std::io::Result<R>,
+{
+    stage_pinned_observed_census(root, filename, inventory, namespace, |pipeline| {
+        for member in inventory.members() {
+            let input = open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
+            pipeline
+                .decode_native_bzip2_member(input, max_compressed_bytes, max_decoded_bytes)
+                .map_err(|error| match error {
+                    NativeCensusError::Census(error) => error,
+                    NativeCensusError::Decode(error) => PinnedCensusError::NativeDecode(error),
+                })?;
+        }
+        Ok(())
+    })
+}
+
 /// Publish an observed census from validated semantic events using a private,
 /// no-overwrite staging file. The callback must feed *all* pinned members and
 /// must only emit events from independently checksum-verified, well-formed XML.
@@ -369,6 +409,120 @@ mod tests {
         pipeline.push(PageEvent::Timestamp("2026-10-01T12:00:00Z"))?;
         pipeline.push(PageEvent::EndRevision)?;
         pipeline.push(PageEvent::EndPage)
+    }
+
+    #[test]
+    fn native_staging_decodes_all_pinned_members_and_never_publishes_failed_shards() {
+        use std::fs;
+        use std::io::Cursor;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "wiki-native-census-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+
+        let xml = [
+            "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>9001</id></contributor></revision></page></mediawiki>",
+            "<mediawiki><page><title>Biology</title><ns>0</ns><id>201</id><revision><id>1201</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>",
+        ];
+        let compressed: Vec<Vec<u8>> = xml
+            .iter()
+            .map(|text| {
+                let mut encoder =
+                    bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+                encoder.write_all(text.as_bytes()).unwrap();
+                encoder.finish().unwrap()
+            })
+            .collect();
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n{:x}  enwiki-2026-10-01-p201p300.xml.bz2\\n",
+            Sha256::digest(&compressed[0]),
+            Sha256::digest(&compressed[1])
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let open = |path: &str| {
+            let index = pinned
+                .members()
+                .iter()
+                .position(|member| member.relative_path == path)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown member"))?;
+            Ok(Cursor::new(compressed[index].as_slice()))
+        };
+        let (published, count) = stage_pinned_native_bzip2_census(
+            &root,
+            "native.ids",
+            &pinned,
+            0,
+            4096,
+            4096,
+            open,
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(fs::read(&published).unwrap(), b"1\\n201\\n");
+
+        // The first shard is valid, but the second has a forged pinned digest.
+        // Its failure must leave no second published file or temporary bytes.
+        let bad_sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n{}  enwiki-2026-10-01-p201p300.xml.bz2\\n",
+            Sha256::digest(&compressed[0]),
+            "0".repeat(64)
+        );
+        let bad_digest = format!("{:x}", Sha256::digest(bad_sums.as_bytes()));
+        let bad_pinned =
+            parse_pinned_inventory(bad_sums.as_bytes(), "enwiki", "2026-10-01", &bad_digest)
+                .unwrap();
+        assert!(matches!(
+            stage_pinned_native_bzip2_census(
+                &root,
+                "bad.ids",
+                &bad_pinned,
+                0,
+                4096,
+                4096,
+                |path| {
+                    let index = bad_pinned
+                        .members()
+                        .iter()
+                        .position(|member| member.relative_path == path)
+                        .unwrap();
+                    Ok(Cursor::new(compressed[index].as_slice()))
+                }
+            ),
+            Err(CensusStageError::Census(PinnedCensusError::NativeDecode(
+                CheckedMemberError::DigestMismatch
+            )))
+        ));
+        assert!(matches!(
+            stage_pinned_native_bzip2_census(
+                &root,
+                "unavailable.ids",
+                &pinned,
+                0,
+                4096,
+                4096,
+                |_path| Err::<Cursor<&[u8]>, _>(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "source member unavailable"
+                ))
+            ),
+            Err(CensusStageError::Census(PinnedCensusError::Source(error)))
+                if error.kind() == io::ErrorKind::NotFound
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        assert_eq!(fs::read(&published).unwrap(), b"1\\n201\\n");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
