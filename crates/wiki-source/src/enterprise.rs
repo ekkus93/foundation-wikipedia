@@ -947,10 +947,8 @@ mod tests {
             format!("Phy{}sics", '\u{200f}'),
             "x".repeat(4097),
         ] {
-            let input = regular_json().replace(
-                "\"name\":\"Physics\"",
-                &format!("\"name\":\"{invalid}\""),
-            );
+            let input =
+                regular_json().replace("\"name\":\"Physics\"", &format!("\"name\":\"{invalid}\""));
             assert_eq!(
                 parse_regular_companion_complete(&input, "2026-10-01"),
                 Err(EnterpriseError::InvalidField("categories"))
@@ -964,10 +962,7 @@ mod tests {
             parse_regular_companion_complete(&invalid_redirect, "2026-10-01"),
             Err(EnterpriseError::InvalidField("redirects"))
         );
-        let legitimate_rtl = regular_json().replace(
-            "\"name\":\"Physics\"",
-            "\"name\":\"فيزياء\"",
-        );
+        let legitimate_rtl = regular_json().replace("\"name\":\"Physics\"", "\"name\":\"فيزياء\"");
         assert!(parse_regular_companion_complete(&legitimate_rtl, "2026-10-01").is_ok());
     }
 
