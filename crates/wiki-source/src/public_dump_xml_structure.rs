@@ -124,6 +124,63 @@ impl<W: Write> XmlNestingGuard<W> {
         true
     }
 
+    /// The XML text guard only accepts UTF-8 and XML 1.0, so a declaration
+    /// must not advertise a different encoding or XML character model.
+    fn valid_xml_declaration(token: &[u8]) -> bool {
+        let Some(mut rest) = token
+            .strip_prefix(b"<?xml")
+            .and_then(|body| body.strip_suffix(b"?>"))
+        else {
+            return false;
+        };
+        let mut stage = 0u8;
+        while !rest.is_empty() {
+            let spaces = rest.iter().take_while(|b| b.is_ascii_whitespace()).count();
+            if spaces == 0 {
+                return false;
+            }
+            rest = &rest[spaces..];
+            if rest.is_empty() {
+                break;
+            }
+            let end = rest
+                .iter()
+                .position(|b| b.is_ascii_whitespace() || *b == b'=')
+                .unwrap_or(rest.len());
+            let name = &rest[..end];
+            rest = &rest[end..];
+            let spaces = rest.iter().take_while(|b| b.is_ascii_whitespace()).count();
+            rest = &rest[spaces..];
+            if !rest.starts_with(b"=") {
+                return false;
+            }
+            rest = &rest[1..];
+            let spaces = rest.iter().take_while(|b| b.is_ascii_whitespace()).count();
+            rest = &rest[spaces..];
+            let Some(&quote) = rest.first() else {
+                return false;
+            };
+            if quote != b'\'' && quote != b'"' {
+                return false;
+            }
+            rest = &rest[1..];
+            let Some(end) = rest.iter().position(|b| *b == quote) else {
+                return false;
+            };
+            let value = &rest[..end];
+            rest = &rest[end + 1..];
+            match name {
+                b"version" if stage == 0 && value == b"1.0" => stage = 1,
+                b"encoding" if stage == 1 && value.eq_ignore_ascii_case(b"utf-8") => stage = 2,
+                b"standalone" if (stage == 1 || stage == 2) && (value == b"yes" || value == b"no") => {
+                    stage = 3;
+                }
+                _ => return false,
+            }
+        }
+        stage != 0
+    }
+
     fn attributes(mut bytes: &[u8]) -> bool {
         let mut seen = BTreeSet::new();
         while !bytes.is_empty() {
@@ -307,6 +364,17 @@ impl<W: Write> XmlNestingGuard<W> {
                     if self.root_seen {
                         return Err(self.invalid());
                     }
+                    let body = &self.token[2..self.token.len() - 2];
+                    let target_end = body
+                        .iter()
+                        .position(|b| b.is_ascii_whitespace() || *b == b'?')
+                        .unwrap_or(body.len());
+                    let target = &body[..target_end];
+                    if target.eq_ignore_ascii_case(b"xml")
+                        && (target != b"xml" || !Self::valid_xml_declaration(&self.token))
+                    {
+                        return Err(self.invalid());
+                    }
                     self.mode = Mode::Text;
                     self.token.clear();
                 }
@@ -475,6 +543,37 @@ mod tests {
                 guard.write_all(chunk).unwrap();
             }
             assert_eq!(guard.finish().unwrap(), xml.as_bytes());
+        }
+    }
+
+    #[test]
+    fn xml_declaration_must_match_utf8_xml10_decoder() {
+        for good in [
+            "<?xml version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone='yes'?><mediawiki><page></page></mediawiki>",
+            "<?xml-stylesheet href='x'?><mediawiki><page></page></mediawiki>",
+        ] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            for chunk in good.as_bytes().chunks(1) {
+                guard.write_all(chunk).unwrap();
+            }
+            assert_eq!(guard.finish().unwrap(), good.as_bytes());
+        }
+        for bad in [
+            "<?xml version='1.1'?><mediawiki><page></page></mediawiki>",
+            "<?xml version='1.0' encoding='ISO-8859-1'?><mediawiki><page></page></mediawiki>",
+            "<?xml version='1.0' encoding='UTF-16'?><mediawiki><page></page></mediawiki>",
+            "<?xml encoding='utf-8'?><mediawiki><page></page></mediawiki>",
+            "<?xml version='1.0' standalone='maybe'?><mediawiki><page></page></mediawiki>",
+            "<?xml version='1.0' version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<?XML version='1.0'?><mediawiki><page></page></mediawiki>",
+        ] {
+            let mut guard = XmlNestingGuard::new(Vec::new());
+            let result = bad
+                .as_bytes()
+                .chunks(2)
+                .try_for_each(|chunk| guard.write_all(chunk));
+            assert!(result.is_err() || guard.finish().is_err(), "{bad}");
         }
     }
 
