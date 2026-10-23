@@ -36,6 +36,8 @@ pub mod public_dump_stream;
 pub mod public_dump_strict;
 pub mod public_dump_verify;
 
+mod strict_json;
+
 use std::collections::BTreeSet;
 
 /// Provisional resource bounds for one verified source generation.

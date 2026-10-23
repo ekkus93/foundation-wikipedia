@@ -150,7 +150,7 @@ fn parse_json(input: &str) -> Result<Value, EnterpriseError> {
     if input.len() > MAX_ENTERPRISE_RECORD_BYTES {
         return Err(EnterpriseError::RecordTooLarge);
     }
-    serde_json::from_str(input).map_err(|_| EnterpriseError::InvalidJson)
+    crate::strict_json::parse(input).map_err(|_| EnterpriseError::InvalidJson)
 }
 
 fn object<'a>(
@@ -894,6 +894,34 @@ mod tests {
             parse_structured_article(&structured_json(), "../another-generation"),
             Err(EnterpriseError::InvalidGeneration)
         );
+    }
+
+    #[test]
+    fn duplicate_json_fields_cannot_override_enterprise_provenance() {
+        let outer = structured_json().replace(
+            "\"identifier\":42",
+            "\"identifier\":42,\"identifier\":43",
+        );
+        let nested = regular_json().replace(
+            "\"version\":{\"identifier\":99}",
+            "\"version\":{\"identifier\":99,\"identifier\":100}",
+        );
+        let metadata = structured_json().replace(
+            "\"description\":\"natural phenomenon\"",
+            "\"description\":\"old\",\"description\":\"natural phenomenon\"",
+        );
+        for input in [outer, metadata] {
+            assert_eq!(
+                parse_structured_article(&input, "2026-10-01"),
+                Err(EnterpriseError::InvalidJson)
+            );
+        }
+        assert_eq!(
+            parse_regular_companion_complete(&nested, "2026-10-01"),
+            Err(EnterpriseError::InvalidJson)
+        );
+        assert!(parse_structured_article(&structured_json(), "2026-10-01").is_ok());
+        assert!(parse_regular_companion_complete(&regular_json(), "2026-10-01").is_ok());
     }
 
     #[test]
