@@ -93,6 +93,13 @@ pub fn graph_from_joined(
     {
         return Err(GraphBuildError::InvalidIdentity);
     }
+    // Administrative skip policy must use the same canonical category
+    // keys as the graph. A bare name would silently fail to mark a category.
+    for category in administrative {
+        if !category.starts_with("Category:") || category_title(category)? != *category {
+            return Err(GraphBuildError::InvalidCategory(category.clone()));
+        }
+    }
     let mut graph = BTreeMap::new();
     let mut page_revisions = BTreeMap::new();
     let mut unresolved_redirect_titles = BTreeSet::new();

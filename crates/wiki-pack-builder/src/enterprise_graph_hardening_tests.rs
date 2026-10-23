@@ -114,3 +114,21 @@ fn typed_joined_graph_revalidates_memberships_and_source_identity() {
         ));
     }
 }
+
+#[test]
+fn administrative_policy_requires_canonical_safe_category_keys() {
+    let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
+    let article = joined_page(42, 0, "Physics", vec!["Science".into()], vec![]);
+    let records = [root, article];
+    let allowed = BTreeSet::from(["Category:Science".to_owned()]);
+    let graph = graph_from_joined(&records, &allowed).unwrap();
+    assert!(graph.graph["Category:Science"].administrative);
+
+    for invalid in ["Science", "Category: Science", "Category:Sci\u{202e}ence"] {
+        let policy = BTreeSet::from([invalid.to_owned()]);
+        assert!(matches!(
+            graph_from_joined(&records, &policy),
+            Err(GraphBuildError::InvalidCategory(_))
+        ));
+    }
+}
