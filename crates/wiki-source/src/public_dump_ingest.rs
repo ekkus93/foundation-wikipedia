@@ -46,6 +46,10 @@ impl<'a> PinnedPageIngest<'a> {
         }
     }
 
+    fn project(&self) -> &str {
+        self.audit.project()
+    }
+
     fn matches_next_member(&self, member: &crate::public_dump::DumpChecksum) -> bool {
         !self.failed && !self.active && !self.in_page && self.audit.matches_next_member(member)
     }
@@ -185,9 +189,11 @@ pub fn ingest_pinned_bzip2_member<R: std::io::Read>(
         .begin_member(&member.relative_path)
         .map_err(PinnedDecodeError::Ingest)?;
     let mut callback_error = None;
-    let decoded = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata(
+    let project = ingest.project().to_owned();
+    let decoded = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata_for_project(
         input,
         member,
+        &project,
         max_compressed_bytes,
         max_decoded_bytes,
         |page| {
@@ -355,6 +361,44 @@ mod tests {
         assert_eq!(decoded, xml.len() as u64);
         assert_eq!(count, 1);
         assert_eq!(ingest.finish(), Ok(1));
+    }
+
+    #[test]
+    fn pinned_native_ingest_rejects_forged_siteinfo_database_identity() {
+        for (database, accepted) in [("frwiki", false), ("enwiki", true)] {
+            let xml = format!(
+                "<mediawiki><siteinfo><dbname>{database}</dbname></siteinfo><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>22</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>"
+            );
+            let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+            encoder.write_all(xml.as_bytes()).unwrap();
+            let compressed = encoder.finish().unwrap();
+            let sums = format!(
+                "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n",
+                Sha256::digest(&compressed)
+            );
+            let pinned = parse_pinned_inventory(
+                sums.as_bytes(),
+                "enwiki",
+                "2026-10-01",
+                &format!("{:x}", Sha256::digest(sums.as_bytes())),
+            )
+            .unwrap();
+            let mut ingest = PinnedPageIngest::new(&pinned);
+            let result = ingest_pinned_bzip2_member(
+                &mut ingest,
+                &pinned.members()[0],
+                Cursor::new(&compressed),
+                4096,
+                4096,
+            );
+            if accepted {
+                assert_eq!(result.unwrap().1, 1);
+                assert_eq!(ingest.finish(), Ok(1));
+            } else {
+                assert!(matches!(result, Err(PinnedDecodeError::Decode(_))));
+                assert_eq!(ingest.finish(), Err(PageIngestError::InvalidState));
+            }
+        }
     }
 
     #[test]

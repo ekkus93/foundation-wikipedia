@@ -67,6 +67,10 @@ impl<'a> StreamShardAudit<'a> {
         }
     }
 
+    pub(crate) fn project(&self) -> &str {
+        self.inventory.project()
+    }
+
     /// Check the complete descriptor, including SHA-256, against the next
     /// inventory member before a caller-controlled decoder is allowed to run.
     pub(crate) fn matches_next_member(&self, member: &crate::public_dump::DumpChecksum) -> bool {
