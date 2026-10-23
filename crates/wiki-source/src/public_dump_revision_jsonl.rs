@@ -387,16 +387,16 @@ mod tests {
             serde_json::from_str(&record(1, "Valid wikitext")).unwrap();
         for field in ["title", "redirect_target"] {
             for rejected in [
-                "A\\u{200b}B",
-                "A\\u{202e}B",
-                "A\\u{2060}B",
-                "A\\u{feff}B",
-                "A\\u{1fffe}B",
-                "A\\u{10ffff}B",
+                "A\u{200b}B",
+                "A\u{202e}B",
+                "A\u{2060}B",
+                "A\u{feff}B",
+                "A\u{1fffe}B",
+                "A\u{10ffff}B",
             ] {
                 let mut row = baseline.clone();
                 row[field] = serde_json::json!(rejected);
-                let input = format!("{row}\\n");
+                let input = format!("{row}\n");
                 let mut reader = DiagnosticRevisionLines::new(
                     Cursor::new(input.as_bytes()),
                     "enwiki",
@@ -405,7 +405,10 @@ mod tests {
                 )
                 .unwrap();
                 assert!(
-                    matches!(reader.next(), Some(Err(RevisionRecordError::InvalidRecord))),
+                    matches!(
+                        reader.next(),
+                        Some(Err(RevisionRecordError::InvalidRecord))
+                    ),
                     "{field} accepted forbidden label: {rejected:?}"
                 );
                 assert!(reader.next().is_none(), "invalid record must poison reader");
@@ -413,7 +416,7 @@ mod tests {
             for accepted in ["می‌روم", "क्‍ष", "العربية", "עברית", "日本語"] {
                 let mut row = baseline.clone();
                 row[field] = serde_json::json!(accepted);
-                let input = format!("{row}\\n");
+                let input = format!("{row}\n");
                 let rows = parse(input.as_bytes()).unwrap();
                 assert_eq!(rows.len(), 1, "{field}: {accepted}");
             }
