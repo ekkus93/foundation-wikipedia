@@ -842,19 +842,16 @@ mod tests {
     fn namespace_uri_character_references_cannot_hide_reserved_bindings() {
         let official = VALID.replace(
             "<mediawiki>",
-            "<mediawiki xmlns=\\\"http://www.mediawiki.org/xml/export-0.11/\\\">",
+            r#"<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">"#,
         );
-        let encoded_default = official.replace(
-            "export-0.11/",
-            "export-0.&#x31;1/",
-        );
+        let encoded_default = official.replace("export-0.11/", "export-0.&#x31;1/");
         let encoded_xml = official.replace(
             "<page>",
-            "<page xmlns:xml=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce\\\">",
+            r#"<page xmlns:xml="http://www.w3.org/XML/1998/namesp&#x61;ce">"#,
         );
         let encoded_extension = official.replace(
             "<page>",
-            "<page xmlns:ext=\\\"urn:foo&amp;bar\\\" ext:note=\\\"ok\\\">",
+            r#"<page xmlns:ext="urn:foo&amp;bar" ext:note="ok">"#,
         );
         for valid in [&encoded_default, &encoded_xml, &encoded_extension] {
             for chunk_size in [1, 2, 7, 8192] {
@@ -869,15 +866,15 @@ mod tests {
         for bad in [
             official.replace(
                 "<page>",
-                "<page xmlns:evil=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce\\\">",
+                r#"<page xmlns:evil="http://www.w3.org/XML/1998/namesp&#x61;ce">"#,
             ),
             official.replace(
                 "<page>",
-                "<page xmlns:evil=\\\"http://www.w3.org/2000/xmln&#x73;/\\\">",
+                r#"<page xmlns:evil="http://www.w3.org/2000/xmln&#x73;/">"#,
             ),
             official.replace(
                 "<page>",
-                "<page xmlns:xml=\\\"http://www.w3.org/XML/1998/namesp&#x61;ce-evil\\\">",
+                r#"<page xmlns:xml="http://www.w3.org/XML/1998/namesp&#x61;ce-evil">"#,
             ),
         ] {
             for chunk_size in [1, 2, 7, 8192] {
