@@ -613,10 +613,8 @@ mod identity_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-fts-readonly-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-fts-readonly-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let database = root.join("derived.sqlite");
         {
