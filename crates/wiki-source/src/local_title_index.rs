@@ -214,9 +214,13 @@ impl LocalTitleIndex {
         Ok(self.titles.get(canonical).cloned())
     }
 
-    /// Deterministic prefix lookup, not full-text or fuzzy search. Wikipedia's
-    /// first-letter case normalization is used, not locale-wide case folding.
-    /// Results are bounded and preserve pack/save/cache location and revision.
+    /// Deterministic prefix lookup over canonical titles and verified direct
+    /// redirects, not full-text or fuzzy search. A redirect is navigation
+    /// metadata: hits always show the canonical title and verified local
+    /// revision, never claim that the alias is a second installed article.
+    ///
+    /// Merge the two sorted key ranges without collecting all matches. Multiple
+    /// aliases for one page are deduplicated before applying the result limit.
     pub fn search_prefix(
         &self,
         query: &str,
@@ -229,13 +233,39 @@ impl LocalTitleIndex {
             return Err(LocalTitleIndexError::InvalidLimit);
         }
         let prefix = wikipedia_title_key(query);
-        Ok(self
+        let mut titles = self
             .titles
             .range(prefix.clone()..)
             .take_while(|(key, _)| key.starts_with(&prefix))
-            .take(limit)
-            .map(|(_, hit)| hit.clone())
-            .collect())
+            .peekable();
+        let mut redirects = self
+            .redirects
+            .range(prefix.clone()..)
+            .take_while(|(key, _)| key.starts_with(&prefix))
+            .peekable();
+        let mut hits = Vec::with_capacity(limit);
+        let mut seen_pages = HashSet::new();
+
+        while hits.len() < limit {
+            let use_title = match (titles.peek(), redirects.peek()) {
+                (None, None) => break,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (Some((title, _)), Some((alias, _))) => title <= alias,
+            };
+            let hit = if use_title {
+                titles.next().map(|(_, hit)| hit)
+            } else {
+                redirects
+                    .next()
+                    .and_then(|(_, canonical)| self.titles.get(canonical))
+            }
+            .ok_or(LocalTitleIndexError::UnknownRedirectTarget)?;
+            if seen_pages.insert(hit.hit.key.page_id) {
+                hits.push(hit.clone());
+            }
+        }
+        Ok(hits)
     }
 }
 
@@ -396,10 +426,51 @@ mod tests {
             2
         );
         assert_eq!(index.len(), 2);
-        assert!(index
-            .search_prefix("Physical science", 5)
-            .unwrap()
-            .is_empty());
+        let aliases = index.search_prefix("Physical science", 5).unwrap();
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].hit.title, "Physics");
+        assert_eq!(aliases[0].version.revision_id, 101);
+    }
+
+    #[test]
+    fn offline_alias_prefix_search_deduplicates_before_limit() {
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [
+                entry(1, "Physics", ArticleLocation::InstalledPack),
+                entry(2, "Physical chemistry", ArticleLocation::ExplicitOfflineSave),
+            ],
+        )
+        .unwrap()
+        .with_redirects([
+            LocalTitleRedirect {
+                alias: "Physical sciences".into(),
+                canonical_title: "Physics".into(),
+                target_page_id: 1,
+            },
+            LocalTitleRedirect {
+                alias: "Physics basics".into(),
+                canonical_title: "Physics".into(),
+                target_page_id: 1,
+            },
+            LocalTitleRedirect {
+                alias: "Phys chem".into(),
+                canonical_title: "Physical chemistry".into(),
+                target_page_id: 2,
+            },
+        ])
+        .unwrap();
+
+        // The earliest alias must not consume a slot again when its canonical
+        // title appears later in the sorted merge.
+        let hits = index.search_prefix("phys", 2).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].hit.key.page_id, 2);
+        assert_eq!(hits[1].hit.key.page_id, 1);
+        assert_eq!(hits[0].version.location, ArticleLocation::ExplicitOfflineSave);
+        assert_eq!(hits[1].version.location, ArticleLocation::InstalledPack);
+        assert_eq!(index.search_prefix("Physics basics", 1).unwrap()[0].hit.title, "Physics");
+        assert_eq!(index.search_prefix("Phys", 1).unwrap().len(), 1);
     }
 
     #[test]
