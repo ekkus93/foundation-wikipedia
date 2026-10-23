@@ -52,3 +52,30 @@ generation and expected census, revision-matched MediaWiki/Parsoid rendering,
 templates/Lua/math, mandatory offline visuals with attribution, complete
 pack/export/install, and desktop/Android acceptance. Do not mark SRC-003
 complete until its explicit acceptance criteria are satisfied.
+
+## Pinned census integration (follow-up)
+
+The Rust `PinnedObservedCensus::decode_checked_member` method now binds
+`decode_checked_member` to the existing fail-closed page event and shard
+validation state machine. A parser callback consumes the exact compressed
+reader and emits semantic `PageEvent` values. A member is closed only if
+the decoder returns success *and* fully consumes the stream without I/O
+or digest error. Any failure poisons the census pipeline, so callers cannot
+replay a later shard or publish a successful census from pages emitted before
+the failed digest check.
+
+Synthetic positive and negative tests cover an exact digest-pinned two-shard
+census, a wrong digest after valid page events, and a decoder that returns
+early with unread trailing bytes.
+
+- Initial code SHA `d9e556e65d6c4b18336307b81cc936a9ac496be3` failed rustfmt in
+  [Rust CI 39938805710](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39938805710).
+- Corrected exact source SHA **`3e8dc9639c897b07b4fbba1be7b3578067988604`** passed
+  [Rust workspace CI 39938942593](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39938942593)
+  and [Platform shells CI 39938942735](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39938942735).
+
+The callback still must implement real portable bzip2 and strict streaming
+MediaWiki XML decoding before this becomes an operational dump importer.
+The digest expected by the pinned inventory must be independently authenticated;
+no check in this module proves completeness, publisher authenticity or
+offline article/media fidelity. **SRC-003 remains unchecked.**
