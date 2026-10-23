@@ -156,7 +156,6 @@ impl SourceGeneration {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     fn sample() -> SourceGeneration {
