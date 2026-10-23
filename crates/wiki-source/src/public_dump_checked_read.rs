@@ -483,5 +483,4 @@ mod tests {
         );
         assert!(matches!(invalid, Err(CheckedMemberError::InvalidLimit)));
     }
-
 }
