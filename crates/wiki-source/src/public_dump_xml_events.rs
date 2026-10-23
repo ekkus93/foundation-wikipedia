@@ -215,6 +215,59 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
         title
     }
 
+    /// Preserve the Wikimedia export namespace identity. A foreign default
+    /// namespace or a descendant rebinding must never be interpreted as an
+    /// ordinary MediaWiki page, even if its local tag names match.
+    ///
+    /// Namespace syntax is already checked by XmlNestingGuard. This is an
+    /// additional semantic check, not proof of upstream source authenticity.
+    fn official_export_namespace(value: &[u8]) -> bool {
+        let Some(version) = value
+            .strip_prefix(b"http://www.mediawiki.org/xml/export-0.")
+            .and_then(|suffix| suffix.strip_suffix(b"/"))
+        else {
+            return false;
+        };
+        !version.is_empty() && version.len() <= 3 && version.iter().all(u8::is_ascii_digit)
+    }
+
+    fn valid_namespace_attributes(mut attrs: &[u8], root: bool) -> bool {
+        while !attrs.is_empty() {
+            attrs = attrs.trim_ascii_start();
+            if attrs.is_empty() {
+                break;
+            }
+            let end = attrs
+                .iter()
+                .position(|byte| byte.is_ascii_whitespace() || *byte == b'=')
+                .unwrap_or(attrs.len());
+            if end == 0 {
+                return false;
+            }
+            let key = &attrs[..end];
+            attrs = attrs[end..].trim_ascii_start();
+            let Some(rest) = attrs.strip_prefix(b"=") else {
+                return false;
+            };
+            attrs = rest.trim_ascii_start();
+            let Some(&quote) = attrs.first() else {
+                return false;
+            };
+            if quote != b'\'' && quote != b'"' {
+                return false;
+            }
+            attrs = &attrs[1..];
+            let Some(end) = attrs.iter().position(|byte| *byte == quote) else {
+                return false;
+            };
+            if key == b"xmlns" && (!root || !Self::official_export_namespace(&attrs[..end])) {
+                return false;
+            }
+            attrs = &attrs[end + 1..];
+        }
+        true
+    }
+
     fn finish_field(&mut self) -> io::Result<()> {
         let field = self.field.take().ok_or_else(|| self.invalid())?;
         let raw = std::mem::take(&mut self.field_bytes);
@@ -274,6 +327,9 @@ impl<F: FnMut(PublicDumpPage) -> io::Result<()>> XmlPageMetadataWriter<F> {
             .unwrap_or(body.len());
         let name = std::str::from_utf8(&body[..end]).map_err(|_| self.invalid())?;
         if name.is_empty() {
+            return Err(self.invalid());
+        }
+        if !closing && !Self::valid_namespace_attributes(&body[end..], self.path.is_empty()) {
             return Err(self.invalid());
         }
         if closing {
@@ -570,6 +626,41 @@ mod tests {
         let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
         writer.write_all(VALID.as_bytes()).unwrap();
         assert_eq!(writer.finish().unwrap().1, 1);
+    }
+
+    #[test]
+    fn rejects_foreign_and_rebound_default_xml_namespaces() {
+        let official = VALID.replace(
+            "<mediawiki>",
+            "<mediawiki xmlns=\"http://www.mediawiki.org/xml/export-0.11/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">",
+        );
+        for size in [1, 2, 7, 8192] {
+            let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+            for chunk in official.as_bytes().chunks(size) {
+                writer.write_all(chunk).unwrap();
+            }
+            assert_eq!(writer.finish().unwrap().1, 1);
+        }
+
+        for bad in [
+            official.replace("export-0.11/", "other-0.11/"),
+            official.replace("<page>", "<page xmlns=\"\">"),
+            official.replace("<title>", "<title xmlns=\"urn:forged\">"),
+            VALID.replace("<page>", "<page xmlns=\"urn:foreign\">"),
+            VALID.replace("<mediawiki>", "<mediawiki xmlns=\"urn:foreign\">"),
+        ] {
+            for size in [1, 2, 7, 8192] {
+                let mut writer = XmlPageMetadataWriter::new(|_| Ok(()));
+                let result = bad
+                    .as_bytes()
+                    .chunks(size)
+                    .try_for_each(|chunk| writer.write_all(chunk));
+                assert!(
+                    result.is_err() || writer.finish().is_err(),
+                    "foreign namespace accepted"
+                );
+            }
+        }
     }
 
     #[test]
