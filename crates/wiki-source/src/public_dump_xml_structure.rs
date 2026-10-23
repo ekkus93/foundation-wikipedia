@@ -32,6 +32,8 @@ pub struct XmlNestingGuard<W> {
     stack: Vec<String>,
     root_seen: bool,
     root_closed: bool,
+    // The XML declaration is permitted only as the first document construct.
+    xml_declaration_allowed: bool,
     pages: u64,
     // XML 1.0 forbids the CDATA terminator in ordinary character data.
     text_right_brackets: u8,
@@ -48,6 +50,7 @@ impl<W: Write> XmlNestingGuard<W> {
             stack: Vec::new(),
             root_seen: false,
             root_closed: false,
+            xml_declaration_allowed: true,
             pages: 0,
             text_right_brackets: 0,
             failed: false,
@@ -251,6 +254,7 @@ impl<W: Write> XmlNestingGuard<W> {
             return Err(self.invalid());
         }
         let name = std::str::from_utf8(name).map_err(|_| self.invalid())?;
+        self.xml_declaration_allowed = false;
         if closing {
             if self.stack.pop().as_deref() != Some(name) {
                 return Err(self.invalid());
@@ -283,6 +287,9 @@ impl<W: Write> XmlNestingGuard<W> {
     fn byte(&mut self, byte: u8) -> io::Result<()> {
         match self.mode {
             Mode::Text => {
+                if !self.root_seen && self.stack.is_empty() && byte != b'<' {
+                    self.xml_declaration_allowed = false;
+                }
                 // Track raw text across write/chunk boundaries. Entity references
                 // and markup reset the sequence; CDATA is handled separately.
                 if byte == b'>' && self.text_right_brackets == 2 {
@@ -325,6 +332,7 @@ impl<W: Write> XmlNestingGuard<W> {
                     return Err(self.invalid());
                 }
                 if self.token == b"<!--" {
+                    self.xml_declaration_allowed = false;
                     self.mode = Mode::Comment;
                     self.token.clear();
                 } else if self.token == b"<![CDATA[" {
@@ -363,20 +371,26 @@ impl<W: Write> XmlNestingGuard<W> {
                     return Err(self.invalid());
                 }
                 if self.token.ends_with(b"?>") {
-                    if self.root_seen {
-                        return Err(self.invalid());
-                    }
                     let body = &self.token[2..self.token.len() - 2];
                     let target_end = body
                         .iter()
-                        .position(|b| b.is_ascii_whitespace() || *b == b'?')
+                        .position(u8::is_ascii_whitespace)
                         .unwrap_or(body.len());
                     let target = &body[..target_end];
+                    if !Self::name(target) {
+                        return Err(self.invalid());
+                    }
                     if target.eq_ignore_ascii_case(b"xml")
-                        && (target != b"xml" || !Self::valid_xml_declaration(&self.token))
+                        && (target != b"xml"
+                            || !self.xml_declaration_allowed
+                            || !Self::valid_xml_declaration(&self.token))
                     {
                         return Err(self.invalid());
                     }
+                    // XML permits ordinary processing instructions before,
+                    // inside, and after the document element. Only the XML
+                    // declaration is constrained to the absolute beginning.
+                    self.xml_declaration_allowed = false;
                     self.mode = Mode::Text;
                     self.token.clear();
                 }
@@ -576,6 +590,42 @@ mod tests {
                 .chunks(2)
                 .try_for_each(|chunk| guard.write_all(chunk));
             assert!(result.is_err() || guard.finish().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn processing_instructions_obey_xml_target_and_declaration_position() {
+        for good in [
+            "<?xml version='1.0'?><mediawiki><page><?hint mode='safe'?></page></mediawiki><?after?>",
+            "<?before?><mediawiki><page></page></mediawiki><?after?>",
+            "<mediawiki><page><?target?></page></mediawiki>",
+        ] {
+            for size in [1, 2, 7, 8192] {
+                let mut guard = XmlNestingGuard::new(Vec::new());
+                for chunk in good.as_bytes().chunks(size) {
+                    guard.write_all(chunk).unwrap();
+                }
+                assert_eq!(guard.finish().unwrap(), good.as_bytes());
+            }
+        }
+        for bad in [
+            " <?xml version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<!--before--><?xml version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<?before?><?xml version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<?xml version='1.0'?><?xml version='1.0'?><mediawiki><page></page></mediawiki>",
+            "<mediawiki><page><?xml version='1.0'?></page></mediawiki>",
+            "<??><mediawiki><page></page></mediawiki>",
+            "<?1bad?><mediawiki><page></page></mediawiki>",
+            "<?bad?target?><mediawiki><page></page></mediawiki>",
+        ] {
+            for size in [1, 2, 7, 8192] {
+                let mut guard = XmlNestingGuard::new(Vec::new());
+                let result = bad
+                    .as_bytes()
+                    .chunks(size)
+                    .try_for_each(|chunk| guard.write_all(chunk));
+                assert!(result.is_err() || guard.finish().is_err(), "{bad}");
+            }
         }
     }
 
