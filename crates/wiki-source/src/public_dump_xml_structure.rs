@@ -57,7 +57,7 @@ impl<W: Write> XmlNestingGuard<W> {
         !bytes.is_empty()
             && matches!(bytes[0], b'a'..=b'z' | b'A'..=b'Z' | b'_' | b':')
             && bytes.iter().skip(1).all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':' | b'.' | b'-')
+                byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b':' | b'.' | b'-')
             })
     }
 
@@ -88,9 +88,12 @@ impl<W: Write> XmlNestingGuard<W> {
             bytes = &bytes[1..];
             let whitespace = bytes.iter().take_while(|b| b.is_ascii_whitespace()).count();
             bytes = &bytes[whitespace..];
-            let Some(&quote @ (b'\'' | b'"')) = bytes.first() else {
+            let Some(&quote) = bytes.first() else {
                 return false;
             };
+            if quote != b'\'' && quote != b'"' {
+                return false;
+            }
             bytes = &bytes[1..];
             let Some(end) = bytes.iter().position(|b| *b == quote) else {
                 return false;
@@ -181,9 +184,7 @@ impl<W: Write> XmlNestingGuard<W> {
                     self.mode = Mode::Cdata;
                     self.token.clear();
                 } else if self.token.starts_with(b"<!") {
-                    if !b"<!--".starts_with(&self.token)
-                        && !b"<![CDATA[".starts_with(&self.token)
-                    {
+                    if !b"<!--".starts_with(&self.token) && !b"<![CDATA[".starts_with(&self.token) {
                         return Err(self.invalid());
                     }
                 } else if self.token.starts_with(b"<?") {
