@@ -172,7 +172,9 @@ impl<W: Write> XmlNestingGuard<W> {
             match name {
                 b"version" if stage == 0 && value == b"1.0" => stage = 1,
                 b"encoding" if stage == 1 && value.eq_ignore_ascii_case(b"utf-8") => stage = 2,
-                b"standalone" if (stage == 1 || stage == 2) && (value == b"yes" || value == b"no") => {
+                b"standalone"
+                    if (stage == 1 || stage == 2) && (value == b"yes" || value == b"no") =>
+                {
                     stage = 3;
                 }
                 _ => return false,
