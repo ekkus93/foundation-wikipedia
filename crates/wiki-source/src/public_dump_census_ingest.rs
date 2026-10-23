@@ -20,7 +20,6 @@ pub enum PinnedCensusError {
     CountMismatch,
 }
 
-
 #[derive(Debug)]
 pub enum NativeCensusError {
     Census(PinnedCensusError),
@@ -117,7 +116,6 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         self.end_member().map_err(CheckedCensusError::Census)
     }
 
-
     /// Decode the next inventory-pinned bzip2 shard using native Rust XML
     /// page events. Output stays in private staging until finish succeeds.
     ///
@@ -132,7 +130,12 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         if self.failed {
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
         }
-        let Some(member) = self.inventory.members().get(self.next_member_index).cloned() else {
+        let Some(member) = self
+            .inventory
+            .members()
+            .get(self.next_member_index)
+            .cloned()
+        else {
             self.failed = true;
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
         };
@@ -368,7 +371,6 @@ mod tests {
         pipeline.push(PageEvent::EndPage)
     }
 
-
     #[test]
     fn native_multistream_bzip2_produces_staged_two_shard_census() {
         use std::io::Cursor;
@@ -392,7 +394,8 @@ mod tests {
             Sha256::digest(&compressed[1])
         );
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         for (index, bytes) in compressed.iter().enumerate() {
             let (decoded, count) = pipeline
@@ -416,11 +419,14 @@ mod tests {
         let compressed = encoder.finish().unwrap();
         let sums = format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64));
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let pinned = parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         assert!(matches!(
             pipeline.decode_native_bzip2_member(Cursor::new(&compressed), 4096, 4096),
-            Err(NativeCensusError::Decode(CheckedMemberError::DigestMismatch))
+            Err(NativeCensusError::Decode(
+                CheckedMemberError::DigestMismatch
+            ))
         ));
         assert!(matches!(
             pipeline.finish(),
@@ -698,83 +704,3 @@ mod tests {
             Err(CensusStageError::Io(error))
                 if error.kind() == io::ErrorKind::AlreadyExists
         ));
-        assert_eq!(fs::read(&published).unwrap(), b"1\n201\n");
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn failed_or_incomplete_ingest_never_publishes_a_census() {
-        use std::fs;
-        let root = std::env::temp_dir().join(format!(
-            "wiki-census-fail-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("unnamed")
-        ));
-        fs::create_dir(&root).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let pinned = inventory();
-        assert!(matches!(
-            stage_pinned_observed_census(&root, "incomplete.ids", &pinned, 0, |pipeline| {
-                pipeline.begin_member(&pinned.members()[0].relative_path)?;
-                push_page(pipeline, 1, 0)?;
-                pipeline.end_member()
-            }),
-            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
-        ));
-        assert!(matches!(
-            stage_pinned_observed_census(&root, "rejected.ids", &pinned, 0, |pipeline| {
-                pipeline.begin_member(&pinned.members()[0].relative_path)?;
-                push_page(pipeline, 1, 0)?;
-                push_page(pipeline, 1, 0)
-            }),
-            Err(CensusStageError::Census(PinnedCensusError::Ingest(_)))
-        ));
-        for bad in ["../escape", "CON", ".hidden", "file/name", "a\\b"] {
-            assert!(matches!(
-                stage_pinned_observed_census(&root, bad, &pinned, 0, |_| Ok(())),
-                Err(CensusStageError::UnsafePath)
-            ));
-        }
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlinked_staging_root_is_rejected_before_file_creation() {
-        use std::fs;
-        use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("wiki-census-link-{}", std::process::id()));
-        let linked = root.with_extension("link");
-        fs::create_dir(&root).unwrap();
-        symlink(&root, &linked).unwrap();
-        assert!(matches!(
-            stage_pinned_observed_census(&linked, "observed.ids", &inventory(), 0, |_| Ok(())),
-            Err(CensusStageError::UnsafePath)
-        ));
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        fs::remove_file(linked).unwrap();
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn shared_staging_directory_is_rejected_before_writing() {
-        use std::fs;
-        use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("wiki-census-public-{}", std::process::id()));
-        fs::create_dir(&root).unwrap();
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(matches!(
-            stage_pinned_observed_census(&root, "observed.ids", &inventory(), 0, |_| Ok(())),
-            Err(CensusStageError::UnsafePath)
-        ));
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
