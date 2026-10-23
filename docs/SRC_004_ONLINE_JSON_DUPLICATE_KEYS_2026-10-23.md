@@ -17,4 +17,4 @@ This is a parser-integrity slice of SRC-004, **not** a claim of completed online
 
 ## Qualification
 
-Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on the exact committed SHA; record exact-head CI outcomes before treating this slice as qualified.
+Exact source SHA `959b01d490b780fdfe751085a671c80c7e49065d` passed [Rust workspace CI 39918391666](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39918391666) and [Platform shells CI 39918391603](https://github.com/ekkus93/foundation-wikipedia/actions/runs/39918391603). These validate automated Rust/frontend/Android shell gates, not publisher authenticity or real offline-device acceptance.
