@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-v1",
+  "claimed_source_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "thresholds": {
+    "min_recall_per_mille": 1000,
+    "max_no_answer_false_positive_cases": 0
+  },
+  "passed": false,
+  "retrieval": {
+    "top_k": 2,
+    "cases": [
+      {
+        "id": "math",
+        "relevant_count": 1,
+        "found_count": 1,
+        "retrieved_count": 1,
+        "no_answer_false_positive": false
+      },
+      {
+        "id": "negative-with-match",
+        "relevant_count": 0,
+        "found_count": 0,
+        "retrieved_count": 1,
+        "no_answer_false_positive": true
+      },
+      {
+        "id": "no-answer",
+        "relevant_count": 0,
+        "found_count": 0,
+        "retrieved_count": 0,
+        "no_answer_false_positive": false
+      },
+      {
+        "id": "physics",
+        "relevant_count": 1,
+        "found_count": 1,
+        "retrieved_count": 1,
+        "no_answer_false_positive": false
+      }
+    ],
+    "answerable_cases": 2,
+    "no_answer_cases": 2,
+    "relevant_total": 2,
+    "found_total": 2,
+    "retrieved_total": 3,
+    "no_answer_false_positive_cases": 1
+  }
+}

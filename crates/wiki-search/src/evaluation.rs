@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::Serialize;
+
 use wiki_model::ArticleKey;
 
 use crate::{CorpusLexicalIndex, MAX_LEXICAL_QUERY_BYTES};
@@ -46,7 +48,7 @@ pub enum EvaluationError {
     OutOfScopeGold(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CaseScore {
     pub id: String,
     pub relevant_count: usize,
@@ -57,7 +59,7 @@ pub struct CaseScore {
 
 /// Integer numerators/denominators keep reports reproducible and avoid
 /// rounding ambiguities. Recall = found/relevant; precision = found/retrieved.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RetrievalScore {
     pub top_k: usize,
     pub cases: Vec<CaseScore>,
@@ -198,6 +200,87 @@ pub fn evaluate_retrieval(
         retrieved_total,
         no_answer_false_positive_cases,
     })
+}
+
+
+/** Integer threshold policy for reproducible retrieval regression gates.
+ * Recall uses a per-thousand integer ratio; no-answer false positives
+ * are counted per case. This does not grade answer factuality.
+ */
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RetrievalThresholds {
+    pub min_recall_per_mille: u16,
+    pub max_no_answer_false_positive_cases: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReportError {
+    InvalidSuiteId,
+    InvalidCommitSha,
+    InvalidThreshold,
+    Evaluation(EvaluationError),
+    Serialization,
+}
+
+#[derive(Serialize)]
+struct VersionedRetrievalReport<'a> {
+    schema_version: u32,
+    suite_id: &'a str,
+    /// Caller-asserted Git commit identity; this API cannot verify repository state.
+    claimed_source_commit_sha: String,
+    thresholds: &'a RetrievalThresholds,
+    passed: bool,
+    retrieval: RetrievalScore,
+}
+
+/// Produce a stable, versioned JSON score artifact and an explicit regression
+/// decision. The caller is responsible for recording the actual tested commit
+/// and authenticating the evaluation corpus. This is retrieval-only evaluation.
+pub fn evaluate_retrieval_report_json(
+    index: &CorpusLexicalIndex,
+    cases: &[RetrievalCase],
+    top_k: usize,
+    suite_id: &str,
+    source_commit_sha: &str,
+    thresholds: &RetrievalThresholds,
+) -> Result<String, ReportError> {
+    if suite_id.is_empty()
+        || suite_id.len() > 128
+        || !suite_id.as_bytes()[0].is_ascii_alphanumeric()
+        || !suite_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(ReportError::InvalidSuiteId);
+    }
+    if source_commit_sha.len() != 40
+        || !source_commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ReportError::InvalidCommitSha);
+    }
+    if thresholds.min_recall_per_mille > 1_000 {
+        return Err(ReportError::InvalidThreshold);
+    }
+    let retrieval = evaluate_retrieval(index, cases, top_k).map_err(ReportError::Evaluation)?;
+    let recall_passed = if retrieval.relevant_total == 0 {
+        thresholds.min_recall_per_mille == 0
+    } else {
+        (retrieval.found_total as u128) * 1_000
+            >= (thresholds.min_recall_per_mille as u128) * (retrieval.relevant_total as u128)
+    };
+    let report = VersionedRetrievalReport {
+        schema_version: 1,
+        suite_id,
+        claimed_source_commit_sha: source_commit_sha.to_ascii_lowercase(),
+        thresholds,
+        passed: recall_passed
+            && retrieval.no_answer_false_positive_cases
+                <= thresholds.max_no_answer_false_positive_cases,
+        retrieval,
+    };
+    let mut json = serde_json::to_string_pretty(&report).map_err(|_| ReportError::Serialization)?;
+    json.push('\n');
+    Ok(json)
 }
 
 #[cfg(test)]
@@ -345,4 +428,84 @@ mod tests {
             Err(EvaluationError::DuplicateCaseId("physics".into()))
         );
     }
+
+    #[test]
+    fn versioned_report_matches_checked_in_fixture_and_case_order() {
+        let index = CorpusLexicalIndex::build(&[
+            article(9, "Physics", "Gravity bends spacetime."),
+            article(10, "Mathematics", "Algebra describes structures."),
+        ])
+        .unwrap();
+        let cases = suite();
+        let policy = RetrievalThresholds {
+            min_recall_per_mille: 1_000,
+            max_no_answer_false_positive_cases: 0,
+        };
+        let sha = "A".repeat(40);
+        let json =
+            evaluate_retrieval_report_json(&index, &cases, 2, "synthetic-v1", &sha, &policy)
+                .unwrap();
+        assert_eq!(
+            json,
+            include_str!("../fixtures/retrieval_report_v1.json")
+        );
+        let mut reversed = cases;
+        reversed.reverse();
+        assert_eq!(
+            evaluate_retrieval_report_json(&index, &reversed, 2, "synthetic-v1", &sha, &policy),
+            Ok(json)
+        );
+    }
+
+    #[test]
+    fn report_rejects_unbounded_metadata_and_invalid_policy() {
+        let index = CorpusLexicalIndex::build(&[]).unwrap();
+        let cases = suite();
+        let policy = RetrievalThresholds {
+            min_recall_per_mille: 1_001,
+            max_no_answer_false_positive_cases: 0,
+        };
+        assert_eq!(
+            evaluate_retrieval_report_json(&index, &cases, 2, "suite", &"a".repeat(40), &policy),
+            Err(ReportError::InvalidThreshold)
+        );
+        let valid = RetrievalThresholds {
+            min_recall_per_mille: 0,
+            max_no_answer_false_positive_cases: 0,
+        };
+        assert_eq!(
+            evaluate_retrieval_report_json(&index, &cases, 2, "../bad", &"a".repeat(40), &valid),
+            Err(ReportError::InvalidSuiteId)
+        );
+        assert_eq!(
+            evaluate_retrieval_report_json(&index, &cases, 2, "suite", "not-a-sha", &valid),
+            Err(ReportError::InvalidCommitSha)
+        );
+    }
+
+    #[test]
+    fn empty_gold_requires_zero_minimum_recall() {
+        let index = CorpusLexicalIndex::build(&[]).unwrap();
+        let cases = vec![RetrievalCase {
+            id: "negative".into(),
+            query: "unseen".into(),
+            project: None,
+            relevant: vec![],
+        }];
+        let policy = RetrievalThresholds {
+            min_recall_per_mille: 1,
+            max_no_answer_false_positive_cases: 0,
+        };
+        let report = evaluate_retrieval_report_json(
+            &index,
+            &cases,
+            1,
+            "negative-v1",
+            &"b".repeat(40),
+            &policy,
+        )
+        .unwrap();
+        assert!(report.contains("\"passed\": false"));
+    }
+
 }
