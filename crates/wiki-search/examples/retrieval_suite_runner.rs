@@ -20,11 +20,11 @@ use std::{
 };
 
 use wiki_model::{Article, ArticleKey, PageRecord};
-use wiki_store::catalog::SnapshotCatalog;
 use wiki_pack_format::container::verify_container;
 use wiki_search::{
     evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json, CorpusLexicalIndex,
 };
+use wiki_store::catalog::SnapshotCatalog;
 
 const MAX_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARTICLES: usize = 20_000;
@@ -65,7 +65,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         match flag.as_str() {
             "--corpus" if corpus.is_none() => corpus = Some(PathBuf::from(value)),
             "--pack" if pack.is_none() => pack = Some(PathBuf::from(value)),
-            "--snapshot-root" if snapshot_root.is_none() => snapshot_root = Some(PathBuf::from(value)),
+            "--snapshot-root" if snapshot_root.is_none() => {
+                snapshot_root = Some(PathBuf::from(value))
+            }
             "--suite" if suite.is_none() => suite = Some(PathBuf::from(value)),
             "--output" if output.is_none() => output = Some(PathBuf::from(value)),
             "--sha" if sha.is_none() => sha = Some(value),
@@ -88,7 +90,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("--sha must be exactly 40 hexadecimal characters".into());
     }
-    if usize::from(corpus.is_some()) + usize::from(pack.is_some()) + usize::from(snapshot_root.is_some()) != 1 {
+    if usize::from(corpus.is_some())
+        + usize::from(pack.is_some())
+        + usize::from(snapshot_root.is_some())
+        != 1
+    {
         return Err("specify exactly one of --corpus, --pack or --snapshot-root".into());
     }
     Ok(Args {
@@ -501,7 +507,8 @@ mod tests {
         ));
         assert!(validate_output_destination(&external).is_ok());
 
-        shard[shard.len() - 1] ^= 1;
+        let final_byte = shard.len() - 1;
+        shard[final_byte] ^= 1;
         fs::write(&shard_path, &shard).unwrap();
         assert!(read_snapshot_corpus(&root).is_err());
         fs::remove_dir_all(root).unwrap();
