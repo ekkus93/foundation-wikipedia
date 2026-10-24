@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use wiki_pack_builder::curated::curated_topic;
+use wiki_pack_builder::curated_preview::curated_definition_fingerprint;
 use wiki_pack_builder::preview::preview_pinned_selection;
 use wiki_pack_builder::related::expand_related_links;
 use wiki_pack_builder::selection::{Category, Rules};
@@ -278,6 +279,17 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         &input.snapshot_id,
     )
     .map_err(|error| format!("topic preview rejected: {error:?}"))?;
+    // Bind curated seed identity to the effective roots/overrides in the
+    // same definition receipt used by the revision-joined library preview.
+    let curated_fingerprint = if curated_ids.is_empty() {
+        None
+    } else {
+        let ids: Vec<&str> = curated_ids.iter().map(String::as_str).collect();
+        Some(
+            curated_definition_fingerprint(&ids, &preview.selection.definition_sha256)
+                .map_err(|error| format!("curated definition fingerprint rejected: {error:?}"))?,
+        )
+    };
     let related_report = if let Some(related) = related {
         if related.links.len() > MAX_EDGES {
             return Err("related links exceed the member limit".into());
@@ -372,11 +384,13 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
             }),
             "warnings": preview.warnings,
         });
-        if !curated_ids.is_empty() {
-            result
-                .as_object_mut()
-                .expect("preview JSON object")
-                .insert("curated_topic_ids".into(), serde_json::json!(curated_ids));
+        if let Some(digest) = &curated_fingerprint {
+            let object = result.as_object_mut().expect("preview JSON object");
+            object.insert("curated_topic_ids".into(), serde_json::json!(curated_ids));
+            object.insert(
+                "curated_definition_sha256".into(),
+                serde_json::json!(digest),
+            );
         }
         if let Some(report) = &related_report {
             let object = result.as_object_mut().expect("preview JSON object");
@@ -408,8 +422,9 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         "Snapshot label (untrusted): {}",
         preview.selection.snapshot_id
     );
-    if !curated_ids.is_empty() {
+    if let Some(digest) = &curated_fingerprint {
         println!("Curated topic seeds: {}", curated_ids.join(", "));
+        println!("Curated definition SHA-256: {digest}");
     }
     println!("Selected page IDs: {selected_count}");
     println!("Topic depth limit: {}", rules.depth_limit);
@@ -528,6 +543,12 @@ mod input_tests {
         assert_eq!(
             input.roots,
             vec!["Category:Extra", "Category:Mathematics", "Category:Physics"]
+        );
+        let ids = ["mathematics", "physics"];
+        let digest = "a".repeat(64);
+        assert_eq!(
+            curated_definition_fingerprint(&ids, &digest),
+            curated_definition_fingerprint(&["physics", "mathematics", "physics"], &digest)
         );
         let mut wrong_edition = PreviewInput {
             snapshot_id: "frwiki-20261023".into(),

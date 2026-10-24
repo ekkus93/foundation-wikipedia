@@ -23,12 +23,53 @@ fn hash_text(digest: &mut Sha256Transcript, text: &str) {
     digest.update(text.as_bytes());
 }
 
+
+/// Fingerprint the editable curated seed identity and an effective selection
+/// rule digest. This receipt is independent of source revisions and cannot
+/// authenticate a publisher. Topic IDs are canonicalized before hashing.
+pub fn curated_definition_fingerprint(
+    topic_ids: &[&str],
+    rules_definition_sha256: &str,
+) -> Result<String, CuratedPreviewError> {
+    if topic_ids.is_empty() {
+        return Err(CuratedPreviewError::EmptyTopics);
+    }
+    if topic_ids.len() > MAX_REQUESTED_TOPICS {
+        return Err(CuratedPreviewError::TooManyTopics);
+    }
+    if rules_definition_sha256.len() != 64
+        || !rules_definition_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(CuratedPreviewError::InvalidDefinitionDigest);
+    }
+    let ids: BTreeSet<&str> = topic_ids.iter().copied().collect();
+    let mut digest = Sha256Transcript::new();
+    digest.update(b"foundation-wikipedia/curated-topic-definition/v1\0");
+    digest.update(&(ids.len() as u64).to_be_bytes());
+    for id in ids {
+        let topic =
+            curated_topic(id).ok_or_else(|| CuratedPreviewError::UnknownTopic(id.to_owned()))?;
+        for value in [topic.id, topic.label, topic.project] {
+            hash_text(&mut digest, value);
+        }
+        digest.update(&(topic.roots.len() as u64).to_be_bytes());
+        for root in topic.roots {
+            hash_text(&mut digest, root);
+        }
+        digest.update(&(topic.depth_limit as u64).to_be_bytes());
+        digest.update(&(topic.page_limit as u64).to_be_bytes());
+    }
+    hash_text(&mut digest, rules_definition_sha256);
+    Ok(digest.finish_hex())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CuratedPreviewError {
     EmptyTopics,
     TooManyTopics,
     UnknownTopic(String),
     IncompatiblePolicy,
+    InvalidDefinitionDigest,
     WrongProject { expected: String, actual: String },
     Preview(JoinedPreviewError),
 }
@@ -104,27 +145,14 @@ pub fn preview_curated_topics(
     };
     let preview = preview_joined_selection(records, administrative, &rules, redirect_identities)
         .map_err(CuratedPreviewError::Preview)?;
-    // A generic rule hash does not record *which curated IDs* produced
-    // those roots. Preserve seed identity, labels, limits and overrides
-    // independently from the revision-bound selected-page receipt.
-    let mut digest = Sha256Transcript::new();
-    digest.update(b"foundation-wikipedia/curated-topic-definition/v1\0");
-    digest.update(&(topics.len() as u64).to_be_bytes());
-    for topic in &topics {
-        for value in [topic.id, topic.label, topic.project] {
-            hash_text(&mut digest, value);
-        }
-        digest.update(&(topic.roots.len() as u64).to_be_bytes());
-        for root in topic.roots {
-            hash_text(&mut digest, root);
-        }
-        digest.update(&(topic.depth_limit as u64).to_be_bytes());
-        digest.update(&(topic.page_limit as u64).to_be_bytes());
-    }
-    hash_text(&mut digest, &preview.preview.selection.definition_sha256);
+    // The shared receipt is also emitted by the local preview CLI.
+    let curated_definition_sha256 = curated_definition_fingerprint(
+        topic_ids,
+        &preview.preview.selection.definition_sha256,
+    )?;
     Ok(CuratedTopicSelection {
         topic_ids: ids.into_iter().map(str::to_owned).collect(),
-        curated_definition_sha256: digest.finish_hex(),
+        curated_definition_sha256,
         rules,
         preview,
     })
@@ -263,6 +291,23 @@ mod tests {
         assert_ne!(
             unchanged.curated_definition_sha256,
             selected.curated_definition_sha256
+        );
+    }
+
+    #[test]
+    fn public_fingerprint_rejects_invalid_rule_digests() {
+        assert_eq!(
+            curated_definition_fingerprint(&["mathematics"], "not-a-digest"),
+            Err(CuratedPreviewError::InvalidDefinitionDigest)
+        );
+        let digest = "a".repeat(64);
+        assert_eq!(
+            curated_definition_fingerprint(&["physics", "mathematics"], &digest),
+            curated_definition_fingerprint(&["mathematics", "physics", "physics"], &digest)
+        );
+        assert_ne!(
+            curated_definition_fingerprint(&["mathematics"], &digest),
+            curated_definition_fingerprint(&["physics"], &digest)
         );
     }
 
