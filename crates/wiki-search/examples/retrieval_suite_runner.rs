@@ -126,7 +126,9 @@ fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<Vec<u8>, String> {
     for object in objects {
         if object.path == "articles.json" {
             if object.bytes > MAX_CORPUS_BYTES {
-                return Err(format!("pack articles.json exceeds {MAX_CORPUS_BYTES} bytes"));
+                return Err(format!(
+                    "pack articles.json exceeds {MAX_CORPUS_BYTES} bytes"
+                ));
             }
             input
                 .seek(SeekFrom::Start(offset))
