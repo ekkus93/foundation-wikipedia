@@ -377,6 +377,41 @@ mod tests {
     }
 
     #[test]
+    fn offline_catalog_rejects_noncharacters_and_invisible_markers() {
+        for marker in [
+            '\u{200b}',
+            '\u{2028}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{fdd0}',
+            '\u{ffff}',
+            '\u{10ffff}',
+        ] {
+            let title = format!("Physics{marker}");
+            assert!(matches!(
+                LocalTitleIndex::new(
+                    "enwiki",
+                    [entry(1, &title, ArticleLocation::InstalledPack)]
+                ),
+                Err(LocalTitleIndexError::InvalidTitle)
+            ));
+            let index = LocalTitleIndex::new(
+                "enwiki",
+                [entry(1, "Physics", ArticleLocation::InstalledPack)],
+            )
+            .unwrap();
+            assert!(matches!(
+                index.with_redirects([LocalTitleRedirect {
+                    alias: title,
+                    canonical_title: "Physics".into(),
+                    target_page_id: 1,
+                }]),
+                Err(LocalTitleIndexError::InvalidRedirect)
+            ));
+        }
+    }
+
+    #[test]
     fn verified_offline_redirects_resolve_without_creating_duplicate_search_hits() {
         let index = LocalTitleIndex::new(
             "enwiki",

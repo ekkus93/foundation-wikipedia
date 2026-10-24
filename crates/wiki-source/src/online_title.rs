@@ -357,6 +357,31 @@ mod tests {
     }
 
     #[test]
+    fn title_resolution_rejects_noncharacters_and_invisible_markers() {
+        let valid = r#"{"query":{"pages":[{"pageid":1,"ns":0,"title":"A"}]}}"#;
+        for marker in [
+            '\u{200b}',
+            '\u{2028}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{fdd0}',
+            '\u{ffff}',
+            '\u{10ffff}',
+        ] {
+            let invalid = format!("A{marker}");
+            assert_eq!(
+                parse_title_resolution(valid, "enwiki", &invalid),
+                Err(TitleResolutionError::InvalidTitle)
+            );
+            let response = valid.replace("\"A\"", &format!("\"{invalid}\""));
+            assert_eq!(
+                parse_title_resolution(&response, "enwiki", "A"),
+                Err(TitleResolutionError::InvalidTitle)
+            );
+        }
+    }
+
+    #[test]
     fn rejects_unsafe_identifiers_and_unbounded_responses() {
         assert_eq!(
             parse_title_resolution(r#"{"error":{"code":"badtitle"}}"#, "enwiki", "A"),
