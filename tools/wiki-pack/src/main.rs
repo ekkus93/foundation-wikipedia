@@ -2,6 +2,7 @@
 //! These commands do not install packs or verify publisher signatures.
 mod audit_diagnostic;
 mod css_graph_diagnostic;
+mod curated_catalog;
 mod preview_topic;
 mod visual_diagnostic;
 
@@ -24,6 +25,7 @@ fn usage() {
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
+    println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
     println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
@@ -247,6 +249,22 @@ fn main() {
                 std::process::exit(2);
             };
             if let Err(error) = visual_diagnostic::run(Path::new(&fields[0]), document_url) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("list-curated") => {
+            let fields: Vec<OsString> = args.collect();
+            let json_output = match fields.as_slice() {
+                [] => false,
+                [flag] if flag.as_os_str() == OsStr::new("--json") => true,
+                _ => {
+                    eprintln!("list-curated accepts only an optional --json flag");
+                    usage();
+                    std::process::exit(2);
+                }
+            };
+            if let Err(error) = curated_catalog::run(json_output) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

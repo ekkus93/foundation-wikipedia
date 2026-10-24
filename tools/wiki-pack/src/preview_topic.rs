@@ -115,9 +115,19 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
     let mut roots = BTreeSet::new();
     for id in &input.curated_topics {
         let topic = curated_topic(id).ok_or_else(|| format!("unknown curated topic: {id}"))?;
-        if !input
+        // A prefix-only match accepts an empty or ambiguous generation
+        // such as `enwiki-`. Require a concrete local generation label.
+        let generation = input
             .snapshot_id
-            .starts_with(&format!("{}-", topic.project))
+            .strip_prefix(&format!("{}-", topic.project));
+        if !generation.is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix.len() <= 255
+                && suffix.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                })
+                && suffix.bytes().any(|byte| byte.is_ascii_alphanumeric())
+        })
         {
             return Err(format!(
                 "curated topic {id} requires {} snapshot label",
@@ -522,6 +532,13 @@ mod input_tests {
         assert!(apply_curated_seeds(&mut wrong_edition)
             .unwrap_err()
             .contains("too many"));
+        wrong_edition.curated_topics = vec!["physics".into()];
+        for invalid in ["enwiki-", "enwiki-...", "enwiki-2026/10/23", "enwiki-2026\n"] {
+            wrong_edition.snapshot_id = invalid.into();
+            assert!(apply_curated_seeds(&mut wrong_edition).is_err(), "{invalid}");
+        }
+        wrong_edition.snapshot_id = "enwiki-20261023".into();
+        assert!(apply_curated_seeds(&mut wrong_edition).is_ok());
     }
 
     #[test]
