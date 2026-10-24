@@ -299,10 +299,8 @@ mod tests {
 
     #[test]
     fn rejects_stale_fabricated_duplicate_or_out_of_scope_gold() {
-        let index = CorpusLexicalIndex::build(&[
-            article(9, "Physics", "Gravity bends spacetime."),
-        ])
-        .unwrap();
+        let index = CorpusLexicalIndex::build(&[article(9, "Physics", "Gravity bends spacetime.")])
+            .unwrap();
         let mut cases = suite();
         cases.truncate(1);
         cases[0].relevant[0].revision_id = 13;
