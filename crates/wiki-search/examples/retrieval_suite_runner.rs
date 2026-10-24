@@ -9,12 +9,15 @@
 //! This does not authenticate the source or labels. It must not be described as
 //! a publisher-verified Wikimedia benchmark without independent provenance.
 
-use std::{env, fs, path::{Path, PathBuf}, process};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process,
+};
 
 use wiki_model::Article;
 use wiki_search::{
-    evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json,
-    CorpusLexicalIndex,
+    evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json, CorpusLexicalIndex,
 };
 
 const MAX_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
@@ -42,7 +45,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut max_no_answer_fp = 0;
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
-        let value = args.next().ok_or_else(|| format!("missing value for {flag}"))?;
+        let value = args
+            .next()
+            .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
             "--corpus" if corpus.is_none() => corpus = Some(PathBuf::from(value)),
             "--suite" if suite.is_none() => suite = Some(PathBuf::from(value)),
@@ -53,7 +58,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                 min_recall_per_mille = value.parse().map_err(|_| "invalid recall".to_owned())?;
             }
             "--max-no-answer-fp" => {
-                max_no_answer_fp = value.parse().map_err(|_| "invalid no-answer limit".to_owned())?;
+                max_no_answer_fp = value
+                    .parse()
+                    .map_err(|_| "invalid no-answer limit".to_owned())?;
             }
             _ => return Err(format!("unknown or duplicate argument: {flag}")),
         }
@@ -83,8 +90,8 @@ fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     if size > max {
         return Err(format!("{} exceeds {max} bytes", path.display()));
     }
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     if bytes.len() as u64 > max {
         return Err(format!("{} exceeds {max} bytes", path.display()));
     }
@@ -144,10 +151,19 @@ mod tests {
     use super::*;
 
     fn arguments() -> Vec<String> {
-        ["--corpus", "articles.json", "--suite", "suite.json", "--output", "report.json", "--sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
-            .iter()
-            .map(|s| (*s).to_owned())
-            .collect()
+        [
+            "--corpus",
+            "articles.json",
+            "--suite",
+            "suite.json",
+            "--output",
+            "report.json",
+            "--sha",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
     }
 
     #[test]
