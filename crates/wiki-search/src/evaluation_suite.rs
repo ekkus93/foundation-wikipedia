@@ -188,6 +188,56 @@ pub fn parse_retrieval_suite_json(input: &str) -> Result<RetrievalSuite, SuiteEr
     })
 }
 
+
+/** Run a versioned, caller-labeled suite against an exact indexed corpus and
+ * return both the stable JSON report and its regression-gate decision.
+ *
+ * The commit SHA is caller-asserted, not independently verified. Neither
+ * parsing nor scoring authenticates Wikimedia data or grades answer support.
+ */
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SuiteRun {
+    pub passed: bool,
+    pub report_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SuiteRunError {
+    Suite(SuiteError),
+    Report(crate::evaluation::ReportError),
+    InvalidReport,
+}
+
+pub fn run_retrieval_suite_json(
+    index: &crate::CorpusLexicalIndex,
+    suite_json: &str,
+    top_k: usize,
+    source_commit_sha: &str,
+    thresholds: &crate::evaluation::RetrievalThresholds,
+) -> Result<SuiteRun, SuiteRunError> {
+    let suite = parse_retrieval_suite_json(suite_json).map_err(SuiteRunError::Suite)?;
+    let report_json = crate::evaluation::evaluate_retrieval_report_json(
+        index,
+        &suite.cases,
+        top_k,
+        &suite.suite_id,
+        source_commit_sha,
+        thresholds,
+    )
+    .map_err(SuiteRunError::Report)?;
+
+    #[derive(Deserialize)]
+    struct Gate {
+        passed: bool,
+    }
+    let gate: Gate = serde_json::from_str(&report_json)
+        .map_err(|_| SuiteRunError::InvalidReport)?;
+    Ok(SuiteRun {
+        passed: gate.passed,
+        report_json,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,4 +343,73 @@ mod tests {
             Err(SuiteError::TooLarge)
         );
     }
+
+    #[test]
+    fn runs_parsed_suite_and_exposes_machine_readable_gate_result() {
+        use crate::evaluation::{ReportError, RetrievalThresholds};
+        use wiki_model::{Article, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
+            revision: Revision {
+                revision_id: 12,
+                timestamp: "2026-10-24T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Physics".into(),
+            display_title: "Physics".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravity bends spacetime.".into()),
+            }],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<p>Gravity bends spacetime.</p>".into(),
+            is_disambiguation: false,
+        };
+        let index = CorpusLexicalIndex::build(&[article]).unwrap();
+        let thresholds = RetrievalThresholds {
+            min_recall_per_mille: 1_000,
+            max_no_answer_false_positive_cases: 0,
+        };
+        let sha = "a".repeat(40);
+        let passing = run_retrieval_suite_json(&index, INPUT, 2, &sha, &thresholds).unwrap();
+        assert!(passing.passed);
+        assert!(passing.report_json.contains("\"suite_id\": \"synthetic-physics-v1\""));
+        assert!(passing.report_json.contains("\"passed\": true"));
+
+        // A no-answer case that retrieves a passage must fail the gate.
+        let false_positive = INPUT.replace("\"dragonfire\"", "\"gravity\"");
+        let failing =
+            run_retrieval_suite_json(&index, &false_positive, 2, &sha, &thresholds).unwrap();
+        assert!(!failing.passed);
+        assert!(failing.report_json.contains("\"passed\": false"));
+
+        let stale = INPUT.replace("\"revision_id\":12", "\"revision_id\":13");
+        assert_eq!(
+            run_retrieval_suite_json(&index, &stale, 2, &sha, &thresholds),
+            Err(SuiteRunError::Report(ReportError::Evaluation(
+                EvaluationError::UnknownOrStaleGold("a-physics".into())
+            )))
+        );
+        assert_eq!(
+            run_retrieval_suite_json(&index, INPUT, 2, "bad-sha", &thresholds),
+            Err(SuiteRunError::Report(ReportError::InvalidCommitSha))
+        );
+        assert!(matches!(
+            run_retrieval_suite_json(&index, "{}", 2, &sha, &thresholds),
+            Err(SuiteRunError::Suite(SuiteError::InvalidJson))
+        ));
+    }
+
 }
