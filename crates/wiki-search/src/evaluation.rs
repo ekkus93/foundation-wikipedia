@@ -202,7 +202,6 @@ pub fn evaluate_retrieval(
     })
 }
 
-
 /** Integer threshold policy for reproducible retrieval regression gates.
  * Recall uses a per-thousand integer ratio; no-answer false positives
  * are counted per case. This does not grade answer factuality.
@@ -254,7 +253,9 @@ pub fn evaluate_retrieval_report_json(
         return Err(ReportError::InvalidSuiteId);
     }
     if source_commit_sha.len() != 40
-        || !source_commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !source_commit_sha
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(ReportError::InvalidCommitSha);
     }
@@ -442,13 +443,9 @@ mod tests {
             max_no_answer_false_positive_cases: 0,
         };
         let sha = "A".repeat(40);
-        let json =
-            evaluate_retrieval_report_json(&index, &cases, 2, "synthetic-v1", &sha, &policy)
-                .unwrap();
-        assert_eq!(
-            json,
-            include_str!("../fixtures/retrieval_report_v1.json")
-        );
+        let json = evaluate_retrieval_report_json(&index, &cases, 2, "synthetic-v1", &sha, &policy)
+            .unwrap();
+        assert_eq!(json, include_str!("../fixtures/retrieval_report_v1.json"));
         let mut reversed = cases;
         reversed.reverse();
         assert_eq!(
@@ -507,5 +504,4 @@ mod tests {
         .unwrap();
         assert!(report.contains("\"passed\": false"));
     }
-
 }
