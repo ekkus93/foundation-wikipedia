@@ -556,10 +556,7 @@ fn valid_membership_label(text: &str) -> bool {
 /// Public typed companions bypass JSON parsing. Apply the same membership
 /// identity and duplicate checks at the join boundary, including direct
 /// single-article joins and every member of a batch.
-fn validate_membership_list(
-    values: &[String],
-    field: &'static str,
-) -> Result<(), EnterpriseError> {
+fn validate_membership_list(values: &[String], field: &'static str) -> Result<(), EnterpriseError> {
     let mut seen = BTreeSet::new();
     for value in values {
         if !valid_membership_label(value) {
