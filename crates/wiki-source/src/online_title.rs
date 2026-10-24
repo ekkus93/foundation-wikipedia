@@ -34,19 +34,7 @@ pub enum TitleResolutionError {
 }
 
 fn valid_title(value: &str) -> bool {
-    !value.trim().is_empty()
-        && value == value.trim()
-        && value.len() <= MAX_TITLE_BYTES
-        && !value.chars().any(|ch| {
-            ch.is_control()
-                || matches!(
-                    ch,
-                    '\u{061c}'
-                        | '\u{200e}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                )
-        })
+    crate::online_requests::safe_navigation_text(value, MAX_TITLE_BYTES)
 }
 
 /// Reject unmatched, cyclic or truncated redirects instead of silently

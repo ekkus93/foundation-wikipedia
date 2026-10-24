@@ -69,19 +69,7 @@ pub struct LocalTitleIndex {
 }
 
 fn safe_text(value: &str, max_bytes: usize) -> bool {
-    !value.trim().is_empty()
-        && value == value.trim()
-        && value.len() <= max_bytes
-        && !value.chars().any(|ch| {
-            ch.is_control()
-                || matches!(
-                    ch,
-                    '\u{061c}'
-                        | '\u{200e}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                )
-        })
+    crate::online_requests::safe_navigation_text(value, max_bytes)
 }
 
 impl LocalTitleIndex {

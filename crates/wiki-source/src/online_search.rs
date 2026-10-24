@@ -97,19 +97,7 @@ pub fn parse_search_results(
             .get("title")
             .and_then(Value::as_str)
             .filter(|title| {
-                !title.trim().is_empty()
-                    && *title == title.trim()
-                    && title.len() <= MAX_TITLE_BYTES
-                    && !title.chars().any(|ch| {
-                        ch.is_control()
-                            || matches!(
-                                ch,
-                                '\u{061c}'
-                                    | '\u{200e}'..='\u{200f}'
-                                    | '\u{202a}'..='\u{202e}'
-                                    | '\u{2066}'..='\u{2069}'
-                            )
-                    })
+                crate::online_requests::safe_navigation_text(title, MAX_TITLE_BYTES)
             })
             .ok_or(OnlineSearchError::InvalidIdentity)?;
         if !seen.insert(page_id) {
@@ -308,6 +296,18 @@ mod tests {
                 parse_search_results(bad, "enwiki", 0),
                 Err(OnlineSearchError::InvalidIdentity),
                 "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_parser_rejects_invisible_and_noncharacter_titles() {
+        let valid = r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"Physics"}]}}"#;
+        for marker in ['\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{fdd0}', '\u{ffff}', '\u{10ffff}'] {
+            let body = valid.replace("Physics", &format!("Physics{marker}"));
+            assert_eq!(
+                parse_search_results(&body, "enwiki", 0),
+                Err(OnlineSearchError::InvalidIdentity)
             );
         }
     }

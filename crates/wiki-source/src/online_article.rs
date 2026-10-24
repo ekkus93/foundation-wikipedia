@@ -65,19 +65,7 @@ fn parse_response(body: &str, bound: usize) -> Result<Value, OnlineArticleError>
 }
 
 fn valid_title(title: &str) -> bool {
-    !title.trim().is_empty()
-        && title == title.trim()
-        && title.len() <= MAX_TITLE_BYTES
-        && !title.chars().any(|ch| {
-            ch.is_control()
-                || matches!(
-                    ch,
-                    '\u{061c}'
-                        | '\u{200e}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                )
-        })
+    crate::online_requests::safe_navigation_text(title, MAX_TITLE_BYTES)
 }
 
 pub(crate) fn valid_utc_timestamp(stamp: &str) -> bool {
@@ -321,6 +309,17 @@ mod tests {
             parse_rendered_revision(RENDER, &pinned),
             Err(OnlineArticleError::InvalidIdentity)
         );
+    }
+
+    #[test]
+    fn revision_parser_rejects_invisible_and_noncharacter_titles() {
+        for marker in ['\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{fdd0}', '\u{ffff}', '\u{10ffff}'] {
+            let response = META.replace("Énergie", &format!("Énergie{marker}"));
+            assert_eq!(
+                parse_current_revision(&response, "frwiki", 42),
+                Err(OnlineArticleError::InvalidIdentity)
+            );
+        }
     }
 
     #[test]

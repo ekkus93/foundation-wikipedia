@@ -11,6 +11,30 @@ use wiki_model::ArticleKey;
 const MAX_QUERY_BYTES: usize = 512;
 const MAX_SEARCH_LIMIT: usize = 100;
 
+/// Shared conservative navigation-title and search-input Unicode policy.
+/// Keep request, response, and verified local-index boundaries consistent.
+pub(crate) fn safe_navigation_text(value: &str, max_bytes: usize) -> bool {
+    !value.trim().is_empty()
+        && value == value.trim()
+        && value.len() <= max_bytes
+        && !value.chars().any(|ch| {
+            let codepoint = ch as u32;
+            ch.is_control()
+                || (0xfdd0..=0xfdef).contains(&codepoint)
+                || (codepoint & 0xfffe) == 0xfffe
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200b}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{206f}'
+                        | '\u{feff}'
+                )
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OnlineRequestError {
     InvalidProject,
@@ -135,20 +159,7 @@ impl WikipediaRequests {
     /// Return an encoded search URL; search snippets are untrusted and should
     /// be discarded by online_search::parse_search_results.
     pub fn search(&self, text: &str, limit: usize) -> Result<String, OnlineRequestError> {
-        if text.trim().is_empty()
-            || text != text.trim()
-            || text.len() > MAX_QUERY_BYTES
-            || text.chars().any(|ch| {
-                ch.is_control()
-                    || matches!(
-                        ch,
-                        '\u{061c}'
-                            | '\u{200e}'..='\u{200f}'
-                            | '\u{202a}'..='\u{202e}'
-                            | '\u{2066}'..='\u{2069}'
-                    )
-            })
-        {
+        if !safe_navigation_text(text, MAX_QUERY_BYTES) {
             return Err(OnlineRequestError::InvalidSearch);
         }
         if !(1..=MAX_SEARCH_LIMIT).contains(&limit) {
@@ -166,20 +177,7 @@ impl WikipediaRequests {
     /// Request one title's stable page identity, following explicit redirect
     /// chains; caller must validate response edges with online_title.
     pub fn resolve_title(&self, title: &str) -> Result<String, OnlineRequestError> {
-        if title.trim().is_empty()
-            || title != title.trim()
-            || title.len() > MAX_QUERY_BYTES
-            || title.chars().any(|ch| {
-                ch.is_control()
-                    || matches!(
-                        ch,
-                        '\u{061c}'
-                            | '\u{200e}'..='\u{200f}'
-                            | '\u{202a}'..='\u{202e}'
-                            | '\u{2066}'..='\u{2069}'
-                    )
-            })
-        {
+        if !safe_navigation_text(title, MAX_QUERY_BYTES) {
             return Err(OnlineRequestError::InvalidTitle);
         }
         Ok(self.request(&[
@@ -239,6 +237,29 @@ mod tests {
             .query_pairs()
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect()
+    }
+
+    #[test]
+    fn navigation_input_rejects_noncharacters_and_invisible_controls() {
+        let api = WikipediaRequests::new("enwiki").unwrap();
+        for marker in [
+            '\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{feff}', '\u{fdd0}',
+            '\u{fdef}', '\u{fffe}', '\u{ffff}', '\u{1fffe}', '\u{10ffff}',
+        ] {
+            let text = format!("Physics{marker}");
+            assert_eq!(
+                api.search(&text, 5),
+                Err(OnlineRequestError::InvalidSearch)
+            );
+            assert_eq!(
+                api.resolve_title(&text),
+                Err(OnlineRequestError::InvalidTitle)
+            );
+        }
+        for text in ["می\u{200c}روم", "क्\u{200d}ष"] {
+            assert!(api.search(text, 5).is_ok());
+            assert!(api.resolve_title(text).is_ok());
+        }
     }
 
     #[test]
