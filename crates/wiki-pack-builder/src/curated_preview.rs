@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+use wiki_pack_format::Sha256Transcript;
 use wiki_source::enterprise::JoinedEnterpriseArticle;
 
 use crate::curated::curated_topic;
@@ -15,6 +16,12 @@ use crate::joined_preview::{preview_joined_selection, JoinedPreviewError, Joined
 use crate::selection::Rules;
 
 const MAX_REQUESTED_TOPICS: usize = 32;
+
+/// Encode length-delimited strings to prevent ambiguous concatenation.
+fn hash_text(digest: &mut Sha256Transcript, text: &str) {
+    digest.update(&(text.len() as u64).to_be_bytes());
+    digest.update(text.as_bytes());
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CuratedPreviewError {
@@ -30,6 +37,9 @@ pub enum CuratedPreviewError {
 pub struct CuratedTopicSelection {
     /// Canonical sorted, deduplicated curated IDs.
     pub topic_ids: Vec<String>,
+    /// Domain-separated digest of curated IDs, editable seed definitions,
+    /// and effective selection rules. This is not a publisher signature.
+    pub curated_definition_sha256: String,
     /// Editable definition, with the curated topic limits and caller overrides.
     pub rules: Rules,
     /// Source-local, revision-bound selection and pre-download diagnostics.
@@ -94,8 +104,30 @@ pub fn preview_curated_topics(
     };
     let preview = preview_joined_selection(records, administrative, &rules, redirect_identities)
         .map_err(CuratedPreviewError::Preview)?;
+    // A generic rule hash does not record *which curated IDs* produced
+    // those roots. Preserve seed identity, labels, limits and overrides
+    // independently from the revision-bound selected-page receipt.
+    let mut digest = Sha256Transcript::new();
+    digest.update(b"foundation-wikipedia/curated-topic-definition/v1\0");
+    digest.update(&(topics.len() as u64).to_be_bytes());
+    for topic in &topics {
+        for value in [topic.id, topic.label, topic.project] {
+            hash_text(&mut digest, value);
+        }
+        digest.update(&(topic.roots.len() as u64).to_be_bytes());
+        for root in topic.roots {
+            hash_text(&mut digest, root);
+        }
+        digest.update(&(topic.depth_limit as u64).to_be_bytes());
+        digest.update(&(topic.page_limit as u64).to_be_bytes());
+    }
+    hash_text(
+        &mut digest,
+        &preview.preview.selection.definition_sha256,
+    );
     Ok(CuratedTopicSelection {
         topic_ids: ids.into_iter().map(str::to_owned).collect(),
+        curated_definition_sha256: digest.finish_hex(),
         rules,
         preview,
     })
@@ -162,6 +194,11 @@ mod tests {
         .unwrap();
         assert_eq!(first.topic_ids, vec!["mathematics", "physics"]);
         assert_eq!(
+            first.curated_definition_sha256,
+            reordered.curated_definition_sha256
+        );
+        assert_eq!(first.curated_definition_sha256.len(), 64);
+        assert_eq!(
             first.rules.roots,
             vec!["Category:Mathematics", "Category:Physics"]
         );
@@ -213,6 +250,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(single.preview.preview.selection.page_ids, vec![3]);
+        assert_ne!(
+            single.curated_definition_sha256,
+            selected.curated_definition_sha256
+        );
+        let unchanged = preview_curated_topics(
+            &records,
+            &BTreeSet::new(),
+            &["mathematics", "physics"],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_ne!(
+            unchanged.curated_definition_sha256,
+            selected.curated_definition_sha256
+        );
     }
 
     #[test]
