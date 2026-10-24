@@ -18,5 +18,4 @@ CJK, and emoji remain accepted. This is a local identity-consistency
 and navigation-hardening change, not live Wikimedia interoperability,
 offline visual completeness, installed pack validation or device acceptance.
 
-**Verification:** CI evidence must be recorded against the exact committed
-source SHA. Do not mark SRC-004 or DUI-001 complete on these tests alone.
+**Exact-head verification:** Implementation SHA `f9845bda4985b3f96df532d1dd71cd3e68cc5ab9` passed [Rust workspace 40143891487](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40143891487), [Platform shells 40143891381](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40143891381) (frontend typecheck, Node tests and build), and [Desktop launch smoke 40143891364](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40143891364). These tests do not complete SRC-004 or DUI-001.
