@@ -400,8 +400,8 @@ mod tests {
             transport
                 .answers
                 .push_back(Ok(response.to_string().into_bytes()));
-            let error =
-                fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
+            let error = fetch_article(&mut transport, &key(), NetworkState::Online, &[local()])
+                .unwrap_err();
             assert_eq!(error.stage, FetchStage::Metadata, "{field}");
             assert_eq!(error.fallback, Some(local()), "{field}");
             assert_eq!(

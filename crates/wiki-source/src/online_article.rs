@@ -419,9 +419,15 @@ mod tests {
         for (field, marker) in [
             ("redirects", serde_json::json!([])),
             ("normalized", serde_json::json!([])),
-            ("normalized", serde_json::json!([{"from": "Énergie", "to": "Energy"}])),
+            (
+                "normalized",
+                serde_json::json!([{"from": "Énergie", "to": "Energy"}]),
+            ),
             ("interwiki", serde_json::json!([])),
-            ("interwiki", serde_json::json!([{"title": "Énergie", "url": "https://en.wikipedia.org/wiki/Energy"}])),
+            (
+                "interwiki",
+                serde_json::json!([{"title": "Énergie", "url": "https://en.wikipedia.org/wiki/Energy"}]),
+            ),
         ] {
             let mut response: Value = serde_json::from_str(META).unwrap();
             response["query"][field] = marker;
@@ -432,7 +438,9 @@ mod tests {
             );
         }
         assert_eq!(
-            parse_current_revision(META, "frwiki", 42).unwrap().revision_id,
+            parse_current_revision(META, "frwiki", 42)
+                .unwrap()
+                .revision_id,
             300
         );
     }
