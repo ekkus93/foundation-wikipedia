@@ -389,10 +389,7 @@ mod tests {
         ] {
             let title = format!("Physics{marker}");
             assert!(matches!(
-                LocalTitleIndex::new(
-                    "enwiki",
-                    [entry(1, &title, ArticleLocation::InstalledPack)]
-                ),
+                LocalTitleIndex::new("enwiki", [entry(1, &title, ArticleLocation::InstalledPack)]),
                 Err(LocalTitleIndexError::InvalidTitle)
             ));
             let index = LocalTitleIndex::new(
