@@ -106,6 +106,21 @@ fn safe_category_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
+/// Wikimedia title keys treat underscores and spaces identically. Use one
+/// spelling for roots, category nodes and child references before hashing
+/// or resolving the local JSON graph. Reject malformed normalized names.
+fn canonical_category_name(name: &str) -> Result<String, String> {
+    if !safe_category_name(name) {
+        return Err("invalid category name".into());
+    }
+    let canonical = name.replace('_', " ");
+    let body = canonical.strip_prefix("Category:").unwrap_or(&canonical);
+    if !safe_category_name(&canonical) || body.is_empty() || body.trim() != body {
+        return Err("invalid category name".into());
+    }
+    Ok(canonical)
+}
+
 /// Expand named curated topic seeds into the local graph preview rules.
 /// The snapshot label is only a caller claim; this checks edition consistency,
 /// not official publication authenticity or category coverage. Legacy previews
@@ -213,32 +228,36 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     {
         return Err("preview source exceeds category or redirect limits".into());
     }
-    if input.roots.iter().any(|name| !safe_category_name(name)) {
-        return Err("invalid root category name".into());
-    }
+    // Normalize user-supplied roots just like category pages and edges.
+    // Otherwise equivalent MediaWiki spellings can silently miss a root.
+    let roots = input
+        .roots
+        .iter()
+        .map(|name| canonical_category_name(name))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut graph = BTreeMap::new();
     let mut edges = 0usize;
     for category in input.categories {
-        if !safe_category_name(&category.name)
-            || category
-                .children
-                .iter()
-                .any(|name| !safe_category_name(name))
-            || category.articles.contains(&0)
-        {
+        let name = canonical_category_name(&category.name)?;
+        let children = category
+            .children
+            .iter()
+            .map(|child| canonical_category_name(child))
+            .collect::<Result<Vec<_>, _>>()?;
+        if category.articles.contains(&0) {
             return Err("invalid category member or name".into());
         }
         edges = edges
             .checked_add(category.articles.len())
-            .and_then(|count| count.checked_add(category.children.len()))
+            .and_then(|count| count.checked_add(children.len()))
             .filter(|count| *count <= MAX_EDGES)
             .ok_or_else(|| "preview category graph exceeds member limit".to_owned())?;
         if graph
             .insert(
-                category.name,
+                name,
                 Category {
                     articles: category.articles,
-                    children: category.children,
+                    children,
                     administrative: category.administrative,
                 },
             )
@@ -261,7 +280,7 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     }
     let related = input.related;
     let rules = Rules {
-        roots: input.roots,
+        roots,
         include: input.include,
         exclude: input.exclude,
         depth_limit: input
@@ -610,6 +629,49 @@ mod input_tests {
         assert!(apply_curated_seeds(&mut implicit)
             .unwrap_err()
             .contains("require explicit"));
+    }
+
+
+    #[test]
+    fn json_preview_normalizes_category_underscores_and_rejects_alias_nodes() {
+        assert_eq!(
+            canonical_category_name("Category:Quantum_mechanics").unwrap(),
+            "Category:Quantum mechanics"
+        );
+        for invalid in ["Category:_Quantum", "Category:Quantum_", "_", "Category:"] {
+            assert!(canonical_category_name(invalid).is_err(), "{invalid}");
+        }
+
+        let path = test_path();
+        let valid = serde_json::json!({
+            "snapshot_id": "enwiki-20261023",
+            "roots": ["Category:Quantum mechanics"],
+            "depth_limit": 1,
+            "page_limit": 100,
+            "categories": [
+                {"name": "Category:Quantum_mechanics", "articles": [42],
+                 "children": ["Category:Wave_mechanics"]},
+                {"name": "Category:Wave mechanics", "articles": [43]}
+            ]
+        });
+        fs::write(&path, valid.to_string()).unwrap();
+        assert!(run(&path, true).is_ok());
+
+        // Distinct raw nodes cannot alias the same canonical category.
+        let duplicate = serde_json::json!({
+            "snapshot_id": "enwiki-20261023",
+            "roots": ["Category:Quantum_mechanics"],
+            "depth_limit": 1,
+            "page_limit": 100,
+            "categories": [
+                {"name": "Category:Quantum_mechanics", "articles": [42]},
+                {"name": "Category:Quantum mechanics", "articles": [43]}
+            ]
+        });
+        fs::write(&path, duplicate.to_string()).unwrap();
+        let result = run(&path, true);
+        fs::remove_file(&path).unwrap();
+        assert!(result.unwrap_err().contains("duplicate category name"));
     }
 
     #[test]
