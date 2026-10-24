@@ -265,8 +265,28 @@ pub fn fetch_title_with_local_index<T: MediaWikiTransport>(
     } else {
         None
     };
+    let verified_fallback = candidate.clone();
     let versions: Vec<_> = candidate.into_iter().collect();
-    fetch_title_with_versions(client, project, requested_title, network, &versions)
+    fetch_title_with_versions(client, project, requested_title, network, &versions).map_err(
+        |mut failure| {
+            // An unavailable title-resolution transport cannot disprove the
+            // independently verified local title mapping. Preserve its exact
+            // installed revision as an explicitly noncurrent fallback.
+            // However, malformed/ambiguous official responses and later
+            // project/page identity mismatches must never be overridden.
+            if failure.stage == FetchStage::TitleResolution
+                && matches!(
+                    &failure.cause,
+                    FetchCause::Transport(_)
+                        | FetchCause::ResponseTooLarge
+                        | FetchCause::InvalidUtf8
+                )
+            {
+                failure.fallback = verified_fallback;
+            }
+            failure
+        },
+    )
 }
 
 #[cfg(test)]
@@ -648,6 +668,89 @@ mod tests {
             ))
         );
         assert_eq!(drift.requests.len(), 1);
+    }
+
+    #[test]
+    fn title_resolution_network_failure_preserves_verified_local_fallback_only() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex, LocalTitleRedirect};
+
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: local(),
+            }],
+        )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Introduction to physics".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 42,
+        }])
+        .unwrap();
+        for title in ["Physics", "Introduction to physics"] {
+            let mut unavailable = FakeTransport::default();
+            unavailable.answers.push_back(Err("offline"));
+            let error = fetch_title_with_local_index(
+                &mut unavailable,
+                "enwiki",
+                title,
+                NetworkState::Online,
+                Some(&index),
+            )
+            .unwrap_err();
+            assert_eq!(error.stage, FetchStage::TitleResolution);
+            assert_eq!(error.cause, FetchCause::Transport("offline"));
+            assert_eq!(error.fallback, Some(local()));
+            assert_eq!(unavailable.requests.len(), 1);
+        }
+
+        let mut missing = FakeTransport::default();
+        missing.answers.push_back(Err("offline"));
+        let error = fetch_title_with_local_index(
+            &mut missing,
+            "enwiki",
+            "Unknown title",
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::TitleResolution);
+        assert_eq!(error.fallback, None);
+
+        // A response which exists but cannot establish the expected title
+        // identity is not a network failure; do not launder a local result.
+        let mut conflicting = FakeTransport::default();
+        conflicting.answers.push_back(Ok(
+            r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Different"}]}}"#
+                .as_bytes()
+                .to_vec(),
+        ));
+        let error = fetch_title_with_local_index(
+            &mut conflicting,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::TitleResolution);
+        assert!(matches!(error.cause, FetchCause::Flow(_)));
+        assert_eq!(error.fallback, None);
+
+        // Without an independently verified local index there is no source
+        // of trustworthy title-to-revision mapping on an HTTP failure.
+        let mut no_index = FakeTransport::default();
+        no_index.answers.push_back(Err("offline"));
+        let error = fetch_title_with_local_index(
+            &mut no_index,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.fallback, None);
     }
 
     #[test]
