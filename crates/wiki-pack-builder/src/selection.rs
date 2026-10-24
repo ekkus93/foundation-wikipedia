@@ -685,7 +685,10 @@ mod pinned_tests {
             )])
         };
         let below = resolve(&graph(32, 512), &rules).unwrap();
-        assert!(below.warnings.iter().all(|warning| !warning.contains("fan-out")));
+        assert!(below
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("fan-out")));
         assert_eq!(below.page_ids.len(), 512);
 
         let above = resolve(&graph(33, 513), &rules).unwrap();
