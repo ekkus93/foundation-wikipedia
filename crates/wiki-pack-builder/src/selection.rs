@@ -3,6 +3,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use wiki_pack_format::Sha256Transcript;
 
+// Preview unusually broad category membership before media acquisition.
+// These thresholds affect diagnostics only, never the selected page-ID set.
+const LARGE_CATEGORY_CHILDREN: usize = 32;
+const LARGE_CATEGORY_ARTICLES: usize = 512;
+
 #[derive(Clone, Debug, Default)]
 pub struct Category {
     pub articles: Vec<u64>,
@@ -150,6 +155,18 @@ pub fn resolve_with_redirects(
         if node.administrative {
             warnings.insert(format!("Skipped administrative category: {name}"));
             continue;
+        }
+        if node.children.len() > LARGE_CATEGORY_CHILDREN {
+            warnings.insert(format!(
+                "Large category child fan-out: {name} ({} children)",
+                node.children.len()
+            ));
+        }
+        if node.articles.len() > LARGE_CATEGORY_ARTICLES {
+            warnings.insert(format!(
+                "Large category article fan-out: {name} ({} memberships)",
+                node.articles.len()
+            ));
         }
         inspected_candidates = inspected_candidates.saturating_add(node.articles.len());
         if inspected_candidates > candidate_budget {
@@ -643,6 +660,54 @@ mod pinned_tests {
         let mut graph = base;
         graph.insert("Category:می‌روم क्‍ष".into(), Category::default());
         assert!(pinned(&graph, &rules).is_ok());
+    }
+
+    #[test]
+    fn warns_on_unusually_broad_category_fanout_without_changing_selection() {
+        let name = "Category:Broad";
+        let rules = Rules {
+            roots: vec![name.into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 1024,
+        };
+        let graph = |children: usize, articles: usize| {
+            BTreeMap::from([(
+                name.to_owned(),
+                Category {
+                    articles: (1..=articles as u64).collect(),
+                    children: (0..children)
+                        .map(|id| format!("Category:Child{id}"))
+                        .collect(),
+                    administrative: false,
+                },
+            )])
+        };
+        let below = resolve(&graph(32, 512), &rules).unwrap();
+        assert!(below.warnings.iter().all(|warning| !warning.contains("fan-out")));
+        assert_eq!(below.page_ids.len(), 512);
+
+        let above = resolve(&graph(33, 513), &rules).unwrap();
+        assert_eq!(above.page_ids.len(), 513);
+        assert_eq!(
+            above.warnings,
+            vec![
+                "Depth limit reached: Category:Broad".to_owned(),
+                "Large category article fan-out: Category:Broad (513 memberships)".to_owned(),
+                "Large category child fan-out: Category:Broad (33 children)".to_owned(),
+            ]
+        );
+        let pinned = resolve_pinned(
+            &graph(33, 513),
+            &rules,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "enwiki-20261023",
+        )
+        .unwrap();
+        assert_eq!(pinned.page_ids, above.page_ids);
+        assert_eq!(pinned.warnings, above.warnings);
     }
 
     #[test]
