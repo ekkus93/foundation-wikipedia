@@ -39,6 +39,20 @@ pub fn expand_related_links(
     {
         return Err(ResolveError::InvalidPage);
     }
+    // Validate the entire supplied link graph, not just edges reachable
+    // within this preview's hop budget. Unselected or depth-limited records
+    // must not conceal invalid page identities in a caller-provided DTO.
+    // The revision-joined wrapper validates its link claims separately;
+    // this low-level entry point must be safe when called directly.
+    if adjacency.iter().any(|(&from, neighbors)| {
+        from == 0
+            || from > i64::MAX as u64
+            || neighbors
+                .iter()
+                .any(|&to| to == 0 || to > i64::MAX as u64)
+    }) {
+        return Err(ResolveError::InvalidPage);
+    }
     let mut selected: BTreeSet<u64> = seeds
         .iter()
         .copied()
@@ -96,6 +110,45 @@ mod tests {
         assert_eq!(
             expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
             Ok(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn unreachable_and_depth_limited_link_identities_fail_closed() {
+        let oversized = i64::MAX as u64 + 1;
+        let excluded = BTreeSet::new();
+        let mut adjacency = BTreeMap::from([(1, vec![2]), (2, vec![3])]);
+        // Both a malformed source and a malformed destination in an
+        // unrelated component are rejected, even if the result is [1, 2].
+        adjacency.insert(0, vec![9]);
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        adjacency.remove(&0);
+        adjacency.insert(99, vec![oversized]);
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        adjacency.remove(&99);
+        adjacency.insert(oversized, vec![9]);
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        adjacency.remove(&oversized);
+        // A neighbor beyond the requested hop limit is also part of the
+        // supplied input and must not evade validation.
+        adjacency.insert(2, vec![0]);
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
+            Err(ResolveError::InvalidPage)
+        );
+        adjacency.insert(2, vec![3]);
+        assert_eq!(
+            expand_related_links(&[1], &adjacency, &excluded, 1, 10, 20),
+            Ok(vec![1, 2])
         );
     }
 
