@@ -14,7 +14,7 @@ const MAX_CASES: usize = 1_000;
 const MAX_GOLD_PER_CASE: usize = 128;
 
 /// Exact, revision-bound evidence that a labeled question should retrieve.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GoldEvidence {
     pub article: ArticleKey,
     pub revision_id: u64,
