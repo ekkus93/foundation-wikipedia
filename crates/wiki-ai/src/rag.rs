@@ -10,8 +10,8 @@ use crate::{
 };
 use wiki_model::{Article, ModelError};
 use wiki_search::{
-    validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit, GroundedAnswer,
-    MAX_LEXICAL_QUERY_BYTES,
+    evidence_word_cost, validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit,
+    GroundedAnswer, MAX_LEXICAL_QUERY_BYTES,
 };
 
 const MAX_RESPONSE_BYTES: usize = 131_072;
@@ -93,11 +93,7 @@ pub fn answer_article(
         if !index.contains_evidence(selected) {
             return Err(RagError::InvalidSelection);
         }
-        used_words = selected
-            .excerpt
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|part| !part.is_empty())
-            .count();
+        used_words = evidence_word_cost(&selected.excerpt);
         if used_words > question.context_word_budget {
             return Err(RagError::SelectionTooLarge);
         }
@@ -113,11 +109,7 @@ pub fn answer_article(
         {
             continue;
         }
-        let words = hit
-            .excerpt
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|part| !part.is_empty())
-            .count();
+        let words = evidence_word_cost(&hit.excerpt);
         if words <= question.context_word_budget.saturating_sub(used_words) {
             used_words += words;
             evidence.push(hit);
@@ -213,7 +205,7 @@ mod citation_parser_tests {
     #[test]
     fn oversized_unicode_question_fails_before_index_or_provider_invocation() {
         use crate::{Locality, ModelInfo, ProviderCapabilities};
-        use wiki_model::{ArticleKey, Revision, ARTICLE_SCHEMA_VERSION};
+        use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
 
         struct MustNotCallProvider;
         impl LlmProvider for MustNotCallProvider {
@@ -290,6 +282,49 @@ mod citation_parser_tests {
                 &CancellationToken::default(),
             ),
             Err(RagError::InvalidQuestion)
+        );
+
+        // The RAG orchestration must use the same CJK word cost as
+        // wiki-search for BOTH explicitly selected and retrieved passages.
+        // Otherwise an unspaced six-character excerpt consumes one "word"
+        // and bypasses the context budget before the model call.
+        let mut cjk = article;
+        cjk.lead.push(Block {
+            ordinal: 0,
+            content: BlockContent::Paragraph("量子力学研究".into()),
+        });
+        let index = ArticleLexicalIndex::build(&cjk).unwrap();
+        let selected = index.search("量子", 1).pop().unwrap();
+        let cjk_question = ArticleQuestion {
+            question: "量子",
+            model: "local-model",
+            passage_limit: 1,
+            context_word_budget: 5,
+            selected_evidence: Some(&selected),
+            max_output_tokens: 16,
+            outbound_policy: OutboundPolicy::OnDeviceOnly,
+        };
+        assert_eq!(
+            answer_article(
+                &cjk,
+                &MustNotCallProvider,
+                &cjk_question,
+                &CancellationToken::default(),
+            ),
+            Err(RagError::SelectionTooLarge)
+        );
+        let unselected = ArticleQuestion {
+            selected_evidence: None,
+            ..cjk_question
+        };
+        assert_eq!(
+            answer_article(
+                &cjk,
+                &MustNotCallProvider,
+                &unselected,
+                &CancellationToken::default(),
+            ),
+            Ok(GroundedAnswer::InsufficientEvidence)
         );
     }
 

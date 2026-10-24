@@ -692,10 +692,11 @@ fn tokenize_query(text: &str) -> Vec<String> {
     tokenize_impl(text, true)
 }
 
-// Word budgets must not treat a 10,000-character unspaced Han passage as
-// one word. Count each CJK scalar conservatively, while preserving existing
-// space-delimited word accounting for Latin and other alphabetic scripts.
-fn evidence_word_cost(text: &str) -> usize {
+/// Word budgets must not treat a 10,000-character unspaced Han passage as
+/// one word. Count each CJK scalar conservatively, while preserving existing
+/// space-delimited word accounting for Latin and other alphabetic scripts.
+/// This is a word-cost heuristic, not a model-specific token count.
+pub fn evidence_word_cost(text: &str) -> usize {
     let mut words = 0;
     let mut in_word = false;
     for ch in text.chars() {
