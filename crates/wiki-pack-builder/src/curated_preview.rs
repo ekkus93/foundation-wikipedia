@@ -325,7 +325,10 @@ mod tests {
         let mixed = "A1b2C3d4E5f60789".repeat(4);
         let ids = ["physics", "mathematics"];
         let expected = curated_definition_fingerprint(&ids, &lower).unwrap();
-        assert_eq!(curated_definition_fingerprint(&ids, &upper), Ok(expected.clone()));
+        assert_eq!(
+            curated_definition_fingerprint(&ids, &upper),
+            Ok(expected.clone())
+        );
         assert_eq!(curated_definition_fingerprint(&ids, &mixed), Ok(expected));
         assert_ne!(
             curated_definition_fingerprint(&ids, &lower),
