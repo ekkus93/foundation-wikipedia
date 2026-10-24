@@ -81,6 +81,14 @@ pub enum CuratedPreviewError {
     Preview(JoinedPreviewError),
 }
 
+/// Optional caller-selected bounds for curated previews. Omitting a field
+/// uses the curated seed's conservative default; widening is rejected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CuratedLimits {
+    pub depth_limit: Option<usize>,
+    pub page_limit: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 pub struct CuratedTopicSelection {
     /// Canonical sorted, deduplicated curated IDs.
@@ -116,8 +124,7 @@ pub fn preview_curated_topics(
         redirect_identities,
         include,
         exclude,
-        None,
-        None,
+        CuratedLimits::default(),
     )
 }
 
@@ -132,8 +139,7 @@ pub fn preview_curated_topics_with_limits(
     redirect_identities: &[PageRedirectIdentity],
     include: &[u64],
     exclude: &[u64],
-    depth_limit: Option<usize>,
-    page_limit: Option<usize>,
+    limits: CuratedLimits,
 ) -> Result<CuratedTopicSelection, CuratedPreviewError> {
     if topic_ids.is_empty() {
         return Err(CuratedPreviewError::EmptyTopics);
@@ -156,11 +162,11 @@ pub fn preview_curated_topics_with_limits(
     }) {
         return Err(CuratedPreviewError::IncompatiblePolicy);
     }
-    if page_limit == Some(0) {
+    if limits.page_limit == Some(0) {
         return Err(CuratedPreviewError::InvalidLimit);
     }
-    if depth_limit.is_some_and(|limit| limit > first.depth_limit)
-        || page_limit.is_some_and(|limit| limit > first.page_limit)
+    if limits.depth_limit.is_some_and(|limit| limit > first.depth_limit)
+        || limits.page_limit.is_some_and(|limit| limit > first.page_limit)
     {
         return Err(CuratedPreviewError::ExceedsPolicy);
     }
@@ -181,8 +187,8 @@ pub fn preview_curated_topics_with_limits(
         roots: roots.into_iter().collect(),
         include: include.to_vec(),
         exclude: exclude.to_vec(),
-        depth_limit: depth_limit.unwrap_or(first.depth_limit),
-        page_limit: page_limit.unwrap_or(first.page_limit),
+        depth_limit: limits.depth_limit.unwrap_or(first.depth_limit),
+        page_limit: limits.page_limit.unwrap_or(first.page_limit),
     };
     let preview = preview_joined_selection(records, administrative, &rules, redirect_identities)
         .map_err(CuratedPreviewError::Preview)?;
@@ -347,8 +353,7 @@ mod tests {
             &[],
             &[],
             &[],
-            None,
-            None,
+            CuratedLimits::default(),
         )
         .unwrap();
         assert_eq!(
@@ -362,8 +367,10 @@ mod tests {
             &[],
             &[],
             &[],
-            Some(0),
-            Some(2),
+            CuratedLimits {
+                depth_limit: Some(0),
+                page_limit: Some(2),
+            },
         )
         .unwrap();
         assert_eq!(limited.rules.depth_limit, 0);
@@ -380,8 +387,10 @@ mod tests {
             &[],
             &[],
             &[],
-            Some(0),
-            Some(2),
+            CuratedLimits {
+                depth_limit: Some(0),
+                page_limit: Some(2),
+            },
         )
         .unwrap();
         assert_eq!(
@@ -407,8 +416,10 @@ mod tests {
                     &[],
                     &[],
                     &[],
-                    depth,
-                    pages,
+                    CuratedLimits {
+                        depth_limit: depth,
+                        page_limit: pages,
+                    },
                 )
                 .unwrap_err(),
                 expected
@@ -421,8 +432,10 @@ mod tests {
             &[],
             &[],
             &[],
-            None,
-            Some(1),
+            CuratedLimits {
+                depth_limit: None,
+                page_limit: Some(1),
+            },
         );
         assert!(matches!(too_small, Err(CuratedPreviewError::Preview(_))));
     }
