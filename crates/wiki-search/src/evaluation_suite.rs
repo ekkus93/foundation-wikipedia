@@ -221,19 +221,29 @@ mod tests {
     #[test]
     fn rejects_unsupported_version_unknown_and_duplicate_json_keys() {
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"schema_version\": 1", "\"schema_version\": 2")),
+            parse_retrieval_suite_json(
+                &INPUT.replace("\"schema_version\": 1", "\"schema_version\": 2")
+            ),
             Err(SuiteError::UnsupportedSchema(2))
         );
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"schema_version\": 1", "\"schema_version\": 1, \"surprise\": true")),
+            parse_retrieval_suite_json(&INPUT.replace(
+                "\"schema_version\": 1",
+                "\"schema_version\": 1, \"surprise\": true"
+            )),
             Err(SuiteError::InvalidJson)
         );
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"schema_version\": 1", "\"schema_version\": 1, \"schema_version\": 1")),
+            parse_retrieval_suite_json(&INPUT.replace(
+                "\"schema_version\": 1",
+                "\"schema_version\": 1, \"schema_version\": 1"
+            )),
             Err(SuiteError::InvalidJson)
         );
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"page_id\":9", "\"page_id\":9,\"page_id\":9")),
+            parse_retrieval_suite_json(
+                &INPUT.replace("\"page_id\":9", "\"page_id\":9,\"page_id\":9")
+            ),
             Err(SuiteError::InvalidJson)
         );
     }
@@ -266,11 +276,16 @@ mod tests {
             Err(SuiteError::InvalidGold("a-physics".into()))
         );
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"project\":\"enwiki\",\"page_id\":9", "\"project\":\"frwiki\",\"page_id\":9")),
+            parse_retrieval_suite_json(&INPUT.replace(
+                "\"project\":\"enwiki\",\"page_id\":9",
+                "\"project\":\"frwiki\",\"page_id\":9"
+            )),
             Err(SuiteError::OutOfScopeGold("a-physics".into()))
         );
         assert_eq!(
-            parse_retrieval_suite_json(&INPUT.replace("\"query\":\"gravity\"", "\"query\":\"gravity\\nforged\"")),
+            parse_retrieval_suite_json(
+                &INPUT.replace("\"query\":\"gravity\"", "\"query\":\"gravity\\nforged\"")
+            ),
             Err(SuiteError::InvalidQuery("a-physics".into()))
         );
         assert_eq!(
