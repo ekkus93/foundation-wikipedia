@@ -60,7 +60,11 @@ pub fn curated_definition_fingerprint(
         digest.update(&(topic.depth_limit as u64).to_be_bytes());
         digest.update(&(topic.page_limit as u64).to_be_bytes());
     }
-    hash_text(&mut digest, rules_definition_sha256);
+    // SHA-256 is a byte identity: upper- and lower-case hexadecimal spellings
+    // denote the same digest. Canonicalize before incorporating the upstream
+    // rules receipt, or an unchanged selection would acquire two different
+    // curated definition fingerprints solely because of letter case.
+    hash_text(&mut digest, &rules_definition_sha256.to_ascii_lowercase());
     Ok(digest.finish_hex())
 }
 
@@ -299,6 +303,10 @@ mod tests {
             curated_definition_fingerprint(&["mathematics"], "not-a-digest"),
             Err(CuratedPreviewError::InvalidDefinitionDigest)
         );
+        assert_eq!(
+            curated_definition_fingerprint(&["mathematics"], &"g".repeat(64)),
+            Err(CuratedPreviewError::InvalidDefinitionDigest)
+        );
         let digest = "a".repeat(64);
         assert_eq!(
             curated_definition_fingerprint(&["physics", "mathematics"], &digest),
@@ -307,6 +315,21 @@ mod tests {
         assert_ne!(
             curated_definition_fingerprint(&["mathematics"], &digest),
             curated_definition_fingerprint(&["physics"], &digest)
+        );
+    }
+
+    #[test]
+    fn fingerprint_canonicalizes_rule_digest_hex_case() {
+        let lower = "a1b2c3d4e5f60789".repeat(4);
+        let upper = lower.to_ascii_uppercase();
+        let mixed = "A1b2C3d4E5f60789".repeat(4);
+        let ids = ["physics", "mathematics"];
+        let expected = curated_definition_fingerprint(&ids, &lower).unwrap();
+        assert_eq!(curated_definition_fingerprint(&ids, &upper), Ok(expected.clone()));
+        assert_eq!(curated_definition_fingerprint(&ids, &mixed), Ok(expected));
+        assert_ne!(
+            curated_definition_fingerprint(&ids, &lower),
+            curated_definition_fingerprint(&ids, &"0".repeat(64))
         );
     }
 
