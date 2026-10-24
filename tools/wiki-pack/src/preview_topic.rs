@@ -136,9 +136,9 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
                 topic.project
             ));
         }
-        if policy.is_some_and(|(depth, pages)| {
-            depth != topic.depth_limit || pages != topic.page_limit
-        }) {
+        if policy
+            .is_some_and(|(depth, pages)| depth != topic.depth_limit || pages != topic.page_limit)
+        {
             return Err("curated topics have incompatible safety policies".into());
         }
         policy = Some((topic.depth_limit, topic.page_limit));
