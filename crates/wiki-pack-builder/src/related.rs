@@ -196,3 +196,5 @@ mod tests {
             ),
             Err(ResolveError::InvalidPage)
         );
+    }
+}
