@@ -234,3 +234,52 @@ fn typed_graph_shares_full_enterprise_unicode_membership_policy() {
     let graph = graph_from_joined(&[root, multilingual], &BTreeSet::new()).unwrap();
     assert!(graph.unresolved_redirect_titles.contains("می‌روم क्‍ष"));
 }
+
+#[test]
+fn typed_graph_rejects_mainspace_title_and_redirect_alias_collisions() {
+    let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
+    let article = joined_page(42, 0, "Quantum mechanics", vec!["Science".into()], vec![]);
+    let same_title = joined_page(43, 0, "Quantum mechanics", vec![], vec![]);
+    let underscore_title = joined_page(43, 0, "Quantum_mechanics", vec![], vec![]);
+    for duplicate in [same_title, underscore_title] {
+        assert!(matches!(
+            graph_from_joined(&[root.clone(), article.clone(), duplicate], &BTreeSet::new()),
+            Err(GraphBuildError::DuplicateTitle(_))
+        ));
+    }
+
+    // The alias may precede or follow the conflicting canonical record.
+    let redirecting = joined_page(
+        43,
+        0,
+        "Other topic",
+        vec![],
+        vec!["Quantum_mechanics".into()],
+    );
+    for records in [
+        vec![root.clone(), redirecting.clone(), article.clone()],
+        vec![root.clone(), article.clone(), redirecting.clone()],
+    ] {
+        assert_eq!(
+            graph_from_joined(&records, &BTreeSet::new()).unwrap_err(),
+            GraphBuildError::RedirectTitleCollision("Quantum_mechanics".into())
+        );
+    }
+
+    // A page cannot claim its own canonical title as a redirect alias.
+    let mut self_alias = article.clone();
+    self_alias.redirects = vec!["Quantum_mechanics".into()];
+    assert_eq!(
+        graph_from_joined(&[root.clone(), self_alias], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::RedirectTitleCollision("Quantum_mechanics".into())
+    );
+
+    // Names in different namespaces are not conflicting mainspace identities.
+    let category_with_same_name = joined_page(50, 14, "Category:Quantum mechanics", vec![], vec![]);
+    let graph = graph_from_joined(
+        &[root, article, category_with_same_name],
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    assert!(graph.graph.contains_key("Category:Quantum mechanics"));
+}

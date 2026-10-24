@@ -15,6 +15,8 @@ pub enum GraphBuildError {
     MixedProject,
     MixedGeneration,
     DuplicatePage(u64),
+    DuplicateTitle(String),
+    RedirectTitleCollision(String),
     DuplicateCategory(String),
     InvalidCategory(String),
     InvalidRedirect(String),
@@ -43,6 +45,12 @@ fn valid_generation_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+// Wikimedia treats underscores as spaces in page titles. This narrow
+// collision key does not claim complete language-dependent title folding.
+fn title_collision_key(title: &str) -> String {
+    title.replace('_', " ")
 }
 
 fn category_title(raw: &str) -> Result<String, GraphBuildError> {
@@ -87,6 +95,8 @@ pub fn graph_from_joined(
     let mut graph = BTreeMap::new();
     let mut page_revisions = BTreeMap::new();
     let mut unresolved_redirect_titles = BTreeSet::new();
+    let mut mainspace_titles = BTreeSet::new();
+    let mut mainspace_redirect_titles = BTreeSet::new();
     for record in records {
         let page = &record.structured;
         if page.page.project != project {
@@ -115,6 +125,11 @@ pub fn graph_from_joined(
         {
             return Err(GraphBuildError::DuplicatePage(page.page.page_id));
         }
+        // Distinct page IDs cannot claim the same mainspace title. This
+        // matters even if neither page is selected by the current topic.
+        if page.namespace == 0 && !mainspace_titles.insert(title_collision_key(&page.name)) {
+            return Err(GraphBuildError::DuplicateTitle(page.name.clone()));
+        }
         for redirect in &record.redirects {
             if !valid_membership_label(redirect) {
                 return Err(GraphBuildError::InvalidRedirect(redirect.clone()));
@@ -123,6 +138,9 @@ pub fn graph_from_joined(
             // silently collapse a duplicate alias across two joined records.
             if !unresolved_redirect_titles.insert(redirect.clone()) {
                 return Err(GraphBuildError::DuplicateRedirect(redirect.clone()));
+            }
+            if page.namespace == 0 {
+                mainspace_redirect_titles.insert(redirect.clone());
             }
         }
         // Revalidate all memberships even for non-contributing namespaces.
@@ -145,6 +163,13 @@ pub fn graph_from_joined(
             if graph.insert(title.clone(), node).is_some() {
                 return Err(GraphBuildError::DuplicateCategory(title));
             }
+        }
+    }
+    // Alias/title collisions must be checked after all canonical titles are
+    // known, so input record ordering cannot hide a conflicting redirect.
+    for alias in mainspace_redirect_titles {
+        if mainspace_titles.contains(&title_collision_key(&alias)) {
+            return Err(GraphBuildError::RedirectTitleCollision(alias));
         }
     }
     // An operator's administrative exclusion policy is security-relevant:
