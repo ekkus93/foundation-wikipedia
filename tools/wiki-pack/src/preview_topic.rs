@@ -29,8 +29,10 @@ struct PreviewInput {
     include: Vec<u64>,
     #[serde(default)]
     exclude: Vec<u64>,
-    depth_limit: usize,
-    page_limit: usize,
+    #[serde(default)]
+    depth_limit: Option<usize>,
+    #[serde(default)]
+    page_limit: Option<usize>,
     categories: Vec<PreviewCategory>,
     #[serde(default)]
     redirects: Vec<PreviewRedirect>,
@@ -113,6 +115,7 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
     }
     let mut ids = BTreeSet::new();
     let mut roots = BTreeSet::new();
+    let mut policy = None;
     for id in &input.curated_topics {
         let topic = curated_topic(id).ok_or_else(|| format!("unknown curated topic: {id}"))?;
         // A prefix-only match accepts an empty or ambiguous generation
@@ -133,7 +136,15 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
                 topic.project
             ));
         }
-        if input.depth_limit > topic.depth_limit || input.page_limit > topic.page_limit {
+        if policy.is_some_and(|(depth, pages)| {
+            depth != topic.depth_limit || pages != topic.page_limit
+        }) {
+            return Err("curated topics have incompatible safety policies".into());
+        }
+        policy = Some((topic.depth_limit, topic.page_limit));
+        if input.depth_limit.unwrap_or(topic.depth_limit) > topic.depth_limit
+            || input.page_limit.unwrap_or(topic.page_limit) > topic.page_limit
+        {
             return Err(format!("curated topic {id} exceeds seed safety limits"));
         }
         ids.insert(id.clone());
@@ -141,9 +152,15 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
             roots.insert((*root).to_owned());
         }
     }
-    if !ids.is_empty() {
+    if let Some((depth, pages)) = policy {
+        // A curated-only request can use the published seed's conservative
+        // defaults; explicit tighter limits remain user-controlled.
+        input.depth_limit.get_or_insert(depth);
+        input.page_limit.get_or_insert(pages);
         roots.extend(input.roots.iter().cloned());
         input.roots = roots.into_iter().collect();
+    } else if input.depth_limit.is_none() || input.page_limit.is_none() {
+        return Err("custom topic previews require explicit depth_limit and page_limit".into());
     }
     Ok(ids.into_iter().collect())
 }
@@ -246,8 +263,12 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         roots: input.roots,
         include: input.include,
         exclude: input.exclude,
-        depth_limit: input.depth_limit,
-        page_limit: input.page_limit,
+        depth_limit: input
+            .depth_limit
+            .ok_or_else(|| "missing preview depth_limit".to_owned())?,
+        page_limit: input
+            .page_limit
+            .ok_or_else(|| "missing preview page_limit".to_owned())?,
     };
     let preview = preview_pinned_selection(
         &graph,
@@ -334,6 +355,8 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
 
             "selected_page_ids": selected_ids,
             "selected_page_count": selected_count,
+            "depth_limit": rules.depth_limit,
+            "page_limit": rules.page_limit,
             "visited_category_count": preview.visited_category_count,
             "skipped_administrative_count": preview.skipped_administrative_count,
             "inspected_article_mentions": preview.inspected_article_mentions,
@@ -389,6 +412,8 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         println!("Curated topic seeds: {}", curated_ids.join(", "));
     }
     println!("Selected page IDs: {selected_count}");
+    println!("Topic depth limit: {}", rules.depth_limit);
+    println!("Topic page limit: {}", rules.page_limit);
     if let Some(report) = &related_report {
         println!("Optional related pages added: {}", report.added_count);
         println!("Related link mentions: {}", report.link_mentions);
@@ -489,8 +514,8 @@ mod input_tests {
             curated_topics: vec!["physics".into(), "mathematics".into(), "physics".into()],
             include: vec![],
             exclude: vec![],
-            depth_limit: 2,
-            page_limit: 50_000,
+            depth_limit: Some(2),
+            page_limit: Some(50_000),
             categories: vec![],
             redirects: vec![],
             disambiguations: vec![],
@@ -513,16 +538,16 @@ mod input_tests {
             .unwrap_err()
             .contains("enwiki"));
         wrong_edition.snapshot_id = "enwiki-20261023".into();
-        wrong_edition.page_limit = 50_001;
+        wrong_edition.page_limit = Some(50_001);
         assert!(apply_curated_seeds(&mut wrong_edition)
             .unwrap_err()
             .contains("safety limits"));
-        wrong_edition.page_limit = 50_000;
-        wrong_edition.depth_limit = 3;
+        wrong_edition.page_limit = Some(50_000);
+        wrong_edition.depth_limit = Some(3);
         assert!(apply_curated_seeds(&mut wrong_edition)
             .unwrap_err()
             .contains("safety limits"));
-        wrong_edition.depth_limit = 2;
+        wrong_edition.depth_limit = Some(2);
         wrong_edition.curated_topics = vec!["not-a-topic".into()];
         assert!(apply_curated_seeds(&mut wrong_edition)
             .unwrap_err()
@@ -546,6 +571,24 @@ mod input_tests {
         }
         wrong_edition.snapshot_id = "enwiki-20261023".into();
         assert!(apply_curated_seeds(&mut wrong_edition).is_ok());
+
+        let mut implicit = PreviewInput {
+            depth_limit: None,
+            page_limit: None,
+            curated_topics: vec!["mathematics".into()],
+            ..wrong_edition
+        };
+        assert_eq!(
+            apply_curated_seeds(&mut implicit).unwrap(),
+            vec!["mathematics"]
+        );
+        assert_eq!(implicit.depth_limit, Some(2));
+        assert_eq!(implicit.page_limit, Some(50_000));
+        implicit.curated_topics.clear();
+        implicit.depth_limit = None;
+        assert!(apply_curated_seeds(&mut implicit)
+            .unwrap_err()
+            .contains("require explicit"));
     }
 
     #[test]
@@ -554,8 +597,6 @@ mod input_tests {
         let json = serde_json::json!({
             "snapshot_id": "enwiki-20261023",
             "curated_topics": ["mathematics"],
-            "depth_limit": 2,
-            "page_limit": 50000,
             "categories": [
                 {"name": "Category:Mathematics", "articles": [42]}
             ]
