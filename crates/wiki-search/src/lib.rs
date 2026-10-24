@@ -4,6 +4,7 @@
 //! search engine. Evidence IDs are revision-bound, not persistent bookmarks.
 
 pub mod evaluation;
+pub mod evaluation_suite;
 
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
