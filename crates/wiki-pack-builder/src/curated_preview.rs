@@ -165,8 +165,12 @@ pub fn preview_curated_topics_with_limits(
     if limits.page_limit == Some(0) {
         return Err(CuratedPreviewError::InvalidLimit);
     }
-    if limits.depth_limit.is_some_and(|limit| limit > first.depth_limit)
-        || limits.page_limit.is_some_and(|limit| limit > first.page_limit)
+    if limits
+        .depth_limit
+        .is_some_and(|limit| limit > first.depth_limit)
+        || limits
+            .page_limit
+            .is_some_and(|limit| limit > first.page_limit)
     {
         return Err(CuratedPreviewError::ExceedsPolicy);
     }
