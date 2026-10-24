@@ -138,6 +138,13 @@ pub enum SearchFetchError<E> {
     InvalidUtf8,
     Parse(OnlineSearchError),
     LocalIndex(LocalTitleIndexError),
+    /// Transport/unreadable-response failure with verified local title
+    /// suggestions. The caller may show these as explicitly offline results;
+    /// they must not be presented as a successful current Wikimedia search.
+    UnavailableWithLocal {
+        reason: Box<SearchFetchError<E>>,
+        hits: Vec<LocalSearchHit>,
+    },
 }
 
 /// Explicit online-only search through an injected HTTPS-capable transport.
@@ -181,26 +188,202 @@ pub fn fetch_search_with_local<T: MediaWikiTransport>(
 ) -> Result<SearchOutcome, SearchFetchError<T::Error>> {
     let api = WikipediaRequests::new(project).map_err(SearchFetchError::Request)?;
     api.search(text, limit).map_err(SearchFetchError::Request)?;
-    if network == NetworkState::Offline {
-        let Some(index) = local else {
-            return Ok(SearchOutcome::OfflineNeedsLocalIndex);
-        };
+    if let Some(index) = local {
         if index.project() != project {
             return Err(SearchFetchError::LocalIndex(
                 LocalTitleIndexError::ForeignProject,
             ));
         }
+    }
+    if network == NetworkState::Offline {
+        let Some(index) = local else {
+            return Ok(SearchOutcome::OfflineNeedsLocalIndex);
+        };
         return index
             .search_prefix(text, limit)
             .map(SearchOutcome::LocalResults)
             .map_err(SearchFetchError::LocalIndex);
     }
-    fetch_search(client, project, text, limit, network)
+    match fetch_search(client, project, text, limit, network) {
+        Err(reason @ (SearchFetchError::Transport(_)
+        | SearchFetchError::ResponseTooLarge
+        | SearchFetchError::InvalidUtf8)) => {
+            // An independently validated local index is usable when upstream
+            // transport becomes unavailable. Retain the failure as an error
+            // so applications explicitly label these as local candidates.
+            let hits = if let Some(index) = local {
+                index
+                    .search_prefix(text, limit)
+                    .map_err(SearchFetchError::LocalIndex)?
+            } else {
+                Vec::new()
+            };
+            if hits.is_empty() {
+                Err(reason)
+            } else {
+                Err(SearchFetchError::UnavailableWithLocal {
+                    reason: Box::new(reason),
+                    hits,
+                })
+            }
+        }
+        result => result,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn online_search_transport_failure_exposes_only_verified_local_suggestions() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleRedirect};
+        use crate::online_selection::{ArticleLocation, ArticleVersion};
+        use std::collections::VecDeque;
+
+        #[derive(Default)]
+        struct Fake {
+            answers: VecDeque<Result<Vec<u8>, &'static str>>,
+            calls: usize,
+        }
+        impl MediaWikiTransport for Fake {
+            type Error = &'static str;
+            fn get(&mut self, _url: &str, _limit: usize) -> Result<Vec<u8>, Self::Error> {
+                self.calls += 1;
+                self.answers.pop_front().unwrap_or(Err("offline"))
+            }
+        }
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: ArticleVersion {
+                    key: ArticleKey {
+                        project: "enwiki".into(),
+                        page_id: 42,
+                    },
+                    revision_id: 123,
+                    location: ArticleLocation::InstalledPack,
+                    local_complete: true,
+                },
+            }],
+        )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Physical science".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 42,
+        }])
+        .unwrap();
+
+        let mut offline = Fake::default();
+        assert_eq!(
+            fetch_search_with_local(
+                &mut offline,
+                "enwiki",
+                "Phys",
+                5,
+                NetworkState::Offline,
+                Some(&index),
+            ),
+            Ok(SearchOutcome::LocalResults(
+                index.search_prefix("Phys", 5).unwrap()
+            ))
+        );
+        assert_eq!(offline.calls, 0);
+
+        let mut client = Fake::default();
+        client.answers.push_back(Err("offline"));
+        let failure = fetch_search_with_local(
+            &mut client,
+            "enwiki",
+            "Phys",
+            5,
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap_err();
+        let SearchFetchError::UnavailableWithLocal { reason, hits } = failure else {
+            panic!("expected verified local candidates on transport outage");
+        };
+        assert_eq!(*reason, SearchFetchError::Transport("offline"));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].hit.key.page_id, 42);
+        assert_eq!(hits[0].version.revision_id, 123);
+        assert_eq!(hits[0].version.location, ArticleLocation::InstalledPack);
+        assert_eq!(client.calls, 1);
+
+        let mut no_match = Fake::default();
+        assert_eq!(
+            fetch_search_with_local(
+                &mut no_match,
+                "enwiki",
+                "unknown",
+                5,
+                NetworkState::Online,
+                Some(&index),
+            ),
+            Err(SearchFetchError::Transport("offline"))
+        );
+        let mut no_index = Fake::default();
+        assert_eq!(
+            fetch_search_with_local(
+                &mut no_index,
+                "enwiki",
+                "Phys",
+                5,
+                NetworkState::Online,
+                None,
+            ),
+            Err(SearchFetchError::Transport("offline"))
+        );
+
+        let mut response = Fake::default();
+        response
+            .answers
+            .push_back(Ok(br#"{"query":{"search":[{"pageid":99,"ns":0,"title":"Physics"}]}}"#.to_vec()));
+        let outcome = fetch_search_with_local(
+            &mut response,
+            "enwiki",
+            "Phys",
+            5,
+            NetworkState::Online,
+            Some(&index),
+        )
+        .unwrap();
+        let SearchOutcome::Results(hits) = outcome else {
+            panic!("online result must take precedence over the local suggestion");
+        };
+        assert_eq!(hits[0].key.page_id, 99);
+
+        let mut malformed = Fake::default();
+        malformed.answers.push_back(Ok(b"not JSON".to_vec()));
+        assert_eq!(
+            fetch_search_with_local(
+                &mut malformed,
+                "enwiki",
+                "Phys",
+                5,
+                NetworkState::Online,
+                Some(&index),
+            ),
+            Err(SearchFetchError::Parse(OnlineSearchError::InvalidResponse))
+        );
+
+        let mut wrong_project = Fake::default();
+        assert_eq!(
+            fetch_search_with_local(
+                &mut wrong_project,
+                "frwiki",
+                "Phys",
+                5,
+                NetworkState::Online,
+                Some(&index),
+            ),
+            Err(SearchFetchError::LocalIndex(LocalTitleIndexError::ForeignProject))
+        );
+        assert_eq!(wrong_project.calls, 0);
+    }
 
     #[test]
     fn rejects_duplicate_json_keys_in_online_search() {
