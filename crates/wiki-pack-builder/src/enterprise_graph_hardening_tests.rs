@@ -147,13 +147,7 @@ fn administrative_policy_requires_canonical_safe_category_keys() {
 #[test]
 fn administrative_policy_is_exact_and_does_not_reject_legitimate_joiners() {
     let root = joined_page(14, 14, "Category:می‌روم क्‍ष", vec![], vec![]);
-    let article = joined_page(
-        42,
-        0,
-        "Physics",
-        vec!["می‌روم क्‍ष".into()],
-        vec![],
-    );
+    let article = joined_page(42, 0, "Physics", vec!["می‌روم क्‍ष".into()], vec![]);
     let policy = BTreeSet::from(["Category:می‌روم क्‍ष".to_owned()]);
     let graph = graph_from_joined(&[root, article], &policy).unwrap();
     assert!(graph.graph["Category:می‌روم क्‍ष"].administrative);
