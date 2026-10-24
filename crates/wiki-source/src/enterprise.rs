@@ -1002,7 +1002,9 @@ mod tests {
         duplicated.redirects.push("Gravity (physics)".into());
         assert_eq!(
             join_enterprise_batch(vec![structured.clone()], vec![duplicated], vec![]),
-            Err(EnterpriseError::DuplicateRedirect("Gravity (physics)".into()))
+            Err(EnterpriseError::DuplicateRedirect(
+                "Gravity (physics)".into()
+            ))
         );
         let mut valid = regular;
         valid.categories.push("می‌روم क्‍ष".into());
