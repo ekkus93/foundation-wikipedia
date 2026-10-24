@@ -123,12 +123,11 @@ fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> 
         if !generation.is_some_and(|suffix| {
             !suffix.is_empty()
                 && suffix.len() <= 255
-                && suffix.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
-                })
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
                 && suffix.bytes().any(|byte| byte.is_ascii_alphanumeric())
-        })
-        {
+        }) {
             return Err(format!(
                 "curated topic {id} requires {} snapshot label",
                 topic.project
@@ -533,9 +532,17 @@ mod input_tests {
             .unwrap_err()
             .contains("too many"));
         wrong_edition.curated_topics = vec!["physics".into()];
-        for invalid in ["enwiki-", "enwiki-...", "enwiki-2026/10/23", "enwiki-2026\n"] {
+        for invalid in [
+            "enwiki-",
+            "enwiki-...",
+            "enwiki-2026/10/23",
+            "enwiki-2026\n",
+        ] {
             wrong_edition.snapshot_id = invalid.into();
-            assert!(apply_curated_seeds(&mut wrong_edition).is_err(), "{invalid}");
+            assert!(
+                apply_curated_seeds(&mut wrong_edition).is_err(),
+                "{invalid}"
+            );
         }
         wrong_edition.snapshot_id = "enwiki-20261023".into();
         assert!(apply_curated_seeds(&mut wrong_edition).is_ok());
