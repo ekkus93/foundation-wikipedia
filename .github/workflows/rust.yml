@@ -28,6 +28,7 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace --locked 2>&1 | tee rust-test.log
+          cargo test -p wiki-search --example retrieval_suite_runner --locked 2>&1 | tee -a rust-test.log
       - name: Synthetic retrieval regression gate
         run: cargo run -p wiki-search --example synthetic_retrieval_gate --locked
       - name: Record codec probe
