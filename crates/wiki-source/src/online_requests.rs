@@ -243,14 +243,20 @@ mod tests {
     fn navigation_input_rejects_noncharacters_and_invisible_controls() {
         let api = WikipediaRequests::new("enwiki").unwrap();
         for marker in [
-            '\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{feff}', '\u{fdd0}',
-            '\u{fdef}', '\u{fffe}', '\u{ffff}', '\u{1fffe}', '\u{10ffff}',
+            '\u{200b}',
+            '\u{2028}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{feff}',
+            '\u{fdd0}',
+            '\u{fdef}',
+            '\u{fffe}',
+            '\u{ffff}',
+            '\u{1fffe}',
+            '\u{10ffff}',
         ] {
             let text = format!("Physics{marker}");
-            assert_eq!(
-                api.search(&text, 5),
-                Err(OnlineRequestError::InvalidSearch)
-            );
+            assert_eq!(api.search(&text, 5), Err(OnlineRequestError::InvalidSearch));
             assert_eq!(
                 api.resolve_title(&text),
                 Err(OnlineRequestError::InvalidTitle)

@@ -96,9 +96,7 @@ pub fn parse_search_results(
         let title = result
             .get("title")
             .and_then(Value::as_str)
-            .filter(|title| {
-                crate::online_requests::safe_navigation_text(title, MAX_TITLE_BYTES)
-            })
+            .filter(|title| crate::online_requests::safe_navigation_text(title, MAX_TITLE_BYTES))
             .ok_or(OnlineSearchError::InvalidIdentity)?;
         if !seen.insert(page_id) {
             return Err(OnlineSearchError::DuplicatePage);
@@ -303,7 +301,15 @@ mod tests {
     #[test]
     fn search_parser_rejects_invisible_and_noncharacter_titles() {
         let valid = r#"{"query":{"search":[{"pageid":1,"ns":0,"title":"Physics"}]}}"#;
-        for marker in ['\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{fdd0}', '\u{ffff}', '\u{10ffff}'] {
+        for marker in [
+            '\u{200b}',
+            '\u{2028}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{fdd0}',
+            '\u{ffff}',
+            '\u{10ffff}',
+        ] {
             let body = valid.replace("Physics", &format!("Physics{marker}"));
             assert_eq!(
                 parse_search_results(&body, "enwiki", 0),

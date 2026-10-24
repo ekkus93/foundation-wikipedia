@@ -313,7 +313,15 @@ mod tests {
 
     #[test]
     fn revision_parser_rejects_invisible_and_noncharacter_titles() {
-        for marker in ['\u{200b}', '\u{2028}', '\u{2060}', '\u{206a}', '\u{fdd0}', '\u{ffff}', '\u{10ffff}'] {
+        for marker in [
+            '\u{200b}',
+            '\u{2028}',
+            '\u{2060}',
+            '\u{206a}',
+            '\u{fdd0}',
+            '\u{ffff}',
+            '\u{10ffff}',
+        ] {
             let response = META.replace("Énergie", &format!("Énergie{marker}"));
             assert_eq!(
                 parse_current_revision(&response, "frwiki", 42),
