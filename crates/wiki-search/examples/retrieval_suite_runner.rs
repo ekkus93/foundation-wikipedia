@@ -7,6 +7,7 @@
 //!   [--max-no-answer-fp 0]
 //!
 //! Use --corpus articles.json instead of --pack for unpacked input.
+//! Use --snapshot-root PATH for catalog.sqlite and MessagePack/zstd shard frames.
 //! A provisional pack must contain an articles.json canonical article array.
 //! This does not authenticate the source or labels. It must not be described as
 //! a publisher-verified Wikimedia benchmark without independent provenance.
@@ -18,7 +19,8 @@ use std::{
     process,
 };
 
-use wiki_model::{Article, ArticleKey};
+use wiki_model::{Article, ArticleKey, PageRecord};
+use wiki_store::catalog::SnapshotCatalog;
 use wiki_pack_format::container::verify_container;
 use wiki_search::{
     evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json, CorpusLexicalIndex,
@@ -32,6 +34,7 @@ const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
 struct Args {
     corpus: Option<PathBuf>,
     pack: Option<PathBuf>,
+    snapshot_root: Option<PathBuf>,
     suite: PathBuf,
     output: PathBuf,
     sha: String,
@@ -43,6 +46,7 @@ struct Args {
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut corpus = None;
     let mut pack = None;
+    let mut snapshot_root = None;
     let mut suite = None;
     let mut output = None;
     let mut sha = None;
@@ -61,6 +65,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         match flag.as_str() {
             "--corpus" if corpus.is_none() => corpus = Some(PathBuf::from(value)),
             "--pack" if pack.is_none() => pack = Some(PathBuf::from(value)),
+            "--snapshot-root" if snapshot_root.is_none() => snapshot_root = Some(PathBuf::from(value)),
             "--suite" if suite.is_none() => suite = Some(PathBuf::from(value)),
             "--output" if output.is_none() => output = Some(PathBuf::from(value)),
             "--sha" if sha.is_none() => sha = Some(value),
@@ -83,12 +88,13 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("--sha must be exactly 40 hexadecimal characters".into());
     }
-    if corpus.is_some() == pack.is_some() {
-        return Err("specify exactly one of --corpus or --pack".into());
+    if usize::from(corpus.is_some()) + usize::from(pack.is_some()) + usize::from(snapshot_root.is_some()) != 1 {
+        return Err("specify exactly one of --corpus, --pack or --snapshot-root".into());
     }
     Ok(Args {
         corpus,
         pack,
+        snapshot_root,
         suite: suite.ok_or("missing --suite")?,
         output: output.ok_or("missing --output")?,
         sha,
@@ -111,6 +117,43 @@ fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
         return Err(format!("{} exceeds {max} bytes", path.display()));
     }
     Ok(bytes)
+}
+
+/// Read a real immutable SQLite catalog and independent MessagePack/zstd
+/// shard frames without copying the entire snapshot or modifying its files.
+/// The catalog's complete frame coverage/title-index audit is mandatory;
+/// byte integrity is not publisher authenticity or required-media completeness.
+fn read_snapshot_corpus(root: &Path) -> Result<Vec<Article>, String> {
+    let catalog_path = root.join("catalog.sqlite");
+    let catalog = SnapshotCatalog::open_read_only(&catalog_path)
+        .map_err(|error| format!("cannot open snapshot catalog: {error:?}"))?;
+    catalog
+        .verify_shard_coverage(root)
+        .map_err(|error| format!("snapshot frame coverage audit failed: {error:?}"))?;
+    let mut articles = Vec::new();
+    let mut too_many = false;
+    catalog
+        .visit_records(root, |record| {
+            if let PageRecord::Article(article) = record {
+                if articles.len() == MAX_ARTICLES {
+                    too_many = true;
+                    return Err(wiki_store::catalog::CatalogError::InvalidCatalogEntry);
+                }
+                articles.push(*article);
+            }
+            Ok(())
+        })
+        .map_err(|error| {
+            if too_many {
+                format!("snapshot exceeds {MAX_ARTICLES} benchmark articles")
+            } else {
+                format!("cannot decode verified snapshot frame: {error:?}")
+            }
+        })?;
+    if articles.is_empty() {
+        return Err("snapshot has no articles to benchmark".into());
+    }
+    Ok(articles)
 }
 
 fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<(Vec<u8>, String), String> {
@@ -198,13 +241,14 @@ fn validate_output_destination(args: &Args) -> Result<(), String> {
         .corpus
         .as_ref()
         .or(args.pack.as_ref())
+        .or(args.snapshot_root.as_ref())
         .ok_or("missing benchmark corpus")?;
     for input in [corpus, &args.suite] {
         let resolved = fs::canonicalize(input)
             .map_err(|error| format!("cannot resolve {}: {error}", input.display()))?;
-        if output == resolved {
+        if output == resolved || (args.snapshot_root.is_some() && output.starts_with(&resolved)) {
             return Err(format!(
-                "report output must not overwrite input {}",
+                "report output must not overwrite input or modify snapshot {}",
                 input.display()
             ));
         }
@@ -214,17 +258,22 @@ fn validate_output_destination(args: &Args) -> Result<(), String> {
 
 fn run(args: Args) -> Result<(), String> {
     validate_output_destination(&args)?;
-    let (corpus_bytes, pack_project) = if let Some(path) = &args.corpus {
-        (read_bounded(path, MAX_CORPUS_BYTES)?, None)
+    let (articles, pack_project) = if let Some(root) = &args.snapshot_root {
+        (read_snapshot_corpus(root)?, None)
     } else {
-        let path = args.pack.as_ref().ok_or("missing --pack")?;
-        let mut input = fs::File::open(path)
-            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-        let (bytes, project) = read_pack_corpus(&mut input)?;
-        (bytes, Some(project))
+        let (corpus_bytes, pack_project) = if let Some(path) = &args.corpus {
+            (read_bounded(path, MAX_CORPUS_BYTES)?, None)
+        } else {
+            let path = args.pack.as_ref().ok_or("missing --pack")?;
+            let mut input = fs::File::open(path)
+                .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+            let (bytes, project) = read_pack_corpus(&mut input)?;
+            (bytes, Some(project))
+        };
+        let articles = serde_json::from_slice(&corpus_bytes)
+            .map_err(|error| format!("invalid canonical article corpus: {error}"))?;
+        (articles, pack_project)
     };
-    let articles: Vec<Article> = serde_json::from_slice(&corpus_bytes)
-        .map_err(|error| format!("invalid canonical article corpus: {error}"))?;
     if articles.is_empty() || articles.len() > MAX_ARTICLES {
         return Err(format!("corpus must contain 1..={MAX_ARTICLES} articles"));
     }
@@ -313,6 +362,9 @@ mod tests {
         assert!(parse_args(args).is_err());
         assert!(parse_args(vec!["--suite".into(), "suite.json".into()]).is_err());
         let mut args = arguments();
+        args.extend(["--snapshot-root".into(), "snapshot".into()]);
+        assert!(parse_args(args).is_err());
+        let mut args = arguments();
         args.extend(["--pack".into(), "test.wpack".into()]);
         assert!(parse_args(args).is_err());
         let mut args = arguments();
@@ -374,6 +426,85 @@ mod tests {
             assert!(validate_output_destination(&args).is_err());
         }
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn verified_snapshot_catalog_decodes_zstd_records_and_rejects_corruption() {
+        use wiki_model::{Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+        use wiki_store::record_codec::append_record_frame;
+
+        let root = std::env::temp_dir().join(format!(
+            "wiki-retrieval-snapshot-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
+            revision: Revision {
+                revision_id: 99,
+                timestamp: "2026-10-24T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Earth".into(),
+            display_title: "Earth".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravity shapes spacetime.".into()),
+            }],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<p>Gravity shapes spacetime.</p>".into(),
+            is_disambiguation: false,
+        };
+        let mut shard = Vec::new();
+        append_record_frame(&mut shard, &PageRecord::Article(Box::new(article.clone()))).unwrap();
+        let shard_path = root.join("articles.shard");
+        fs::write(&shard_path, &shard).unwrap();
+        let mut catalog = SnapshotCatalog::open(&root.join("catalog.sqlite")).unwrap();
+        catalog
+            .insert_verified(&root, "articles.shard", 0, shard.len() as u64)
+            .unwrap();
+        drop(catalog);
+
+        assert_eq!(read_snapshot_corpus(&root).unwrap(), vec![article]);
+        let args = Args {
+            corpus: None,
+            pack: None,
+            snapshot_root: Some(root.clone()),
+            suite: root.join("suite.json"),
+            output: root.join("report.json"),
+            sha: "a".repeat(40),
+            top_k: 5,
+            min_recall_per_mille: 800,
+            max_no_answer_fp: 0,
+        };
+        fs::write(&args.suite, "{}").unwrap();
+        assert!(validate_output_destination(&args).is_err());
+        let mut external = args;
+        external.output = root.parent().unwrap().join(format!(
+            "wiki-retrieval-report-{}-nonexistent.json",
+            std::process::id()
+        ));
+        assert!(validate_output_destination(&external).is_ok());
+
+        shard[shard.len() - 1] ^= 1;
+        fs::write(&shard_path, &shard).unwrap();
+        assert!(read_snapshot_corpus(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

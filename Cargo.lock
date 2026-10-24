@@ -791,6 +791,7 @@ dependencies = [
  "wiki-core",
  "wiki-model",
  "wiki-pack-format",
+ "wiki-store",
 ]
 
 [[package]]
