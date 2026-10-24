@@ -121,10 +121,7 @@ pub fn preview_curated_topics(
         digest.update(&(topic.depth_limit as u64).to_be_bytes());
         digest.update(&(topic.page_limit as u64).to_be_bytes());
     }
-    hash_text(
-        &mut digest,
-        &preview.preview.selection.definition_sha256,
-    );
+    hash_text(&mut digest, &preview.preview.selection.definition_sha256);
     Ok(CuratedTopicSelection {
         topic_ids: ids.into_iter().map(str::to_owned).collect(),
         curated_definition_sha256: digest.finish_hex(),
