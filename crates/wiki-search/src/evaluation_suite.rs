@@ -188,7 +188,6 @@ pub fn parse_retrieval_suite_json(input: &str) -> Result<RetrievalSuite, SuiteEr
     })
 }
 
-
 /** Run a versioned, caller-labeled suite against an exact indexed corpus and
  * return both the stable JSON report and its regression-gate decision.
  *
@@ -230,8 +229,8 @@ pub fn run_retrieval_suite_json(
     struct Gate {
         passed: bool,
     }
-    let gate: Gate = serde_json::from_str(&report_json)
-        .map_err(|_| SuiteRunError::InvalidReport)?;
+    let gate: Gate =
+        serde_json::from_str(&report_json).map_err(|_| SuiteRunError::InvalidReport)?;
     Ok(SuiteRun {
         passed: gate.passed,
         report_json,
@@ -385,7 +384,9 @@ mod tests {
         let sha = "a".repeat(40);
         let passing = run_retrieval_suite_json(&index, INPUT, 2, &sha, &thresholds).unwrap();
         assert!(passing.passed);
-        assert!(passing.report_json.contains("\"suite_id\": \"synthetic-physics-v1\""));
+        assert!(passing
+            .report_json
+            .contains("\"suite_id\": \"synthetic-physics-v1\""));
         assert!(passing.report_json.contains("\"passed\": true"));
 
         // A no-answer case that retrieves a passage must fail the gate.
@@ -411,5 +412,4 @@ mod tests {
             Err(SuiteRunError::Suite(SuiteError::InvalidJson))
         ));
     }
-
 }
