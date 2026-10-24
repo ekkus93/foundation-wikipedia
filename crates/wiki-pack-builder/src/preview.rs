@@ -4,7 +4,9 @@
 //! Wikimedia snapshot. No media download or pack install is performed here.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::selection::{resolve_pinned, Category, PinnedResolution, ResolveError, Rules};
+use crate::selection::{
+    resolve_pinned, Category, PinnedResolution, ResolveError, Rules, WarningCollector,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CategoryFanout {
@@ -80,12 +82,22 @@ pub fn preview_pinned_selection(
     let selection = resolve_pinned(graph, rules, redirects, disambiguations, snapshot_id)?;
     let mut visited = BTreeSet::new();
     let mut traversed_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut queue: VecDeque<_> = rules.roots.iter().map(|name| (name.clone(), 0)).collect();
+    // Mirror the resolver's unique BFS queue: duplicate roots/edges must not
+    // inflate the diagnostic preview's queued work or memory consumption.
+    let mut enqueued = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    for root in &rules.roots {
+        if enqueued.insert(root.clone()) {
+            queue.push_back((root.clone(), 0));
+        }
+    }
     let mut skipped_administrative_count = 0usize;
     let mut inspected_article_mentions = 0usize;
     let mut inspected_child_category_mentions = 0usize;
     let mut largest_category: Option<CategoryFanout> = None;
-    let mut warnings: BTreeSet<String> = selection.warnings.iter().cloned().collect();
+    // The resolver already caps its warnings; additional preview-specific
+    // diagnostics must obey the same limit and retain its truncation signal.
+    let mut warnings = WarningCollector::from_existing(&selection.warnings);
     for id in &rules.include {
         let mut canonical = *id;
         while let Some(&target) = redirects.get(&canonical) {
@@ -134,7 +146,11 @@ pub fn preview_pinned_selection(
                     node.children.len()
                 ));
             }
-            queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
+            for child in &node.children {
+                if enqueued.insert(child.clone()) {
+                    queue.push_back((child.clone(), depth + 1));
+                }
+            }
         }
     }
     let (cycles, more_cycles) = traversed_cycles(&traversed_edges);
@@ -173,13 +189,74 @@ pub fn preview_pinned_selection(
         explicit_include_ids: rules.include.iter().copied().collect::<BTreeSet<_>>().len(),
         explicit_exclude_ids: rules.exclude.iter().copied().collect::<BTreeSet<_>>().len(),
         largest_category,
-        warnings: warnings.into_iter().collect(),
+        warnings: warnings.finish(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_bounds_suppressed_include_warnings_and_duplicate_queue_work() {
+        let mut graph = BTreeMap::from([(
+            "Root".to_owned(),
+            Category {
+                articles: vec![1],
+                children: vec!["Leaf".into(); 4096],
+                administrative: false,
+            },
+        ), (
+            "Leaf".to_owned(),
+            Category {
+                articles: vec![2],
+                children: vec!["Root".into(); 2048],
+                administrative: false,
+            },
+        )]);
+        let mut rules = Rules {
+            roots: vec!["Root".into(); 2048],
+            include: (1000..=1320).collect(),
+            exclude: (1000..=1320).collect(),
+            depth_limit: 2,
+            page_limit: 10,
+        };
+        let inspect = |graph: &BTreeMap<String, Category>, rules: &Rules| {
+            preview_pinned_selection(
+                graph,
+                rules,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                "enwiki-20261023",
+            )
+            .unwrap()
+        };
+        let many = inspect(&graph, &rules);
+        assert_eq!(many.selection.page_ids, vec![1, 2]);
+        assert_eq!(many.visited_category_count, 2);
+        assert_eq!(many.inspected_child_category_mentions, 6144);
+        assert_eq!(many.warnings.len(), 257);
+        assert_eq!(
+            many.warnings.last().unwrap(),
+            "Additional topic warnings omitted (limit: 256)"
+        );
+        assert!(many.warnings[..256].windows(2).all(|w| w[0] < w[1]));
+
+        rules.roots = vec!["Root".into()];
+        graph.get_mut("Root").unwrap().children = vec!["Leaf".into()];
+        graph.get_mut("Leaf").unwrap().children = vec!["Root".into()];
+        let minimal = inspect(&graph, &rules);
+        assert_eq!(minimal.selection.page_ids, many.selection.page_ids);
+        assert_eq!(minimal.warnings, many.warnings);
+        assert_eq!(minimal.visited_category_count, many.visited_category_count);
+        assert_eq!(minimal.inspected_child_category_mentions, 2);
+
+        rules.include = vec![1000];
+        rules.exclude = vec![1000];
+        let small = inspect(&graph, &rules);
+        assert!(small.warnings.iter().any(|w| w.contains("Explicit include suppressed")));
+        assert!(!small.warnings.iter().any(|w| w.contains("warnings omitted")));
+    }
 
     #[test]
     fn preview_counts_only_traversed_content_and_deduplicates_rules() {

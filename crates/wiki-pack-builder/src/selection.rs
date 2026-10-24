@@ -10,30 +10,41 @@ const LARGE_CATEGORY_ARTICLES: usize = 512;
 // Topic previews must not allocate an unbounded warning for every redirect,
 // disambiguation or category in a large snapshot.
 const MAX_SELECTION_WARNINGS: usize = 256;
+const TRUNCATION_NOTICE: &str = "Additional topic warnings omitted (limit: 256)";
 
 /// Retain the lexicographically smallest warnings so the bounded preview is
 /// independent of root ordering and duplicate source memberships. The final
 /// truncation notice is explicit; it is not a count of unique omitted items.
 #[derive(Default)]
-struct WarningCollector {
+pub(crate) struct WarningCollector {
     retained: BTreeSet<String>,
     omitted: bool,
 }
 
 impl WarningCollector {
-    fn insert(&mut self, warning: String) {
+    pub(crate) fn from_existing(warnings: &[String]) -> Self {
+        let mut collector = Self::default();
+        for warning in warnings {
+            if warning == TRUNCATION_NOTICE {
+                collector.omitted = true;
+            } else {
+                collector.insert(warning.clone());
+            }
+        }
+        collector
+    }
+
+    pub(crate) fn insert(&mut self, warning: String) {
         if self.retained.insert(warning) && self.retained.len() > MAX_SELECTION_WARNINGS {
             self.retained.pop_last();
             self.omitted = true;
         }
     }
 
-    fn finish(self) -> Vec<String> {
+    pub(crate) fn finish(self) -> Vec<String> {
         let mut warnings: Vec<_> = self.retained.into_iter().collect();
         if self.omitted {
-            warnings.push(format!(
-                "Additional topic warnings omitted (limit: {MAX_SELECTION_WARNINGS})"
-            ));
+            warnings.push(TRUNCATION_NOTICE.to_owned());
         }
         warnings
     }
