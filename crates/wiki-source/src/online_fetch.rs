@@ -391,23 +391,28 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_query_redirect_stops_before_html_and_preserves_fallback() {
-        let mut transport = FakeTransport::default();
-        let redirected = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
-        transport
-            .answers
-            .push_back(Ok(redirected.as_bytes().to_vec()));
-        let error =
-            fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
-        assert_eq!(error.stage, FetchStage::Metadata);
-        assert_eq!(error.fallback, Some(local()));
-        assert_eq!(
-            error.cause,
-            FetchCause::Flow(OnlineFlowError::Article(
-                crate::online_article::OnlineArticleError::RedirectNeedsResolution
-            ))
-        );
-        assert_eq!(transport.requests.len(), 1);
+    fn unexpected_query_title_metadata_stops_before_html_and_preserves_fallback() {
+        for field in ["redirects", "normalized", "interwiki"] {
+            let mut response: serde_json::Value = serde_json::from_str(METADATA).unwrap();
+            response["query"][field] =
+                serde_json::json!([{"from": "Physics intro", "to": "Physics"}]);
+            let mut transport = FakeTransport::default();
+            transport
+                .answers
+                .push_back(Ok(response.to_string().into_bytes()));
+            let error =
+                fetch_article(&mut transport, &key(), NetworkState::Online, &[local()]).unwrap_err();
+            assert_eq!(error.stage, FetchStage::Metadata, "{field}");
+            assert_eq!(error.fallback, Some(local()), "{field}");
+            assert_eq!(
+                error.cause,
+                FetchCause::Flow(OnlineFlowError::Article(
+                    crate::online_article::OnlineArticleError::RedirectNeedsResolution
+                )),
+                "{field}"
+            );
+            assert_eq!(transport.requests.len(), 1, "{field}");
+        }
     }
 
     #[test]

@@ -130,16 +130,20 @@ pub fn parse_current_revision(
     // A normalized redirect alias is not proof that the requested page ID
     // identifies the returned article. Resolve redirects explicitly before
     // accepting a revision-pinned response.
-    if value
+    let query = value
         .get("query")
-        .and_then(|q| q.get("redirects"))
-        .is_some()
+        .ok_or(OnlineArticleError::InvalidResponse)?;
+    // A page-ID request does not ask for title normalization, redirects or
+    // interwiki resolution. Never accept unrequested alias metadata as proof
+    // that a matching page ID identifies the requested revision.
+    if ["redirects", "normalized", "interwiki"]
+        .iter()
+        .any(|field| query.get(*field).is_some())
     {
         return Err(OnlineArticleError::RedirectNeedsResolution);
     }
-    let pages = value
-        .get("query")
-        .and_then(|q| q.get("pages"))
+    let pages = query
+        .get("pages")
         .and_then(Value::as_array)
         .ok_or(OnlineArticleError::InvalidResponse)?;
     if pages.len() != 1 {
@@ -408,6 +412,29 @@ mod tests {
                 Err(OnlineArticleError::RevisionMismatch)
             );
         }
+    }
+
+    #[test]
+    fn page_id_metadata_rejects_all_title_resolution_markers() {
+        for (field, marker) in [
+            ("redirects", serde_json::json!([])),
+            ("normalized", serde_json::json!([])),
+            ("normalized", serde_json::json!([{"from": "Énergie", "to": "Energy"}])),
+            ("interwiki", serde_json::json!([])),
+            ("interwiki", serde_json::json!([{"title": "Énergie", "url": "https://en.wikipedia.org/wiki/Energy"}])),
+        ] {
+            let mut response: Value = serde_json::from_str(META).unwrap();
+            response["query"][field] = marker;
+            assert_eq!(
+                parse_current_revision(&response.to_string(), "frwiki", 42),
+                Err(OnlineArticleError::RedirectNeedsResolution),
+                "{field}"
+            );
+        }
+        assert_eq!(
+            parse_current_revision(META, "frwiki", 42).unwrap().revision_id,
+            300
+        );
     }
 
     #[test]
