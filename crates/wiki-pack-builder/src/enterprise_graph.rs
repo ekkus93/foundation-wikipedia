@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wiki_pack_format::Sha256Transcript;
-use wiki_source::enterprise::JoinedEnterpriseArticle;
+use wiki_source::enterprise::{valid_membership_label, JoinedEnterpriseArticle};
 
 use crate::selection::{resolve_pinned, Category, PinnedResolution, ResolveError, Rules};
 
@@ -18,6 +18,7 @@ pub enum GraphBuildError {
     DuplicateCategory(String),
     InvalidCategory(String),
     InvalidRedirect(String),
+    DuplicateRedirect(String),
     MissingCategory(String),
 }
 
@@ -32,28 +33,8 @@ pub struct JoinedCategoryGraph {
     pub unresolved_redirect_titles: BTreeSet<String>,
 }
 
-// Typed JoinedEnterpriseArticle records are public DTOs: callers can bypass
-// the upstream JSON parser. Reapply its bounded, anti-spoof membership rules
-// at the topic-selection trust boundary before hashing or traversing labels.
-fn valid_membership_label(value: &str) -> bool {
-    !value.trim().is_empty()
-        && value.trim() == value
-        && value.len() <= 4096
-        && !value.chars().any(|ch| {
-            ch.is_control()
-                || matches!(
-                    ch,
-                    '\u{061c}'
-                        | '\u{200b}'
-                        | '\u{200e}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
-                        | '\u{2060}'
-                        | '\u{2066}'..='\u{2069}'
-                        | '\u{feff}'
-                )
-        })
-}
-
+// Public typed joined records reuse the source decoder's exact membership
+// label policy, rather than maintaining a drift-prone second Unicode list.
 fn valid_generation_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 255
@@ -114,6 +95,11 @@ pub fn graph_from_joined(
         if page.generation_id != generation_id {
             return Err(GraphBuildError::MixedGeneration);
         }
+        // A public JoinedEnterpriseArticle can bypass the source decoder's
+        // required title validation, including invisible formatting controls.
+        if !valid_membership_label(&page.name) {
+            return Err(GraphBuildError::InvalidIdentity);
+        }
         if page.page.page_id == 0
             || page.revision_id == 0
             || page.page.page_id > i64::MAX as u64
@@ -131,12 +117,21 @@ pub fn graph_from_joined(
             if !valid_membership_label(redirect) {
                 return Err(GraphBuildError::InvalidRedirect(redirect.clone()));
             }
-            unresolved_redirect_titles.insert(redirect.clone());
+            // A redirect title identifies one page within a project. Never
+            // silently collapse a duplicate alias across two joined records.
+            if !unresolved_redirect_titles.insert(redirect.clone()) {
+                return Err(GraphBuildError::DuplicateRedirect(redirect.clone()));
+            }
         }
-        // Validate even membership labels on pages that will not contribute
-        // edges, so forged typed inputs cannot evade validation by namespace.
+        // Revalidate all memberships even for non-contributing namespaces.
+        // Distinct raw labels can denote the same canonical category; reject
+        // them instead of silently deduplicating ambiguous typed inputs.
+        let mut memberships = BTreeSet::new();
         for category in &record.categories {
-            category_title(category)?;
+            let canonical = category_title(category)?;
+            if !memberships.insert(canonical.clone()) {
+                return Err(GraphBuildError::DuplicateCategory(canonical));
+            }
         }
         if page.namespace == 14 {
             let title = category_title(&page.name)?;

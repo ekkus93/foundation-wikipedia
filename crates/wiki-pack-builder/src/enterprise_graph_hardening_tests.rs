@@ -153,3 +153,82 @@ fn administrative_policy_is_exact_and_does_not_reject_legitimate_joiners() {
     assert!(graph.graph["Category:می‌روم क्‍ष"].administrative);
     assert_eq!(graph.graph["Category:می‌روم क्‍ष"].articles, vec![42]);
 }
+
+#[test]
+fn typed_graph_rejects_semantically_duplicate_memberships_and_aliases() {
+    let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
+    let article = joined_page(
+        42,
+        0,
+        "Physics",
+        vec!["Science".into()],
+        vec!["Physics alias".into()],
+    );
+    let mut duplicate_category = article.clone();
+    duplicate_category.categories = vec!["Science".into(), "Category:Science".into()];
+    assert_eq!(
+        graph_from_joined(&[root.clone(), duplicate_category], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::DuplicateCategory("Category:Science".into())
+    );
+    let mut duplicate_redirect = article.clone();
+    duplicate_redirect.redirects = vec!["Physics alias".into(), "Physics alias".into()];
+    assert_eq!(
+        graph_from_joined(&[root.clone(), duplicate_redirect], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::DuplicateRedirect("Physics alias".into())
+    );
+    let other = joined_page(
+        43,
+        0,
+        "Chemistry",
+        vec!["Science".into()],
+        vec!["Physics alias".into()],
+    );
+    assert_eq!(
+        graph_from_joined(&[root.clone(), article.clone(), other], &BTreeSet::new())
+            .unwrap_err(),
+        GraphBuildError::DuplicateRedirect("Physics alias".into())
+    );
+    let mut unique = article.clone();
+    unique.redirects = vec!["Physics alias".into(), "فيزياء".into()];
+    let graph = graph_from_joined(&[root, unique], &BTreeSet::new()).unwrap();
+    assert_eq!(graph.unresolved_redirect_titles.len(), 2);
+}
+
+#[test]
+fn typed_graph_shares_full_enterprise_unicode_membership_policy() {
+    let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
+    let article = joined_page(42, 0, "Physics", vec!["Science".into()], vec![]);
+    for code in ['\u{2028}', '\u{2029}', '\u{206a}', '\u{206b}', '\u{206c}', '\u{206d}', '\u{206e}', '\u{206f}'] {
+        let label = format!("Sci{code}ence");
+        let mut bad = article.clone();
+        bad.categories = vec![label.clone()];
+        assert!(
+            matches!(
+                graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
+                Err(GraphBuildError::InvalidCategory(_))
+            ),
+            "unsafe category accepted: U+{:04X}",
+            code as u32
+        );
+        let mut bad = article.clone();
+        bad.redirects = vec![label];
+        assert!(
+            matches!(
+                graph_from_joined(&[root.clone(), bad], &BTreeSet::new()),
+                Err(GraphBuildError::InvalidRedirect(_))
+            ),
+            "unsafe redirect accepted: U+{:04X}",
+            code as u32
+        );
+    }
+    let mut bad_title = article.clone();
+    bad_title.structured.name = "Phy\u{206b}sics".into();
+    assert_eq!(
+        graph_from_joined(&[root.clone(), bad_title], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::InvalidIdentity
+    );
+    let mut multilingual = article;
+    multilingual.redirects = vec!["می‌روم क्‍ष".into()];
+    let graph = graph_from_joined(&[root, multilingual], &BTreeSet::new()).unwrap();
+    assert!(graph.unresolved_redirect_titles.contains("می‌روم क्‍ष"));
+}

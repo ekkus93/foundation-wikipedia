@@ -534,7 +534,9 @@ pub fn parse_structured_article(
     })
 }
 
-fn valid_membership_label(text: &str) -> bool {
+/// Shared conservative label validation for Enterprise membership and typed
+/// topic-graph inputs. Callers must still verify publisher provenance.
+pub fn valid_membership_label(text: &str) -> bool {
     !text.trim().is_empty()
         && text.trim() == text
         && text.len() <= 4096
