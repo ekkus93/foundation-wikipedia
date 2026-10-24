@@ -60,7 +60,10 @@ fn valid_title(title: &str) -> bool {
         && title == title.trim()
         && title.len() <= 4096
         && !title.chars().any(|ch| {
+            let codepoint = ch as u32;
             ch.is_control()
+                || (0xfdd0..=0xfdef).contains(&codepoint)
+                || (codepoint & 0xfffe) == 0xfffe
                 || matches!(
                     ch,
                     '\u{061c}'
@@ -398,6 +401,7 @@ mod tests {
             assert!(matches!(
                 cache.put(&item),
                 Err(HtmlCacheError::InvalidContent)
+
             ));
             assert_eq!(cache.get(&item.key, 125).unwrap(), None);
         }
@@ -445,6 +449,39 @@ mod tests {
                 .unwrap();
             assert!(matches!(
                 cache.get(&original.key, 128),
+                Err(HtmlCacheError::InvalidContent)
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_unicode_noncharacters_in_cached_titles_on_write_and_read() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        let original = article(131);
+        cache.put(&original).unwrap();
+        for marker in [
+            '\u{fdd0}',
+            '\u{fdef}',
+            '\u{fffe}',
+            '\u{ffff}',
+            '\u{1fffe}',
+            '\u{10ffff}',
+        ] {
+            let mut item = article(132);
+            item.title = format!("Physics{marker}");
+            assert!(matches!(
+                cache.put(&item),
+                Err(HtmlCacheError::InvalidContent)
+            ));
+            cache
+                .conn
+                .execute(
+                    "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=131",
+                    params![item.title],
+                )
+                .unwrap();
+            assert!(matches!(
+                cache.get(&original.key, 131),
                 Err(HtmlCacheError::InvalidContent)
             ));
         }
