@@ -115,7 +115,11 @@ pub fn resolve_with_redirects(
     // Bound queued work before expansion: a single category can have far more
     // children than selected pages, including cycles and duplicate links.
     let category_budget = rules.page_limit.saturating_mul(32).clamp(1024, 100_000);
-    if rules.roots.len() > category_budget {
+    // Repeated edges do not consume unique-category capacity, but still
+    // consume work. Bound the raw traversal separately to prevent a source
+    // graph with millions of duplicate edges from monopolizing the builder.
+    let edge_budget = category_budget.saturating_mul(64).min(1_000_000);
+    if rules.roots.len() > edge_budget {
         return Err(ResolveError::TooManyCategories);
     }
     // A category can list millions of duplicate, excluded or redirected IDs
@@ -139,16 +143,22 @@ pub fn resolve_with_redirects(
         .collect::<Result<_, _>>()?;
     let mut pages = BTreeSet::new();
     let mut inspected_candidates = rules.include.len().saturating_add(rules.exclude.len());
-    let mut visited = BTreeSet::new();
+    // BFS discovers each category at its minimum root-relative depth. Queue
+    // identities, not raw links: duplicate roots, diamond edges and cycles
+    // must not cause false TooManyCategories errors or excess allocations.
+    let mut enqueued = BTreeSet::new();
     let mut warnings = BTreeSet::new();
-    let mut queue: VecDeque<_> = rules.roots.iter().map(|root| (root.clone(), 0)).collect();
+    let mut queue = VecDeque::new();
+    for root in &rules.roots {
+        if enqueued.insert(root.clone()) {
+            if enqueued.len() > category_budget {
+                return Err(ResolveError::TooManyCategories);
+            }
+            queue.push_back((root.clone(), 0));
+        }
+    }
+    let mut inspected_edges = rules.roots.len();
     while let Some((name, depth)) = queue.pop_front() {
-        if !visited.insert(name.clone()) {
-            continue;
-        }
-        if visited.len() > category_budget {
-            return Err(ResolveError::TooManyCategories);
-        }
         let node = graph
             .get(&name)
             .ok_or(ResolveError::Missing(name.clone()))?;
@@ -188,10 +198,18 @@ pub fn resolve_with_redirects(
             return Err(ResolveError::TooManyPages);
         }
         if depth < rules.depth_limit {
-            if node.children.len() > category_budget.saturating_sub(queue.len()) {
+            inspected_edges = inspected_edges.saturating_add(node.children.len());
+            if inspected_edges > edge_budget {
                 return Err(ResolveError::TooManyCategories);
             }
-            queue.extend(node.children.iter().map(|child| (child.clone(), depth + 1)));
+            for child in &node.children {
+                if enqueued.insert(child.clone()) {
+                    if enqueued.len() > category_budget {
+                        return Err(ResolveError::TooManyCategories);
+                    }
+                    queue.push_back((child.clone(), depth + 1));
+                }
+            }
         } else if !node.children.is_empty() {
             warnings.insert(format!("Depth limit reached: {name}"));
         }
@@ -660,6 +678,60 @@ mod pinned_tests {
         let mut graph = base;
         graph.insert("Category:می‌روم क्‍ष".into(), Category::default());
         assert!(pinned(&graph, &rules).is_ok());
+    }
+
+    #[test]
+    fn repeated_category_edges_use_unique_queue_budget() {
+        let mut rules = Rules {
+            roots: vec!["Category:Root".into(); 2048],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 2,
+            page_limit: 10,
+        };
+        let mut graph = BTreeMap::from([
+            (
+                "Category:Root".into(),
+                Category {
+                    articles: vec![2],
+                    children: vec!["Category:Leaf".into(); 4096],
+                    administrative: false,
+                },
+            ),
+            (
+                "Category:Leaf".into(),
+                Category {
+                    articles: vec![3],
+                    children: vec!["Category:Root".into(); 2048],
+                    administrative: false,
+                },
+            ),
+        ]);
+        let repeated = resolve(&graph, &rules).unwrap();
+        assert_eq!(repeated.page_ids, vec![2, 3]);
+        rules.roots = vec!["Category:Root".into()];
+        graph.get_mut("Category:Root").unwrap().children =
+            vec!["Category:Leaf".into()];
+        graph.get_mut("Category:Leaf").unwrap().children =
+            vec!["Category:Root".into()];
+        let minimal = resolve(&graph, &rules).unwrap();
+        assert_eq!(repeated.page_ids, minimal.page_ids);
+
+        // A large number of *distinct* categories must still fail closed.
+        graph.get_mut("Category:Root").unwrap().children = (0..1024)
+            .map(|id| format!("Category:Child{id}"))
+            .collect();
+        assert_eq!(
+            resolve(&graph, &rules),
+            Err(ResolveError::TooManyCategories)
+        );
+
+        // Repeated raw edges are also bounded independently of unique nodes.
+        rules.roots = vec!["Category:Root".into(); 65_537];
+        assert_eq!(
+            resolve(&graph, &rules),
+            Err(ResolveError::TooManyCategories)
+        );
     }
 
     #[test]
