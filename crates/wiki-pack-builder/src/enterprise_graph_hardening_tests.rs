@@ -184,8 +184,7 @@ fn typed_graph_rejects_semantically_duplicate_memberships_and_aliases() {
         vec!["Physics alias".into()],
     );
     assert_eq!(
-        graph_from_joined(&[root.clone(), article.clone(), other], &BTreeSet::new())
-            .unwrap_err(),
+        graph_from_joined(&[root.clone(), article.clone(), other], &BTreeSet::new()).unwrap_err(),
         GraphBuildError::DuplicateRedirect("Physics alias".into())
     );
     let mut unique = article.clone();
@@ -198,7 +197,10 @@ fn typed_graph_rejects_semantically_duplicate_memberships_and_aliases() {
 fn typed_graph_shares_full_enterprise_unicode_membership_policy() {
     let root = joined_page(14, 14, "Category:Science", vec![], vec![]);
     let article = joined_page(42, 0, "Physics", vec!["Science".into()], vec![]);
-    for code in ['\u{2028}', '\u{2029}', '\u{206a}', '\u{206b}', '\u{206c}', '\u{206d}', '\u{206e}', '\u{206f}'] {
+    for code in [
+        '\u{2028}', '\u{2029}', '\u{206a}', '\u{206b}', '\u{206c}', '\u{206d}', '\u{206e}',
+        '\u{206f}',
+    ] {
         let label = format!("Sci{code}ence");
         let mut bad = article.clone();
         bad.categories = vec![label.clone()];
