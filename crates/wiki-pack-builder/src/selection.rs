@@ -25,6 +25,7 @@ pub enum ResolveError {
     Missing(String),
     InvalidPage,
     InvalidSnapshot,
+    InvalidCategory(String),
     TooManyPages,
     TooManyCategories,
     TooManyCandidates,
@@ -41,6 +42,50 @@ pub struct Resolution {
 
 fn invalid_page_id(id: u64) -> bool {
     id == 0 || id > i64::MAX as u64
+}
+
+/// Raw topic DTOs can bypass Enterprise parsing. Reject spoofed category
+/// labels, including those in graph nodes outside the selected traversal.
+/// ZWNJ/ZWJ remain legal for Persian and Indic orthography.
+fn valid_category_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && value.trim() == value
+        && !value.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200b}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{2069}'
+                        | '\u{feff}'
+                )
+        })
+}
+
+fn validate_category_labels(
+    graph: &BTreeMap<String, Category>,
+    rules: &Rules,
+) -> Result<(), ResolveError> {
+    for root in &rules.roots {
+        if !valid_category_label(root) {
+            return Err(ResolveError::InvalidCategory(root.clone()));
+        }
+    }
+    for (name, node) in graph {
+        if !valid_category_label(name) {
+            return Err(ResolveError::InvalidCategory(name.clone()));
+        }
+        for child in &node.children {
+            if !valid_category_label(child) {
+                return Err(ResolveError::InvalidCategory(child.clone()));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve(
@@ -61,6 +106,7 @@ pub fn resolve_with_redirects(
     if rules.page_limit == 0 || rules.depth_limit > 100 {
         return Err(ResolveError::BadLimit);
     }
+    validate_category_labels(graph, rules)?;
     // Bound queued work before expansion: a single category can have far more
     // children than selected pages, including cycles and duplicate links.
     let category_budget = rules.page_limit.saturating_mul(32).clamp(1024, 100_000);
@@ -525,6 +571,68 @@ mod pinned_tests {
         let mut too_long = valid;
         too_long.insert(9_999, 10_000);
         assert_eq!(check(&too_long), Err(ResolveError::RedirectTooDeep));
+    }
+
+    #[test]
+    fn raw_topic_resolver_rejects_spoofed_labels_even_in_unselected_nodes() {
+        let rules = Rules {
+            roots: vec!["Category:Science".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 10,
+        };
+        let base = BTreeMap::from([(
+            "Category:Science".into(),
+            Category {
+                articles: vec![2],
+                children: vec![],
+                administrative: false,
+            },
+        )]);
+        let pinned = |graph: &BTreeMap<String, Category>, rules: &Rules| {
+            resolve_pinned(graph, rules, &BTreeMap::new(), &BTreeSet::new(), "enwiki-20261023")
+        };
+        assert_eq!(pinned(&base, &rules).unwrap().page_ids, vec![2]);
+        for bad in [
+            "",
+            " Category:Science",
+            "Category:Science ",
+            "Category:Science\nSpoof",
+            "Category:Science\u{202e}Spoof",
+            "Category:Science\u{2066}Spoof",
+            "Category:Science\u{200b}Spoof",
+            "Category:Science\u{feff}Spoof",
+        ] {
+            let mut bad_root = rules.clone();
+            bad_root.roots = vec![bad.into()];
+            assert_eq!(
+                pinned(&base, &bad_root),
+                Err(ResolveError::InvalidCategory(bad.into()))
+            );
+            let mut unselected = base.clone();
+            unselected.insert(bad.into(), Category::default());
+            assert_eq!(
+                pinned(&unselected, &rules),
+                Err(ResolveError::InvalidCategory(bad.into()))
+            );
+            let mut child = base.clone();
+            child.get_mut("Category:Science").unwrap().children.push(bad.into());
+            assert_eq!(
+                pinned(&child, &rules),
+                Err(ResolveError::InvalidCategory(bad.into()))
+            );
+        }
+        let too_long = "x".repeat(4097);
+        let mut bad_root = rules.clone();
+        bad_root.roots = vec![too_long.clone()];
+        assert_eq!(
+            pinned(&base, &bad_root),
+            Err(ResolveError::InvalidCategory(too_long))
+        );
+        let mut graph = base;
+        graph.insert("Category:می‌روم क्‍ष".into(), Category::default());
+        assert!(pinned(&graph, &rules).is_ok());
     }
 
     #[test]
