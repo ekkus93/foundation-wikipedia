@@ -3,6 +3,8 @@
 //! This indexes only one validated article revision and is not yet a BM25
 //! search engine. Evidence IDs are revision-bound, not persistent bookmarks.
 
+pub mod evaluation;
+
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
 
