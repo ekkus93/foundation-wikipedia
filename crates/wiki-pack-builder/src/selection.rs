@@ -7,6 +7,37 @@ use wiki_pack_format::Sha256Transcript;
 // These thresholds affect diagnostics only, never the selected page-ID set.
 const LARGE_CATEGORY_CHILDREN: usize = 32;
 const LARGE_CATEGORY_ARTICLES: usize = 512;
+// Topic previews must not allocate an unbounded warning for every redirect,
+// disambiguation or category in a large snapshot.
+const MAX_SELECTION_WARNINGS: usize = 256;
+
+/// Retain the lexicographically smallest warnings so the bounded preview is
+/// independent of root ordering and duplicate source memberships. The final
+/// truncation notice is explicit; it is not a count of unique omitted items.
+#[derive(Default)]
+struct WarningCollector {
+    retained: BTreeSet<String>,
+    omitted: bool,
+}
+
+impl WarningCollector {
+    fn insert(&mut self, warning: String) {
+        if self.retained.insert(warning) && self.retained.len() > MAX_SELECTION_WARNINGS {
+            self.retained.pop_last();
+            self.omitted = true;
+        }
+    }
+
+    fn finish(self) -> Vec<String> {
+        let mut warnings: Vec<_> = self.retained.into_iter().collect();
+        if self.omitted {
+            warnings.push(format!(
+                "Additional topic warnings omitted (limit: {MAX_SELECTION_WARNINGS})"
+            ));
+        }
+        warnings
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Category {
@@ -148,7 +179,7 @@ pub fn resolve_with_redirects(
     // identities, not raw links: duplicate roots, diamond edges and cycles
     // must not cause false TooManyCategories errors or excess allocations.
     let mut enqueued = BTreeSet::new();
-    let mut warnings = BTreeSet::new();
+    let mut warnings = WarningCollector::default();
     let mut queue = VecDeque::new();
     for root in &rules.roots {
         if enqueued.insert(root.clone()) {
@@ -232,7 +263,7 @@ pub fn resolve_with_redirects(
     }
     Ok(Resolution {
         page_ids: pages.into_iter().collect(),
-        warnings: warnings.into_iter().collect(),
+        warnings: warnings.finish(),
     })
 }
 
@@ -797,6 +828,65 @@ mod pinned_tests {
             resolve(&graph, &rules),
             Err(ResolveError::TooManyCategories)
         );
+    }
+
+    #[test]
+    fn large_topic_preview_bounds_warnings_without_changing_selection() {
+        let mut graph = BTreeMap::from([(
+            "Category:Many".to_owned(),
+            Category {
+                articles: (1..=320).collect(),
+                children: Vec::new(),
+                administrative: false,
+            },
+        )]);
+        let redirects: BTreeMap<u64, u64> = (1..=320).map(|id| (id, id + 1000)).collect();
+        let rules = Rules {
+            roots: vec!["Category:Many".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 400,
+        };
+        let first = resolve_pinned(
+            &graph,
+            &rules,
+            &redirects,
+            &BTreeSet::new(),
+            "enwiki-20261023",
+        )
+        .unwrap();
+        assert_eq!(first.page_ids.len(), 320);
+        assert_eq!(first.page_ids[0], 1001);
+        assert_eq!(first.page_ids[319], 1320);
+        assert_eq!(first.warnings.len(), MAX_SELECTION_WARNINGS + 1);
+        assert!(first.warnings[..MAX_SELECTION_WARNINGS]
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
+        assert_eq!(
+            first.warnings.last().unwrap(),
+            "Additional topic warnings omitted (limit: 256)"
+        );
+        // The receipt, selected IDs and capped warnings remain stable when
+        // the upstream category emits memberships in reverse order.
+        graph.get_mut("Category:Many").unwrap().articles.reverse();
+        assert_eq!(
+            first,
+            resolve_pinned(
+                &graph,
+                &rules,
+                &redirects,
+                &BTreeSet::new(),
+                "enwiki-20261023",
+            )
+            .unwrap()
+        );
+        // Small previews retain all individual warnings without a notice.
+        graph.get_mut("Category:Many").unwrap().articles = vec![1, 2];
+        let small = resolve_with_redirects(&graph, &rules, &redirects, &BTreeSet::new()).unwrap();
+        assert_eq!(small.page_ids, vec![1001, 1002]);
+        assert_eq!(small.warnings.len(), 2);
+        assert!(!small.warnings.iter().any(|warning| warning.contains("omitted")));
     }
 
     #[test]
