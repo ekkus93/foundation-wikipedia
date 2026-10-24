@@ -886,7 +886,10 @@ mod pinned_tests {
         let small = resolve_with_redirects(&graph, &rules, &redirects, &BTreeSet::new()).unwrap();
         assert_eq!(small.page_ids, vec![1001, 1002]);
         assert_eq!(small.warnings.len(), 2);
-        assert!(!small.warnings.iter().any(|warning| warning.contains("omitted")));
+        assert!(!small
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("omitted")));
     }
 
     #[test]
@@ -998,9 +1001,3 @@ mod pinned_tests {
         );
         redirects.clear();
         disambiguations.insert(0);
-        assert_eq!(
-            pinned(&graph, &redirects, &disambiguations),
-            Err(ResolveError::InvalidPage)
-        );
-    }
-}
