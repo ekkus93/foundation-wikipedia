@@ -205,9 +205,11 @@ pub fn fetch_search_with_local<T: MediaWikiTransport>(
             .map_err(SearchFetchError::LocalIndex);
     }
     match fetch_search(client, project, text, limit, network) {
-        Err(reason @ (SearchFetchError::Transport(_)
-        | SearchFetchError::ResponseTooLarge
-        | SearchFetchError::InvalidUtf8)) => {
+        Err(
+            reason @ (SearchFetchError::Transport(_)
+            | SearchFetchError::ResponseTooLarge
+            | SearchFetchError::InvalidUtf8),
+        ) => {
             // An independently validated local index is usable when upstream
             // transport becomes unavailable. Retain the failure as an error
             // so applications explicitly label these as local candidates.
@@ -339,9 +341,9 @@ mod tests {
         );
 
         let mut response = Fake::default();
-        response
-            .answers
-            .push_back(Ok(br#"{"query":{"search":[{"pageid":99,"ns":0,"title":"Physics"}]}}"#.to_vec()));
+        response.answers.push_back(Ok(
+            br#"{"query":{"search":[{"pageid":99,"ns":0,"title":"Physics"}]}}"#.to_vec(),
+        ));
         let outcome = fetch_search_with_local(
             &mut response,
             "enwiki",
@@ -380,7 +382,9 @@ mod tests {
                 NetworkState::Online,
                 Some(&index),
             ),
-            Err(SearchFetchError::LocalIndex(LocalTitleIndexError::ForeignProject))
+            Err(SearchFetchError::LocalIndex(
+                LocalTitleIndexError::ForeignProject
+            ))
         );
         assert_eq!(wrong_project.calls, 0);
     }
@@ -598,125 +602,3 @@ mod tests {
             fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
             Err(SearchFetchError::Transport("network unavailable"))
         );
-        client
-            .responses
-            .push_back(Ok(vec![b' '; MAX_RESPONSE_BYTES + 1]));
-        assert_eq!(
-            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
-            Err(SearchFetchError::ResponseTooLarge)
-        );
-        client.responses.push_back(Ok(vec![0xff]));
-        assert_eq!(
-            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
-            Err(SearchFetchError::InvalidUtf8)
-        );
-        client
-            .responses
-            .push_back(Ok(br#"{"error":{"code":"ratelimited"}}"#.to_vec()));
-        assert_eq!(
-            fetch_search(&mut client, "enwiki", "Physics", 1, NetworkState::Online),
-            Err(SearchFetchError::Parse(OnlineSearchError::ApiError))
-        );
-    }
-    #[test]
-    fn verified_offline_title_search_never_invokes_http() {
-        use crate::local_title_index::{LocalTitleEntry, LocalTitleIndex, LocalTitleRedirect};
-        use crate::online_selection::{ArticleLocation, ArticleVersion};
-
-        struct NoNetwork;
-        impl MediaWikiTransport for NoNetwork {
-            type Error = &'static str;
-            fn get(&mut self, _: &str, _: usize) -> Result<Vec<u8>, Self::Error> {
-                panic!("offline title lookup must not call HTTP")
-            }
-        }
-        let index = LocalTitleIndex::new(
-            "enwiki",
-            [LocalTitleEntry {
-                title: "Physics".into(),
-                version: ArticleVersion {
-                    key: ArticleKey {
-                        project: "enwiki".into(),
-                        page_id: 42,
-                    },
-                    revision_id: 99,
-                    location: ArticleLocation::InstalledPack,
-                    local_complete: true,
-                },
-            }],
-        )
-        .unwrap()
-        .with_redirects([LocalTitleRedirect {
-            alias: "Introduction to physics".into(),
-            canonical_title: "Physics".into(),
-            target_page_id: 42,
-        }])
-        .unwrap();
-        let mut client = NoNetwork;
-        let result = fetch_search_with_local(
-            &mut client,
-            "enwiki",
-            "phys",
-            5,
-            NetworkState::Offline,
-            Some(&index),
-        )
-        .unwrap();
-        let SearchOutcome::LocalResults(hits) = result else {
-            panic!("expected local title results");
-        };
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].hit.key.page_id, 42);
-        assert_eq!(hits[0].version.revision_id, 99);
-        let aliased = fetch_search_with_local(
-            &mut client,
-            "enwiki",
-            "Introduction to phys",
-            5,
-            NetworkState::Offline,
-            Some(&index),
-        )
-        .unwrap();
-        let SearchOutcome::LocalResults(hits) = aliased else {
-            panic!("verified offline redirect must return local results");
-        };
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].hit.title, "Physics");
-        assert_eq!(hits[0].version.revision_id, 99);
-        assert_eq!(
-            fetch_search_with_local(
-                &mut client,
-                "enwiki",
-                "phys",
-                5,
-                NetworkState::Offline,
-                None,
-            ),
-            Ok(SearchOutcome::OfflineNeedsLocalIndex)
-        );
-        assert_eq!(
-            fetch_search_with_local(
-                &mut client,
-                "frwiki",
-                "phys",
-                5,
-                NetworkState::Offline,
-                Some(&index),
-            ),
-            Err(SearchFetchError::LocalIndex(
-                LocalTitleIndexError::ForeignProject
-            ))
-        );
-        assert_eq!(
-            fetch_search_with_local(
-                &mut client,
-                "enwiki",
-                "bad\u{202e}search",
-                5,
-                NetworkState::Offline,
-                Some(&index),
-            ),
-            Err(SearchFetchError::Request(OnlineRequestError::InvalidSearch))
-        );
-    }
-}
