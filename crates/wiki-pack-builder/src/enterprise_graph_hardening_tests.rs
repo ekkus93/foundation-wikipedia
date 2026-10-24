@@ -291,3 +291,56 @@ fn typed_graph_rejects_mainspace_title_and_redirect_alias_collisions() {
         graph_from_joined(&[root, article, category_with_same_name], &BTreeSet::new()).unwrap();
     assert!(graph.graph.contains_key("Category:Quantum mechanics"));
 }
+
+#[test]
+fn category_underscore_space_aliases_share_one_canonical_graph_identity() {
+    let category = joined_page(14, 14, "Category:Quantum_mechanics", vec![], vec![]);
+    let article = joined_page(
+        42,
+        0,
+        "Wavefunction",
+        vec!["Quantum mechanics".into()],
+        vec![],
+    );
+    let policy = BTreeSet::from(["Category:Quantum mechanics".to_owned()]);
+    let graph = graph_from_joined(&[category.clone(), article.clone()], &policy).unwrap();
+    assert_eq!(graph.graph.len(), 1);
+    assert_eq!(graph.graph["Category:Quantum mechanics"].articles, vec![42]);
+    assert!(graph.graph["Category:Quantum mechanics"].administrative);
+
+    // Duplicate page titles and memberships that differ only by an
+    // underscore are not distinct category identities.
+    let duplicate = joined_page(15, 14, "Category:Quantum mechanics", vec![], vec![]);
+    assert_eq!(
+        graph_from_joined(&[category.clone(), duplicate], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::DuplicateCategory("Category:Quantum mechanics".into())
+    );
+    let mut duplicate_membership = article.clone();
+    duplicate_membership.categories = vec![
+        "Quantum_mechanics".into(),
+        "Category:Quantum mechanics".into(),
+    ];
+    assert_eq!(
+        graph_from_joined(&[category.clone(), duplicate_membership], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::DuplicateCategory("Category:Quantum mechanics".into())
+    );
+
+    // Administrative policy must use canonical category keys; accepting an
+    // alias here would silently make an intended exclusion ineffective.
+    let noncanonical_policy = BTreeSet::from(["Category:Quantum_mechanics".to_owned()]);
+    assert_eq!(
+        graph_from_joined(&[category.clone(), article.clone()], &noncanonical_policy).unwrap_err(),
+        GraphBuildError::InvalidCategory("Category:Quantum_mechanics".into())
+    );
+
+    // Leading/trailing underscores normalize to illegal whitespace, not
+    // silently to a different category root.
+    for bad in ["Category:_Quantum", "Category:Quantum_", "___"] {
+        let mut invalid = category.clone();
+        invalid.structured.name = bad.into();
+        assert_eq!(
+            graph_from_joined(&[invalid, article.clone()], &BTreeSet::new()).unwrap_err(),
+            GraphBuildError::InvalidCategory(bad.into())
+        );
+    }
+}

@@ -57,11 +57,15 @@ fn category_title(raw: &str) -> Result<String, GraphBuildError> {
     if !valid_membership_label(raw) || raw.contains('#') {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
+    // MediaWiki treats underscores as spaces in page/category titles.
+    // Canonicalize both category page titles and membership references
+    // before indexing so spelling aliases cannot split or shadow a node.
     let name = raw.strip_prefix("Category:").unwrap_or(raw);
-    if name.is_empty() || name.trim() != name {
+    let canonical = name.replace('_', " ");
+    if canonical.is_empty() || canonical.trim() != canonical {
         return Err(GraphBuildError::InvalidCategory(raw.to_owned()));
     }
-    Ok(format!("Category:{name}"))
+    Ok(format!("Category:{canonical}"))
 }
 
 /// Require all referenced category pages in the supplied joined records.
