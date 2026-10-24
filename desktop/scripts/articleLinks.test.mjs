@@ -30,6 +30,21 @@ test("rejects external, unsafe, cross-edition and non-article destinations", () 
   assert.equal(normalizeWikiHref("./Physics", "xxwiki"), null);
 });
 
+test("rejects links that cannot pass the exact-title transport boundary", () => {
+  for (const href of [
+    "./" + "é".repeat(257), "./" + "猫".repeat(171),
+    "./Physics%E2%80%8B", "./Physics%E2%81%A0",
+    "./Physics%E2%81%AA", "./Physics%EF%BB%BF",
+    "./Physics%EF%B7%90", "./Physics%EF%BF%BE",
+    "./Physics%F4%8F%BF%BF", "./Physics\uD800",
+  ]) {
+    assert.equal(normalizeWikiHref(href, "enwiki"), null, JSON.stringify(href));
+  }
+  assert.equal(normalizeWikiHref("./" + "é".repeat(256), "enwiki"), "é".repeat(256));
+  assert.equal(normalizeWikiHref("./%E7%8C%AB", "jawiki"), "猫");
+  assert.equal(normalizeWikiHref("./%F0%9F%90%88", "enwiki"), "🐈");
+});
+
 test("accepts fragments as article-only navigation, not privileged iframe navigation", () => {
   assert.equal(normalizeWikiHref("./Quantum_mechanics#History", "enwiki"), "Quantum mechanics");
 });

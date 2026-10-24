@@ -23,7 +23,7 @@ export function navigationTitleKey(title: string): string {
 
 /** Reject malformed UTF-16: TextEncoder silently replaces unpaired surrogates,
  * which could change a Wikipedia page identity between UI and transport. */
-function wellFormedTitleUnicode(value: string): boolean {
+export function wellFormedTitleUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const unit = value.charCodeAt(index);
     if (unit >= 0xd800 && unit <= 0xdbff) {
@@ -38,9 +38,27 @@ function wellFormedTitleUnicode(value: string): boolean {
   return true;
 }
 
+/** Mirror the Rust navigation boundary: invisible format controls and Unicode
+ * noncharacters must never be accepted as page identities. */
+function unsafeNavigationUnicode(value: string): boolean {
+  for (const character of value) {
+    const codepoint = character.codePointAt(0)!;
+    if ((codepoint <= 0x1f || (codepoint >= 0x7f && codepoint <= 0x9f)) ||
+        (codepoint >= 0xfdd0 && codepoint <= 0xfdef) ||
+        (codepoint & 0xfffe) === 0xfffe ||
+        codepoint === 0x061c || codepoint === 0x200b ||
+        codepoint === 0x200e || codepoint === 0x200f ||
+        (codepoint >= 0x2028 && codepoint <= 0x202e) ||
+        codepoint === 0x2060 ||
+        (codepoint >= 0x2066 && codepoint <= 0x206f) ||
+        codepoint === 0xfeff) return true;
+  }
+  return false;
+}
+
 function validTitle(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512 &&
-    value === value.trim() && wellFormedTitleUnicode(value) && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
+    value === value.trim() && wellFormedTitleUnicode(value) && !unsafeNavigationUnicode(value);
 }
 
 /** Validate a title before a user-initiated exact-title fetch.

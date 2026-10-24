@@ -2,7 +2,7 @@
  * The isolated preview iframe remains sandboxed with scripts and clicks disabled.
  * Only validated, same-edition mainspace titles reach the existing Rust adapter.
  */
-import { navigationTitleKey } from "./readerResponse.ts";
+import { navigationTitleKey, validReaderTitleInput, wellFormedTitleUnicode } from "./readerResponse.ts";
 
 export interface WikiArticleLink {
   title: string;
@@ -14,7 +14,7 @@ const MAX_LINKS = 80;
 const MAX_HTML_BYTES = 2_000_000;
 
 export function normalizeWikiHref(href: string, project: string): string | null {
-  if (!EDITIONS.has(project) || !href || href.length > 2048 || /[\\\\\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(href) || href.trim() !== href) return null;
+  if (!EDITIONS.has(project) || !href || !wellFormedTitleUnicode(href) || href.length > 2048 || /[\\\\\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(href) || href.trim() !== href) return null;
   // Do not interpret arbitrary relative URLs, schemes, query-only links or anchors.
   if (!/^(?:\.\/|\/wiki\/|https:\/\/|\/\/)/u.test(href)) return null;
   // WHATWG URL parsing removes dot segments before callers can inspect them.
@@ -43,6 +43,10 @@ export function normalizeWikiHref(href: string, project: string): string | null 
   // A colon indicates a namespace/interwiki prefix, not an article link.
   if (!title || title.length > 512 || title.trim() !== title || /[:?#\\\\\u0000-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/u.test(title)) return null;
   if (title.split("/").some((segment) => segment === "." || segment === "..")) return null;
+  // An extracted link must be fetchable by the exact-title Rust adapter.
+  // UTF-16 length alone misses oversized UTF-8 titles and the stricter
+  // invisible/noncharacter policy at the transport boundary.
+  if (!validReaderTitleInput(title)) return null;
   return title;
 }
 

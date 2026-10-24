@@ -65,6 +65,19 @@ test("exact-title user navigation validates directional marks and UTF-8 byte lim
   assert.equal(validReaderTitleInput(null), false);
 });
 
+test("rejects Rust-disallowed invisible and noncharacter title identities", () => {
+  for (const marker of ["\u200b", "\u2028", "\u2029", "\u2060", "\u206a", "\u206f",
+    "\ufeff", "\ufdd0", "\ufdef", "\ufffe", "\uffff", "\u{1fffe}", "\u{10ffff}"]) {
+    const title = "Physics" + marker;
+    assert.equal(validReaderTitleInput(title), false, JSON.stringify(title));
+    assert.throws(() => parseReaderSearchHits([[42, title]]), /Invalid Wikipedia search identity/);
+    assert.throws(() => parseReaderArticle([42, 333, title, "<p>text</p>"]), /Invalid Wikipedia article identity/);
+  }
+  for (const title of ["می\u200cروم", "क्\u200dष", "🐈", "פיזיקה"]) {
+    assert.equal(validReaderTitleInput(title), true, title);
+  }
+});
+
 test("bounded bookmark listing validates exact identities without treating them as article bytes", () => {
   assert.deepEqual(parseReaderBookmarks([["enwiki", 42, 333], ["frwiki", 42, 991]]),
     [["enwiki", 42, 333], ["frwiki", 42, 991]]);
