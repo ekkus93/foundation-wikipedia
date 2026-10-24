@@ -48,6 +48,18 @@ pub enum EvaluationError {
     OutOfScopeGold(String),
 }
 
+/// One exact retrieved block, in ranking order, with its gold-label status.
+/// Labels are supplied by the suite; this is not factual entailment grading.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RankedEvidence {
+    pub rank: usize,
+    pub article: ArticleKey,
+    pub revision_id: u64,
+    pub block_id: String,
+    pub score: usize,
+    pub labeled_relevant: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CaseScore {
     pub id: String,
@@ -55,6 +67,7 @@ pub struct CaseScore {
     pub found_count: usize,
     pub retrieved_count: usize,
     pub no_answer_false_positive: bool,
+    pub ranked_evidence: Vec<RankedEvidence>,
 }
 
 /// Integer numerators/denominators keep reports reproducible and avoid
@@ -158,16 +171,26 @@ pub fn evaluate_retrieval(
         } else {
             index.search(&case.query, top_k)
         };
-        let found = hits
+        let ranked_evidence: Vec<RankedEvidence> = hits
             .iter()
-            .filter(|hit| {
-                gold.contains(&(
+            .enumerate()
+            .map(|(position, hit)| RankedEvidence {
+                rank: position + 1,
+                article: hit.article.clone(),
+                revision_id: hit.evidence.revision_id,
+                block_id: hit.evidence.block_id.clone(),
+                score: hit.evidence.score,
+                labeled_relevant: gold.contains(&(
                     hit.article.project.clone(),
                     hit.article.page_id,
                     hit.evidence.revision_id,
                     hit.evidence.block_id.clone(),
-                ))
+                )),
             })
+            .collect();
+        let found = ranked_evidence
+            .iter()
+            .filter(|hit| hit.labeled_relevant)
             .count();
         let no_answer = gold.is_empty();
         if no_answer {
@@ -187,6 +210,7 @@ pub fn evaluate_retrieval(
             found_count: found,
             retrieved_count: hits.len(),
             no_answer_false_positive: no_answer && !hits.is_empty(),
+            ranked_evidence,
         });
     }
     scored.sort_by(|a, b| a.id.cmp(&b.id));
@@ -270,7 +294,7 @@ pub fn evaluate_retrieval_report_json(
             >= (thresholds.min_recall_per_mille as u128) * (retrieval.relevant_total as u128)
     };
     let report = VersionedRetrievalReport {
-        schema_version: 1,
+        schema_version: 2,
         suite_id,
         claimed_source_commit_sha: source_commit_sha.to_ascii_lowercase(),
         thresholds,
@@ -382,6 +406,37 @@ mod tests {
     }
 
     #[test]
+    fn ranked_evidence_receipts_identify_exact_false_positives_and_gold() {
+        let index = CorpusLexicalIndex::build(&[
+            article(9, "Physics", "Gravity bends spacetime."),
+            article(10, "Mathematics", "Algebra describes structures."),
+        ])
+        .unwrap();
+        let score = evaluate_retrieval(&index, &suite(), 2).unwrap();
+        let negative = &score.cases[1];
+        assert_eq!(negative.id, "negative-with-match");
+        assert!(negative.no_answer_false_positive);
+        assert_eq!(negative.ranked_evidence.len(), 1);
+        assert_eq!(
+            negative.ranked_evidence[0],
+            RankedEvidence {
+                rank: 1,
+                article: ArticleKey {
+                    project: "enwiki".into(),
+                    page_id: 9,
+                },
+                revision_id: 12,
+                block_id: "wkb:enwiki:9:12:b0".into(),
+                score: 1,
+                labeled_relevant: false,
+            }
+        );
+        assert!(score.cases[2].ranked_evidence.is_empty());
+        assert!(score.cases[3].ranked_evidence[0].labeled_relevant);
+        assert_eq!(score.cases[3].ranked_evidence[0].score, 2);
+    }
+
+    #[test]
     fn rejects_stale_fabricated_duplicate_or_out_of_scope_gold() {
         let index = CorpusLexicalIndex::build(&[article(9, "Physics", "Gravity bends spacetime.")])
             .unwrap();
@@ -445,7 +500,7 @@ mod tests {
         let sha = "A".repeat(40);
         let json = evaluate_retrieval_report_json(&index, &cases, 2, "synthetic-v1", &sha, &policy)
             .unwrap();
-        assert_eq!(json, include_str!("../fixtures/retrieval_report_v1.json"));
+        assert_eq!(json, include_str!("../fixtures/retrieval_report_v2.json"));
         let mut reversed = cases;
         reversed.reverse();
         assert_eq!(

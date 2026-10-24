@@ -1,0 +1,89 @@
+{
+  "schema_version": 2,
+  "suite_id": "synthetic-v1",
+  "claimed_source_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "thresholds": {
+    "min_recall_per_mille": 1000,
+    "max_no_answer_false_positive_cases": 0
+  },
+  "passed": false,
+  "retrieval": {
+    "top_k": 2,
+    "cases": [
+      {
+        "id": "math",
+        "relevant_count": 1,
+        "found_count": 1,
+        "retrieved_count": 1,
+        "no_answer_false_positive": false,
+        "ranked_evidence": [
+          {
+            "rank": 1,
+            "article": {
+              "project": "enwiki",
+              "page_id": 10
+            },
+            "revision_id": 12,
+            "block_id": "wkb:enwiki:10:12:b0",
+            "score": 1,
+            "labeled_relevant": true
+          }
+        ]
+      },
+      {
+        "id": "negative-with-match",
+        "relevant_count": 0,
+        "found_count": 0,
+        "retrieved_count": 1,
+        "no_answer_false_positive": true,
+        "ranked_evidence": [
+          {
+            "rank": 1,
+            "article": {
+              "project": "enwiki",
+              "page_id": 9
+            },
+            "revision_id": 12,
+            "block_id": "wkb:enwiki:9:12:b0",
+            "score": 1,
+            "labeled_relevant": false
+          }
+        ]
+      },
+      {
+        "id": "no-answer",
+        "relevant_count": 0,
+        "found_count": 0,
+        "retrieved_count": 0,
+        "no_answer_false_positive": false,
+        "ranked_evidence": []
+      },
+      {
+        "id": "physics",
+        "relevant_count": 1,
+        "found_count": 1,
+        "retrieved_count": 1,
+        "no_answer_false_positive": false,
+        "ranked_evidence": [
+          {
+            "rank": 1,
+            "article": {
+              "project": "enwiki",
+              "page_id": 9
+            },
+            "revision_id": 12,
+            "block_id": "wkb:enwiki:9:12:b0",
+            "score": 2,
+            "labeled_relevant": true
+          }
+        ]
+      }
+    ],
+    "answerable_cases": 2,
+    "no_answer_cases": 2,
+    "relevant_total": 2,
+    "found_total": 2,
+    "retrieved_total": 3,
+    "no_answer_false_positive_cases": 1
+  }
+}
