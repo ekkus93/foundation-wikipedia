@@ -401,7 +401,6 @@ mod tests {
             assert!(matches!(
                 cache.put(&item),
                 Err(HtmlCacheError::InvalidContent)
-
             ));
             assert_eq!(cache.get(&item.key, 125).unwrap(), None);
         }
