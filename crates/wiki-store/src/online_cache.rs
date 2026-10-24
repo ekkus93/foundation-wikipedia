@@ -66,7 +66,11 @@ fn valid_title(title: &str) -> bool {
                     '\u{061c}'
                         | '\u{200e}'..='\u{200f}'
                         | '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
+                        | '\u{200b}'
+                        | '\u{2028}'..='\u{2029}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{206f}'
+                        | '\u{feff}'
                 )
         })
 }
@@ -386,7 +390,9 @@ mod tests {
             assert_eq!(cache.get(&item.key, 123).unwrap(), Some(item));
         }
         for marker in [
-            '\u{061c}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}', '\u{2066}', '\u{2069}',
+            '\u{061c}', '\u{200b}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}',
+            '\u{2028}', '\u{2029}', '\u{2060}', '\u{2066}', '\u{2069}', '\u{206a}',
+            '\u{206f}', '\u{feff}',
         ] {
             let mut item = article(125);
             item.title = format!("Physics{marker}Spoof");
@@ -409,6 +415,35 @@ mod tests {
             cache.get(&normal.key, 130),
             Err(HtmlCacheError::InvalidContent)
         ));
+    }
+
+    #[test]
+    fn rejects_invisible_cache_title_controls_on_read_and_preserves_joiners() {
+        let mut cache = RevisionHtmlCache::in_memory().unwrap();
+        // ZWNJ and ZWJ are meaningful in Persian/Indic text, not spoof markers.
+        let mut natural = article(126);
+        natural.key.project = "fawiki".into();
+        natural.title = "می\u{200c}روم".into();
+        cache.put(&natural).unwrap();
+        assert_eq!(cache.get(&natural.key, 126).unwrap(), Some(natural));
+        let mut joined = article(127);
+        joined.key.project = "hiwiki".into();
+        joined.title = "क्\u{200d}ष".into();
+        cache.put(&joined).unwrap();
+        assert_eq!(cache.get(&joined.key, 127).unwrap(), Some(joined));
+
+        let original = article(128);
+        cache.put(&original).unwrap();
+        for marker in ['\u{200b}', '\u{2028}', '\u{2029}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}'] {
+            cache.conn.execute(
+                "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=128",
+                params![format!("Physics{marker}Spoof")],
+            ).unwrap();
+            assert!(matches!(
+                cache.get(&original.key, 128),
+                Err(HtmlCacheError::InvalidContent)
+            ));
+        }
     }
 
     #[test]
