@@ -47,7 +47,7 @@ impl ArticleLexicalIndex {
         if query.len() > MAX_LEXICAL_QUERY_BYTES || limit == 0 {
             return Vec::new();
         }
-        let terms: BTreeSet<String> = tokenize(query).into_iter().take(32).collect();
+        let terms: BTreeSet<String> = tokenize_query(query).into_iter().take(32).collect();
         if terms.is_empty() || limit == 0 {
             return Vec::new();
         }
@@ -87,7 +87,7 @@ impl ArticleLexicalIndex {
         let mut used = 0;
         let mut selected = Vec::new();
         for hit in self.search(query, 100) {
-            let count = tokenize(&hit.excerpt).len();
+            let count = evidence_word_cost(&hit.excerpt);
             if count <= budget.saturating_sub(used) && selected.len() < limit {
                 used += count;
                 selected.push(hit);
@@ -138,8 +138,9 @@ fn title_match_score(name: &str, terms: &[String]) -> usize {
     {
         return 0;
     }
-    let exact = usize::from(words == terms) * 100;
-    let starts_with = usize::from(words.starts_with(terms)) * 20;
+    let title_terms = tokenize_query(name);
+    let exact = usize::from(title_terms == terms) * 100;
+    let starts_with = usize::from(title_terms.starts_with(terms)) * 20;
     10 * terms.len() + exact + starts_with
 }
 
@@ -242,7 +243,7 @@ impl CorpusLexicalIndex {
         if limit == 0 || query.len() > MAX_LEXICAL_QUERY_BYTES {
             return Vec::new();
         }
-        let terms: Vec<_> = tokenize(query).into_iter().take(32).collect();
+        let terms: Vec<_> = tokenize_query(query).into_iter().take(32).collect();
         if terms.is_empty() {
             return Vec::new();
         }
@@ -333,7 +334,7 @@ impl CorpusLexicalIndex {
             if selected.len() >= limit {
                 break;
             }
-            let words = tokenize(&hit.evidence.excerpt).len();
+            let words = evidence_word_cost(&hit.evidence.excerpt);
             if words <= budget.saturating_sub(used) {
                 used += words;
                 selected.push(hit);
@@ -547,11 +548,92 @@ fn append_blocks(
     }
 }
 
+// CJK scripts do not generally separate words with spaces. A whole-script
+// token makes even a short Chinese/Japanese/Korean query miss its passage.
+// Adjacent bigrams permit deterministic substring retrieval without a
+// dictionary, morphological model, network access, or language-specific pack.
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{1100}'..='\u{11ff}'
+            | '\u{3040}'..='\u{30ff}'
+            | '\u{3130}'..='\u{318f}'
+            | '\u{3400}'..='\u{9fff}'
+            | '\u{ac00}'..='\u{d7af}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{20000}'..='\u{2fa1f}'
+    )
+}
+
+fn flush_word(tokens: &mut Vec<String>, word: &mut String) {
+    if !word.is_empty() {
+        tokens.push(std::mem::take(word));
+    }
+}
+
+fn flush_cjk(tokens: &mut Vec<String>, run: &mut Vec<char>, query: bool) {
+    // Index single characters so one-character queries still work, but do
+    // not put individual characters of multi-character queries in the query
+    // terms: otherwise a phrase like 引力 would match unrelated 引 ... 力.
+    if !query || run.len() == 1 {
+        tokens.extend(run.iter().map(char::to_string));
+    }
+    for pair in run.windows(2) {
+        tokens.push(format!("{}{}", pair[0], pair[1]));
+    }
+    run.clear();
+}
+
+fn tokenize_impl(text: &str, query: bool) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut word = String::new();
+    let mut cjk_run = Vec::new();
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            flush_word(&mut tokens, &mut word);
+            cjk_run.push(ch);
+        } else {
+            flush_cjk(&mut tokens, &mut cjk_run, query);
+            if ch.is_alphanumeric() {
+                word.extend(ch.to_lowercase());
+            } else {
+                flush_word(&mut tokens, &mut word);
+            }
+        }
+    }
+    flush_cjk(&mut tokens, &mut cjk_run, query);
+    flush_word(&mut tokens, &mut word);
+    tokens
+}
+
 fn tokenize(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+    tokenize_impl(text, false)
+}
+
+fn tokenize_query(text: &str) -> Vec<String> {
+    tokenize_impl(text, true)
+}
+
+// Word budgets must not treat a 10,000-character unspaced Han passage as
+// one word. Count each CJK scalar conservatively, while preserving existing
+// space-delimited word accounting for Latin and other alphabetic scripts.
+fn evidence_word_cost(text: &str) -> usize {
+    let mut words = 0;
+    let mut in_word = false;
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            words += 1;
+            in_word = false;
+        } else if ch.is_alphanumeric() {
+            if !in_word {
+                words += 1;
+            }
+            in_word = true;
+        } else {
+            in_word = false;
+        }
+    }
+    words
 }
 
 #[cfg(test)]
@@ -617,6 +699,66 @@ mod tests {
         assert!(!ArticleLexicalIndex::build(&newer)
             .unwrap()
             .contains_evidence(&hits[0]));
+    }
+
+    #[test]
+    fn cjk_substring_retrieval_and_navigation_are_revision_scoped() {
+        let mut chinese = sample();
+        chinese.title = "广义相对论".into();
+        chinese.display_title = chinese.title.clone();
+        chinese.language = "zh".into();
+        chinese.lead[0].content = BlockContent::Paragraph("广义相对论解释引力。".into());
+        chinese.sections.clear();
+
+        let mut japanese = sample();
+        japanese.key.page_id = 10;
+        japanese.title = "量子力学".into();
+        japanese.display_title = japanese.title.clone();
+        japanese.language = "ja".into();
+        japanese.aliases = vec!["量子物理".into()];
+        japanese.lead[0].content = BlockContent::Paragraph("量子力学を研究する。".into());
+        japanese.sections.clear();
+
+        let mut korean = sample();
+        korean.key.page_id = 11;
+        korean.title = "양자역학".into();
+        korean.display_title = korean.title.clone();
+        korean.language = "ko".into();
+        korean.lead[0].content = BlockContent::Paragraph("양자역학을 연구한다.".into());
+        korean.sections.clear();
+
+        let corpus = CorpusLexicalIndex::build(&[chinese, japanese, korean]).unwrap();
+        assert_eq!(corpus.search("相对论", 5)[0].article.page_id, 9);
+        assert_eq!(corpus.search("量子力学", 5)[0].article.page_id, 10);
+        assert_eq!(corpus.search("역학", 5)[0].article.page_id, 11);
+        assert_eq!(corpus.search_titles("相对论", 5)[0].article.page_id, 9);
+        assert_eq!(corpus.search_titles("量子物理", 5)[0].article.page_id, 10);
+        assert_eq!(corpus.search_titles("역학", 5)[0].article.page_id, 11);
+        assert_eq!(corpus.search_titles("量子力学", 5)[0].matched_alias, None);
+
+        let mut separated = sample();
+        separated.lead[0].content = BlockContent::Paragraph("引 和 力".into());
+        separated.sections.clear();
+        let index = ArticleLexicalIndex::build(&separated).unwrap();
+        assert!(index.search("引力", 5).is_empty());
+        assert_eq!(index.search("引", 5).len(), 1);
+    }
+
+    #[test]
+    fn cjk_passages_cannot_bypass_evidence_word_budgets() {
+        let mut article = sample();
+        article.lead[0].content = BlockContent::Paragraph("量子力学研究".into());
+        article.sections.clear();
+        let index = ArticleLexicalIndex::build(&article).unwrap();
+        assert_eq!(index.search("量子", 1).len(), 1);
+        assert!(index.search_with_word_budget("量子", 1, 5).is_empty());
+        assert_eq!(index.search_with_word_budget("量子", 1, 6).len(), 1);
+        let corpus = CorpusLexicalIndex::build(&[article]).unwrap();
+        assert!(corpus.search_with_word_budget("量子", 1, 5).is_empty());
+        assert_eq!(corpus.search_with_word_budget("量子", 1, 6).len(), 1);
+        assert_eq!(evidence_word_cost("Physics 量子力学 research"), 6);
+        assert_eq!(tokenize_query("引力"), vec!["引力"]);
+        assert_eq!(tokenize_query("引"), vec!["引"]);
     }
 
     #[test]
