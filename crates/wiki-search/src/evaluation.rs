@@ -243,7 +243,7 @@ mod tests {
                 page_id,
             },
             revision_id: 12,
-            block_id: format!("wkb:enwiki:{page_id}:12:0:b0"),
+            block_id: format!("wkb:enwiki:{page_id}:12:b0"),
         }
     }
 
@@ -333,10 +333,15 @@ mod tests {
             evaluate_retrieval(&index, &suite(), 0),
             Err(EvaluationError::InvalidLimit)
         );
+        let valid_index = CorpusLexicalIndex::build(&[
+            article(9, "Physics", "Gravity bends spacetime."),
+            article(10, "Mathematics", "Algebra describes structures."),
+        ])
+        .unwrap();
         let mut cases = suite();
         cases.push(cases[0].clone());
         assert_eq!(
-            evaluate_retrieval(&index, &cases, 2),
+            evaluate_retrieval(&valid_index, &cases, 2),
             Err(EvaluationError::DuplicateCaseId("physics".into()))
         );
     }
