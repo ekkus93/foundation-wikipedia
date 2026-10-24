@@ -710,17 +710,14 @@ mod pinned_tests {
         let repeated = resolve(&graph, &rules).unwrap();
         assert_eq!(repeated.page_ids, vec![2, 3]);
         rules.roots = vec!["Category:Root".into()];
-        graph.get_mut("Category:Root").unwrap().children =
-            vec!["Category:Leaf".into()];
-        graph.get_mut("Category:Leaf").unwrap().children =
-            vec!["Category:Root".into()];
+        graph.get_mut("Category:Root").unwrap().children = vec!["Category:Leaf".into()];
+        graph.get_mut("Category:Leaf").unwrap().children = vec!["Category:Root".into()];
         let minimal = resolve(&graph, &rules).unwrap();
         assert_eq!(repeated.page_ids, minimal.page_ids);
 
         // A large number of *distinct* categories must still fail closed.
-        graph.get_mut("Category:Root").unwrap().children = (0..1024)
-            .map(|id| format!("Category:Child{id}"))
-            .collect();
+        graph.get_mut("Category:Root").unwrap().children =
+            (0..1024).map(|id| format!("Category:Child{id}")).collect();
         assert_eq!(
             resolve(&graph, &rules),
             Err(ResolveError::TooManyCategories)
