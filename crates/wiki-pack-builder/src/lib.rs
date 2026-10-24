@@ -4,6 +4,7 @@
 //! production API until its canonical TODO tasks are implemented.
 
 pub mod curated;
+pub mod curated_preview;
 pub mod enterprise_graph;
 pub mod gif_preflight;
 pub mod graph_digest;
