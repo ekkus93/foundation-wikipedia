@@ -18,7 +18,7 @@ use std::{
     process,
 };
 
-use wiki_model::Article;
+use wiki_model::{Article, ArticleKey};
 use wiki_pack_format::container::verify_container;
 use wiki_search::{
     evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json, CorpusLexicalIndex,
@@ -109,7 +109,7 @@ fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<Vec<u8>, String> {
+fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<(Vec<u8>, String), String> {
     // Verify every object before exposing article bytes. This verifies
     // manifest-declared integrity, not publisher authenticity.
     let manifest =
@@ -140,7 +140,7 @@ fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<Vec<u8>, String> {
             if wiki_pack_format::sha256_hex(&bytes) != object.sha256.to_ascii_lowercase() {
                 return Err("pack articles.json changed after envelope verification".into());
             }
-            return Ok(bytes);
+            return Ok((bytes, manifest.project));
         }
         offset = offset
             .checked_add(object.bytes)
@@ -149,19 +149,40 @@ fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<Vec<u8>, String> {
     Err("pack contains no articles.json canonical article array".into())
 }
 
+// A provisional pack's project declaration must agree with every canonical
+// article key. An intact envelope hash alone does not establish this join.
+fn validate_pack_project<'a>(
+    project: &str,
+    keys: impl IntoIterator<Item = &'a ArticleKey>,
+) -> Result<(), String> {
+    for key in keys {
+        if key.project != project {
+            return Err(format!(
+                "pack project {project} conflicts with article project {} at page {}",
+                key.project, key.page_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn run(args: Args) -> Result<(), String> {
-    let corpus_bytes = if let Some(path) = &args.corpus {
-        read_bounded(path, MAX_CORPUS_BYTES)?
+    let (corpus_bytes, pack_project) = if let Some(path) = &args.corpus {
+        (read_bounded(path, MAX_CORPUS_BYTES)?, None)
     } else {
         let path = args.pack.as_ref().ok_or("missing --pack")?;
         let mut input = fs::File::open(path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-        read_pack_corpus(&mut input)?
+        let (bytes, project) = read_pack_corpus(&mut input)?;
+        (bytes, Some(project))
     };
     let articles: Vec<Article> = serde_json::from_slice(&corpus_bytes)
         .map_err(|error| format!("invalid canonical article corpus: {error}"))?;
     if articles.is_empty() || articles.len() > MAX_ARTICLES {
         return Err(format!("corpus must contain 1..={MAX_ARTICLES} articles"));
+    }
+    if let Some(project) = &pack_project {
+        validate_pack_project(project, articles.iter().map(|article| &article.key))?;
     }
     let index = CorpusLexicalIndex::build(&articles)
         .map_err(|error| format!("invalid article identity or revision: {error:?}"))?;
@@ -298,13 +319,34 @@ mod tests {
         .unwrap();
         assert_eq!(
             read_pack_corpus(&mut Cursor::new(&envelope)).unwrap(),
-            corpus
+            (corpus.to_vec(), "enwiki".to_owned())
         );
         let mut tampered = envelope.clone();
         *tampered.last_mut().unwrap() ^= 1;
         assert!(read_pack_corpus(&mut Cursor::new(tampered)).is_err());
         envelope.push(0);
         assert!(read_pack_corpus(&mut Cursor::new(envelope)).is_err());
+    }
+
+    #[test]
+    fn provisional_pack_project_must_match_every_article_key() {
+        let en = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 12,
+        };
+        let other_en = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 34,
+        };
+        let fr = ArticleKey {
+            project: "frwiki".into(),
+            page_id: 56,
+        };
+        assert!(validate_pack_project("enwiki", [&en, &other_en]).is_ok());
+        assert!(validate_pack_project("enwiki", [&en, &fr]).is_err());
+        assert!(validate_pack_project("frwiki", [&en]).is_err());
+        // Raw --corpus remains intentionally multi-project; this check is
+        // applied only when the caller supplies a pack manifest.
     }
 
     #[test]
