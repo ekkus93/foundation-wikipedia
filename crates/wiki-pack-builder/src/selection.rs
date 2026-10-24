@@ -591,7 +591,13 @@ mod pinned_tests {
             },
         )]);
         let pinned = |graph: &BTreeMap<String, Category>, rules: &Rules| {
-            resolve_pinned(graph, rules, &BTreeMap::new(), &BTreeSet::new(), "enwiki-20261023")
+            resolve_pinned(
+                graph,
+                rules,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                "enwiki-20261023",
+            )
         };
         assert_eq!(pinned(&base, &rules).unwrap().page_ids, vec![2]);
         for bad in [
@@ -617,7 +623,11 @@ mod pinned_tests {
                 Err(ResolveError::InvalidCategory(bad.into()))
             );
             let mut child = base.clone();
-            child.get_mut("Category:Science").unwrap().children.push(bad.into());
+            child
+                .get_mut("Category:Science")
+                .unwrap()
+                .children
+                .push(bad.into());
             assert_eq!(
                 pinned(&child, &rules),
                 Err(ResolveError::InvalidCategory(bad.into()))
