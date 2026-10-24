@@ -1001,3 +1001,9 @@ mod pinned_tests {
         );
         redirects.clear();
         disambiguations.insert(0);
+        assert_eq!(
+            pinned(&graph, &redirects, &disambiguations),
+            Err(ResolveError::InvalidPage)
+        );
+    }
+}
