@@ -199,21 +199,24 @@ mod tests {
 
     #[test]
     fn preview_bounds_suppressed_include_warnings_and_duplicate_queue_work() {
-        let mut graph = BTreeMap::from([(
-            "Root".to_owned(),
-            Category {
-                articles: vec![1],
-                children: vec!["Leaf".into(); 4096],
-                administrative: false,
-            },
-        ), (
-            "Leaf".to_owned(),
-            Category {
-                articles: vec![2],
-                children: vec!["Root".into(); 2048],
-                administrative: false,
-            },
-        )]);
+        let mut graph = BTreeMap::from([
+            (
+                "Root".to_owned(),
+                Category {
+                    articles: vec![1],
+                    children: vec!["Leaf".into(); 4096],
+                    administrative: false,
+                },
+            ),
+            (
+                "Leaf".to_owned(),
+                Category {
+                    articles: vec![2],
+                    children: vec!["Root".into(); 2048],
+                    administrative: false,
+                },
+            ),
+        ]);
         let mut rules = Rules {
             roots: vec!["Root".into(); 2048],
             include: (1000..=1320).collect(),
@@ -254,8 +257,14 @@ mod tests {
         rules.include = vec![1000];
         rules.exclude = vec![1000];
         let small = inspect(&graph, &rules);
-        assert!(small.warnings.iter().any(|w| w.contains("Explicit include suppressed")));
-        assert!(!small.warnings.iter().any(|w| w.contains("warnings omitted")));
+        assert!(small
+            .warnings
+            .iter()
+            .any(|w| w.contains("Explicit include suppressed")));
+        assert!(!small
+            .warnings
+            .iter()
+            .any(|w| w.contains("warnings omitted")));
     }
 
     #[test]
