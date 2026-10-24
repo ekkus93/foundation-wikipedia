@@ -104,7 +104,11 @@ fn measure_curated_coverage(
     let mut union = BTreeSet::new();
     let mut total_mentions = 0usize;
     let mut seeds = Vec::new();
-    for id in curated_ids.iter().map(String::as_str).collect::<BTreeSet<_>>() {
+    for id in curated_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+    {
         let topic = curated_topic(id).ok_or_else(|| format!("unknown curated topic: {id}"))?;
         let seed_rules = Rules {
             roots: topic.roots.iter().map(|root| (*root).to_owned()).collect(),
@@ -113,14 +117,9 @@ fn measure_curated_coverage(
             depth_limit: rules.depth_limit,
             page_limit: rules.page_limit,
         };
-        let seed = preview_pinned_selection(
-            graph,
-            &seed_rules,
-            redirects,
-            disambiguations,
-            snapshot_id,
-        )
-        .map_err(|error| format!("curated seed {id} preview rejected: {error:?}"))?;
+        let seed =
+            preview_pinned_selection(graph, &seed_rules, redirects, disambiguations, snapshot_id)
+                .map_err(|error| format!("curated seed {id} preview rejected: {error:?}"))?;
         total_mentions += seed.selected_page_count;
         union.extend(seed.selection.page_ids.iter().copied());
         seeds.push(CuratedSeedCoverage {
@@ -563,8 +562,14 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     }
     println!("Selected page IDs: {selected_count}");
     if let Some(coverage) = &curated_coverage {
-        println!("Unique curated seed pages: {}", coverage.unique_seed_page_count);
-        println!("Curated overlap page mentions: {}", coverage.overlap_page_mentions);
+        println!(
+            "Unique curated seed pages: {}",
+            coverage.unique_seed_page_count
+        );
+        println!(
+            "Curated overlap page mentions: {}",
+            coverage.overlap_page_mentions
+        );
         println!(
             "Pages from custom roots, explicit additions or related links: {}",
             selected_count - coverage.unique_seed_page_count
@@ -837,30 +842,23 @@ mod input_tests {
         let redirects = BTreeMap::new();
         let disambiguations = BTreeSet::new();
         let snapshot = "enwiki-20261023";
-        let combined = preview_pinned_selection(
-            &graph,
-            &rules,
-            &redirects,
-            &disambiguations,
-            snapshot,
-        )
-        .unwrap();
+        let combined =
+            preview_pinned_selection(&graph, &rules, &redirects, &disambiguations, snapshot)
+                .unwrap();
         assert_eq!(combined.selection.page_ids, vec![2, 3, 5]);
         let ids = vec!["physics".into(), "mathematics".into(), "physics".into()];
-        let report = measure_curated_coverage(
-            &ids,
-            &graph,
-            &rules,
-            &redirects,
-            &disambiguations,
-            snapshot,
-        )
-        .unwrap()
-        .unwrap();
+        let report =
+            measure_curated_coverage(&ids, &graph, &rules, &redirects, &disambiguations, snapshot)
+                .unwrap()
+                .unwrap();
         assert_eq!(report.unique_seed_page_count, 2);
         assert_eq!(report.overlap_page_mentions, 1);
         assert_eq!(
-            report.seeds.iter().map(|seed| (seed.topic_id.as_str(), seed.selected_page_count)).collect::<Vec<_>>(),
+            report
+                .seeds
+                .iter()
+                .map(|seed| (seed.topic_id.as_str(), seed.selected_page_count))
+                .collect::<Vec<_>>(),
             vec![("mathematics", 1), ("physics", 2)]
         );
         assert_eq!(
@@ -881,15 +879,8 @@ mod input_tests {
             Some(report)
         );
         assert_eq!(
-            measure_curated_coverage(
-                &[],
-                &graph,
-                &rules,
-                &redirects,
-                &disambiguations,
-                snapshot
-            )
-            .unwrap(),
+            measure_curated_coverage(&[], &graph, &rules, &redirects, &disambiguations, snapshot)
+                .unwrap(),
             None
         );
     }
@@ -898,15 +889,3 @@ mod input_tests {
     fn curated_only_json_preview_runs_without_explicit_roots() {
         let path = test_path();
         let json = serde_json::json!({
-            "snapshot_id": "enwiki-20261023",
-            "curated_topics": ["mathematics"],
-            "categories": [
-                {"name": "Category:Mathematics", "articles": [42]}
-            ]
-        });
-        fs::write(&path, json.to_string()).unwrap();
-        let result = run(&path, true);
-        fs::remove_file(&path).unwrap();
-        assert!(result.is_ok(), "{result:?}");
-    }
-}
