@@ -454,3 +454,30 @@ mod tests {
         use std::io::Cursor;
         use wiki_pack_format::{
             container::write_container,
+            manifest::{Manifest, Object, Origin, FORMAT_VERSION},
+            sha256_hex,
+        };
+
+        let bytes = b"other";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "benchmark".into(),
+            project: "enwiki".into(),
+            snapshot: "20261024".into(),
+            origin: Origin::Custom {
+                definition_id: "benchmark".into(),
+            },
+            objects: vec![Object {
+                path: "other.json".into(),
+                sha256: sha256_hex(bytes),
+                bytes: bytes.len() as u64,
+            }],
+        };
+        let mut envelope = Vec::new();
+        write_container(&mut envelope, &manifest, |_object, output| {
+            output.write_all(bytes)
+        })
+        .unwrap();
+        assert!(read_pack_corpus(&mut Cursor::new(envelope)).is_err());
+    }
+}
