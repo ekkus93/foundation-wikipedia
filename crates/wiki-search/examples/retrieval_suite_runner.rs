@@ -2,20 +2,24 @@
 //!
 //! Usage:
 //! cargo run -p wiki-search --example retrieval_suite_runner --locked -- \\
-//!   --corpus articles.json --suite labels.json --sha <40-hex-commit> \\
+//!   --pack corpus.wpack --suite labels.json --sha <40-hex-commit> \\
 //!   --output report.json [--top-k 5] [--min-recall-per-mille 800] \\
 //!   [--max-no-answer-fp 0]
 //!
+//! Use --corpus articles.json instead of --pack for unpacked input.
+//! A provisional pack must contain an articles.json canonical article array.
 //! This does not authenticate the source or labels. It must not be described as
 //! a publisher-verified Wikimedia benchmark without independent provenance.
 
 use std::{
     env, fs,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process,
 };
 
 use wiki_model::Article;
+use wiki_pack_format::container::verify_container;
 use wiki_search::{
     evaluation::RetrievalThresholds, evaluation_suite::run_retrieval_suite_json, CorpusLexicalIndex,
 };
@@ -26,7 +30,8 @@ const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
-    corpus: PathBuf,
+    corpus: Option<PathBuf>,
+    pack: Option<PathBuf>,
     suite: PathBuf,
     output: PathBuf,
     sha: String,
@@ -37,6 +42,7 @@ struct Args {
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut corpus = None;
+    let mut pack = None;
     let mut suite = None;
     let mut output = None;
     let mut sha = None;
@@ -50,6 +56,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
             "--corpus" if corpus.is_none() => corpus = Some(PathBuf::from(value)),
+            "--pack" if pack.is_none() => pack = Some(PathBuf::from(value)),
             "--suite" if suite.is_none() => suite = Some(PathBuf::from(value)),
             "--output" if output.is_none() => output = Some(PathBuf::from(value)),
             "--sha" if sha.is_none() => sha = Some(value),
@@ -72,8 +79,12 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("--sha must be exactly 40 hexadecimal characters".into());
     }
+    if corpus.is_some() == pack.is_some() {
+        return Err("specify exactly one of --corpus or --pack".into());
+    }
     Ok(Args {
-        corpus: corpus.ok_or("missing --corpus")?,
+        corpus,
+        pack,
         suite: suite.ok_or("missing --suite")?,
         output: output.ok_or("missing --output")?,
         sha,
@@ -98,8 +109,53 @@ fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn read_pack_corpus<R: Read + Seek>(input: &mut R) -> Result<Vec<u8>, String> {
+    // Verify every object before exposing article bytes. This verifies
+    // manifest-declared integrity, not publisher authenticity.
+    let manifest =
+        verify_container(input).map_err(|error| format!("invalid pack envelope: {error:?}"))?;
+    let transcript_len = manifest
+        .identity_transcript()
+        .map_err(|error| format!("invalid pack manifest: {error:?}"))?
+        .len() as u64;
+    let mut offset = 12u64
+        .checked_add(transcript_len)
+        .ok_or("pack object offset overflow")?;
+    let mut objects = manifest.objects.iter().collect::<Vec<_>>();
+    objects.sort_by(|a, b| a.path.cmp(&b.path));
+    for object in objects {
+        if object.path == "articles.json" {
+            if object.bytes > MAX_CORPUS_BYTES {
+                return Err(format!("pack articles.json exceeds {MAX_CORPUS_BYTES} bytes"));
+            }
+            input
+                .seek(SeekFrom::Start(offset))
+                .map_err(|error| format!("cannot seek to pack articles.json: {error}"))?;
+            let mut bytes = vec![0; object.bytes as usize];
+            input
+                .read_exact(&mut bytes)
+                .map_err(|error| format!("cannot read pack articles.json: {error}"))?;
+            if wiki_pack_format::sha256_hex(&bytes) != object.sha256.to_ascii_lowercase() {
+                return Err("pack articles.json changed after envelope verification".into());
+            }
+            return Ok(bytes);
+        }
+        offset = offset
+            .checked_add(object.bytes)
+            .ok_or("pack object offset overflow")?;
+    }
+    Err("pack contains no articles.json canonical article array".into())
+}
+
 fn run(args: Args) -> Result<(), String> {
-    let corpus_bytes = read_bounded(&args.corpus, MAX_CORPUS_BYTES)?;
+    let corpus_bytes = if let Some(path) = &args.corpus {
+        read_bounded(path, MAX_CORPUS_BYTES)?
+    } else {
+        let path = args.pack.as_ref().ok_or("missing --pack")?;
+        let mut input = fs::File::open(path)
+            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        read_pack_corpus(&mut input)?
+    };
     let articles: Vec<Article> = serde_json::from_slice(&corpus_bytes)
         .map_err(|error| format!("invalid canonical article corpus: {error}"))?;
     if articles.is_empty() || articles.len() > MAX_ARTICLES {
@@ -186,5 +242,98 @@ mod tests {
         args.extend(["--corpus".into(), "other.json".into()]);
         assert!(parse_args(args).is_err());
         assert!(parse_args(vec!["--suite".into(), "suite.json".into()]).is_err());
+        let mut args = arguments();
+        args.extend(["--pack".into(), "test.wpack".into()]);
+        assert!(parse_args(args).is_err());
+        let mut args = arguments();
+        args[0] = "--pack".into();
+        assert_eq!(
+            parse_args(args).unwrap().pack,
+            Some(PathBuf::from("articles.json"))
+        );
+    }
+
+    #[test]
+    fn verified_pack_article_object_is_read_without_extracting_media() {
+        use std::io::Cursor;
+        use wiki_pack_format::{
+            container::write_container,
+            manifest::{Manifest, Object, Origin, FORMAT_VERSION},
+            sha256_hex,
+        };
+
+        let corpus = br#"[{"sample":"canonical-article-array"}]"#;
+        let media = b"figure";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "benchmark".into(),
+            project: "enwiki".into(),
+            snapshot: "20261024".into(),
+            origin: Origin::Custom {
+                definition_id: "benchmark".into(),
+            },
+            objects: vec![
+                Object {
+                    path: "media/figure.bin".into(),
+                    sha256: sha256_hex(media),
+                    bytes: media.len() as u64,
+                },
+                Object {
+                    path: "articles.json".into(),
+                    sha256: sha256_hex(corpus),
+                    bytes: corpus.len() as u64,
+                },
+            ],
+        };
+        let mut envelope = Vec::new();
+        write_container(&mut envelope, &manifest, |object, output| {
+            if object.path == "articles.json" {
+                output.write_all(corpus)
+            } else {
+                output.write_all(media)
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            read_pack_corpus(&mut Cursor::new(&envelope)).unwrap(),
+            corpus
+        );
+        let mut tampered = envelope.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(read_pack_corpus(&mut Cursor::new(tampered)).is_err());
+        envelope.push(0);
+        assert!(read_pack_corpus(&mut Cursor::new(envelope)).is_err());
+    }
+
+    #[test]
+    fn pack_without_canonical_article_array_fails_closed() {
+        use std::io::Cursor;
+        use wiki_pack_format::{
+            container::write_container,
+            manifest::{Manifest, Object, Origin, FORMAT_VERSION},
+            sha256_hex,
+        };
+
+        let bytes = b"other";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "benchmark".into(),
+            project: "enwiki".into(),
+            snapshot: "20261024".into(),
+            origin: Origin::Custom {
+                definition_id: "benchmark".into(),
+            },
+            objects: vec![Object {
+                path: "other.json".into(),
+                sha256: sha256_hex(bytes),
+                bytes: bytes.len() as u64,
+            }],
+        };
+        let mut envelope = Vec::new();
+        write_container(&mut envelope, &manifest, |_object, output| {
+            output.write_all(bytes)
+        })
+        .unwrap();
+        assert!(read_pack_corpus(&mut Cursor::new(envelope)).is_err());
     }
 }
