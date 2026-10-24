@@ -112,6 +112,7 @@ pub fn resolve_with_redirects(
         return Err(ResolveError::BadLimit);
     }
     validate_category_labels(graph, rules)?;
+    validate_source_identities(graph, redirects, disambiguations)?;
     // Bound queued work before expansion: a single category can have far more
     // children than selected pages, including cycles and duplicate links.
     let category_budget = rules.page_limit.saturating_mul(32).clamp(1024, 100_000);
@@ -233,6 +234,28 @@ pub fn resolve_with_redirects(
         page_ids: pages.into_iter().collect(),
         warnings: warnings.into_iter().collect(),
     })
+}
+
+/// All public resolver entry points reject invalid supplied identities,
+/// including graph nodes and redirect chains not reached by a chosen topic.
+/// Otherwise callers of the unpinned preview could see a valid selection
+/// over malformed source data that the pinned receipt would later reject.
+fn validate_source_identities(
+    graph: &BTreeMap<String, Category>,
+    redirects: &BTreeMap<u64, u64>,
+    disambiguations: &BTreeSet<u64>,
+) -> Result<(), ResolveError> {
+    if graph
+        .values()
+        .any(|category| category.articles.iter().any(|&id| invalid_page_id(id)))
+        || redirects
+            .iter()
+            .any(|(&from, &to)| invalid_page_id(from) || invalid_page_id(to))
+        || disambiguations.iter().any(|&id| invalid_page_id(id))
+    {
+        return Err(ResolveError::InvalidPage);
+    }
+    validate_pinned_redirect_map(redirects)
 }
 
 /// Validate the entire supplied redirect identity map before fingerprinting it.
@@ -359,19 +382,8 @@ pub fn resolve_pinned(
     {
         return Err(ResolveError::InvalidSnapshot);
     }
-    // A receipt fingerprints the entire supplied graph, not just the visited
-    // subset. Reject malformed identities even in unselected source records.
-    if graph
-        .values()
-        .any(|category| category.articles.iter().any(|&id| invalid_page_id(id)))
-        || redirects
-            .iter()
-            .any(|(&from, &to)| invalid_page_id(from) || invalid_page_id(to))
-        || disambiguations.iter().any(|&id| invalid_page_id(id))
-    {
-        return Err(ResolveError::InvalidPage);
-    }
-    validate_pinned_redirect_map(redirects)?;
+    // All resolver entry points share the same full-input validation,
+    // including identities in unselected category and redirect records.
     let resolved = resolve_with_redirects(graph, rules, redirects, disambiguations)?;
     let mut definition = Sha256Transcript::new();
     definition.update(b"foundation-wikipedia/topic-definition/v1\0");
@@ -678,6 +690,62 @@ mod pinned_tests {
         let mut graph = base;
         graph.insert("Category:می‌روم क्‍ष".into(), Category::default());
         assert!(pinned(&graph, &rules).is_ok());
+    }
+
+    #[test]
+    fn unpinned_preview_rejects_unselected_invalid_source_identities() {
+        let rules = Rules {
+            roots: vec!["Category:Root".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 0,
+            page_limit: 10,
+        };
+        let mut graph = BTreeMap::from([
+            (
+                "Category:Root".into(),
+                Category {
+                    articles: vec![2],
+                    children: vec![],
+                    administrative: false,
+                },
+            ),
+            (
+                "Category:Unselected".into(),
+                Category {
+                    articles: vec![0],
+                    children: vec![],
+                    administrative: false,
+                },
+            ),
+        ]);
+        assert_eq!(resolve(&graph, &rules), Err(ResolveError::InvalidPage));
+        graph.get_mut("Category:Unselected").unwrap().articles = vec![3];
+        assert_eq!(resolve(&graph, &rules).unwrap().page_ids, vec![2]);
+
+        let redirects = BTreeMap::from([(100, 101), (101, 100)]);
+        assert_eq!(
+            resolve_with_redirects(&graph, &rules, &redirects, &BTreeSet::new()),
+            Err(ResolveError::RedirectCycle(100))
+        );
+        assert_eq!(
+            resolve_with_redirects(
+                &graph,
+                &rules,
+                &BTreeMap::from([(100, 0)]),
+                &BTreeSet::new(),
+            ),
+            Err(ResolveError::InvalidPage)
+        );
+        assert_eq!(
+            resolve_with_redirects(
+                &graph,
+                &rules,
+                &BTreeMap::new(),
+                &BTreeSet::from([i64::MAX as u64 + 1]),
+            ),
+            Err(ResolveError::InvalidPage)
+        );
     }
 
     #[test]
