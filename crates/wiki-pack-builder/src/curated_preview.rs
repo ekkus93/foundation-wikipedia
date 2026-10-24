@@ -226,8 +226,7 @@ mod tests {
             Err(CuratedPreviewError::EmptyTopics)
         ));
         assert_eq!(
-            preview_curated_topics(&records, &admin, &["unknown"], &[], &[], &[])
-                .unwrap_err(),
+            preview_curated_topics(&records, &admin, &["unknown"], &[], &[], &[]).unwrap_err(),
             CuratedPreviewError::UnknownTopic("unknown".into())
         );
         assert!(matches!(
@@ -237,8 +236,7 @@ mod tests {
         let mut wrong = records;
         wrong[0].structured.page.project = "frwiki".into();
         assert_eq!(
-            preview_curated_topics(&wrong, &admin, &["physics"], &[], &[], &[])
-                .unwrap_err(),
+            preview_curated_topics(&wrong, &admin, &["physics"], &[], &[], &[]).unwrap_err(),
             CuratedPreviewError::WrongProject {
                 expected: "enwiki".into(),
                 actual: "frwiki".into(),
