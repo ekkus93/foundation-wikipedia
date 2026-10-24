@@ -452,6 +452,86 @@ pub fn validate_corpus_citations(
     Ok(result)
 }
 
+/// The application must explicitly choose the articles permitted for a
+/// multi-article answer. A valid indexed citation is not authorization to
+/// include a different article in the model context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScopedCorpusAnswerError {
+    EmptyScope,
+    UnknownAllowedArticle(ArticleKey),
+    OutOfScopeArticle(ArticleKey),
+    Citation(CorpusCitationError),
+    EmptyAnswer,
+    UnsupportedAnswer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScopedCorpusAnswer {
+    Supported {
+        text: String,
+        citations: Vec<CorpusHit>,
+    },
+    InsufficientEvidence,
+}
+
+/// Validate multi-article answers against an explicit caller-authorized page
+/// allowlist *and* the exact retrieved revision-scoped evidence. This checks
+/// provenance and scope, not user consent or factual entailment; callers must
+/// obtain permission before supplying cross-article passages to an LLM.
+pub fn validate_scoped_corpus_answer(
+    index: &CorpusLexicalIndex,
+    allowed_articles: &[ArticleKey],
+    retrieved: &[CorpusHit],
+    generated_text: &str,
+    claimed: &[(ArticleKey, String)],
+    abstained: bool,
+) -> Result<ScopedCorpusAnswer, ScopedCorpusAnswerError> {
+    if allowed_articles.is_empty() {
+        return Err(ScopedCorpusAnswerError::EmptyScope);
+    }
+    let mut allowed = BTreeSet::new();
+    for article in allowed_articles {
+        let key = (article.project.clone(), article.page_id);
+        if !index.articles.contains_key(&key) {
+            return Err(ScopedCorpusAnswerError::UnknownAllowedArticle(
+                article.clone(),
+            ));
+        }
+        allowed.insert(key);
+    }
+    for article in retrieved
+        .iter()
+        .map(|hit| &hit.article)
+        .chain(claimed.iter().map(|(article, _)| article))
+    {
+        if !allowed.contains(&(article.project.clone(), article.page_id)) {
+            return Err(ScopedCorpusAnswerError::OutOfScopeArticle(
+                article.clone(),
+            ));
+        }
+    }
+    if abstained {
+        if !generated_text.trim().is_empty() || !claimed.is_empty() {
+            return Err(ScopedCorpusAnswerError::UnsupportedAnswer);
+        }
+        validate_corpus_citations(index, retrieved, &[])
+            .map_err(ScopedCorpusAnswerError::Citation)?;
+        return Ok(ScopedCorpusAnswer::InsufficientEvidence);
+    }
+    if generated_text.trim().is_empty() {
+        return Err(ScopedCorpusAnswerError::EmptyAnswer);
+    }
+    if claimed.is_empty() {
+        return Err(ScopedCorpusAnswerError::UnsupportedAnswer);
+    }
+    let citations = validate_corpus_citations(index, retrieved, claimed)
+        .map_err(ScopedCorpusAnswerError::Citation)?;
+    Ok(ScopedCorpusAnswer::Supported {
+        text: generated_text.to_owned(),
+        citations,
+    })
+}
+
 /// Structurally grounded answer after checking its exact supplied citations.
 /// This enforces provenance, not factual entailment of the generated text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1126,6 +1206,113 @@ mod tests {
             Err(CorpusCitationError::InvalidRetrievedEvidence(
                 stale.article.clone(),
                 stale.evidence.block_id.clone(),
+            ))
+        );
+    }
+
+    #[test]
+    fn scoped_corpus_answers_require_explicit_article_authorization() {
+        let first = sample();
+        let mut second = sample();
+        second.key.page_id = 10;
+        second.revision.revision_id = 13;
+        let index = CorpusLexicalIndex::build(&[first.clone(), second.clone()]).unwrap();
+        let hits = index.search("physics", 10);
+        assert_eq!(hits.len(), 2);
+        let allowed = [first.key.clone(), second.key.clone()];
+        let claims: Vec<_> = hits
+            .iter()
+            .map(|hit| (hit.article.clone(), hit.evidence.block_id.clone()))
+            .collect();
+        assert_eq!(
+            validate_scoped_corpus_answer(
+                &index,
+                &allowed,
+                &hits,
+                "Two pages provide evidence.",
+                &claims,
+                false,
+            ),
+            Ok(ScopedCorpusAnswer::Supported {
+                text: "Two pages provide evidence.".into(),
+                citations: hits.clone(),
+            })
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &[], &hits, "", &[], true),
+            Err(ScopedCorpusAnswerError::EmptyScope)
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(
+                &index,
+                &allowed[..1],
+                &hits,
+                "Unsupported scope",
+                &claims,
+                false,
+            ),
+            Err(ScopedCorpusAnswerError::OutOfScopeArticle(second.key.clone()))
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(
+                &index,
+                &allowed[..1],
+                &hits[..1],
+                "Unsupported claim",
+                &claims[1..],
+                false,
+            ),
+            Err(ScopedCorpusAnswerError::OutOfScopeArticle(second.key.clone()))
+        );
+        let unknown = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 999,
+        };
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &[unknown.clone()], &[], "", &[], true),
+            Err(ScopedCorpusAnswerError::UnknownAllowedArticle(unknown))
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &allowed, &hits, "", &[], true),
+            Ok(ScopedCorpusAnswer::InsufficientEvidence)
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &allowed, &hits, "hidden", &[], true),
+            Err(ScopedCorpusAnswerError::UnsupportedAnswer)
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &allowed, &hits, "Uncited", &[], false),
+            Err(ScopedCorpusAnswerError::UnsupportedAnswer)
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &allowed, &hits, " ", &claims, false),
+            Err(ScopedCorpusAnswerError::EmptyAnswer)
+        );
+        assert_eq!(
+            validate_scoped_corpus_answer(
+                &index,
+                &allowed,
+                &hits[..1],
+                "Invented second-page evidence",
+                &claims[1..],
+                false,
+            ),
+            Err(ScopedCorpusAnswerError::Citation(
+                CorpusCitationError::UnretrievedCitation(
+                    claims[1].0.clone(),
+                    claims[1].1.clone(),
+                )
+            ))
+        );
+        let mut tampered = hits.clone();
+        tampered[0].evidence.excerpt.push_str(" forged");
+        assert_eq!(
+            validate_scoped_corpus_answer(&index, &allowed, &tampered, "", &[], true),
+            Err(ScopedCorpusAnswerError::Citation(
+                CorpusCitationError::InvalidRetrievedEvidence(
+                    hits[0].article.clone(),
+                    hits[0].evidence.block_id.clone(),
+                )
             ))
         );
     }
