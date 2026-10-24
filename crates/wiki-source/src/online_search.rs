@@ -69,9 +69,20 @@ pub fn parse_search_results(
     {
         return Err(OnlineSearchError::InvalidResponse);
     }
-    let results = value
+    let query = value
         .get("query")
-        .and_then(|query| query.get("search"))
+        .ok_or(OnlineSearchError::InvalidResponse)?;
+    // A list=search response must not smuggle in title/page resolution
+    // metadata from an unrelated Action API query. Never silently trust
+    // aliases or page identities that this request did not ask for.
+    if ["redirects", "normalized", "interwiki", "pages"]
+        .iter()
+        .any(|key| query.get(*key).is_some())
+    {
+        return Err(OnlineSearchError::InvalidResponse);
+    }
+    let results = query
+        .get("search")
         .and_then(Value::as_array)
         .ok_or(OnlineSearchError::InvalidResponse)?;
     if results.len() > MAX_SEARCH_RESULTS {
@@ -503,6 +514,25 @@ mod tests {
                 Err(OnlineSearchError::InvalidIdentity)
             );
         }
+    }
+
+    #[test]
+    fn rejects_unrequested_search_query_alias_and_page_metadata() {
+        // Even empty alias metadata is unexpected for list=search; the
+        // caller must resolve any selected hit through the pinned article API.
+        for field in ["redirects", "normalized", "interwiki", "pages"] {
+            let body = format!(
+                r#"{{"query":{{"search":[{{"pageid":42,"ns":0,"title":"Physics"}}],"{field}":[]}}}}"#
+            );
+            assert_eq!(
+                parse_search_results(&body, "enwiki", 0),
+                Err(OnlineSearchError::InvalidResponse),
+                "{field}"
+            );
+        }
+        // Ordinary search metadata remains compatible with Action API.
+        let body = r#"{"query":{"searchinfo":{"totalhits":1},"search":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        assert_eq!(parse_search_results(body, "enwiki", 5).unwrap().len(), 1);
     }
 
     #[test]
