@@ -8,7 +8,8 @@ The online Action API current-revision request uses `pageids=<stable-id>` and ne
 
 - `crates/wiki-source/src/online_article.rs`: parser tests reject each unexpected marker, empty and populated, while accepting a normal stable page-ID revision response.
 - `crates/wiki-source/src/online_fetch.rs`: fake transport confirms each unexpected marker halts at metadata, does not request rendered HTML, and retains a verified saved revision as an explicitly local fallback.
-- Verify Rust workspace and platform CI against the exact source SHA after committing.
+- First implementation SHA `42aacac1d3c5d498041199d7f2cc1e5304d41ec6` failed only Rust formatting ([run 40134730064](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40134730064)); formatting was corrected without changing behavior.
+- Corrected exact code SHA **`3e4880ee0ad3687e9994b669320d68aae7e69af6`** passed [Rust workspace CI 40134787889](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40134787889) (format, strict Clippy, tests) and [Platform shells CI 40134787842](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40134787842).
 
 ## Qualification limits
 
