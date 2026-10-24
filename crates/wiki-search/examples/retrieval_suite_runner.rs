@@ -50,7 +50,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut min_recall_per_mille = 800;
     let mut max_no_answer_fp = 0;
     let mut args = args.into_iter();
+    let mut seen_flags = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
+        if !seen_flags.insert(flag.clone()) {
+            return Err(format!("duplicate argument: {flag}"));
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {flag}"))?;
@@ -166,7 +170,49 @@ fn validate_pack_project<'a>(
     Ok(())
 }
 
+// Benchmark reports must not overwrite the evidence or the labeled suite.
+// Canonical paths catch equivalent spellings and symlinked parent directories.
+// Refuse output symlinks, including dangling ones, rather than following them.
+fn validate_output_destination(args: &Args) -> Result<(), String> {
+    if fs::symlink_metadata(&args.output)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err("report output must not be a symlink".into());
+    }
+    let output = match fs::canonicalize(&args.output) {
+        Ok(path) => path,
+        Err(_) => {
+            let parent = args
+                .output
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let filename = args.output.file_name().ok_or("invalid report output path")?;
+            fs::canonicalize(parent)
+                .map_err(|error| format!("cannot resolve report directory: {error}"))?
+                .join(filename)
+        }
+    };
+    let corpus = args
+        .corpus
+        .as_ref()
+        .or(args.pack.as_ref())
+        .ok_or("missing benchmark corpus")?;
+    for input in [corpus, &args.suite] {
+        let resolved = fs::canonicalize(input)
+            .map_err(|error| format!("cannot resolve {}: {error}", input.display()))?;
+        if output == resolved {
+            return Err(format!(
+                "report output must not overwrite input {}",
+                input.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn run(args: Args) -> Result<(), String> {
+    validate_output_destination(&args)?;
     let (corpus_bytes, pack_project) = if let Some(path) = &args.corpus {
         (read_bounded(path, MAX_CORPUS_BYTES)?, None)
     } else {
@@ -274,6 +320,54 @@ mod tests {
             parse_args(args).unwrap().pack,
             Some(PathBuf::from("articles.json"))
         );
+    }
+
+    #[test]
+    fn duplicate_threshold_flags_are_rejected() {
+        for (flag, value) in [
+            ("--top-k", "3"),
+            ("--min-recall-per-mille", "900"),
+            ("--max-no-answer-fp", "1"),
+        ] {
+            let mut args = arguments();
+            args.extend([flag.to_owned(), value.to_owned(), flag.to_owned(), value.to_owned()]);
+            assert!(parse_args(args).is_err(), "accepted duplicate {flag}");
+        }
+    }
+
+    #[test]
+    fn report_destination_must_not_alias_corpus_or_suite() {
+        let dir = std::env::temp_dir().join(format!(
+            "wiki-retrieval-output-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let corpus = dir.join("corpus.json");
+        let suite = dir.join("suite.json");
+        fs::write(&corpus, b"[]").unwrap();
+        fs::write(&suite, b"{}").unwrap();
+        let mut args = parse_args(arguments()).unwrap();
+        args.corpus = Some(corpus.clone());
+        args.suite = suite.clone();
+        args.output = dir.join("report.json");
+        assert!(validate_output_destination(&args).is_ok());
+        args.output = corpus.clone();
+        assert!(validate_output_destination(&args).is_err());
+        args.output = dir.join("./suite.json");
+        assert!(validate_output_destination(&args).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = dir.join("linked-report.json");
+            symlink(&suite, &link).unwrap();
+            args.output = link;
+            assert!(validate_output_destination(&args).is_err());
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
