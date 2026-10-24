@@ -1049,10 +1049,8 @@ mod tests {
         }
         let legitimate_rtl = regular_json().replace("\"name\":\"Physics\"", "\"name\":\"فيزياء\"");
         assert!(parse_regular_companion_complete(&legitimate_rtl, "2026-10-01").is_ok());
-        let legitimate_joiners = regular_json().replace(
-            "\"name\":\"Physics\"",
-            "\"name\":\"می‌روم क्‍ष\"",
-        );
+        let legitimate_joiners =
+            regular_json().replace("\"name\":\"Physics\"", "\"name\":\"می‌روم क्‍ष\"");
         assert!(parse_regular_companion_complete(&legitimate_joiners, "2026-10-01").is_ok());
     }
 
