@@ -148,15 +148,9 @@ mod tests {
     fn curated_composites_are_deterministic_and_revision_bound() {
         let records = fixture();
         let admin = BTreeSet::new();
-        let first = preview_curated_topics(
-            &records,
-            &admin,
-            &["physics", "mathematics"],
-            &[],
-            &[],
-            &[],
-        )
-        .unwrap();
+        let first =
+            preview_curated_topics(&records, &admin, &["physics", "mathematics"], &[], &[], &[])
+                .unwrap();
         let reordered = preview_curated_topics(
             &records,
             &admin,
@@ -182,7 +176,11 @@ mod tests {
         );
         assert_eq!(
             first.preview.preview.selection.snapshot_selection_sha256,
-            reordered.preview.preview.selection.snapshot_selection_sha256
+            reordered
+                .preview
+                .preview
+                .selection
+                .snapshot_selection_sha256
         );
         assert_eq!(
             first.preview.preview.selection.definition_sha256,
