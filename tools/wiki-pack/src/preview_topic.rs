@@ -889,3 +889,15 @@ mod input_tests {
     fn curated_only_json_preview_runs_without_explicit_roots() {
         let path = test_path();
         let json = serde_json::json!({
+            "snapshot_id": "enwiki-20261023",
+            "curated_topics": ["mathematics"],
+            "categories": [
+                {"name": "Category:Mathematics", "articles": [42]}
+            ]
+        });
+        fs::write(&path, json.to_string()).unwrap();
+        let result = run(&path, true);
+        fs::remove_file(&path).unwrap();
+        assert!(result.is_ok(), "{result:?}");
+    }
+}
