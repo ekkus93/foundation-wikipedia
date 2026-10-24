@@ -47,9 +47,7 @@ pub fn expand_related_links(
     if adjacency.iter().any(|(&from, neighbors)| {
         from == 0
             || from > i64::MAX as u64
-            || neighbors
-                .iter()
-                .any(|&to| to == 0 || to > i64::MAX as u64)
+            || neighbors.iter().any(|&to| to == 0 || to > i64::MAX as u64)
     }) {
         return Err(ResolveError::InvalidPage);
     }
@@ -198,5 +196,3 @@ mod tests {
             ),
             Err(ResolveError::InvalidPage)
         );
-    }
-}
