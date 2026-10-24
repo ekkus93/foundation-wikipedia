@@ -790,6 +790,7 @@ dependencies = [
  "serde_json",
  "wiki-core",
  "wiki-model",
+ "wiki-pack-format",
 ]
 
 [[package]]
