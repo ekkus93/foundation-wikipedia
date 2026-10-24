@@ -44,9 +44,12 @@ fn valid_membership_label(value: &str) -> bool {
                 || matches!(
                     ch,
                     '\u{061c}'
+                        | '\u{200b}'
                         | '\u{200e}'..='\u{200f}'
                         | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'
                         | '\u{2066}'..='\u{2069}'
+                        | '\u{feff}'
                 )
         })
 }
@@ -145,6 +148,14 @@ pub fn graph_from_joined(
             if graph.insert(title.clone(), node).is_some() {
                 return Err(GraphBuildError::DuplicateCategory(title));
             }
+        }
+    }
+    // An operator's administrative exclusion policy is security-relevant:
+    // a typo or absent category must never silently become an ordinary
+    // traversable category in the published topic selection.
+    for category in administrative {
+        if !graph.contains_key(category) {
+            return Err(GraphBuildError::MissingCategory(category.clone()));
         }
     }
     for record in records {
