@@ -23,7 +23,6 @@ fn hash_text(digest: &mut Sha256Transcript, text: &str) {
     digest.update(text.as_bytes());
 }
 
-
 /// Fingerprint the editable curated seed identity and an effective selection
 /// rule digest. This receipt is independent of source revisions and cannot
 /// authenticate a publisher. Topic IDs are canonicalized before hashing.
@@ -38,7 +37,9 @@ pub fn curated_definition_fingerprint(
         return Err(CuratedPreviewError::TooManyTopics);
     }
     if rules_definition_sha256.len() != 64
-        || !rules_definition_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !rules_definition_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(CuratedPreviewError::InvalidDefinitionDigest);
     }
@@ -146,10 +147,8 @@ pub fn preview_curated_topics(
     let preview = preview_joined_selection(records, administrative, &rules, redirect_identities)
         .map_err(CuratedPreviewError::Preview)?;
     // The shared receipt is also emitted by the local preview CLI.
-    let curated_definition_sha256 = curated_definition_fingerprint(
-        topic_ids,
-        &preview.preview.selection.definition_sha256,
-    )?;
+    let curated_definition_sha256 =
+        curated_definition_fingerprint(topic_ids, &preview.preview.selection.definition_sha256)?;
     Ok(CuratedTopicSelection {
         topic_ids: ids.into_iter().map(str::to_owned).collect(),
         curated_definition_sha256,
