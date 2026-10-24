@@ -631,7 +631,6 @@ mod input_tests {
             .contains("require explicit"));
     }
 
-
     #[test]
     fn json_preview_normalizes_category_underscores_and_rejects_alias_nodes() {
         assert_eq!(
