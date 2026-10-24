@@ -498,14 +498,26 @@ mod tests {
             min_recall_per_mille: 800,
             max_no_answer_fp: 0,
         };
-        fs::write(&args.suite, "{}").unwrap();
+        fs::write(
+            &args.suite,
+            r#"{"schema_version":1,"suite_id":"snapshot-v1","cases":[
+                {"id":"a-answer","query":"gravity spacetime","project":"enwiki",
+                 "relevant":[{"article":{"project":"enwiki","page_id":42},
+                 "revision_id":99,"block_id":"wkb:enwiki:42:99:b0"}]},
+                {"id":"b-no-answer","query":"unobtainium","project":"enwiki","relevant":[]}
+            ]}"#,
+        )
+        .unwrap();
         assert!(validate_output_destination(&args).is_err());
         let mut external = args;
-        external.output = root.parent().unwrap().join(format!(
-            "wiki-retrieval-report-{}-nonexistent.json",
-            std::process::id()
-        ));
+        external.output = root.with_extension("report.json");
         assert!(validate_output_destination(&external).is_ok());
+        let report_path = external.output.clone();
+        run(external).unwrap();
+        let report = fs::read_to_string(&report_path).unwrap();
+        assert!(report.contains("\"suite_id\": \"snapshot-v1\""));
+        assert!(report.contains("\"passed\": true"));
+        fs::remove_file(report_path).unwrap();
 
         let final_byte = shard.len() - 1;
         shard[final_byte] ^= 1;
