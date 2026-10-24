@@ -74,6 +74,8 @@ pub enum CuratedPreviewError {
     TooManyTopics,
     UnknownTopic(String),
     IncompatiblePolicy,
+    InvalidLimit,
+    ExceedsPolicy,
     InvalidDefinitionDigest,
     WrongProject { expected: String, actual: String },
     Preview(JoinedPreviewError),
@@ -107,6 +109,32 @@ pub fn preview_curated_topics(
     include: &[u64],
     exclude: &[u64],
 ) -> Result<CuratedTopicSelection, CuratedPreviewError> {
+    preview_curated_topics_with_limits(
+        records,
+        administrative,
+        topic_ids,
+        redirect_identities,
+        include,
+        exclude,
+        None,
+        None,
+    )
+}
+
+/// Preview curated topics with optional caller-selected tighter traversal
+/// limits, matching the CLI's curated safety policy. None uses the seed
+/// default; a depth of zero selects only root memberships. Page limits must
+/// be positive. This is still an unauthenticated source-local preview.
+pub fn preview_curated_topics_with_limits(
+    records: &[JoinedEnterpriseArticle],
+    administrative: &BTreeSet<String>,
+    topic_ids: &[&str],
+    redirect_identities: &[PageRedirectIdentity],
+    include: &[u64],
+    exclude: &[u64],
+    depth_limit: Option<usize>,
+    page_limit: Option<usize>,
+) -> Result<CuratedTopicSelection, CuratedPreviewError> {
     if topic_ids.is_empty() {
         return Err(CuratedPreviewError::EmptyTopics);
     }
@@ -128,6 +156,14 @@ pub fn preview_curated_topics(
     }) {
         return Err(CuratedPreviewError::IncompatiblePolicy);
     }
+    if page_limit == Some(0) {
+        return Err(CuratedPreviewError::InvalidLimit);
+    }
+    if depth_limit.is_some_and(|limit| limit > first.depth_limit)
+        || page_limit.is_some_and(|limit| limit > first.page_limit)
+    {
+        return Err(CuratedPreviewError::ExceedsPolicy);
+    }
     for record in records {
         let actual = &record.structured.page.project;
         if actual != first.project {
@@ -145,8 +181,8 @@ pub fn preview_curated_topics(
         roots: roots.into_iter().collect(),
         include: include.to_vec(),
         exclude: exclude.to_vec(),
-        depth_limit: first.depth_limit,
-        page_limit: first.page_limit,
+        depth_limit: depth_limit.unwrap_or(first.depth_limit),
+        page_limit: page_limit.unwrap_or(first.page_limit),
     };
     let preview = preview_joined_selection(records, administrative, &rules, redirect_identities)
         .map_err(CuratedPreviewError::Preview)?;
@@ -295,6 +331,100 @@ mod tests {
             unchanged.curated_definition_sha256,
             selected.curated_definition_sha256
         );
+    }
+
+    #[test]
+    fn curated_library_tighter_limits_match_cli_policy_and_receipts() {
+        let records = fixture();
+        let admin = BTreeSet::new();
+        let defaults =
+            preview_curated_topics(&records, &admin, &["physics", "mathematics"], &[], &[], &[])
+                .unwrap();
+        let explicit_defaults = preview_curated_topics_with_limits(
+            &records,
+            &admin,
+            &["mathematics", "physics"],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            defaults.curated_definition_sha256,
+            explicit_defaults.curated_definition_sha256
+        );
+        let limited = preview_curated_topics_with_limits(
+            &records,
+            &admin,
+            &["mathematics", "physics"],
+            &[],
+            &[],
+            &[],
+            Some(0),
+            Some(2),
+        )
+        .unwrap();
+        assert_eq!(limited.rules.depth_limit, 0);
+        assert_eq!(limited.rules.page_limit, 2);
+        assert_eq!(limited.preview.preview.selection.page_ids, vec![1, 2]);
+        assert_ne!(
+            defaults.curated_definition_sha256,
+            limited.curated_definition_sha256
+        );
+        let reordered = preview_curated_topics_with_limits(
+            &records,
+            &admin,
+            &["physics", "mathematics", "physics"],
+            &[],
+            &[],
+            &[],
+            Some(0),
+            Some(2),
+        )
+        .unwrap();
+        assert_eq!(
+            limited.curated_definition_sha256,
+            reordered.curated_definition_sha256
+        );
+    }
+
+    #[test]
+    fn curated_library_rejects_zero_or_widened_limits() {
+        let records = fixture();
+        let admin = BTreeSet::new();
+        for (depth, pages, expected) in [
+            (None, Some(0), CuratedPreviewError::InvalidLimit),
+            (Some(3), None, CuratedPreviewError::ExceedsPolicy),
+            (None, Some(50_001), CuratedPreviewError::ExceedsPolicy),
+        ] {
+            assert_eq!(
+                preview_curated_topics_with_limits(
+                    &records,
+                    &admin,
+                    &["mathematics"],
+                    &[],
+                    &[],
+                    &[],
+                    depth,
+                    pages,
+                )
+                .unwrap_err(),
+                expected
+            );
+        }
+        let too_small = preview_curated_topics_with_limits(
+            &records,
+            &admin,
+            &["mathematics", "physics"],
+            &[],
+            &[],
+            &[],
+            None,
+            Some(1),
+        );
+        assert!(matches!(too_small, Err(CuratedPreviewError::Preview(_))));
     }
 
     #[test]
