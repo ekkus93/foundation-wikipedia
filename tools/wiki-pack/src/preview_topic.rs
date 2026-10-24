@@ -8,6 +8,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use wiki_pack_builder::curated::curated_topic;
 use wiki_pack_builder::preview::preview_pinned_selection;
 use wiki_pack_builder::related::expand_related_links;
 use wiki_pack_builder::selection::{Category, Rules};
@@ -20,7 +21,10 @@ const MAX_EDGES: usize = 1_000_000;
 #[serde(deny_unknown_fields)]
 struct PreviewInput {
     snapshot_id: String,
+    #[serde(default)]
     roots: Vec<String>,
+    #[serde(default)]
+    curated_topics: Vec<String>,
     #[serde(default)]
     include: Vec<u64>,
     #[serde(default)]
@@ -99,6 +103,42 @@ fn safe_category_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
+/// Expand named curated topic seeds into the local graph preview rules.
+/// The snapshot label is only a caller claim; this checks edition consistency,
+/// not official publication authenticity or category coverage. Legacy previews
+/// with no curated IDs preserve their existing root and limit semantics.
+fn apply_curated_seeds(input: &mut PreviewInput) -> Result<Vec<String>, String> {
+    if input.curated_topics.len() > 32 {
+        return Err("too many curated topic IDs".into());
+    }
+    let mut ids = BTreeSet::new();
+    let mut roots = BTreeSet::new();
+    for id in &input.curated_topics {
+        let topic = curated_topic(id).ok_or_else(|| format!("unknown curated topic: {id}"))?;
+        if !input
+            .snapshot_id
+            .starts_with(&format!("{}-", topic.project))
+        {
+            return Err(format!(
+                "curated topic {id} requires {} snapshot label",
+                topic.project
+            ));
+        }
+        if input.depth_limit > topic.depth_limit || input.page_limit > topic.page_limit {
+            return Err(format!("curated topic {id} exceeds seed safety limits"));
+        }
+        ids.insert(id.clone());
+        for root in topic.roots {
+            roots.insert((*root).to_owned());
+        }
+    }
+    if !ids.is_empty() {
+        roots.extend(input.roots.iter().cloned());
+        input.roots = roots.into_iter().collect();
+    }
+    Ok(ids.into_iter().collect())
+}
+
 pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         for ancestor in parent.ancestors() {
@@ -136,8 +176,9 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         return Err("preview input exceeds the 64 MiB limit".into());
     }
     let input_sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let input: PreviewInput =
+    let mut input: PreviewInput =
         serde_json::from_slice(&bytes).map_err(|error| format!("invalid preview JSON: {error}"))?;
+    let curated_ids = apply_curated_seeds(&mut input)?;
     if input.categories.len() > MAX_CATEGORIES
         || input.redirects.len() > MAX_EDGES
         || input.disambiguations.len() > MAX_EDGES
@@ -299,6 +340,12 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
             }),
             "warnings": preview.warnings,
         });
+        if !curated_ids.is_empty() {
+            result
+                .as_object_mut()
+                .expect("preview JSON object")
+                .insert("curated_topic_ids".into(), serde_json::json!(curated_ids));
+        }
         if let Some(report) = &related_report {
             let object = result.as_object_mut().expect("preview JSON object");
             object.insert(
@@ -329,6 +376,9 @@ pub fn run(path: &Path, json_output: bool) -> Result<(), String> {
         "Snapshot label (untrusted): {}",
         preview.selection.snapshot_id
     );
+    if !curated_ids.is_empty() {
+        println!("Curated topic seeds: {}", curated_ids.join(", "));
+    }
     println!("Selected page IDs: {selected_count}");
     if let Some(report) = &related_report {
         println!("Optional related pages added: {}", report.added_count);
@@ -420,5 +470,75 @@ mod input_tests {
         fs::remove_file(&link).unwrap();
         fs::remove_dir_all(&root).unwrap();
         assert!(error.contains("contains a symlink"), "{error}");
+    }
+
+    #[test]
+    fn curated_seeds_expand_deterministically_and_enforce_edition_and_limits() {
+        let mut input = PreviewInput {
+            snapshot_id: "enwiki-20261023".into(),
+            roots: vec!["Category:Extra".into()],
+            curated_topics: vec!["physics".into(), "mathematics".into(), "physics".into()],
+            include: vec![],
+            exclude: vec![],
+            depth_limit: 2,
+            page_limit: 50_000,
+            categories: vec![],
+            redirects: vec![],
+            disambiguations: vec![],
+            related: None,
+        };
+        assert_eq!(
+            apply_curated_seeds(&mut input).unwrap(),
+            vec!["mathematics", "physics"]
+        );
+        assert_eq!(
+            input.roots,
+            vec!["Category:Extra", "Category:Mathematics", "Category:Physics"]
+        );
+        let mut wrong_edition = PreviewInput {
+            snapshot_id: "frwiki-20261023".into(),
+            curated_topics: vec!["physics".into()],
+            ..input
+        };
+        assert!(apply_curated_seeds(&mut wrong_edition)
+            .unwrap_err()
+            .contains("enwiki"));
+        wrong_edition.snapshot_id = "enwiki-20261023".into();
+        wrong_edition.page_limit = 50_001;
+        assert!(apply_curated_seeds(&mut wrong_edition)
+            .unwrap_err()
+            .contains("safety limits"));
+        wrong_edition.page_limit = 50_000;
+        wrong_edition.depth_limit = 3;
+        assert!(apply_curated_seeds(&mut wrong_edition)
+            .unwrap_err()
+            .contains("safety limits"));
+        wrong_edition.depth_limit = 2;
+        wrong_edition.curated_topics = vec!["not-a-topic".into()];
+        assert!(apply_curated_seeds(&mut wrong_edition)
+            .unwrap_err()
+            .contains("unknown curated topic"));
+        wrong_edition.curated_topics = vec!["physics".into(); 33];
+        assert!(apply_curated_seeds(&mut wrong_edition)
+            .unwrap_err()
+            .contains("too many"));
+    }
+
+    #[test]
+    fn curated_only_json_preview_runs_without_explicit_roots() {
+        let path = test_path();
+        let json = serde_json::json!({
+            "snapshot_id": "enwiki-20261023",
+            "curated_topics": ["mathematics"],
+            "depth_limit": 2,
+            "page_limit": 50000,
+            "categories": [
+                {"name": "Category:Mathematics", "articles": [42]}
+            ]
+        });
+        fs::write(&path, json.to_string()).unwrap();
+        let result = run(&path, true);
+        fs::remove_file(&path).unwrap();
+        assert!(result.is_ok(), "{result:?}");
     }
 }
