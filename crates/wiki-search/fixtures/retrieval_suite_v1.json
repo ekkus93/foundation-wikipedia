@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "suite_id": "synthetic-ci-physics-v1",
+  "cases": [
+    {
+      "id": "physics",
+      "query": "gravity",
+      "project": "enwiki",
+      "relevant": [
+        {
+          "article": { "project": "enwiki", "page_id": 9 },
+          "revision_id": 12,
+          "block_id": "wkb:enwiki:9:12:b0"
+        }
+      ]
+    },
+    {
+      "id": "unanswerable",
+      "query": "dragonfire",
+      "project": "enwiki",
+      "relevant": []
+    }
+  ]
+}

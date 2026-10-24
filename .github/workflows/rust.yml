@@ -28,6 +28,8 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace --locked 2>&1 | tee rust-test.log
+      - name: Synthetic retrieval regression gate
+        run: cargo run -p wiki-search --example synthetic_retrieval_gate --locked
       - name: Record codec probe
         shell: bash
         run: |
@@ -45,6 +47,7 @@ jobs:
           path: |
             rust-test.log
             codec-probe.log
+            retrieval-synthetic-report.json
           retention-days: 14
           if-no-files-found: warn
       - name: Confirm exact head
