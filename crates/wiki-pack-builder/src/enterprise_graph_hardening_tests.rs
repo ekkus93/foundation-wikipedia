@@ -243,7 +243,10 @@ fn typed_graph_rejects_mainspace_title_and_redirect_alias_collisions() {
     let underscore_title = joined_page(43, 0, "Quantum_mechanics", vec![], vec![]);
     for duplicate in [same_title, underscore_title] {
         assert!(matches!(
-            graph_from_joined(&[root.clone(), article.clone(), duplicate], &BTreeSet::new()),
+            graph_from_joined(
+                &[root.clone(), article.clone(), duplicate],
+                &BTreeSet::new()
+            ),
             Err(GraphBuildError::DuplicateTitle(_))
         ));
     }
@@ -266,6 +269,14 @@ fn typed_graph_rejects_mainspace_title_and_redirect_alias_collisions() {
         );
     }
 
+    // Two differently spelled aliases may still resolve to the same title.
+    let alias_a = joined_page(43, 0, "Other topic", vec![], vec!["Quantum_alias".into()]);
+    let alias_b = joined_page(44, 0, "Another topic", vec![], vec!["Quantum alias".into()]);
+    assert_eq!(
+        graph_from_joined(&[root.clone(), alias_a, alias_b], &BTreeSet::new()).unwrap_err(),
+        GraphBuildError::DuplicateRedirect("Quantum alias".into())
+    );
+
     // A page cannot claim its own canonical title as a redirect alias.
     let mut self_alias = article.clone();
     self_alias.redirects = vec!["Quantum_mechanics".into()];
@@ -276,10 +287,7 @@ fn typed_graph_rejects_mainspace_title_and_redirect_alias_collisions() {
 
     // Names in different namespaces are not conflicting mainspace identities.
     let category_with_same_name = joined_page(50, 14, "Category:Quantum mechanics", vec![], vec![]);
-    let graph = graph_from_joined(
-        &[root, article, category_with_same_name],
-        &BTreeSet::new(),
-    )
-    .unwrap();
+    let graph =
+        graph_from_joined(&[root, article, category_with_same_name], &BTreeSet::new()).unwrap();
     assert!(graph.graph.contains_key("Category:Quantum mechanics"));
 }

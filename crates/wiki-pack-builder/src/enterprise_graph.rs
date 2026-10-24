@@ -97,6 +97,7 @@ pub fn graph_from_joined(
     let mut unresolved_redirect_titles = BTreeSet::new();
     let mut mainspace_titles = BTreeSet::new();
     let mut mainspace_redirect_titles = BTreeSet::new();
+    let mut mainspace_redirect_keys = BTreeSet::new();
     for record in records {
         let page = &record.structured;
         if page.page.project != project {
@@ -140,6 +141,11 @@ pub fn graph_from_joined(
                 return Err(GraphBuildError::DuplicateRedirect(redirect.clone()));
             }
             if page.namespace == 0 {
+                // Alias spellings with underscores and spaces denote the
+                // same mainspace title, even when raw strings differ.
+                if !mainspace_redirect_keys.insert(title_collision_key(redirect)) {
+                    return Err(GraphBuildError::DuplicateRedirect(redirect.clone()));
+                }
                 mainspace_redirect_titles.insert(redirect.clone());
             }
         }
