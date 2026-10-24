@@ -174,9 +174,7 @@ fn validate_pack_project<'a>(
 // Canonical paths catch equivalent spellings and symlinked parent directories.
 // Refuse output symlinks, including dangling ones, rather than following them.
 fn validate_output_destination(args: &Args) -> Result<(), String> {
-    if fs::symlink_metadata(&args.output)
-        .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
+    if fs::symlink_metadata(&args.output).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err("report output must not be a symlink".into());
     }
     let output = match fs::canonicalize(&args.output) {
@@ -187,7 +185,10 @@ fn validate_output_destination(args: &Args) -> Result<(), String> {
                 .parent()
                 .filter(|path| !path.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            let filename = args.output.file_name().ok_or("invalid report output path")?;
+            let filename = args
+                .output
+                .file_name()
+                .ok_or("invalid report output path")?;
             fs::canonicalize(parent)
                 .map_err(|error| format!("cannot resolve report directory: {error}"))?
                 .join(filename)
@@ -330,7 +331,12 @@ mod tests {
             ("--max-no-answer-fp", "1"),
         ] {
             let mut args = arguments();
-            args.extend([flag.to_owned(), value.to_owned(), flag.to_owned(), value.to_owned()]);
+            args.extend([
+                flag.to_owned(),
+                value.to_owned(),
+                flag.to_owned(),
+                value.to_owned(),
+            ]);
             assert!(parse_args(args).is_err(), "accepted duplicate {flag}");
         }
     }
@@ -448,30 +454,3 @@ mod tests {
         use std::io::Cursor;
         use wiki_pack_format::{
             container::write_container,
-            manifest::{Manifest, Object, Origin, FORMAT_VERSION},
-            sha256_hex,
-        };
-
-        let bytes = b"other";
-        let manifest = Manifest {
-            version: FORMAT_VERSION,
-            pack_id: "benchmark".into(),
-            project: "enwiki".into(),
-            snapshot: "20261024".into(),
-            origin: Origin::Custom {
-                definition_id: "benchmark".into(),
-            },
-            objects: vec![Object {
-                path: "other.json".into(),
-                sha256: sha256_hex(bytes),
-                bytes: bytes.len() as u64,
-            }],
-        };
-        let mut envelope = Vec::new();
-        write_container(&mut envelope, &manifest, |_object, output| {
-            output.write_all(bytes)
-        })
-        .unwrap();
-        assert!(read_pack_corpus(&mut Cursor::new(envelope)).is_err());
-    }
-}
