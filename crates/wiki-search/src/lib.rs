@@ -505,9 +505,7 @@ pub fn validate_scoped_corpus_answer(
         .chain(claimed.iter().map(|(article, _)| article))
     {
         if !allowed.contains(&(article.project.clone(), article.page_id)) {
-            return Err(ScopedCorpusAnswerError::OutOfScopeArticle(
-                article.clone(),
-            ));
+            return Err(ScopedCorpusAnswerError::OutOfScopeArticle(article.clone()));
         }
     }
     if abstained {
@@ -1251,7 +1249,9 @@ mod tests {
                 &claims,
                 false,
             ),
-            Err(ScopedCorpusAnswerError::OutOfScopeArticle(second.key.clone()))
+            Err(ScopedCorpusAnswerError::OutOfScopeArticle(
+                second.key.clone()
+            ))
         );
         assert_eq!(
             validate_scoped_corpus_answer(
@@ -1262,7 +1262,9 @@ mod tests {
                 &claims[1..],
                 false,
             ),
-            Err(ScopedCorpusAnswerError::OutOfScopeArticle(second.key.clone()))
+            Err(ScopedCorpusAnswerError::OutOfScopeArticle(
+                second.key.clone()
+            ))
         );
         let unknown = ArticleKey {
             project: "enwiki".into(),
@@ -1298,10 +1300,7 @@ mod tests {
                 false,
             ),
             Err(ScopedCorpusAnswerError::Citation(
-                CorpusCitationError::UnretrievedCitation(
-                    claims[1].0.clone(),
-                    claims[1].1.clone(),
-                )
+                CorpusCitationError::UnretrievedCitation(claims[1].0.clone(), claims[1].1.clone(),)
             ))
         );
         let mut tampered = hits.clone();
