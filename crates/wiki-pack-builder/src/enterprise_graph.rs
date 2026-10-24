@@ -97,7 +97,9 @@ pub fn graph_from_joined(
         }
         // A public JoinedEnterpriseArticle can bypass the source decoder's
         // required title validation, including invisible formatting controls.
-        if !valid_membership_label(&page.name) {
+        if page.namespace == 14 {
+            category_title(&page.name)?;
+        } else if !valid_membership_label(&page.name) {
             return Err(GraphBuildError::InvalidIdentity);
         }
         if page.page.page_id == 0
