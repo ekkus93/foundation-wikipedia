@@ -390,9 +390,8 @@ mod tests {
             assert_eq!(cache.get(&item.key, 123).unwrap(), Some(item));
         }
         for marker in [
-            '\u{061c}', '\u{200b}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}',
-            '\u{2028}', '\u{2029}', '\u{2060}', '\u{2066}', '\u{2069}', '\u{206a}',
-            '\u{206f}', '\u{feff}',
+            '\u{061c}', '\u{200b}', '\u{200e}', '\u{200f}', '\u{202a}', '\u{202e}', '\u{2028}',
+            '\u{2029}', '\u{2060}', '\u{2066}', '\u{2069}', '\u{206a}', '\u{206f}', '\u{feff}',
         ] {
             let mut item = article(125);
             item.title = format!("Physics{marker}Spoof");
@@ -434,11 +433,16 @@ mod tests {
 
         let original = article(128);
         cache.put(&original).unwrap();
-        for marker in ['\u{200b}', '\u{2028}', '\u{2029}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}'] {
-            cache.conn.execute(
-                "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=128",
-                params![format!("Physics{marker}Spoof")],
-            ).unwrap();
+        for marker in [
+            '\u{200b}', '\u{2028}', '\u{2029}', '\u{2060}', '\u{206a}', '\u{206f}', '\u{feff}',
+        ] {
+            cache
+                .conn
+                .execute(
+                    "UPDATE cached_html SET title=?1 WHERE project='enwiki' AND revision_id=128",
+                    params![format!("Physics{marker}Spoof")],
+                )
+                .unwrap();
             assert!(matches!(
                 cache.get(&original.key, 128),
                 Err(HtmlCacheError::InvalidContent)
