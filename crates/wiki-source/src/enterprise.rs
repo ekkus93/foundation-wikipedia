@@ -553,6 +553,29 @@ fn valid_membership_label(text: &str) -> bool {
         })
 }
 
+/// Public typed companions bypass JSON parsing. Apply the same membership
+/// identity and duplicate checks at the join boundary, including direct
+/// single-article joins and every member of a batch.
+fn validate_membership_list(
+    values: &[String],
+    field: &'static str,
+) -> Result<(), EnterpriseError> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if !valid_membership_label(value) {
+            return Err(EnterpriseError::InvalidField(field));
+        }
+        if !seen.insert(value.as_str()) {
+            return Err(match field {
+                "categories" => EnterpriseError::DuplicateCategory(value.clone()),
+                "redirects" => EnterpriseError::DuplicateRedirect(value.clone()),
+                _ => EnterpriseError::InvalidField(field),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn parse_string_array(
     map: &Map<String, Value>,
     field: &'static str,
@@ -668,6 +691,8 @@ pub fn join_enterprise_article(
     {
         return Err(EnterpriseError::InvalidGeneration);
     }
+    validate_membership_list(&regular.categories, "categories")?;
+    validate_membership_list(&regular.redirects, "redirects")?;
     if structured.page != regular.page || structured.name != regular.name {
         return Err(EnterpriseError::IdentityMismatch);
     }
@@ -939,6 +964,49 @@ mod tests {
         );
         assert!(parse_structured_article(&structured_json(), "2026-10-01").is_ok());
         assert!(parse_regular_companion_complete(&regular_json(), "2026-10-01").is_ok());
+    }
+
+    #[test]
+    fn typed_companion_joins_reject_unparsed_membership_spoofing_and_duplicates() {
+        let structured = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular = parse_regular_companion_complete(&regular_json(), "2026-10-01").unwrap();
+        for (field, invalid) in [
+            ("categories", "Physics\u{206a}".to_owned()),
+            ("categories", "Physics\u{2029}".to_owned()),
+            ("categories", "Physics\u{200b}".to_owned()),
+            ("redirects", "Gravity\u{206f}".to_owned()),
+            ("redirects", "Gravity\u{feff}".to_owned()),
+        ] {
+            let mut forged = regular.clone();
+            if field == "categories" {
+                forged.categories = vec![invalid];
+            } else {
+                forged.redirects = vec![invalid];
+            }
+            assert_eq!(
+                join_enterprise_article(structured.clone(), forged.clone()),
+                Err(EnterpriseError::InvalidField(field))
+            );
+            assert_eq!(
+                join_enterprise_batch(vec![structured.clone()], vec![forged], vec![]),
+                Err(EnterpriseError::InvalidField(field))
+            );
+        }
+        let mut duplicated = regular.clone();
+        duplicated.categories.push("Physics".into());
+        assert_eq!(
+            join_enterprise_article(structured.clone(), duplicated),
+            Err(EnterpriseError::DuplicateCategory("Physics".into()))
+        );
+        let mut duplicated = regular.clone();
+        duplicated.redirects.push("Gravity (physics)".into());
+        assert_eq!(
+            join_enterprise_batch(vec![structured.clone()], vec![duplicated], vec![]),
+            Err(EnterpriseError::DuplicateRedirect("Gravity (physics)".into()))
+        );
+        let mut valid = regular;
+        valid.categories.push("می‌روم क्‍ष".into());
+        assert!(join_enterprise_article(structured, valid).is_ok());
     }
 
     #[test]
