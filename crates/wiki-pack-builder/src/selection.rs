@@ -105,9 +105,9 @@ fn valid_category_label(value: &str) -> bool {
                     '\u{061c}'
                         | '\u{200b}'
                         | '\u{200e}'..='\u{200f}'
-                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2028}'..='\u{202e}'
                         | '\u{2060}'
-                        | '\u{2066}'..='\u{2069}'
+                        | '\u{2066}'..='\u{206f}'
                         | '\u{feff}'
                 )
         })
@@ -695,7 +695,11 @@ mod pinned_tests {
             "Category:Science ",
             "Category:Science\nSpoof",
             "Category:Science\u{202e}Spoof",
+            "Category:Science\u{2028}Spoof",
+            "Category:Science\u{2029}Spoof",
             "Category:Science\u{2066}Spoof",
+            "Category:Science\u{206a}Spoof",
+            "Category:Science\u{206f}Spoof",
             "Category:Science\u{200b}Spoof",
             "Category:Science\u{feff}Spoof",
         ] {
