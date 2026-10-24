@@ -31,9 +31,44 @@ authenticate a Wikimedia source, prove category coverage or build a pack.
   revision and definition receipts, explicit page overrides, single-topic
   selection, invalid topic requests and foreign-edition rejection.
 
+## Provisional CLI integration
+
+The `wiki-pack preview-topic [--json] <local-category-graph.json>` diagnostic
+now accepts an optional `curated_topics` array. When supplied, it resolves
+known seed IDs to category roots and merges additional explicit roots
+deterministically. It requires the caller's untrusted `snapshot_id` label
+to match the curated edition and rejects depth/page limits exceeding the
+seed's policy. The previous root-only input remains supported unchanged.
+
+A minimal local fixture can omit `roots`:
+
+```json
+{
+  "snapshot_id": "enwiki-20261023",
+  "curated_topics": ["mathematics"],
+  "depth_limit": 2,
+  "page_limit": 50000,
+  "categories": [
+    {"name": "Category:Mathematics", "articles": [42]}
+  ]
+}
+```
+
+The JSON output includes `curated_topic_ids` but continues to report
+`source_authenticated=false`, `publisher_signature_verified=false`,
+`offline_ready=false`, and `pack_installed=false`. This is a local,
+untrusted diagnostic; a matching snapshot label is not publication evidence.
+
+- CLI code SHA `3779210ebddbbb66967b479e8476c2a4c5d9b03d` passed
+  [Rust workspace 40063867494](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40063867494)
+  and [Platform shells 40063867471](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40063867471).
+- Regression coverage includes canonical composite seed roots, explicit
+  extra roots, edition/limit/unknown-ID rejection and a curated-only JSON
+  preview without an explicit root list.
+
 ## Remaining
 
-Production desktop Pack Builder and CLI exposure, publisher-authenticated
+Production desktop Pack Builder and authenticated-source CLI integration, publisher-authenticated
 complete category membership, measured fan-out/storage, required media,
 pack build/signing and real-device verification remain outstanding.
 **PACK-005 remains unchecked.**
