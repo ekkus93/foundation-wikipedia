@@ -87,7 +87,6 @@ fn parse_exact_content_range(
     Ok(total)
 }
 
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum InventoryFetchError {
     InvalidIdentity,
@@ -502,9 +501,7 @@ impl InventoryCurl {
             .filter_map(|line| line.strip_prefix("FW_DUMP_CONTENT_RANGE:"))
             .last()
             .ok_or(RangeFetchError::InvalidContentRange)?;
-        let total = parse_exact_content_range(
-            header, start, end, byte_budget, bytes.len(),
-        )?;
+        let total = parse_exact_content_range(header, start, end, byte_budget, bytes.len())?;
         Ok(VerifiedRange {
             total_bytes: total,
             bytes,
