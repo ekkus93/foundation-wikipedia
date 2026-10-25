@@ -54,6 +54,7 @@ pub struct PinnedObservedCensus<'a, W: Write> {
     namespace: i32,
     member_hash: Sha256,
     member_count: u64,
+    expected_member_count: Option<u64>,
     last_member_receipt: Option<(String, u64)>,
     failed: bool,
 }
@@ -74,6 +75,7 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             namespace,
             member_hash: Sha256::new(),
             member_count: 0,
+            expected_member_count: None,
             last_member_receipt: None,
             failed: false,
         })
@@ -89,6 +91,7 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         })?;
         self.member_hash = Sha256::new();
         self.member_count = 0;
+        self.expected_member_count = None;
         self.last_member_receipt = None;
         Ok(())
     }
@@ -149,6 +152,36 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         max_compressed_bytes: u64,
         max_decoded_bytes: u64,
     ) -> Result<(u64, u64), NativeCensusError> {
+        self.decode_native_bzip2_member_inner(input, max_compressed_bytes, max_decoded_bytes, None)
+    }
+
+    /// Native audit variant with an independently pinned expected namespace
+    /// page count. Reject an unexpected extra page as soon as it is decoded,
+    /// without reading the rest of a potentially enormous compressed shard.
+    /// A matching count is NOT sufficient: the caller must still compare the
+    /// completed member digest and perform the final independent census audit.
+    pub fn decode_native_bzip2_member_with_expected_count<R: Read>(
+        &mut self,
+        input: R,
+        max_compressed_bytes: u64,
+        max_decoded_bytes: u64,
+        expected_count: u64,
+    ) -> Result<(u64, u64), NativeCensusError> {
+        self.decode_native_bzip2_member_inner(
+            input,
+            max_compressed_bytes,
+            max_decoded_bytes,
+            Some(expected_count),
+        )
+    }
+
+    fn decode_native_bzip2_member_inner<R: Read>(
+        &mut self,
+        input: R,
+        max_compressed_bytes: u64,
+        max_decoded_bytes: u64,
+        expected_count: Option<u64>,
+    ) -> Result<(u64, u64), NativeCensusError> {
         if self.failed {
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
         }
@@ -163,6 +196,7 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         };
         self.begin_member(&member.relative_path)
             .map_err(NativeCensusError::Census)?;
+        self.expected_member_count = expected_count;
         let mut callback_error = None;
         let result = crate::public_dump_bzip2::decode_bzip2_xml_page_metadata_for_project(
             input,
@@ -222,6 +256,24 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             PinnedCensusError::Ingest(error)
         })?;
         if let Some(page) = page {
+            if page.namespace == self.namespace {
+                let next_count = self.member_count.checked_add(1).ok_or_else(|| {
+                    self.failed = true;
+                    PinnedCensusError::CountMismatch
+                })?;
+                if let Some(expected_count) = self.expected_member_count {
+                    if next_count > expected_count {
+                        self.failed = true;
+                        return Err(PinnedCensusError::MemberCensusMismatch {
+                            member: self.inventory.members()[self.next_member_index]
+                                .relative_path
+                                .clone(),
+                            expected_count,
+                            observed_count: next_count,
+                        });
+                    }
+                }
+            }
             self.writer.push(&page).map_err(|error| {
                 self.failed = true;
                 PinnedCensusError::Export(error)
@@ -671,6 +723,55 @@ mod tests {
         let (bytes, count) = pipeline.finish().unwrap();
         assert_eq!(bytes, b"1\n201\n");
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn native_expected_member_count_rejects_extra_page_during_decode() {
+        use std::io::Cursor;
+
+        let xml = "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>";
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n",
+            Sha256::digest(&compressed)
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+
+        // A pinned expected namespace count of zero must reject the first
+        // observed mainspace page before finishing the compressed member.
+        let mut excess = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        let result = excess.decode_native_bzip2_member_with_expected_count(
+            Cursor::new(&compressed), 4096, 4096, 0,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(NativeCensusError::Census(PinnedCensusError::MemberCensusMismatch {
+                    expected_count: 0,
+                    observed_count: 1,
+                    ..
+                }))
+            ),
+            "unexpected count-overflow outcome: {result:?}"
+        );
+        assert!(excess.last_member_census_receipt().is_none());
+        assert!(matches!(excess.finish(), Err(PinnedCensusError::InvalidState)));
+
+        // Counts apply only to the selected namespace. A mainspace page is
+        // not an unexpected page in a namespace-1-only census.
+        let mut other_namespace = PinnedObservedCensus::new(&pinned, Vec::new(), 1).unwrap();
+        other_namespace
+            .decode_native_bzip2_member_with_expected_count(
+                Cursor::new(&compressed), 4096, 4096, 0,
+            )
+            .unwrap();
+        let (bytes, count) = other_namespace.finish().unwrap();
+        assert_eq!(bytes, b"");
+        assert_eq!(count, 0);
     }
 
     #[test]

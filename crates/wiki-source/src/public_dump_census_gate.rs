@@ -504,10 +504,11 @@ where
                 let input =
                     open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
                 pipeline
-                    .decode_native_bzip2_member(
+                    .decode_native_bzip2_member_with_expected_count(
                         input,
                         audit.max_compressed_bytes,
                         audit.max_decoded_bytes,
+                        expected_count,
                     )
                     .map_err(|error| match error {
                         NativeCensusError::Census(error) => error,
