@@ -588,6 +588,91 @@ pub fn run_all_resumed_members(
     Ok(())
 }
 
+/// One fail-closed operator transaction: fetch/reuse the exact independently
+/// pinned official inventory, resume every declared compressed member, and
+/// verify the entire clean staged tree before producing a receipt. Partial
+/// files may remain privately staged on failure, but success is never emitted.
+fn fetch_generation_with<F, G>(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+    inventory_fetch: F,
+    member_fetch: G,
+) -> Result<String, String>
+where
+    F: FnOnce(&str, &str, &str) -> Result<Vec<u8>, String>,
+    G: FnMut(&PinnedInventory, usize, &Path, u64) -> Result<u64, String>,
+{
+    // Invalid budgets must fail before fetching or publishing the inventory.
+    if !(1..=1_u64 << 40).contains(&max_member_bytes) {
+        return Err("compressed member byte limit must be 1..=1TiB".into());
+    }
+    run_with_fetch(project, generation, inventory_sha256, root, inventory_fetch)?;
+    run_all_members_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+        member_fetch,
+    )?;
+    // A successful download is not enough: reject unlisted files, stale
+    // checkpoints, aliases, missing members and any digest mismatch.
+    verified_generation_json(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )
+}
+
+/// Host-only resumable acquisition of a complete locally verified generation.
+/// No source is promoted to an installed pack or claimed publisher-authentic.
+pub fn fetch_public_generation(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+    json: bool,
+) -> Result<(), String> {
+    let client = InventoryCurl::new();
+    let receipt = fetch_generation_with(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+        |wiki, date, pin| {
+            client
+                .fetch_verified_inventory(wiki, date, pin)
+                .map_err(|error| format!("official HTTPS inventory rejected: {error:?}"))
+        },
+        |inventory, index, directory, limit| {
+            client
+                .stage_resumed_member(inventory, index, directory, limit)
+                .map_err(|error| format!("resumable official member rejected: {error:?}"))
+        },
+    )?;
+    if json {
+        println!("{receipt}");
+    } else {
+        let value: serde_json::Value = serde_json::from_str(&receipt)
+            .map_err(|error| format!("cannot read verified generation receipt: {error}"))?;
+        println!(
+            "Acquired and verified {} locally staged compressed members ({} bytes)",
+            value["member_count"], value["verified_compressed_bytes"]
+        );
+        println!("Exact inventory and member SHA-256 digests, clean staging tree: VERIFIED");
+        println!("Publisher authentication, independent census, rendering and media: NOT VERIFIED");
+        println!("No pack installed or active snapshot changed.");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,6 +1239,111 @@ mod tests {
             .unwrap(),
             (2, 12)
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn integrated_generation_acquisition_resumes_after_failure_and_receipts_only_full_tree() {
+        use wiki_source::public_dump_https::{RangeFetchError, VerifiedRange};
+        use wiki_source::public_dump_resume::stage_resumed_member_with;
+
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let inventory = format!(
+            "{:x}  {second}\n{:x}  {first}\n",
+            Sha256::digest(b"ghijkl"),
+            Sha256::digest(b"abcdef"),
+        );
+        let pin = format!("{:x}", Sha256::digest(inventory.as_bytes()));
+        let mut inventory_fetches = 0usize;
+        let mut ranges = Vec::new();
+
+        let failed = fetch_generation_with(
+            "enwiki", "2026-10-01", &pin, &root, 64,
+            |_, _, _| {
+                inventory_fetches += 1;
+                Ok(inventory.as_bytes().to_vec())
+            },
+            |pinned, index, directory, limit| {
+                stage_resumed_member_with(pinned, index, directory, limit, 3, |start, _, _| {
+                    ranges.push((index, start));
+                    match (index, start) {
+                        (0, 0) => Ok(VerifiedRange { total_bytes: 6, bytes: b"abc".to_vec() }),
+                        (0, 3) => Ok(VerifiedRange { total_bytes: 6, bytes: b"def".to_vec() }),
+                        (1, 0) => Ok(VerifiedRange { total_bytes: 6, bytes: b"ghi".to_vec() }),
+                        (1, 3) => Err(RangeFetchError::IoFailure),
+                        _ => panic!("unexpected range"),
+                    }
+                }).map_err(|error| format!("{error:?}"))
+            },
+        );
+        assert!(failed.unwrap_err().contains("member 1 failed"));
+        assert_eq!(inventory_fetches, 1);
+        assert_eq!(ranges, [(0, 0), (0, 3), (1, 0), (1, 3)]);
+        assert!(root.join(first).exists());
+        assert!(!root.join(second).exists());
+        assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 64).is_err());
+
+        let mut resumed = Vec::new();
+        let receipt = fetch_generation_with(
+            "enwiki", "2026-10-01", &pin, &root, 64,
+            |_, _, _| panic!("verified inventory must be reused without HTTP"),
+            |pinned, index, directory, limit| {
+                stage_resumed_member_with(pinned, index, directory, limit, 3, |start, _, _| {
+                    resumed.push((index, start));
+                    assert_eq!((index, start), (1, 3));
+                    Ok(VerifiedRange { total_bytes: 6, bytes: b"jkl".to_vec() })
+                }).map_err(|error| format!("{error:?}"))
+            },
+        ).unwrap();
+        assert_eq!(resumed, [(1, 3)]);
+        let value: serde_json::Value = serde_json::from_str(&receipt).unwrap();
+        assert_eq!(value["schema_version"], 2);
+        assert_eq!(value["member_count"], 2);
+        assert_eq!(value["verified_compressed_bytes"], 12);
+        assert_eq!(value["verified_members"][0]["relative_path"], first);
+        assert_eq!(value["verified_members"][1]["relative_path"], second);
+        assert_eq!(value["trust"]["publisher_authenticated"], false);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
+
+        // The complete generation can be replayed offline without curl.
+        let replay = fetch_generation_with(
+            "enwiki", "2026-10-01", &pin, &root, 64,
+            |_, _, _| panic!("inventory must be reused"),
+            |pinned, index, directory, limit| {
+                stage_resumed_member_with(pinned, index, directory, limit, 3, |_, _, _| {
+                    panic!("verified shard must be reused")
+                }).map_err(|error| format!("{error:?}"))
+            },
+        ).unwrap();
+        assert_eq!(replay, receipt);
+
+        // Unexpected files invalidate final verification, even if all
+        // declared members were successfully acquired and reused.
+        fs::write(root.join("unlisted.part"), b"orphan").unwrap();
+        assert!(fetch_generation_with(
+            "enwiki", "2026-10-01", &pin, &root, 64,
+            |_, _, _| panic!("inventory must be reused"),
+            |pinned, index, directory, limit| {
+                stage_resumed_member_with(pinned, index, directory, limit, 3, |_, _, _| {
+                    panic!("verified shard must be reused")
+                }).map_err(|error| format!("{error:?}"))
+            },
+        ).is_err());
+        assert_eq!(fs::read(root.join("unlisted.part")).unwrap(), b"orphan");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn integrated_generation_rejects_invalid_limit_before_inventory_transport() {
+        let root = private_root();
+        assert!(fetch_generation_with(
+            "enwiki", "2026-10-01", &"a".repeat(64), &root, 0,
+            |_, _, _| panic!("invalid budget must fail before inventory HTTP"),
+            |_, _, _, _| panic!("invalid budget must fail before member HTTP"),
+        ).is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
 
