@@ -12,7 +12,10 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::public_dump_census_stream::{validate_page_id_stream, CensusScope, StreamCoverageError};
+use crate::public_dump::declared_member_page_range;
+use crate::public_dump_census_stream::{
+    validate_page_id_stream, CensusScope, CensusSide, StreamCoverageError,
+};
 use crate::public_dump_census_text::{audit_page_coverage_text, PageIdLines};
 use crate::public_dump_coverage::PageCoverageDelta;
 use crate::public_dump_pinned::PinnedInventory;
@@ -26,6 +29,7 @@ pub enum CensusGateError {
     SameSource,
     Io(io::Error),
     ExpectedDigestMismatch,
+    ExpectedOutsideDeclaredRange(u64),
     Coverage(StreamCoverageError),
     ChangedDuringAudit,
 }
@@ -142,6 +146,42 @@ fn sha256_file(file: &mut File) -> Result<String, CensusGateError> {
     Ok(digest)
 }
 
+/// Check that every independently expected page ID could be contained in one
+/// of the inventory's declared shard partitions. The inventory is already
+/// parsed and ordered by numeric range, so this is O(pages + shards) time and
+/// O(1) extra memory. This is an identity consistency check, NOT evidence that
+/// a shard actually contains the expected pages or that the inventory is
+/// publisher-authenticated.
+fn validate_expected_page_ranges<R: Read + Seek>(
+    input: &mut R,
+    inventory: &PinnedInventory,
+) -> Result<(), CensusGateError> {
+    input.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    let mut ranges = inventory.members().iter().map(|member| {
+        declared_member_page_range(member, inventory.project(), inventory.date())
+            .expect("pinned inventory contains validated ranges")
+    });
+    let mut current = ranges.next().ok_or(CensusGateError::UnsafeInput)?;
+    for page_id in PageIdLines::new(BufReader::new(&mut *input)) {
+        let page_id = page_id.map_err(|source| {
+            CensusGateError::Coverage(StreamCoverageError::Read {
+                side: CensusSide::Expected,
+                source,
+            })
+        })?;
+        while page_id > current.1 {
+            current = ranges
+                .next()
+                .ok_or(CensusGateError::ExpectedOutsideDeclaredRange(page_id))?;
+        }
+        if page_id < current.0 {
+            return Err(CensusGateError::ExpectedOutsideDeclaredRange(page_id));
+        }
+    }
+    input.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    Ok(())
+}
+
 /** Reject an invalid or modified independently pinned expected census before
  * processing potentially terabytes of dump shards. The final coverage gate
  * reopens and rehashes this file after decoding: preflight is not provenance
@@ -150,6 +190,7 @@ fn preflight_expected_census(
     path: &Path,
     sha256: &str,
     scope: CensusScope<'_>,
+    inventory: &PinnedInventory,
 ) -> Result<(), CensusGateError> {
     if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(CensusGateError::InvalidDigest);
@@ -162,6 +203,7 @@ fn preflight_expected_census(
     // unsorted and duplicate IDs before opening any large dump shard.
     validate_page_id_stream(scope, PageIdLines::new(BufReader::new(&mut file)))
         .map_err(CensusGateError::Coverage)?;
+    validate_expected_page_ranges(&mut file, inventory)?;
     if !unchanged(&before, &file.metadata().map_err(CensusGateError::Io)?) {
         return Err(CensusGateError::ChangedDuringAudit);
     }
@@ -201,6 +243,7 @@ pub fn audit_pinned_census_files(
     if !sha256_file(&mut expected)?.eq_ignore_ascii_case(expected_sha256) {
         return Err(CensusGateError::ExpectedDigestMismatch);
     }
+    validate_expected_page_ranges(&mut expected, inventory)?;
     let scope = CensusScope {
         project: inventory.project(),
         generation: inventory.date(),
@@ -291,6 +334,7 @@ where
             generation: inventory.date(),
             namespace,
         },
+        inventory,
     )
     .map_err(VerifiedCensusStageError::Audit)?;
     let pending_name = format!(
@@ -715,6 +759,7 @@ mod tests {
                 generation: pinned.date(),
                 namespace: 0,
             },
+            &pinned,
         )
         .is_ok());
         fs::remove_dir_all(root).unwrap();
@@ -783,6 +828,68 @@ mod tests {
             assert!(!root.join(output).exists());
         }
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn expected_ids_outside_inventory_partitions_fail_before_native_io() {
+        let (root, expected, observed, _) = fixture();
+        fs::remove_file(observed).unwrap();
+        let pinned = inventory();
+        // The pinned shards cover [1, 100] and [201, 300].
+        // Even a structurally valid and correctly digest-pinned expected
+        // census cannot be reconciled with these declared source partitions.
+        for (index, (bytes, outside)) in [
+            (&b"1\n150\n201\n"[..], 150_u64),
+            (&b"1\n201\n301\n"[..], 301_u64),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            fs::write(&expected, bytes).unwrap();
+            let digest = format!("{:x}", Sha256::digest(bytes));
+            let output = format!("out-of-range-{index}.ids");
+            let mut opened = 0usize;
+            let result = stage_and_audit_native_bzip2_census(
+                &root,
+                &output,
+                &pinned,
+                0,
+                NativeCensusAudit {
+                    expected_path: &expected,
+                    expected_sha256: &digest,
+                    max_compressed_bytes: 4096,
+                    max_decoded_bytes: 4096,
+                },
+                |_| -> io::Result<std::io::Cursor<&[u8]>> {
+                    opened += 1;
+                    panic!("impossible expected page ID must fail before source decoding")
+                },
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(VerifiedCensusStageError::Audit(
+                        CensusGateError::ExpectedOutsideDeclaredRange(id)
+                    )) if id == outside
+                ),
+                "unexpected result for out-of-range page ID {outside}: {result:?}"
+            );
+            assert_eq!(opened, 0);
+            assert!(!root.join(output).exists());
+        }
+        // The direct post-ingestion audit must reject the same impossible
+        // expected census even if a caller supplies a matching observed file.
+        let bytes = b"1\n150\n201\n";
+        fs::write(&expected, bytes).unwrap();
+        let observed = root.join("matching-observed.ids");
+        fs::write(&observed, bytes).unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        assert!(matches!(
+            audit_pinned_census_files(&pinned, 0, &expected, &digest, &observed),
+            Err(CensusGateError::ExpectedOutsideDeclaredRange(150))
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 
