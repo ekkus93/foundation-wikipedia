@@ -707,14 +707,9 @@ mod tests {
                 &root,
                 64,
                 |inventory, index, directory, limit| {
-                    stage_resumed_member_with(
-                        inventory,
-                        index,
-                        directory,
-                        limit,
-                        3,
-                        |_, _, _| panic!("both members must be reusable without transport"),
-                    )
+                    stage_resumed_member_with(inventory, index, directory, limit, 3, |_, _, _| {
+                        panic!("both members must be reusable without transport")
+                    })
                     .map_err(|error| format!("{error:?}"))
                 },
             )
