@@ -78,15 +78,14 @@ test("rejects Rust-disallowed invisible and noncharacter title identities", () =
   }
 });
 
-
 test("online search trims ordinary outer spacing but validates the exact UTF-8 query boundary", () => {
   assert.equal(normalizedReaderSearchQuery("  Quantum mechanics  "), "Quantum mechanics");
   assert.equal(normalizedReaderSearchQuery("  猫と🐈  "), "猫と🐈");
   assert.equal(normalizedReaderSearchQuery("é".repeat(256)), "é".repeat(256));
   for (const invalid of [
     null, undefined, 42, "", "   ", "é".repeat(257), "猫".repeat(171),
-    "Physics\\nMath", "Physics\\u200b", "Physics\\u202e",
-    "Physics\\u2060", "Physics\\u{1fffe}", "Physics\\ud800",
+    "Physics\nMath", "Physics\u200b", "Physics\u202e",
+    "Physics\u2060", "Physics\u{1fffe}", "Physics\ud800",
   ]) {
     assert.equal(normalizedReaderSearchQuery(invalid), null, JSON.stringify(invalid));
   }
