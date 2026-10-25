@@ -75,6 +75,50 @@ fn partial_path(root: &Path, inventory: &PinnedInventory, index: usize) -> PathB
     ))
 }
 
+/// A crash after publishing a fully verified member can leave its private
+/// checkpoint behind. Reclaim only an ordinary, isolated private file; a
+/// suspicious alias is not ours to remove. Cleanup is opportunistic and
+/// cannot turn a verified completed member into a failed cache hit.
+fn cleanup_published_checkpoint(root: &Path, inventory: &PinnedInventory, index: usize) {
+    let path = partial_path(root, inventory, index);
+    let Ok(inspected) = fs::symlink_metadata(&path) else {
+        return;
+    };
+    if !inspected.file_type().is_file() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if inspected.nlink() != 1 || inspected.permissions().mode() & 0o077 != 0 {
+            return;
+        }
+    }
+    let Ok(file) = File::open(&path) else {
+        return;
+    };
+    let Ok(opened) = file.metadata() else {
+        return;
+    };
+    if !opened.is_file() || opened.len() != inspected.len() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1 {
+            return;
+        }
+    }
+    drop(file);
+    if fs::remove_file(&path).is_ok() {
+        #[cfg(unix)]
+        {
+            let _ = File::open(root).and_then(|directory| directory.sync_all());
+        }
+    }
+}
+
 fn open_private_partial(path: &Path, max_bytes: u64) -> Result<File, ResumeError> {
     let inspected = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -169,6 +213,7 @@ where
     if let Some(bytes) = verified_existing_member(inventory, member_index, root, max_bytes)
         .map_err(ResumeError::Cache)?
     {
+        cleanup_published_checkpoint(root, inventory, member_index);
         return Ok(bytes);
     }
     let partial = partial_path(root, inventory, member_index);
@@ -401,6 +446,57 @@ mod tests {
         ));
         assert!(!partial.exists());
         assert!(!root.join("enwiki-2026-10-01-p1p100.xml.bz2").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verified_cache_hit_reclaims_orphaned_private_checkpoint_without_fetching() {
+        let (root, inventory) = fixture();
+        let final_name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let partial = partial_path(&root, &inventory, 0);
+        fs::write(root.join(final_name), b"abcdef").unwrap();
+        fs::write(&partial, b"ab").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |_, _, _| {
+                panic!("completed verified shard must not issue HTTP requests")
+            })
+            .unwrap(),
+            6
+        );
+        assert!(!partial.exists());
+        assert_eq!(fs::read(root.join(final_name)).unwrap(), b"abcdef");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let external = root.with_extension("external");
+            fs::write(&external, b"outside").unwrap();
+            symlink(&external, &partial).unwrap();
+            assert_eq!(
+                stage_resumed_member_with(&inventory, 0, &root, 64, 3, |_, _, _| {
+                    panic!("cached shard must not issue HTTP requests")
+                })
+                .unwrap(),
+                6
+            );
+            assert!(fs::symlink_metadata(&partial).unwrap().file_type().is_symlink());
+            assert_eq!(fs::read(&external).unwrap(), b"outside");
+            fs::remove_file(&partial).unwrap();
+
+            fs::hard_link(&external, &partial).unwrap();
+            assert_eq!(
+                stage_resumed_member_with(&inventory, 0, &root, 64, 3, |_, _, _| {
+                    panic!("cached shard must not issue HTTP requests")
+                })
+                .unwrap(),
+                6
+            );
+            assert_eq!(fs::read(&partial).unwrap(), b"outside");
+            fs::remove_file(&external).unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
