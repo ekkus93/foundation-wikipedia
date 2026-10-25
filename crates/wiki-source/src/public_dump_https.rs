@@ -7,12 +7,17 @@
 //! forbidden. Android requires a separate platform transport.
 
 use std::collections::VecDeque;
-use std::io::Read;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::fs;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdout, Command, Stdio};
 
 use crate::public_dump_origin::is_official_checksum_url;
-use crate::public_dump_pinned::{parse_origin_checked_pinned_inventory, PinnedInventoryError};
+use crate::public_dump_pinned::{
+    parse_origin_checked_pinned_inventory, stage_pinned_member, PinnedInventory,
+    PinnedInventoryError,
+};
+use crate::public_dump_stage::StageWriteError;
 
 pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
@@ -40,6 +45,86 @@ impl Default for InventoryCurl {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Error when fetching a specific pinned compressed member. The member is
+/// never published if the HTTPS subprocess or final checksum fails.
+#[derive(Debug)]
+pub enum MemberFetchError {
+    InvalidMember,
+    InvalidLimit,
+    UnsafeRoot,
+    SpawnFailed,
+    Stage(StageWriteError),
+}
+
+/// The entire HTTP process must exit successfully with status 200 before
+/// this reader returns EOF. A failed HTTPS transfer becomes an I/O error
+/// instead, so stage_pinned_member cannot publish a successful partial body.
+struct MemberCurlStream {
+    child: Child,
+    stdout: ChildStdout,
+    stderr_reader: Option<std::thread::JoinHandle<io::Result<Vec<u8>>>>,
+    done: bool,
+}
+
+impl Read for MemberCurlStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.done {
+            return Ok(0);
+        }
+        let n = self.stdout.read(buf)?;
+        if n != 0 {
+            return Ok(n);
+        }
+        self.done = true;
+        let status = self.child.wait()?;
+        let stderr_bytes = self.stderr_reader.take()
+            .ok_or_else(|| io::Error::other("missing curl status reader"))?
+            .join()
+            .map_err(|_| io::Error::other("curl status reader panicked"))??;
+        let diagnostics = String::from_utf8_lossy(&stderr_bytes);
+        let http_status = diagnostics
+            .lines()
+            .filter_map(|line| line.strip_prefix("FW_DUMP_HTTP_CODE:"))
+            .last()
+            .and_then(|code| code.parse::<u16>().ok());
+        if !status.success() || http_status != Some(200) {
+            return Err(io::Error::other("verified member HTTPS request failed"));
+        }
+        Ok(0)
+    }
+}
+
+impl Drop for MemberCurlStream {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+fn drain_member_stderr(mut stderr: impl Read + Send + 'static)
+    -> std::thread::JoinHandle<io::Result<Vec<u8>>>
+{
+    std::thread::spawn(move || {
+        let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = stderr.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            tail.extend(&buffer[..count]);
+            let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
+            tail.drain(..excess);
+        }
+        Ok(tail.into_iter().collect())
+    })
 }
 
 impl InventoryCurl {
@@ -71,6 +156,74 @@ impl InventoryCurl {
         parse_origin_checked_pinned_inventory(&raw, project, date, &url, expected_sha256)
             .map_err(InventoryFetchError::Inventory)?;
         Ok(raw)
+    }
+
+    /// Stream exactly one member declared by the pinned inventory from its
+    /// canonical official HTTPS URL into private, digest-verified staging.
+    /// Source bytes are never published before curl exits with HTTP 200.
+    /// This is not resumable transfer, independent provenance or a full dump.
+    pub fn stage_verified_member(
+        &self,
+        inventory: &PinnedInventory,
+        member_index: usize,
+        root: &Path,
+        max_bytes: u64,
+    ) -> Result<u64, MemberFetchError> {
+        if max_bytes == 0 || max_bytes > (1_u64 << 40) {
+            return Err(MemberFetchError::InvalidLimit);
+        }
+        let url = inventory
+            .official_member_url(member_index)
+            .ok_or(MemberFetchError::InvalidMember)?;
+        // Reject path aliases and untrusted staging roots before network I/O.
+        for ancestor in root.ancestors() {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(ancestor)
+                .map_err(|_| MemberFetchError::UnsafeRoot)?;
+            if metadata.file_type().is_symlink() {
+                return Err(MemberFetchError::UnsafeRoot);
+            }
+        }
+        let root_meta = fs::symlink_metadata(root).map_err(|_| MemberFetchError::UnsafeRoot)?;
+        if !root_meta.is_dir() {
+            return Err(MemberFetchError::UnsafeRoot);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if root_meta.permissions().mode() & 0o077 != 0 {
+                return Err(MemberFetchError::UnsafeRoot);
+            }
+        }
+        // -q first disables .curlrc; never use -k, -L or user-supplied URLs.
+        let mut child = Command::new(&self.executable)
+            .args([
+                "-q", "--silent", "--show-error", "--globoff",
+                "--user-agent", "FoundationWikipedia/0.1 (dump member)",
+                "--header", "Accept: application/octet-stream",
+                "--proto", "=https", "--max-redirs", "0",
+                "--connect-timeout", "10", "--max-time", "3600",
+                "--max-filesize", &max_bytes.to_string(),
+                "--output", "-",
+                "--write-out", "%{stderr}\nFW_DUMP_HTTP_CODE:%{http_code}\n",
+                "--", &url,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| MemberFetchError::SpawnFailed)?;
+        let stdout = child.stdout.take().ok_or(MemberFetchError::SpawnFailed)?;
+        let stderr = child.stderr.take().ok_or(MemberFetchError::SpawnFailed)?;
+        let mut stream = MemberCurlStream {
+            child,
+            stdout,
+            stderr_reader: Some(drain_member_stderr(stderr)),
+            done: false,
+        };
+        stage_pinned_member(root, inventory, member_index, &mut stream, max_bytes)
+            .map_err(MemberFetchError::Stage)
     }
 
     fn fetch_raw(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, InventoryFetchError> {
@@ -294,6 +447,66 @@ mod tests {
             ))
         ));
         fs::remove_file(executable).unwrap();
+    }
+
+
+    #[test]
+    fn member_stream_publishes_only_successful_digest_pinned_http200() {
+        use std::io::Cursor;
+        let body = b"compressed fixture member bytes";
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let sums = format!("{:x}  {name}\n", Sha256::digest(body));
+        let pin = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let inventory = parse_origin_checked_pinned_inventory(
+            sums.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &pin,
+        ).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-remote-member-{}-{}",
+            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let (client, exe) = fake_curl(
+            "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2"
+        );
+        assert_eq!(client.stage_verified_member(&inventory, 0, &root, 256).unwrap(), body.len() as u64);
+        assert_eq!(fs::read(root.join(name)).unwrap(), body);
+        fs::remove_file(exe).unwrap();
+
+        for (label, script) in [
+            ("redirect", "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:302\n' >&2"),
+            ("failed", "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2; exit 2"),
+            ("no-status", "printf 'compressed fixture member bytes'"),
+            ("bad-checksum", "printf 'tampered'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2"),
+        ] {
+            let (client, exe) = fake_curl(script);
+            fs::remove_file(root.join(name)).unwrap();
+            let output = client.stage_verified_member(&inventory, 0, &root, 256);
+            assert!(output.is_err(), "{label}: {output:?}");
+            assert!(!root.join(name).exists(), "{label}");
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 0, "{label}");
+            fs::remove_file(exe).unwrap();
+        }
+
+        let (client, exe) =
+            fake_curl("printf '123456789'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2");
+        assert!(matches!(
+            client.stage_verified_member(&inventory, 0, &root, 8),
+            Err(MemberFetchError::Stage(StageWriteError::TooLarge))
+        ));
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        assert!(matches!(
+            client.stage_verified_member(&inventory, 1, &root, 256),
+            Err(MemberFetchError::InvalidMember)
+        ));
+        fs::remove_file(exe).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        let _ = Cursor::new(body);
     }
 
     #[test]
