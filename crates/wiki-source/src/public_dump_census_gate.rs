@@ -214,6 +214,74 @@ fn preflight_expected_census(
     Ok(())
 }
 
+/// Compute the expected selected-namespace census digest for every pinned
+/// shard. This extra bounded-memory pass lets the native audit fail after the
+/// first mismatching member instead of decompressing all later shards.
+/// The whole-generation independent census audit still gates publication.
+fn expected_member_census_receipts(
+    path: &Path,
+    sha256: &str,
+    inventory: &PinnedInventory,
+) -> Result<Vec<(String, u64)>, CensusGateError> {
+    let (mut file, before) = open_regular(path)?;
+    if !sha256_file(&mut file)?.eq_ignore_ascii_case(sha256) {
+        return Err(CensusGateError::ExpectedDigestMismatch);
+    }
+    let ranges: Vec<_> = inventory
+        .members()
+        .iter()
+        .map(|member| {
+            declared_member_page_range(member, inventory.project(), inventory.date())
+                .expect("pinned inventory contains validated ranges")
+        })
+        .collect();
+    let mut receipts = Vec::with_capacity(ranges.len());
+    let mut index = 0usize;
+    let mut hash = Sha256::new();
+    let mut count = 0u64;
+    let mut previous = 0u64;
+    for page_id in PageIdLines::new(BufReader::new(&mut file)) {
+        let page_id = page_id.map_err(|source| {
+            CensusGateError::Coverage(StreamCoverageError::Read {
+                side: CensusSide::Expected,
+                source,
+            })
+        })?;
+        if page_id <= previous {
+            return Err(CensusGateError::Coverage(
+                StreamCoverageError::UnsortedOrDuplicate {
+                    side: CensusSide::Expected,
+                    page_id,
+                },
+            ));
+        }
+        previous = page_id;
+        while page_id > ranges[index].1 {
+            receipts.push((format!("{:x}", hash.finalize()), count));
+            index += 1;
+            if index == ranges.len() {
+                return Err(CensusGateError::ExpectedOutsideDeclaredRange(page_id));
+            }
+            hash = Sha256::new();
+            count = 0;
+        }
+        if page_id < ranges[index].0 {
+            return Err(CensusGateError::ExpectedOutsideDeclaredRange(page_id));
+        }
+        hash.update(page_id.to_string().as_bytes());
+        hash.update(b"\n");
+        count += 1;
+    }
+    receipts.push((format!("{:x}", hash.finalize()), count));
+    receipts.extend((index + 1..ranges.len()).map(|_| {
+        (format!("{:x}", Sha256::digest(b"")), 0)
+    }));
+    if !unchanged(&before, &file.metadata().map_err(CensusGateError::Io)?) {
+        return Err(CensusGateError::ChangedDuringAudit);
+    }
+    Ok(receipts)
+}
+
 /// Audit observed IDs against a separately authenticated, SHA-256-pinned
 /// expected census for the same pinned project/generation and namespace.
 ///
@@ -426,7 +494,15 @@ where
         audit.expected_path,
         audit.expected_sha256,
         |pipeline| {
-            for member in inventory.members() {
+            let expected = expected_member_census_receipts(
+                audit.expected_path,
+                audit.expected_sha256,
+                inventory,
+            )
+            .map_err(|_| PinnedCensusError::ExpectedCensusChanged)?;
+            for (member, (expected_digest, expected_count)) in
+                inventory.members().iter().zip(expected)
+            {
                 let input =
                     open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
                 pipeline
@@ -439,6 +515,17 @@ where
                         NativeCensusError::Census(error) => error,
                         NativeCensusError::Decode(error) => PinnedCensusError::NativeDecode(error),
                     })?;
+                let Some((observed_digest, observed_count)) = pipeline.last_member_census_receipt()
+                else {
+                    return Err(PinnedCensusError::InvalidState);
+                };
+                if observed_digest != expected_digest || observed_count != expected_count {
+                    return Err(PinnedCensusError::MemberCensusMismatch {
+                        member: member.relative_path.clone(),
+                        expected_count,
+                        observed_count,
+                    });
+                }
             }
             Ok(())
         },
@@ -647,6 +734,44 @@ mod tests {
             ));
             fs::remove_file(alias).unwrap();
         }
+
+        // The expected census is structurally valid, checksum-pinned and
+        // inside the declared shard ranges, but its first-shard page identity
+        // differs. Reject it after one decode, without opening later shards.
+        fs::write(&expected, b"2\n201\n").unwrap();
+        let wrong_first_digest = format!("{:x}", Sha256::digest(b"2\n201\n"));
+        let mut early_opens = 0usize;
+        let early_result = stage_and_audit_native_bzip2_census(
+            &root,
+            "early-mismatch.ids",
+            &pinned,
+            0,
+            NativeCensusAudit {
+                expected_sha256: &wrong_first_digest,
+                ..audit
+            },
+            |name| {
+                early_opens += 1;
+                open(name)
+            },
+        );
+        assert!(
+            matches!(
+                early_result,
+                Err(VerifiedCensusStageError::Stage(
+                    crate::public_dump_census_ingest::CensusStageError::Census(
+                        PinnedCensusError::MemberCensusMismatch {
+                            expected_count: 1,
+                            observed_count: 1,
+                            ..
+                        }
+                    )
+                ))
+            ),
+            "unexpected early mismatch: {early_result:?}"
+        );
+        assert_eq!(early_opens, 1, "must not decompress later shards");
+        assert!(!root.join("early-mismatch.ids").exists());
 
         // Correctly pinned but different expected IDs must not be published.
         fs::write(&expected, b"1\n202\n").unwrap();

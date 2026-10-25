@@ -6,6 +6,8 @@
 
 use std::io::{Read, Write};
 
+use sha2::{Digest, Sha256};
+
 use crate::public_dump_census_export::{CensusExportError, ObservedCensusWriter};
 use crate::public_dump_checked_read::CheckedMemberError;
 use crate::public_dump_ingest::{PageIngestError, PinnedPageIngest};
@@ -20,6 +22,12 @@ pub enum PinnedCensusError {
     CountMismatch,
     Source(std::io::Error),
     NativeDecode(CheckedMemberError<std::io::Error>),
+    ExpectedCensusChanged,
+    MemberCensusMismatch {
+        member: String,
+        expected_count: u64,
+        observed_count: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -43,6 +51,10 @@ pub struct PinnedObservedCensus<'a, W: Write> {
     ingest: PinnedPageIngest<'a>,
     writer: ObservedCensusWriter<W>,
     observed_pages: usize,
+    namespace: i32,
+    member_hash: Sha256,
+    member_count: u64,
+    last_member_receipt: Option<(String, u64)>,
     failed: bool,
 }
 
@@ -59,6 +71,10 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             writer: ObservedCensusWriter::new(output, namespace)
                 .map_err(PinnedCensusError::Export)?,
             observed_pages: 0,
+            namespace,
+            member_hash: Sha256::new(),
+            member_count: 0,
+            last_member_receipt: None,
             failed: false,
         })
     }
@@ -70,7 +86,11 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         self.ingest.begin_member(relative_path).map_err(|error| {
             self.failed = true;
             PinnedCensusError::Ingest(error)
-        })
+        })?;
+        self.member_hash = Sha256::new();
+        self.member_count = 0;
+        self.last_member_receipt = None;
+        Ok(())
     }
 
     /// Accept one pinned compressed member only after its decoder has consumed
@@ -206,6 +226,16 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
                 self.failed = true;
                 PinnedCensusError::Export(error)
             })?;
+            if page.namespace == self.namespace {
+                // Hash exactly the decimal/LF bytes emitted for this namespace.
+                // All other namespaces still participate in shard ordering.
+                self.member_hash.update(page.page_id.to_string().as_bytes());
+                self.member_hash.update(b"\n");
+                self.member_count = self.member_count.checked_add(1).ok_or_else(|| {
+                    self.failed = true;
+                    PinnedCensusError::CountMismatch
+                })?;
+            }
             self.observed_pages = self.observed_pages.checked_add(1).ok_or_else(|| {
                 self.failed = true;
                 PinnedCensusError::CountMismatch
@@ -223,7 +253,22 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             PinnedCensusError::Ingest(error)
         })?;
         self.next_member_index += 1;
+        self.last_member_receipt = Some((
+            format!("{:x}", self.member_hash.clone().finalize()),
+            self.member_count,
+        ));
         Ok(())
+    }
+
+    /// The digest/count of the last completed member's selected-namespace
+    /// census. Never exposes a partially decoded or failed member.
+    pub fn last_member_census_receipt(&self) -> Option<(&str, u64)> {
+        if self.failed {
+            return None;
+        }
+        self.last_member_receipt
+            .as_ref()
+            .map(|(digest, count)| (digest.as_str(), *count))
     }
 
     pub fn finish(self) -> Result<(W, usize), PinnedCensusError> {
@@ -394,6 +439,32 @@ mod tests {
         );
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
         parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap()
+    }
+
+    #[test]
+    fn member_census_receipts_track_only_selected_namespace_and_complete_members() {
+        let pinned = inventory();
+        let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        assert_eq!(pipeline.last_member_census_receipt(), None);
+        push_page(&mut pipeline, 1, 1).unwrap();
+        push_page(&mut pipeline, 2, 0).unwrap();
+        pipeline.end_member().unwrap();
+        assert_eq!(
+            pipeline.last_member_census_receipt(),
+            Some((format!("{:x}", Sha256::digest(b"2\n")).as_str(), 1))
+        );
+        pipeline.begin_member(&pinned.members()[1].relative_path).unwrap();
+        assert_eq!(pipeline.last_member_census_receipt(), None);
+        push_page(&mut pipeline, 201, 1).unwrap();
+        pipeline.end_member().unwrap();
+        assert_eq!(
+            pipeline.last_member_census_receipt(),
+            Some((format!("{:x}", Sha256::digest(b"")).as_str(), 0))
+        );
+        let (bytes, count) = pipeline.finish().unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(bytes, b"2\n");
     }
 
     fn push_page<W: Write>(
