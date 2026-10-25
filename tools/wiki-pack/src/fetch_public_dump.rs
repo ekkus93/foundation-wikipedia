@@ -216,17 +216,9 @@ fn verify_local_generation(
         return Err("compressed member byte limit must be 1..=1TiB".into());
     }
     let inventory = read_staged_inventory(root, project, generation, inventory_sha256)?;
-    let mut total = 0u64;
     let mut files = BTreeSet::from([PathBuf::from("SHA256SUMS")]);
     let mut directories = BTreeSet::new();
-    for (index, member) in inventory.members().iter().enumerate() {
-        let bytes = verified_existing_member(&inventory, index, root, max_member_bytes)
-            .map_err(|error| format!("member {index} rejected: {error:?}"))?
-            .ok_or_else(|| format!("member {index} is missing"))?;
-        total = total
-            .checked_add(bytes)
-            .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
-            .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+    for member in inventory.members() {
         let relative = PathBuf::from(&member.relative_path);
         for ancestor in relative.ancestors().skip(1) {
             if !ancestor.as_os_str().is_empty() {
@@ -236,9 +228,12 @@ fn verify_local_generation(
         files.insert(relative);
     }
 
-    // Check the complete directory tree, not just the named members. This
-    // rejects unfinished .part checkpoints, stray payloads and symlink aliases
-    // instead of mistaking a dirty transport staging tree for a clean export.
+    // Scan the entire tree and preflight every member's size BEFORE hashing
+    // any member. A missing late shard, an orphaned .part checkpoint or an
+    // oversized shard must not trigger hours of avoidable terabyte-scale I/O.
+    // The subsequent digest-checked opens remain authoritative: callers must
+    // exclude untrusted concurrent writers from their private staging tree.
+    let mut preflight_total = 0u64;
     let mut pending = vec![(root.to_path_buf(), PathBuf::new())];
     while let Some((directory, prefix)) = pending.pop() {
         for entry in fs::read_dir(&directory)
@@ -259,6 +254,15 @@ fn verify_local_generation(
                         return Err("hardlinked file in staged generation".into());
                     }
                 }
+                if relative != Path::new("SHA256SUMS") {
+                    if metadata.len() == 0 || metadata.len() > max_member_bytes {
+                        return Err("staged member has invalid compressed byte size".into());
+                    }
+                    preflight_total = preflight_total
+                        .checked_add(metadata.len())
+                        .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
+                        .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+                }
             } else if metadata.file_type().is_dir() {
                 if !directories.remove(&relative) {
                     return Err("unlisted directory in staged generation".into());
@@ -272,7 +276,23 @@ fn verify_local_generation(
     if !files.is_empty() || !directories.is_empty() {
         return Err("staged generation is missing declared entries".into());
     }
-    Ok((inventory.members().len(), total))
+
+    // The cheap structural preflight never confers integrity. Reopen every
+    // member and verify the complete pinned SHA-256 before reporting success.
+    let mut verified_total = 0u64;
+    for (index, _) in inventory.members().iter().enumerate() {
+        let bytes = verified_existing_member(&inventory, index, root, max_member_bytes)
+            .map_err(|error| format!("member {index} rejected: {error:?}"))?
+            .ok_or_else(|| format!("member {index} disappeared after preflight"))?;
+        verified_total = verified_total
+            .checked_add(bytes)
+            .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
+            .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+    }
+    if verified_total != preflight_total {
+        return Err("staged generation changed size during verification".into());
+    }
+    Ok((inventory.members().len(), verified_total))
 }
 
 /// Read-only post-download integrity gate. The exact pinned SHA256SUMS and
@@ -614,6 +634,54 @@ mod tests {
                 .unwrap()
                 .0,
             2
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_generation_preflights_entire_tree_before_digest_io() {
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let first_body = b"original-first";
+        let second_body = b"original-second";
+        let raw = format!(
+            "{:x}  {first}\\n{:x}  {second}\\n",
+            Sha256::digest(first_body),
+            Sha256::digest(second_body),
+        );
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), raw).unwrap();
+
+        // Even though the first member's digest is wrong, missing or
+        // unlisted late entries must fail during the cheap tree preflight.
+        fs::write(root.join(first), b"corrupted-first").unwrap();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
+            .unwrap_err();
+        assert!(error.contains("missing declared entries"), "{error}");
+
+        fs::write(root.join(second), second_body).unwrap();
+        fs::write(root.join(".abandoned.part"), b"partial").unwrap();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
+            .unwrap_err();
+        assert!(error.contains("unlisted or duplicated file"), "{error}");
+        fs::remove_file(root.join(".abandoned.part")).unwrap();
+
+        fs::write(root.join(second), vec![0; 1025]).unwrap();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
+            .unwrap_err();
+        assert!(error.contains("invalid compressed byte size"), "{error}");
+
+        // Once structural problems are gone, the full pinned hash remains
+        // mandatory; the corrupt first member must never pass.
+        fs::write(root.join(second), second_body).unwrap();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
+            .unwrap_err();
+        assert!(error.contains("DigestMismatch"), "{error}");
+        fs::write(root.join(first), first_body).unwrap();
+        assert_eq!(
+            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap(),
+            (2, (first_body.len() + second_body.len()) as u64)
         );
         fs::remove_dir_all(root).unwrap();
     }
