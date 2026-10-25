@@ -303,7 +303,6 @@ pub fn run_all_members(
     Ok(())
 }
 
-
 /** Resume one exact pinned member through bounded HTTP 206 byte ranges.
  * Partial chunks remain private and are never accepted as complete until
  * the entire compressed member passes the pinned SHA-256 publication gate.
