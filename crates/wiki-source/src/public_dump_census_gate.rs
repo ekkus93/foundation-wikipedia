@@ -12,9 +12,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::public_dump_census_stream::{
-    validate_page_id_stream, CensusScope, StreamCoverageError,
-};
+use crate::public_dump_census_stream::{validate_page_id_stream, CensusScope, StreamCoverageError};
 use crate::public_dump_census_text::{audit_page_coverage_text, PageIdLines};
 use crate::public_dump_coverage::PageCoverageDelta;
 use crate::public_dump_pinned::PinnedInventory;
@@ -777,7 +775,10 @@ mod tests {
                     )))
                 )
             };
-            assert!(expected_error, "bad expected census fixture {index}: {result:?}");
+            assert!(
+                expected_error,
+                "bad expected census fixture {index}: {result:?}"
+            );
             assert_eq!(opens, 0);
             assert!(!root.join(output).exists());
         }
