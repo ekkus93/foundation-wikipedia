@@ -20,6 +20,22 @@ use crate::public_dump_pinned::{
 use crate::public_dump_stage::StageWriteError;
 use crate::public_dump_verify::{verify_dump_member, DumpVerifyError};
 
+/// A failed exec with ETXTBSY has not launched a process, so a bounded
+/// retry is safe and does not duplicate an HTTP request. The same workaround
+/// is used by the online article curl adapter on concurrent CI runners.
+fn retry_executable_busy<T>(mut spawn: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let mut retries = 0;
+    loop {
+        match spawn() {
+            Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy && retries < 3 => {
+                retries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * retries));
+            }
+            result => return result,
+        }
+    }
+}
+
 pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 /// Bound one resumed HTTPS transfer to 2 MiB of RAM, regardless of headers.
@@ -343,7 +359,8 @@ impl InventoryCurl {
             return Ok(bytes);
         }
         // -q first disables .curlrc; never use -k, -L or user-supplied URLs.
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args([
                 "-q",
                 "--silent",
@@ -371,9 +388,15 @@ impl InventoryCurl {
                 &url,
             ])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| MemberFetchError::SpawnFailed)?;
+            .stderr(Stdio::piped());
+        let mut child = retry_executable_busy(|| command.spawn()).map_err(|error| {
+            eprintln!(
+                "wiki-source public dump curl spawn failed: kind={:?}, raw_os_error={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+            MemberFetchError::SpawnFailed
+        })?;
         let stdout = child.stdout.take().ok_or(MemberFetchError::SpawnFailed)?;
         let stderr = child.stderr.take().ok_or(MemberFetchError::SpawnFailed)?;
         let mut stream = MemberCurlStream {
@@ -415,7 +438,8 @@ impl InventoryCurl {
             .filter(|end| *end < byte_budget)
             .ok_or(RangeFetchError::InvalidRange)?;
         let range = format!("{start}-{end}");
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args([
                 "-q",
                 "--silent",
@@ -447,9 +471,15 @@ impl InventoryCurl {
                 &url,
             ])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| RangeFetchError::SpawnFailed)?;
+            .stderr(Stdio::piped());
+        let mut child = retry_executable_busy(|| command.spawn()).map_err(|error| {
+            eprintln!(
+                "wiki-source public dump curl spawn failed: kind={:?}, raw_os_error={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+            RangeFetchError::SpawnFailed
+        })?;
         let stderr = child.stderr.take().ok_or(RangeFetchError::IoFailure)?;
         let reader = drain_member_stderr(stderr);
         let mut stdout = child.stdout.take().ok_or(RangeFetchError::IoFailure)?;
@@ -515,7 +545,8 @@ impl InventoryCurl {
         // -q first suppresses ~/.curlrc. Do not use -L, -k or --insecure.
         // Curl verifies the TLS certificate with the installed system CA roots.
         // Limit stdout independently of Content-Length / --max-filesize.
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command
             .args([
                 "-q",
                 "--silent",
@@ -543,9 +574,15 @@ impl InventoryCurl {
                 url,
             ])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| InventoryFetchError::SpawnFailed)?;
+            .stderr(Stdio::piped());
+        let mut child = retry_executable_busy(|| command.spawn()).map_err(|error| {
+            eprintln!(
+                "wiki-source public dump curl spawn failed: kind={:?}, raw_os_error={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+            InventoryFetchError::SpawnFailed
+        })?;
 
         let mut stderr = child.stderr.take().ok_or(InventoryFetchError::IoFailure)?;
         let drain_stderr = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
@@ -640,6 +677,29 @@ mod tests {
 
     fn inventory_bytes() -> String {
         format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64),)
+    }
+
+    #[test]
+    fn busy_executable_retries_without_retrying_permission_errors() {
+        let mut attempts = 0;
+        let result = retry_executable_busy(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(io::Error::from(io::ErrorKind::ExecutableFileBusy))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts, 3);
+
+        let mut denied_attempts = 0;
+        let denied: io::Result<()> = retry_executable_busy(|| {
+            denied_attempts += 1;
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
+        assert_eq!(denied.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(denied_attempts, 1);
     }
 
     #[test]
