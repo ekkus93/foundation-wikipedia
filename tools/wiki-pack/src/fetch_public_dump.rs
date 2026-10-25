@@ -146,7 +146,6 @@ pub fn run(
     Ok(())
 }
 
-
 /// Read a locally pinned official checksum inventory before requesting any
 /// compressed member. This deliberately does not accept an arbitrary URL,
 /// download digest or caller-created member descriptor.
@@ -173,18 +172,17 @@ fn read_staged_inventory(
             return Err("source inventory hard-link aliases are unsafe".into());
         }
     }
-    let mut file = File::open(&path)
-        .map_err(|e| format!("cannot open staged SHA256SUMS: {e}"))?;
-    let opened = file.metadata().map_err(|e| format!("inventory metadata: {e}"))?;
+    let mut file = File::open(&path).map_err(|e| format!("cannot open staged SHA256SUMS: {e}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("inventory metadata: {e}"))?;
     if !opened.is_file() || opened.len() != inspected.len() {
         return Err("source inventory changed during open".into());
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if opened.dev() != inspected.dev()
-            || opened.ino() != inspected.ino()
-            || opened.nlink() != 1
+        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1
         {
             return Err("source inventory identity changed during open".into());
         }
@@ -231,7 +229,12 @@ pub fn run_member(
     max_bytes: u64,
 ) -> Result<(), String> {
     let downloaded = run_member_with_fetch(
-        project, generation, inventory_sha256, root, member_index, max_bytes,
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        member_index,
+        max_bytes,
         |inventory, index, directory, byte_limit| {
             InventoryCurl::new()
                 .stage_verified_member(inventory, index, directory, byte_limit)
@@ -310,7 +313,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-
     #[test]
     fn member_selection_requires_verified_private_inventory_and_index() {
         let root = private_root();
@@ -319,19 +321,28 @@ mod tests {
         let mut requests = 0usize;
         let try_fetch = |inventory: &PinnedInventory, index: usize, _: &Path, limit: u64| {
             requests += 1;
-            assert_eq!(inventory.members()[index].relative_path, "enwiki-2026-10-01-p1p100.xml.bz2");
+            assert_eq!(
+                inventory.members()[index].relative_path,
+                "enwiki-2026-10-01-p1p100.xml.bz2"
+            );
             assert_eq!(limit, 1024);
             Ok(4)
         };
         assert!(run_member_with_fetch(
-            "enwiki", "2026-10-01", &digest, &root, 0, 1024,
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            0,
+            1024,
             |_, _, _, _| panic!("missing inventory must fail before HTTP")
-        ).is_err());
+        )
+        .is_err());
         fs::write(root.join("SHA256SUMS"), &raw).unwrap();
         assert_eq!(
-            run_member_with_fetch(
-                "enwiki", "2026-10-01", &digest, &root, 0, 1024, try_fetch,
-            ).unwrap(), 4
+            run_member_with_fetch("enwiki", "2026-10-01", &digest, &root, 0, 1024, try_fetch,)
+                .unwrap(),
+            4
         );
         assert_eq!(requests, 1);
         for (project, date, pin, index, limit) in [
@@ -342,15 +353,27 @@ mod tests {
             ("enwiki", "2026-10-01", digest.as_str(), 0, 0),
         ] {
             assert!(run_member_with_fetch(
-                project, date, pin, &root, index, limit,
+                project,
+                date,
+                pin,
+                &root,
+                index,
+                limit,
                 |_, _, _, _| panic!("invalid member scope must fail before HTTP")
-            ).is_err());
+            )
+            .is_err());
         }
         fs::write(root.join("SHA256SUMS"), b"tampered inventory").unwrap();
         assert!(run_member_with_fetch(
-            "enwiki", "2026-10-01", &digest, &root, 0, 1024,
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            0,
+            1024,
             |_, _, _, _| panic!("tampered inventory must fail before HTTP")
-        ).is_err());
+        )
+        .is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

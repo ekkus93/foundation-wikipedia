@@ -79,7 +79,9 @@ impl Read for MemberCurlStream {
         }
         self.done = true;
         let status = self.child.wait()?;
-        let stderr_bytes = self.stderr_reader.take()
+        let stderr_bytes = self
+            .stderr_reader
+            .take()
             .ok_or_else(|| io::Error::other("missing curl status reader"))?
             .join()
             .map_err(|_| io::Error::other("curl status reader panicked"))??;
@@ -108,9 +110,9 @@ impl Drop for MemberCurlStream {
     }
 }
 
-fn drain_member_stderr(mut stderr: impl Read + Send + 'static)
-    -> std::thread::JoinHandle<io::Result<Vec<u8>>>
-{
+fn drain_member_stderr(
+    mut stderr: impl Read + Send + 'static,
+) -> std::thread::JoinHandle<io::Result<Vec<u8>>> {
     std::thread::spawn(move || {
         let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
         let mut buffer = [0u8; 8192];
@@ -180,8 +182,8 @@ impl InventoryCurl {
             if ancestor.as_os_str().is_empty() {
                 continue;
             }
-            let metadata = fs::symlink_metadata(ancestor)
-                .map_err(|_| MemberFetchError::UnsafeRoot)?;
+            let metadata =
+                fs::symlink_metadata(ancestor).map_err(|_| MemberFetchError::UnsafeRoot)?;
             if metadata.file_type().is_symlink() {
                 return Err(MemberFetchError::UnsafeRoot);
             }
@@ -200,15 +202,30 @@ impl InventoryCurl {
         // -q first disables .curlrc; never use -k, -L or user-supplied URLs.
         let mut child = Command::new(&self.executable)
             .args([
-                "-q", "--silent", "--show-error", "--globoff",
-                "--user-agent", "FoundationWikipedia/0.1 (dump member)",
-                "--header", "Accept: application/octet-stream",
-                "--proto", "=https", "--max-redirs", "0",
-                "--connect-timeout", "10", "--max-time", "3600",
-                "--max-filesize", &max_bytes.to_string(),
-                "--output", "-",
-                "--write-out", "%{stderr}\nFW_DUMP_HTTP_CODE:%{http_code}\n",
-                "--", &url,
+                "-q",
+                "--silent",
+                "--show-error",
+                "--globoff",
+                "--user-agent",
+                "FoundationWikipedia/0.1 (dump member)",
+                "--header",
+                "Accept: application/octet-stream",
+                "--proto",
+                "=https",
+                "--max-redirs",
+                "0",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "3600",
+                "--max-filesize",
+                &max_bytes.to_string(),
+                "--output",
+                "-",
+                "--write-out",
+                "%{stderr}\nFW_DUMP_HTTP_CODE:%{http_code}\n",
+                "--",
+                &url,
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -449,7 +466,6 @@ mod tests {
         fs::remove_file(executable).unwrap();
     }
 
-
     #[test]
     fn member_stream_publishes_only_successful_digest_pinned_http200() {
         use std::io::Cursor;
@@ -466,15 +482,21 @@ mod tests {
         ).unwrap();
         let root = std::env::temp_dir().join(format!(
             "wiki-remote-member-{}-{}",
-            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
 
         let (client, exe) = fake_curl(
-            "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2"
+            "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2",
         );
-        assert_eq!(client.stage_verified_member(&inventory, 0, &root, 256).unwrap(), body.len() as u64);
+        assert_eq!(
+            client
+                .stage_verified_member(&inventory, 0, &root, 256)
+                .unwrap(),
+            body.len() as u64
+        );
         assert_eq!(fs::read(root.join(name)).unwrap(), body);
         fs::remove_file(exe).unwrap();
 
@@ -493,8 +515,7 @@ mod tests {
             fs::remove_file(exe).unwrap();
         }
 
-        let (client, exe) =
-            fake_curl("printf '123456789'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2");
+        let (client, exe) = fake_curl("printf '123456789'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2");
         assert!(matches!(
             client.stage_verified_member(&inventory, 0, &root, 8),
             Err(MemberFetchError::Stage(StageWriteError::TooLarge))
