@@ -854,6 +854,9 @@ mod tests {
             ))
         ));
 
+        // Restore a matching independently pinned census so a forged digest
+        // in the second source member is reached and rejected by SHA-256.
+        fs::write(&expected, b"1\n201\n").unwrap();
         // A forged second-member checksum fails before expected-census audit.
         let bad_sums = format!(
             "{:x}  {}\n{}  {}\n",
@@ -876,7 +879,7 @@ mod tests {
                 &bad_pinned,
                 0,
                 NativeCensusAudit {
-                    expected_sha256: &different_digest,
+                    expected_sha256: audit.expected_sha256,
                     ..audit
                 },
                 open,
