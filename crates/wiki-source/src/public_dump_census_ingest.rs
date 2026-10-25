@@ -911,7 +911,7 @@ mod tests {
                 &mut correct,
             )
             .unwrap();
-        assert_eq!(correct.next(), None);
+        assert!(correct.next().is_none());
         let (observed, count) = matched.finish().unwrap();
         assert_eq!(observed, b"2\n3\n");
         assert_eq!(count, 3);

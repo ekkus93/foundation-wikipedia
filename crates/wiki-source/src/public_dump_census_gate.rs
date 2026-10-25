@@ -218,7 +218,6 @@ fn preflight_expected_census(
 /// shard. This extra bounded-memory pass lets the native audit fail after the
 /// first mismatching member instead of decompressing all later shards.
 /// The whole-generation independent census audit still gates publication.
-
 fn expected_member_census_receipts(
     path: &Path,
     sha256: &str,
