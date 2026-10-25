@@ -440,7 +440,11 @@ mod tests {
         let second = "enwiki-2026-10-01-p101p200.xml.bz2";
         // Deliberately reverse the checksum line order: pinned inventory
         // normalizes to ascending page ranges before download.
-        let raw = format!("{}  {second}\n{}  {first}\n", "b".repeat(64), "a".repeat(64));
+        let raw = format!(
+            "{}  {second}\n{}  {first}\n",
+            "b".repeat(64),
+            "a".repeat(64)
+        );
         let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
         fs::write(root.join("SHA256SUMS"), &raw).unwrap();
         let mut visited = Vec::new();
