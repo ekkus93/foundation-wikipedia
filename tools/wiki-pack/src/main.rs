@@ -3,6 +3,7 @@
 mod audit_diagnostic;
 mod audit_public_dump;
 mod css_graph_diagnostic;
+mod fetch_public_dump;
 mod curated_catalog;
 mod preview_topic;
 mod visual_diagnostic;
@@ -30,6 +31,7 @@ fn usage() {
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
     println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
     println!("       wiki-pack audit-public-dump <private-source-dir> <project> <generation> <SHA256SUMS-sha256> <expected-ids> <expected-sha256> <namespace> <private-output-dir> <output-name> <max-compressed-bytes> <max-decoded-bytes>");
+    println!("       wiki-pack fetch-public-inventory <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -190,6 +192,31 @@ fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("fetch-public-inventory") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 4 {
+                eprintln!("fetch-public-inventory requires exactly four arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let identity = fields[0..3]
+                .iter()
+                .map(|value| value.to_str())
+                .collect::<Option<Vec<_>>>();
+            let Some(identity) = identity else {
+                eprintln!("Project, generation and SHA-256 must be UTF-8");
+                std::process::exit(2);
+            };
+            if let Err(error) = fetch_public_dump::run(
+                identity[0],
+                identity[1],
+                identity[2],
+                Path::new(&fields[3]),
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("audit-public-dump") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 11 {
