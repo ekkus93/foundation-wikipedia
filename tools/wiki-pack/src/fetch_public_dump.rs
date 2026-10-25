@@ -2,12 +2,15 @@
 //! The independently supplied SHA-256 is an integrity pin, not a Wikimedia
 //! publisher signature, completeness proof or permission to activate a pack.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wiki_source::public_dump_https::{InventoryCurl, MAX_INVENTORY_BYTES};
+use wiki_source::public_dump_https::{
+    verified_existing_member, InventoryCurl, MAX_INVENTORY_BYTES,
+};
 use wiki_source::public_dump_origin::is_official_checksum_url;
 use wiki_source::public_dump_pinned::{parse_pinned_inventory, PinnedInventory};
 
@@ -197,6 +200,102 @@ fn read_staged_inventory(
     }
     parse_pinned_inventory(&bytes, project, generation, digest)
         .map_err(|e| format!("pinned staged SHA256SUMS rejected: {e:?}"))
+}
+
+/// Audit the entire local acquisition tree after a resumable download.
+/// The digest pin is supplied independently; this does not authenticate
+/// Wikimedia publication, render articles or authorize pack installation.
+fn verify_local_generation(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+) -> Result<(usize, u64), String> {
+    if !(1..=1_u64 << 40).contains(&max_member_bytes) {
+        return Err("compressed member byte limit must be 1..=1TiB".into());
+    }
+    let inventory = read_staged_inventory(root, project, generation, inventory_sha256)?;
+    let mut total = 0u64;
+    let mut files = BTreeSet::from([PathBuf::from("SHA256SUMS")]);
+    let mut directories = BTreeSet::new();
+    for (index, member) in inventory.members().iter().enumerate() {
+        let bytes = verified_existing_member(&inventory, index, root, max_member_bytes)
+            .map_err(|error| format!("member {index} rejected: {error:?}"))?
+            .ok_or_else(|| format!("member {index} is missing"))?;
+        total = total
+            .checked_add(bytes)
+            .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
+            .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+        let relative = PathBuf::from(&member.relative_path);
+        for ancestor in relative.ancestors().skip(1) {
+            if !ancestor.as_os_str().is_empty() {
+                directories.insert(ancestor.to_path_buf());
+            }
+        }
+        files.insert(relative);
+    }
+
+    // Check the complete directory tree, not just the named members. This
+    // rejects unfinished .part checkpoints, stray payloads and symlink aliases
+    // instead of mistaking a dirty transport staging tree for a clean export.
+    let mut pending = vec![(root.to_path_buf(), PathBuf::new())];
+    while let Some((directory, prefix)) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot inspect staged member tree: {error}"))?
+        {
+            let entry = entry.map_err(|error| format!("invalid staging entry: {error}"))?;
+            let relative = prefix.join(entry.file_name());
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| format!("cannot inspect staging entry: {error}"))?;
+            if metadata.file_type().is_file() {
+                if !files.remove(&relative) {
+                    return Err("unlisted or duplicated file in staged generation".into());
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if metadata.nlink() != 1 {
+                        return Err("hardlinked file in staged generation".into());
+                    }
+                }
+            } else if metadata.file_type().is_dir() {
+                if !directories.remove(&relative) {
+                    return Err("unlisted directory in staged generation".into());
+                }
+                pending.push((entry.path(), relative));
+            } else {
+                return Err("nonregular entry in staged generation".into());
+            }
+        }
+    }
+    if !files.is_empty() || !directories.is_empty() {
+        return Err("staged generation is missing declared entries".into());
+    }
+    Ok((inventory.members().len(), total))
+}
+
+/// Read-only post-download integrity gate. The exact pinned SHA256SUMS and
+/// every declared compressed member must be present, with no extra entries.
+pub fn verify_public_members(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+) -> Result<(), String> {
+    let (count, bytes) = verify_local_generation(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )?;
+    println!("Verified {count} locally staged compressed members ({bytes} bytes)");
+    println!("All declared SHA-256 digests and clean staging tree: VERIFIED");
+    println!("Publisher provenance, independent census and rendering: NOT VERIFIED");
+    println!("No pack installed or active snapshot changed.");
+    Ok(())
 }
 
 fn run_member_with_fetch<F>(
@@ -477,6 +576,69 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read(&outside).unwrap(), raw);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
+    }
+
+    #[test]
+    fn local_generation_gate_requires_every_digest_and_a_clean_tree() {
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let first_body = b"fixture-one";
+        let second_body = b"fixture-two";
+        let raw = format!(
+            "{:x}  {first}\n{:x}  {second}\n",
+            Sha256::digest(first_body),
+            Sha256::digest(second_body),
+        );
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+        fs::write(root.join(first), first_body).unwrap();
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::write(root.join(second), second_body).unwrap();
+        assert_eq!(
+            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap(),
+            (2, (first_body.len() + second_body.len()) as u64)
+        );
+        assert!(verify_local_generation("frwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1).is_err());
+        fs::write(root.join(".fw-resume-orphan.part"), b"partial").unwrap();
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::remove_file(root.join(".fw-resume-orphan.part")).unwrap();
+        fs::write(root.join(second), b"tampered").unwrap();
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::write(root.join(second), second_body).unwrap();
+        assert_eq!(
+            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap().0,
+            2
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_generation_gate_rejects_member_aliases_and_unlisted_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = private_root();
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let body = b"fixture";
+        let raw = format!("{:x}  {name}\n", Sha256::digest(body));
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+        let outside = root.with_extension("outside-member");
+        fs::write(&outside, body).unwrap();
+        fs::hard_link(&outside, root.join(name)).unwrap();
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::remove_file(root.join(name)).unwrap();
+        fs::write(root.join(name), body).unwrap();
+        symlink(&outside, root.join("extra-link")).unwrap();
+        assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::remove_file(root.join("extra-link")).unwrap();
+        assert_eq!(
+            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap(),
+            (1, body.len() as u64)
+        );
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(outside).unwrap();
     }
