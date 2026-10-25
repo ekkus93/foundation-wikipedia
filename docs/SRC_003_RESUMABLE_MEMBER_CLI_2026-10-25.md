@@ -34,3 +34,19 @@ The independently supplied inventory digest is **not** publisher
 authentication or completeness evidence. No live Wikimedia generation,
 independent page census, revision-matched renderer, required offline media,
 or desktop/Android end-to-end acceptance is qualified by this change.
+
+## Checkpoint restart efficiency and crash recovery
+
+At exact source SHA `1955190dd3705613aeb4e83d3232164ef66a097b`,
+the resume loop avoids an expensive provisional copy of an incomplete prefix
+on every restart. A previously synced partial continues at its byte offset.
+An HTTP 416 at that offset (or reaching the caller's byte budget) triggers
+a full checksum-verified publication attempt, never an assumption of success.
+Corrupt completed prefixes are removed after the failed SHA-256 gate.
+
+- Rust workspace: https://github.com/ekkus93/foundation-wikipedia/actions/runs/40186867230 (passed)
+- Platform shells: https://github.com/ekkus93/foundation-wikipedia/actions/runs/40186867268 (passed)
+
+Synthetic regressions cover ordinary continuation, valid crash-after-final-
+chunk recovery, and rejection/removal of a corrupted complete prefix. No
+real Wikimedia transfer or device benchmark has been performed.
