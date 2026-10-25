@@ -703,7 +703,7 @@ mod tests {
         let root = private_root();
         let name = "enwiki-2026-10-01-p1p100.xml.bz2";
         let body = b"fixture-source-bytes";
-        let raw = format!("{:x}  {name}\\n", Sha256::digest(body));
+        let raw = format!("{:x}  {name}\n", Sha256::digest(body));
         let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
         fs::write(root.join("SHA256SUMS"), raw).unwrap();
         assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
