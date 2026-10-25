@@ -610,7 +610,9 @@ mod tests {
         assert!(verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
         fs::write(root.join(second), second_body).unwrap();
         assert_eq!(
-            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap().0,
+            verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
+                .unwrap()
+                .0,
             2
         );
         fs::remove_dir_all(root).unwrap();
