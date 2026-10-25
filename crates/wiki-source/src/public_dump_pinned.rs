@@ -55,7 +55,11 @@ impl PinnedInventory {
     /// downloaded bytes still MUST be checked against members()[index].sha256.
     pub fn official_member_url(&self, index: usize) -> Option<String> {
         let member = self.members.get(index)?;
-        Some(format!("{}/{}", self.official_export_base_url(), member.relative_path))
+        Some(format!(
+            "{}/{}",
+            self.official_export_base_url(),
+            member.relative_path
+        ))
     }
 
     fn official_export_base_url(&self) -> String {
@@ -228,7 +232,10 @@ mod tests {
             parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
         let base =
             "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2";
-        assert_eq!(inventory.official_inventory_url(), format!("{base}/SHA256SUMS"));
+        assert_eq!(
+            inventory.official_inventory_url(),
+            format!("{base}/SHA256SUMS")
+        );
         assert_eq!(
             inventory.official_member_url(0).as_deref(),
             Some(format!("{base}/{first}").as_str())
