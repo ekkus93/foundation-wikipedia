@@ -172,7 +172,7 @@ fn read_staged_inventory(
             return Err("source inventory hard-link aliases are unsafe".into());
         }
     }
-    let mut file = File::open(&path).map_err(|e| format!("cannot open staged SHA256SUMS: {e}"))?;
+    let file = File::open(&path).map_err(|e| format!("cannot open staged SHA256SUMS: {e}"))?;
     let opened = file
         .metadata()
         .map_err(|e| format!("inventory metadata: {e}"))?;
