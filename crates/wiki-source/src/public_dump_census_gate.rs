@@ -156,7 +156,9 @@ fn validate_expected_page_ranges<R: Read + Seek>(
     input: &mut R,
     inventory: &PinnedInventory,
 ) -> Result<(), CensusGateError> {
-    input.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    input
+        .seek(SeekFrom::Start(0))
+        .map_err(CensusGateError::Io)?;
     let mut ranges = inventory.members().iter().map(|member| {
         declared_member_page_range(member, inventory.project(), inventory.date())
             .expect("pinned inventory contains validated ranges")
@@ -178,7 +180,9 @@ fn validate_expected_page_ranges<R: Read + Seek>(
             return Err(CensusGateError::ExpectedOutsideDeclaredRange(page_id));
         }
     }
-    input.seek(SeekFrom::Start(0)).map_err(CensusGateError::Io)?;
+    input
+        .seek(SeekFrom::Start(0))
+        .map_err(CensusGateError::Io)?;
     Ok(())
 }
 
