@@ -125,6 +125,83 @@ where
     Ok(inventory.members().len())
 }
 
+/// Independently recheck the locally pinned inventory against the live
+/// official HTTPS endpoint. This does not modify staged files or download
+/// members. A successful TLS retrieval is origin evidence at check time,
+/// NOT a signed publication, page census or durable offline attestation.
+fn confirm_origin_with_fetch<F>(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    fetch: F,
+) -> Result<usize, String>
+where
+    F: FnOnce(&str, &str, &str) -> Result<Vec<u8>, String>,
+{
+    // Reject missing, tampered and aliased local inventories BEFORE HTTP.
+    let local = read_staged_inventory(root, project, generation, inventory_sha256)?;
+    let remote_bytes = fetch(project, generation, inventory_sha256)?;
+    let remote = parse_pinned_inventory(&remote_bytes, project, generation, inventory_sha256)
+        .map_err(|error| format!("live official SHA256SUMS rejected: {error:?}"))?;
+    if remote != local {
+        return Err("live official SHA256SUMS differs from pinned local inventory".into());
+    }
+    Ok(local.members().len())
+}
+
+pub fn confirm_public_inventory(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    json: bool,
+) -> Result<(), String> {
+    let count = confirm_origin_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        |wiki, date, sha| {
+            InventoryCurl::new()
+                .fetch_verified_inventory(wiki, date, sha)
+                .map_err(|error| format!("live official HTTPS confirmation failed: {error:?}"))
+        },
+    )?;
+    if json {
+        let receipt = serde_json::json!({
+            "schema_version": 1,
+            "kind": "public_dump_live_https_inventory_confirmation",
+            "project": project,
+            "generation": generation,
+            "inventory_sha256": inventory_sha256.to_ascii_lowercase(),
+            "member_count": count,
+            "checks": {
+                "official_https_inventory_retrieved": true,
+                "live_inventory_matches_local_pin": true
+            },
+            "trust": {
+                "publisher_signature_verified": false,
+                "independent_page_census_verified": false,
+                "revision_rendering_verified": false,
+                "mandatory_offline_media_complete": false,
+                "pack_installed": false
+            }
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&receipt)
+                .map_err(|error| format!("cannot encode confirmation: {error}"))?
+        );
+    } else {
+        println!("Live official HTTPS SHA256SUMS confirmed: {count} members");
+        println!("Local inventory matches live official checksum publication");
+        println!("Publisher signature and independent page census: NOT VERIFIED");
+        println!("No pack installed or active snapshot changed.");
+    }
+    Ok(())
+}
+
 pub fn run(
     project: &str,
     generation: &str,
@@ -1385,6 +1462,89 @@ mod tests {
         .is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn live_official_inventory_confirmation_is_read_only_and_requires_exact_pin() {
+        let root = private_root();
+        let raw = valid_raw();
+        let digest = format!("{:x}", Sha256::digest(&raw));
+        let local = root.join("SHA256SUMS");
+        fs::write(&local, &raw).unwrap();
+        let mut fetches = 0;
+        assert_eq!(
+            confirm_origin_with_fetch("enwiki", "2026-10-01", &digest, &root, |project, date, pin| {
+                fetches += 1;
+                assert_eq!((project, date, pin), ("enwiki", "2026-10-01", digest.as_str()));
+                Ok(raw.clone())
+            })
+            .unwrap(),
+            1
+        );
+        assert_eq!(fetches, 1);
+        assert_eq!(fs::read(&local).unwrap(), raw);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+
+        // An HTTPS response for a different inventory must fail, even when
+        // the transport callback reports success.
+        assert!(confirm_origin_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            |_, _, _| Ok(b"forged remote inventory".to_vec())
+        )
+        .is_err());
+        assert!(confirm_origin_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            |_, _, _| Err("HTTP 404 or TLS failure".into())
+        )
+        .is_err());
+        for (project, date, pin) in [
+            ("frwiki", "2026-10-01", digest.as_str()),
+            ("enwiki", "2026-10-02", digest.as_str()),
+            ("enwiki", "2026-10-01", "bad"),
+        ] {
+            assert!(confirm_origin_with_fetch(project, date, pin, &root, |_, _, _| {
+                panic!("invalid local identity must fail before network")
+            })
+            .is_err());
+        }
+        fs::write(&local, b"tampered").unwrap();
+        assert!(confirm_origin_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            |_, _, _| panic!("tampered local inventory must fail before network")
+        )
+        .is_err());
+        assert_eq!(fs::read(&local).unwrap(), b"tampered");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_confirmation_rejects_hardlinked_inventory_before_http() {
+        let root = private_root();
+        let raw = valid_raw();
+        let digest = format!("{:x}", Sha256::digest(&raw));
+        let outside = root.with_extension("external-checksums");
+        fs::write(&outside, &raw).unwrap();
+        fs::hard_link(&outside, root.join("SHA256SUMS")).unwrap();
+        assert!(confirm_origin_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            |_, _, _| panic!("hardlinked local inventory must fail before HTTP")
+        )
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[test]

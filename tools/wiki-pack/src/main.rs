@@ -32,6 +32,7 @@ fn usage() {
     println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
     println!("       wiki-pack audit-public-dump <private-source-dir> <project> <generation> <SHA256SUMS-sha256> <expected-ids> <expected-sha256> <namespace> <private-output-dir> <output-name> <max-compressed-bytes> <max-decoded-bytes>");
     println!("       wiki-pack fetch-public-inventory <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir>");
+    println!("       wiki-pack confirm-public-inventory [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir>");
     println!("       wiki-pack fetch-public-member <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
     println!("       wiki-pack fetch-public-member-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
     println!("       wiki-pack fetch-public-members <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
@@ -198,6 +199,34 @@ fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("confirm-public-inventory") => {
+            let supplied: Vec<OsString> = args.collect();
+            let json = supplied.first().is_some_and(|value| value == "--json");
+            let fields = if json { &supplied[1..] } else { &supplied[..] };
+            if fields.len() != 4 {
+                eprintln!("confirm-public-inventory requires four arguments, optionally prefixed with --json");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(identity) = fields[0..3]
+                .iter()
+                .map(|value| value.to_str())
+                .collect::<Option<Vec<_>>>()
+            else {
+                eprintln!("Project, generation and SHA-256 must be UTF-8");
+                std::process::exit(2);
+            };
+            if let Err(error) = fetch_public_dump::confirm_public_inventory(
+                identity[0],
+                identity[1],
+                identity[2],
+                Path::new(&fields[3]),
+                json,
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("fetch-public-inventory") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 4 {
