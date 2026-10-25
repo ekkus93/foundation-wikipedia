@@ -218,6 +218,7 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         mut expected_ids: Option<&mut dyn Iterator<Item = std::io::Result<u64>>>,
     ) -> Result<(u64, u64), NativeCensusError> {
         if self.failed {
+
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
         }
         let Some(member) = self
@@ -438,6 +439,7 @@ pub fn stage_pinned_observed_census<F>(
     root: &std::path::Path,
     filename: &str,
     inventory: &PinnedInventory,
+
     namespace: i32,
     feed: F,
 ) -> Result<(std::path::PathBuf, usize), CensusStageError>
@@ -658,6 +660,7 @@ mod tests {
             "<mediawiki><page><title>Physics</title><ns>0</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp><contributor><id>9001</id></contributor></revision></page></mediawiki>",
             "<mediawiki><page><title>Biology</title><ns>0</ns><id>201</id><revision><id>1201</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page></mediawiki>",
         ];
+
         let compressed: Vec<Vec<u8>> = xml
             .iter()
             .map(|text| {
@@ -863,7 +866,7 @@ mod tests {
         encoder.write_all(xml.as_bytes()).unwrap();
         let compressed = encoder.finish().unwrap();
         let sums = format!(
-            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n",
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\n",
             Sha256::digest(&compressed)
         );
         let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
@@ -878,6 +881,7 @@ mod tests {
             Cursor::new(&compressed),
             4096,
             4096,
+
             2,
             &mut expected,
         );
@@ -902,7 +906,7 @@ mod tests {
             .unwrap();
         assert_eq!(correct.next(), None);
         let (observed, count) = matched.finish().unwrap();
-        assert_eq!(observed, b"2\\n3\\n");
+        assert_eq!(observed, b"2\n3\n");
         assert_eq!(count, 3);
 
         // A broken expected cursor cannot silently qualify a native member.
@@ -1098,6 +1102,7 @@ mod tests {
 
     struct RejectingFlush {
         bytes: Vec<u8>,
+
     }
 
     impl Write for RejectingFlush {
