@@ -190,15 +190,13 @@ fn verified_existing_member(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if opened.dev() != inspected.dev()
-            || opened.ino() != inspected.ino()
-            || opened.nlink() != 1
+        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1
         {
             return Err(MemberFetchError::UnsafeRoot);
         }
     }
-    let bytes = verify_dump_member(&mut file, member, max_bytes)
-        .map_err(MemberFetchError::Existing)?;
+    let bytes =
+        verify_dump_member(&mut file, member, max_bytes).map_err(MemberFetchError::Existing)?;
     let after = file.metadata().map_err(|_| MemberFetchError::UnsafeRoot)?;
     if after.len() != opened.len() {
         return Err(MemberFetchError::UnsafeRoot);
