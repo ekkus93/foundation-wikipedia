@@ -276,9 +276,9 @@ impl InventoryCurl {
 mod tests {
     use super::*;
     use crate::public_dump_pinned::parse_pinned_inventory;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
