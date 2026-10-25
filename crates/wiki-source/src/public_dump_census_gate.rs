@@ -773,6 +773,43 @@ mod tests {
         assert_eq!(early_opens, 1, "must not decompress later shards");
         assert!(!root.join("early-mismatch.ids").exists());
 
+        // A zero-count expected first shard must fail on its first selected
+        // page, before later members are opened or any census is published.
+        fs::write(&expected, b"201\n").unwrap();
+        let missing_first_digest = format!("{:x}", Sha256::digest(b"201\n"));
+        let mut excess_opens = 0usize;
+        let excess_result = stage_and_audit_native_bzip2_census(
+            &root,
+            "excess-first.ids",
+            &pinned,
+            0,
+            NativeCensusAudit {
+                expected_sha256: &missing_first_digest,
+                ..audit
+            },
+            |name| {
+                excess_opens += 1;
+                open(name)
+            },
+        );
+        assert!(
+            matches!(
+                excess_result,
+                Err(VerifiedCensusStageError::Stage(
+                    crate::public_dump_census_ingest::CensusStageError::Census(
+                        PinnedCensusError::MemberCensusMismatch {
+                            expected_count: 0,
+                            observed_count: 1,
+                            ..
+                        }
+                    )
+                ))
+            ),
+            "unexpected excess-page outcome: {excess_result:?}"
+        );
+        assert_eq!(excess_opens, 1);
+        assert!(!root.join("excess-first.ids").exists());
+
         // Correctly pinned but different expected IDs must not be published.
         fs::write(&expected, b"1\n202\n").unwrap();
         let different_digest = format!("{:x}", Sha256::digest(b"1\n202\n"));
