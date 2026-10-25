@@ -139,7 +139,9 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
         &pinned,
         config.namespace,
         NativeCensusAudit {
-            expected_path: &expected,
+            // Preserve the original pathname for the gate's symlink checks;
+            // canonicalization above is used only for directory separation.
+            expected_path: config.expected_path,
             expected_sha256: config.expected_sha256,
             max_compressed_bytes: config.max_compressed_bytes,
             max_decoded_bytes: config.max_decoded_bytes,
@@ -230,6 +232,20 @@ mod tests {
         assert_eq!(run(&options).unwrap(), 2);
         assert_eq!(fs::read(output.join("observed.ids")).unwrap(), b"1\n201\n");
         assert!(run(&options).is_err(), "never overwrite an existing output");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let expected_link = root.join("expected-link.ids");
+            symlink(&expected, &expected_link).unwrap();
+            assert!(run(&NativeDumpAudit {
+                expected_path: &expected_link,
+                output_name: "symlink-census.ids",
+                ..options
+            })
+            .is_err());
+            assert!(!output.join("symlink-census.ids").exists());
+            fs::remove_file(expected_link).unwrap();
+        }
         assert!(run(&NativeDumpAudit {
             output_name: "nested/escape.ids",
             ..options
