@@ -3,13 +3,13 @@
 //! publisher signature, completeness proof or permission to activate a pack.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wiki_source::public_dump_https::InventoryCurl;
+use wiki_source::public_dump_https::{InventoryCurl, MAX_INVENTORY_BYTES};
 use wiki_source::public_dump_origin::is_official_checksum_url;
-use wiki_source::public_dump_pinned::parse_pinned_inventory;
+use wiki_source::public_dump_pinned::{parse_pinned_inventory, PinnedInventory};
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -146,6 +146,104 @@ pub fn run(
     Ok(())
 }
 
+
+/// Read a locally pinned official checksum inventory before requesting any
+/// compressed member. This deliberately does not accept an arbitrary URL,
+/// download digest or caller-created member descriptor.
+fn read_staged_inventory(
+    root: &Path,
+    project: &str,
+    generation: &str,
+    digest: &str,
+) -> Result<PinnedInventory, String> {
+    safe_private_root(root)?;
+    let path = root.join("SHA256SUMS");
+    let inspected = fs::symlink_metadata(&path)
+        .map_err(|e| format!("cannot inspect staged SHA256SUMS: {e}"))?;
+    if !inspected.file_type().is_file()
+        || inspected.len() == 0
+        || inspected.len() > MAX_INVENTORY_BYTES as u64
+    {
+        return Err("invalid source inventory size or type".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if inspected.nlink() != 1 {
+            return Err("source inventory hard-link aliases are unsafe".into());
+        }
+    }
+    let mut file = File::open(&path)
+        .map_err(|e| format!("cannot open staged SHA256SUMS: {e}"))?;
+    let opened = file.metadata().map_err(|e| format!("inventory metadata: {e}"))?;
+    if !opened.is_file() || opened.len() != inspected.len() {
+        return Err("source inventory changed during open".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != inspected.dev()
+            || opened.ino() != inspected.ino()
+            || opened.nlink() != 1
+        {
+            return Err("source inventory identity changed during open".into());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_INVENTORY_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read staged SHA256SUMS: {e}"))?;
+    if bytes.len() as u64 != inspected.len() {
+        return Err("source inventory changed during read".into());
+    }
+    parse_pinned_inventory(&bytes, project, generation, digest)
+        .map_err(|e| format!("pinned staged SHA256SUMS rejected: {e:?}"))
+}
+
+fn run_member_with_fetch<F>(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    member_index: usize,
+    max_bytes: u64,
+    fetch: F,
+) -> Result<u64, String>
+where
+    F: FnOnce(&PinnedInventory, usize, &Path, u64) -> Result<u64, String>,
+{
+    if !(1..=1_u64 << 40).contains(&max_bytes) {
+        return Err("compressed member byte limit must be 1..=1TiB".into());
+    }
+    let inventory = read_staged_inventory(root, project, generation, inventory_sha256)?;
+    if inventory.members().get(member_index).is_none() {
+        return Err("member index is not declared by the pinned inventory".into());
+    }
+    fetch(&inventory, member_index, root, max_bytes)
+}
+
+pub fn run_member(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    member_index: usize,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let downloaded = run_member_with_fetch(
+        project, generation, inventory_sha256, root, member_index, max_bytes,
+        |inventory, index, directory, byte_limit| {
+            InventoryCurl::new()
+                .stage_verified_member(inventory, index, directory, byte_limit)
+                .map_err(|error| format!("official compressed member rejected: {error:?}"))
+        },
+    )?;
+    println!("HTTPS and SHA-256-verified compressed member staged: {downloaded} bytes");
+    println!("Expected census and Wikimedia publisher provenance: NOT AUTHENTICATED");
+    println!("No pack installed or active snapshot changed.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +307,50 @@ mod tests {
         );
         assert_eq!(fetches, 1);
         assert_eq!(fs::read(root.join("SHA256SUMS")).unwrap(), raw);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+
+    #[test]
+    fn member_selection_requires_verified_private_inventory_and_index() {
+        let root = private_root();
+        let raw = valid_raw();
+        let digest = format!("{:x}", Sha256::digest(&raw));
+        let mut requests = 0usize;
+        let try_fetch = |inventory: &PinnedInventory, index: usize, _: &Path, limit: u64| {
+            requests += 1;
+            assert_eq!(inventory.members()[index].relative_path, "enwiki-2026-10-01-p1p100.xml.bz2");
+            assert_eq!(limit, 1024);
+            Ok(4)
+        };
+        assert!(run_member_with_fetch(
+            "enwiki", "2026-10-01", &digest, &root, 0, 1024,
+            |_, _, _, _| panic!("missing inventory must fail before HTTP")
+        ).is_err());
+        fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+        assert_eq!(
+            run_member_with_fetch(
+                "enwiki", "2026-10-01", &digest, &root, 0, 1024, try_fetch,
+            ).unwrap(), 4
+        );
+        assert_eq!(requests, 1);
+        for (project, date, pin, index, limit) in [
+            ("frwiki", "2026-10-01", digest.as_str(), 0, 1024),
+            ("enwiki", "2026-10-02", digest.as_str(), 0, 1024),
+            ("enwiki", "2026-10-01", "wrong", 0, 1024),
+            ("enwiki", "2026-10-01", digest.as_str(), 1, 1024),
+            ("enwiki", "2026-10-01", digest.as_str(), 0, 0),
+        ] {
+            assert!(run_member_with_fetch(
+                project, date, pin, &root, index, limit,
+                |_, _, _, _| panic!("invalid member scope must fail before HTTP")
+            ).is_err());
+        }
+        fs::write(root.join("SHA256SUMS"), b"tampered inventory").unwrap();
+        assert!(run_member_with_fetch(
+            "enwiki", "2026-10-01", &digest, &root, 0, 1024,
+            |_, _, _, _| panic!("tampered inventory must fail before HTTP")
+        ).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 

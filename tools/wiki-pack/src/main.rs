@@ -32,6 +32,7 @@ fn usage() {
     println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
     println!("       wiki-pack audit-public-dump <private-source-dir> <project> <generation> <SHA256SUMS-sha256> <expected-ids> <expected-sha256> <namespace> <private-output-dir> <output-name> <max-compressed-bytes> <max-decoded-bytes>");
     println!("       wiki-pack fetch-public-inventory <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir>");
+    println!("       wiki-pack fetch-public-member <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -210,6 +211,39 @@ fn main() {
             if let Err(error) =
                 fetch_public_dump::run(identity[0], identity[1], identity[2], Path::new(&fields[3]))
             {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("fetch-public-member") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 6 {
+                eprintln!("fetch-public-member requires exactly six arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(identity) = [0usize, 1, 2, 4, 5]
+                .iter()
+                .map(|index| fields[*index].to_str())
+                .collect::<Option<Vec<_>>>()
+            else {
+                eprintln!("Member identity, index and limits must be UTF-8");
+                std::process::exit(2);
+            };
+            let (Ok(index), Ok(max_bytes)) =
+                (identity[3].parse::<usize>(), identity[4].parse::<u64>())
+            else {
+                eprintln!("Member index and compressed byte limit must be decimal integers");
+                std::process::exit(2);
+            };
+            if let Err(error) = fetch_public_dump::run_member(
+                identity[0],
+                identity[1],
+                identity[2],
+                Path::new(&fields[3]),
+                index,
+                max_bytes,
+            ) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
