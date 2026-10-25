@@ -656,27 +656,23 @@ mod tests {
         // Even though the first member's digest is wrong, missing or
         // unlisted late entries must fail during the cheap tree preflight.
         fs::write(root.join(first), b"corrupted-first").unwrap();
-        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
-            .unwrap_err();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap_err();
         assert!(error.contains("missing declared entries"), "{error}");
 
         fs::write(root.join(second), second_body).unwrap();
         fs::write(root.join(".abandoned.part"), b"partial").unwrap();
-        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
-            .unwrap_err();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap_err();
         assert!(error.contains("unlisted or duplicated file"), "{error}");
         fs::remove_file(root.join(".abandoned.part")).unwrap();
 
         fs::write(root.join(second), vec![0; 1025]).unwrap();
-        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
-            .unwrap_err();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap_err();
         assert!(error.contains("invalid compressed byte size"), "{error}");
 
         // Once structural problems are gone, the full pinned hash remains
         // mandatory; the corrupt first member must never pass.
         fs::write(root.join(second), second_body).unwrap();
-        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024)
-            .unwrap_err();
+        let error = verify_local_generation("enwiki", "2026-10-01", &pin, &root, 1024).unwrap_err();
         assert!(error.contains("DigestMismatch"), "{error}");
         fs::write(root.join(first), first_body).unwrap();
         assert_eq!(
