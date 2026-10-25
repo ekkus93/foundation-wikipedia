@@ -82,6 +82,31 @@ impl<I: Iterator<Item = io::Result<u64>>> Cursor<I> {
     }
 }
 
+/// Validate a separately pinned expected census before expensive source decoding.
+/// This uses the same sorted-ID, scope and page-count bounds as final auditing.
+pub fn validate_page_id_stream<I>(
+    scope: CensusScope<'_>,
+    input: I,
+) -> Result<usize, StreamCoverageError>
+where
+    I: IntoIterator<Item = io::Result<u64>>,
+{
+    if !valid_scope(scope) {
+        return Err(StreamCoverageError::InvalidCensus);
+    }
+    let mut cursor = Cursor {
+        input: input.into_iter(),
+        side: CensusSide::Expected,
+        previous: 0,
+        count: 0,
+    };
+    while cursor.next_id()?.is_some() {}
+    if cursor.count == 0 {
+        return Err(StreamCoverageError::InvalidCensus);
+    }
+    Ok(cursor.count)
+}
+
 fn record_missing(delta: &mut PageCoverageDelta, id: u64) {
     delta.missing_count += 1;
     if delta.missing_examples.len() < MAX_EXAMPLES {
