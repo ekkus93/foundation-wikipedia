@@ -69,7 +69,10 @@ fn partial_path(root: &Path, inventory: &PinnedInventory, index: usize) -> PathB
         index,
         member.sha256
     );
-    root.join(format!(".fw-resume-{:x}.part", Sha256::digest(identity.as_bytes())))
+    root.join(format!(
+        ".fw-resume-{:x}.part",
+        Sha256::digest(identity.as_bytes())
+    ))
 }
 
 fn open_private_partial(path: &Path, max_bytes: u64) -> Result<File, ResumeError> {
@@ -109,9 +112,7 @@ fn open_private_partial(path: &Path, max_bytes: u64) -> Result<File, ResumeError
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if opened.dev() != inspected.dev()
-            || opened.ino() != inspected.ino()
-            || opened.nlink() != 1
+        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1
         {
             return Err(ResumeError::UnsafeStaging);
         }
@@ -213,7 +214,10 @@ where
     }
     drop(output);
     let published = publish_full_partial(root, inventory, member_index, &partial, max_bytes);
-    if matches!(published, Err(ResumeError::Stage(StageWriteError::DigestMismatch))) {
+    if matches!(
+        published,
+        Err(ResumeError::Stage(StageWriteError::DigestMismatch))
+    ) {
         // A pinned checksum failure is not a resumable transient; remove the
         // poisoned prefix to allow a subsequent clean download.
         let _ = fs::remove_file(&partial);
@@ -232,7 +236,11 @@ impl InventoryCurl {
         max_bytes: u64,
     ) -> Result<u64, ResumeError> {
         stage_resumed_member_with(
-            inventory, member_index, root, max_bytes, MAX_RANGE_BYTES,
+            inventory,
+            member_index,
+            root,
+            max_bytes,
+            MAX_RANGE_BYTES,
             |start, length, budget| {
                 self.fetch_member_range(inventory, member_index, start, length, budget)
             },
@@ -253,11 +261,12 @@ mod tests {
         let filename = "enwiki-2026-10-01-p1p100.xml.bz2";
         let sums = format!("{:x}  {filename}\n", Sha256::digest(bytes));
         let pin = format!("{:x}", Sha256::digest(sums.as_bytes()));
-        let inventory = parse_pinned_inventory(
-            sums.as_bytes(), "enwiki", "2026-10-01", &pin,
-        ).unwrap();
+        let inventory =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &pin).unwrap();
         let root = std::env::temp_dir().join(format!(
-            "wiki-resume-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+            "wiki-resume-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
         #[cfg(unix)]
@@ -274,26 +283,46 @@ mod tests {
         let partial = partial_path(&root, &inventory, 0);
         let result = stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
             if start == 0 {
-                return Ok(VerifiedRange { total_bytes: 6, bytes: b"abc".to_vec() });
+                return Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"abc".to_vec(),
+                });
             }
             Err(RangeFetchError::IoFailure)
         });
-        assert!(matches!(result, Err(ResumeError::Transport(RangeFetchError::IoFailure))));
+        assert!(matches!(
+            result,
+            Err(ResumeError::Transport(RangeFetchError::IoFailure))
+        ));
         assert_eq!(fs::read(&partial).unwrap(), b"abc");
         assert!(!root.join("enwiki-2026-10-01-p1p100.xml.bz2").exists());
 
         let mut offsets = Vec::new();
-        assert_eq!(stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
-            offsets.push(start);
-            Ok(VerifiedRange { total_bytes: 6, bytes: b"def".to_vec() })
-        }).unwrap(), 6);
+        assert_eq!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
+                offsets.push(start);
+                Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"def".to_vec(),
+                })
+            })
+            .unwrap(),
+            6
+        );
         assert_eq!(offsets, [3]);
-        assert_eq!(fs::read(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap(), b"abcdef");
+        assert_eq!(
+            fs::read(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap(),
+            b"abcdef"
+        );
         assert!(!partial.exists());
 
-        assert_eq!(stage_resumed_member_with(&inventory, 0, &root, 64, 3, |_, _, _| {
-            panic!("verified completed member must be reusable offline")
-        }).unwrap(), 6);
+        assert_eq!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |_, _, _| {
+                panic!("verified completed member must be reusable offline")
+            })
+            .unwrap(),
+            6
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -303,12 +332,21 @@ mod tests {
         let partial = partial_path(&root, &inventory, 0);
         let result = stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
             if start == 0 {
-                Ok(VerifiedRange { total_bytes: 6, bytes: b"abc".to_vec() })
+                Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"abc".to_vec(),
+                })
             } else {
-                Ok(VerifiedRange { total_bytes: 6, bytes: b"xyz".to_vec() })
+                Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"xyz".to_vec(),
+                })
             }
         });
-        assert!(matches!(result, Err(ResumeError::Stage(StageWriteError::DigestMismatch))));
+        assert!(matches!(
+            result,
+            Err(ResumeError::Stage(StageWriteError::DigestMismatch))
+        ));
         assert!(!partial.exists());
         assert!(!root.join("enwiki-2026-10-01-p1p100.xml.bz2").exists());
         fs::remove_dir_all(root).unwrap();
@@ -320,9 +358,15 @@ mod tests {
         let partial = partial_path(&root, &inventory, 0);
         let result = stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
             if start == 0 {
-                Ok(VerifiedRange { total_bytes: 6, bytes: b"abc".to_vec() })
+                Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"abc".to_vec(),
+                })
             } else {
-                Ok(VerifiedRange { total_bytes: 7, bytes: b"def".to_vec() })
+                Ok(VerifiedRange {
+                    total_bytes: 7,
+                    bytes: b"def".to_vec(),
+                })
             }
         });
         assert!(matches!(result, Err(ResumeError::TotalChanged)));
