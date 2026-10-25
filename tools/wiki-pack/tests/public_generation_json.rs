@@ -64,10 +64,21 @@ fn cli_json_receipt_requires_all_pinned_members_and_preserves_human_output() {
     let stdout = String::from_utf8(good.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1);
     let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["schema_version"], 2);
     assert_eq!(json["member_count"], 1);
     assert_eq!(json["verified_compressed_bytes"], body.len() as u64);
     assert_eq!(json["inventory_sha256"], pin);
+    assert_eq!(json["verified_members"].as_array().unwrap().len(), 1);
+    assert_eq!(json["verified_members"][0]["index"], 0);
+    assert_eq!(json["verified_members"][0]["relative_path"], name);
+    assert_eq!(
+        json["verified_members"][0]["sha256"],
+        format!("{:x}", Sha256::digest(body))
+    );
+    assert_eq!(
+        json["verified_members"][0]["verified_compressed_bytes"],
+        body.len() as u64
+    );
     assert_eq!(json["trust"]["publisher_authenticated"], false);
     assert_eq!(json["trust"]["mandatory_offline_media_complete"], false);
     assert_eq!(json["trust"]["pack_installed"], false);
