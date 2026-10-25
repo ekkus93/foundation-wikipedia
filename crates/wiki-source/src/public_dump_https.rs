@@ -22,6 +22,71 @@ use crate::public_dump_verify::{verify_dump_member, DumpVerifyError};
 
 pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
+/// Bound one resumed HTTPS transfer to 2 MiB of RAM, regardless of headers.
+pub const MAX_RANGE_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedRange {
+    pub total_bytes: u64,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RangeFetchError {
+    InvalidMember,
+    InvalidRange,
+    SpawnFailed,
+    IoFailure,
+    ResponseTooLarge,
+    HttpStatus(u16),
+    InvalidContentRange,
+}
+
+/// Require exactly one canonical RFC 7233 byte range for this request.
+fn parse_exact_content_range(
+    header: &str,
+    requested_start: u64,
+    requested_end: u64,
+    byte_budget: u64,
+    actual_size: usize,
+) -> Result<u64, RangeFetchError> {
+    let (unit, numbers) = header
+        .split_once(' ')
+        .ok_or(RangeFetchError::InvalidContentRange)?;
+    if unit != "bytes" {
+        return Err(RangeFetchError::InvalidContentRange);
+    }
+    let (range, total) = numbers
+        .split_once('/')
+        .ok_or(RangeFetchError::InvalidContentRange)?;
+    let (start, end) = range
+        .split_once('-')
+        .ok_or(RangeFetchError::InvalidContentRange)?;
+    // Parsing via u64 rules out wildcards, multiple ranges, negative offsets
+    // and duplicate/injected Content-Range strings.
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| RangeFetchError::InvalidContentRange)?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| RangeFetchError::InvalidContentRange)?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|_| RangeFetchError::InvalidContentRange)?;
+    if start != requested_start
+        || end < start
+        || end > requested_end
+        || total == 0
+        || total > byte_budget
+        || end >= total
+        || (end != requested_end && end != total - 1)
+        || end - start + 1 != actual_size as u64
+    {
+        return Err(RangeFetchError::InvalidContentRange);
+    }
+    Ok(total)
+}
+
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum InventoryFetchError {
@@ -320,6 +385,130 @@ impl InventoryCurl {
         };
         stage_pinned_member(root, inventory, member_index, &mut stream, max_bytes)
             .map_err(MemberFetchError::Stage)
+    }
+
+    /// Fetch one bounded, explicit HTTP byte range for a checksum-declared
+    /// member. Curl must report HTTP 206 and the exact Content-Range. The
+    /// returned bytes are NOT individually authenticated: the full shard's
+    /// independently pinned SHA-256 must still be verified before publishing.
+    /// Requires curl 7.84+ for the %header{content-range} write-out variable.
+    pub fn fetch_member_range(
+        &self,
+        inventory: &PinnedInventory,
+        member_index: usize,
+        start: u64,
+        chunk_bytes: usize,
+        byte_budget: u64,
+    ) -> Result<VerifiedRange, RangeFetchError> {
+        if chunk_bytes == 0
+            || chunk_bytes > MAX_RANGE_BYTES
+            || byte_budget == 0
+            || byte_budget > (1_u64 << 40)
+            || start >= byte_budget
+        {
+            return Err(RangeFetchError::InvalidRange);
+        }
+        let url = inventory
+            .official_member_url(member_index)
+            .ok_or(RangeFetchError::InvalidMember)?;
+        let end = start
+            .checked_add(chunk_bytes as u64 - 1)
+            .filter(|end| *end < byte_budget)
+            .ok_or(RangeFetchError::InvalidRange)?;
+        let range = format!("{start}-{end}");
+        let mut child = Command::new(&self.executable)
+            .args([
+                "-q",
+                "--silent",
+                "--show-error",
+                "--globoff",
+                "--user-agent",
+                "FoundationWikipedia/0.1 (resumable dump member)",
+                "--header",
+                "Accept: application/octet-stream",
+                "--header",
+                "Accept-Encoding: identity",
+                "--proto",
+                "=https",
+                "--max-redirs",
+                "0",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "180",
+                "--max-filesize",
+                &chunk_bytes.to_string(),
+                "--range",
+                &range,
+                "--output",
+                "-",
+                "--write-out",
+                "%{stderr}\\nFW_DUMP_HTTP_CODE:%{http_code}\\nFW_DUMP_CONTENT_RANGE:%header{content-range}\\n",
+                "--",
+                &url,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| RangeFetchError::SpawnFailed)?;
+        let stderr = child.stderr.take().ok_or(RangeFetchError::IoFailure)?;
+        let reader = drain_member_stderr(stderr);
+        let mut stdout = child.stdout.take().ok_or(RangeFetchError::IoFailure)?;
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let n = match stdout.read(&mut buffer) {
+                Ok(n) => n,
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(RangeFetchError::IoFailure);
+                }
+            };
+            if n == 0 {
+                break;
+            }
+            if n > chunk_bytes.saturating_sub(bytes.len()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(RangeFetchError::ResponseTooLarge);
+            }
+            bytes.extend_from_slice(&buffer[..n]);
+        }
+        drop(stdout);
+        let status = child.wait().map_err(|_| RangeFetchError::IoFailure)?;
+        let diagnostics = reader
+            .join()
+            .map_err(|_| RangeFetchError::IoFailure)?
+            .map_err(|_| RangeFetchError::IoFailure)?;
+        let diagnostics = String::from_utf8_lossy(&diagnostics);
+        let http = diagnostics
+            .lines()
+            .filter_map(|line| line.strip_prefix("FW_DUMP_HTTP_CODE:"))
+            .last()
+            .and_then(|code| code.parse::<u16>().ok());
+        if let Some(code) = http {
+            if code != 206 && code != 0 {
+                return Err(RangeFetchError::HttpStatus(code));
+            }
+        }
+        if !status.success() || http != Some(206) {
+            return Err(RangeFetchError::InvalidContentRange);
+        }
+        let header = diagnostics
+            .lines()
+            .filter_map(|line| line.strip_prefix("FW_DUMP_CONTENT_RANGE:"))
+            .last()
+            .ok_or(RangeFetchError::InvalidContentRange)?;
+        let total = parse_exact_content_range(
+            header, start, end, byte_budget, bytes.len(),
+        )?;
+        Ok(VerifiedRange {
+            total_bytes: total,
+            bytes,
+        })
     }
 
     fn fetch_raw(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, InventoryFetchError> {
@@ -640,6 +829,60 @@ mod tests {
         ));
         fs::remove_file(exe).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn member_ranges_require_exact_http206_content_range_and_bounded_body() {
+        let raw = inventory_bytes();
+        let sha = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let inventory = parse_origin_checked_pinned_inventory(
+            raw.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &sha,
+        )
+        .unwrap();
+        let (client, exe) = fake_curl(
+            "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\\n' >&2",
+        );
+        let response = client.fetch_member_range(&inventory, 0, 0, 4, 100).unwrap();
+        assert_eq!(response.bytes, b"abcd");
+        assert_eq!(response.total_bytes, 6);
+        fs::remove_file(exe).unwrap();
+
+        for (label, script) in [
+            ("ignored range", "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:200\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\\n' >&2"),
+            ("wrong start", "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 1-4/6\\n' >&2"),
+            ("wrong size", "printf 'abc'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\\n' >&2"),
+            ("wrong total", "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/999\\n' >&2"),
+            ("invalid suffix", "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/*\\n' >&2"),
+            ("redirect", "printf 'abcd'; printf 'FW_DUMP_HTTP_CODE:302\\n' >&2"),
+            ("early short", "printf 'ab'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-1/6\\n' >&2"),
+            ("missing headers", "printf 'abcd'"),
+        ] {
+            let (client, exe) = fake_curl(script);
+            let result = client.fetch_member_range(&inventory, 0, 0, 4, 100);
+            assert!(result.is_err(), "{label}: {result:?}");
+            fs::remove_file(exe).unwrap();
+        }
+
+        let (client, exe) = fake_curl(
+            "printf 'abcdef'; printf 'FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\\n' >&2",
+        );
+        assert_eq!(
+            client.fetch_member_range(&inventory, 0, 0, 4, 100),
+            Err(RangeFetchError::ResponseTooLarge)
+        );
+        assert_eq!(
+            client.fetch_member_range(&inventory, 2, 0, 4, 100),
+            Err(RangeFetchError::InvalidMember)
+        );
+        assert_eq!(
+            client.fetch_member_range(&inventory, 0, 100, 4, 100),
+            Err(RangeFetchError::InvalidRange)
+        );
+        fs::remove_file(exe).unwrap();
     }
 
     #[test]
