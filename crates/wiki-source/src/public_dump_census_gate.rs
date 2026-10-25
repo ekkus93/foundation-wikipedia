@@ -679,10 +679,11 @@ mod tests {
             );
             assert!(matches!(
                 result,
-                Err(VerifiedCensusStageError::Audit(CensusGateError::InvalidDigest))
-                    | Err(VerifiedCensusStageError::Audit(
-                        CensusGateError::ExpectedDigestMismatch
-                    ))
+                Err(VerifiedCensusStageError::Audit(
+                    CensusGateError::InvalidDigest
+                )) | Err(VerifiedCensusStageError::Audit(
+                    CensusGateError::ExpectedDigestMismatch
+                ))
             ));
             assert!(!root.join(filename).exists());
         }
