@@ -60,17 +60,26 @@ fn open_regular_bounded(path: &Path, max_bytes: u64) -> io::Result<File> {
             continue;
         }
         if fs::symlink_metadata(ancestor)?.file_type().is_symlink() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "symlink in source path"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "symlink in source path",
+            ));
         }
     }
     let inspected = fs::symlink_metadata(path)?;
     if !inspected.is_file() || inspected.len() == 0 || inspected.len() > max_bytes {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe source member size or type"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsafe source member size or type",
+        ));
     }
     let file = File::open(path)?;
     let opened = file.metadata()?;
     if !opened.is_file() || opened.len() != inspected.len() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "source member changed at open"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source member changed at open",
+        ));
     }
     #[cfg(unix)]
     {
@@ -80,7 +89,10 @@ fn open_regular_bounded(path: &Path, max_bytes: u64) -> io::Result<File> {
             || inspected.nlink() != 1
             || opened.nlink() != 1
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "source member inode/link changed"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source member inode/link changed",
+            ));
         }
     }
     Ok(file)
@@ -103,10 +115,8 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
     if expected.starts_with(&source) || expected.starts_with(&output) {
         return Err("expected census must be outside both source and output directories".into());
     }
-    let mut inventory_file = open_regular_bounded(
-        &source.join("SHA256SUMS"),
-        MAX_INVENTORY_BYTES,
-    ).map_err(|error| format!("cannot open pinned SHA256SUMS: {error}"))?;
+    let mut inventory_file = open_regular_bounded(&source.join("SHA256SUMS"), MAX_INVENTORY_BYTES)
+        .map_err(|error| format!("cannot open pinned SHA256SUMS: {error}"))?;
     let mut raw = Vec::new();
     inventory_file
         .by_ref()
@@ -121,7 +131,8 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
         config.project,
         config.generation,
         config.inventory_sha256,
-    ).map_err(|error| format!("pinned inventory rejected: {error:?}"))?;
+    )
+    .map_err(|error| format!("pinned inventory rejected: {error:?}"))?;
     let (path, delta) = stage_and_audit_native_bzip2_census(
         &output,
         config.output_name,
@@ -134,7 +145,8 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
             max_decoded_bytes: config.max_decoded_bytes,
         },
         |name| open_regular_bounded(&source.join(name), config.max_compressed_bytes),
-    ).map_err(|error| format!("native bzip2/XML census audit rejected: {error:?}"))?;
+    )
+    .map_err(|error| format!("native bzip2/XML census audit rejected: {error:?}"))?;
     println!("Native bzip2/XML member checks and observed page-ID census: PASSED");
     println!("Exact observed/expected page IDs: {}", delta.observed_count);
     println!("Staged audited census: {}", path.display());
@@ -218,23 +230,45 @@ mod tests {
         assert_eq!(run(&options).unwrap(), 2);
         assert_eq!(fs::read(output.join("observed.ids")).unwrap(), b"1\n201\n");
         assert!(run(&options).is_err(), "never overwrite an existing output");
-        assert!(run(&NativeDumpAudit { output_name: "nested/escape.ids", ..options }).is_err());
-        assert!(run(&NativeDumpAudit { expected_sha256: &"0".repeat(64), output_name: "bad-pin.ids", ..options }).is_err());
+        assert!(run(&NativeDumpAudit {
+            output_name: "nested/escape.ids",
+            ..options
+        })
+        .is_err());
+        assert!(run(&NativeDumpAudit {
+            expected_sha256: &"0".repeat(64),
+            output_name: "bad-pin.ids",
+            ..options
+        })
+        .is_err());
         assert!(!output.join("bad-pin.ids").exists());
         fs::write(&expected, b"1\n202\n").unwrap();
         let changed_expected = format!("{:x}", Sha256::digest(b"1\n202\n"));
-        assert!(run(&NativeDumpAudit { expected_sha256: &changed_expected, output_name: "wrong-ids.ids", ..options }).is_err());
+        assert!(run(&NativeDumpAudit {
+            expected_sha256: &changed_expected,
+            output_name: "wrong-ids.ids",
+            ..options
+        })
+        .is_err());
         assert!(!output.join("wrong-ids.ids").exists());
         fs::write(&expected, b"1\n201\n").unwrap();
         fs::write(source.join(names[1]), b"corrupt member").unwrap();
-        assert!(run(&NativeDumpAudit { output_name: "bad-member.ids", ..options }).is_err());
+        assert!(run(&NativeDumpAudit {
+            output_name: "bad-member.ids",
+            ..options
+        })
+        .is_err());
         assert!(!output.join("bad-member.ids").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
             fs::remove_file(source.join(names[1])).unwrap();
             symlink(source.join(names[0]), source.join(names[1])).unwrap();
-            assert!(run(&NativeDumpAudit { output_name: "symlink.ids", ..options }).is_err());
+            assert!(run(&NativeDumpAudit {
+                output_name: "symlink.ids",
+                ..options
+            })
+            .is_err());
             assert!(!output.join("symlink.ids").exists());
         }
         assert_eq!(fs::read_dir(&output).unwrap().count(), 1);
