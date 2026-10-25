@@ -1,6 +1,7 @@
 //! Verification and provisional custom export of unsigned FWPACK01 envelopes.
 //! These commands do not install packs or verify publisher signatures.
 mod audit_diagnostic;
+mod audit_public_dump;
 mod css_graph_diagnostic;
 mod curated_catalog;
 mod preview_topic;
@@ -28,6 +29,7 @@ fn usage() {
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
     println!("       wiki-pack inventory-css-graph <supplied-css-graph.json>");
+    println!("       wiki-pack audit-public-dump <private-source-dir> <project> <generation> <SHA256SUMS-sha256> <expected-ids> <expected-sha256> <namespace> <private-output-dir> <output-name> <max-compressed-bytes> <max-decoded-bytes>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -188,6 +190,48 @@ fn main() {
     let mut args = env::args_os().skip(1);
     match args.next().as_deref().and_then(OsStr::to_str) {
         None | Some("--help" | "-h") if args.next().is_none() => usage(),
+        Some("audit-public-dump") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 11 {
+                eprintln!("audit-public-dump requires exactly eleven arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let identity = [1usize, 2, 3, 5, 6, 8, 9, 10]
+                .iter()
+                .map(|index| fields[*index].to_str())
+                .collect::<Option<Vec<_>>>();
+            let Some(identity) = identity else {
+                eprintln!("Dump identity, digests, output name and limits must be UTF-8");
+                std::process::exit(2);
+            };
+            let namespace = identity[4].parse::<i32>();
+            let max_compressed = identity[6].parse::<u64>();
+            let max_decoded = identity[7].parse::<u64>();
+            let (Ok(namespace), Ok(max_compressed_bytes), Ok(max_decoded_bytes)) =
+                (namespace, max_compressed, max_decoded)
+            else {
+                eprintln!("Namespace and byte limits must be decimal integers");
+                std::process::exit(2);
+            };
+            let options = audit_public_dump::NativeDumpAudit {
+                source_root: Path::new(&fields[0]),
+                project: identity[0],
+                generation: identity[1],
+                inventory_sha256: identity[2],
+                expected_path: Path::new(&fields[4]),
+                expected_sha256: identity[3],
+                namespace,
+                output_root: Path::new(&fields[7]),
+                output_name: identity[5],
+                max_compressed_bytes,
+                max_decoded_bytes,
+            };
+            if let Err(error) = audit_public_dump::run(&options) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         Some("audit-diagnostic") => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 6 && fields.len() != 7 {
