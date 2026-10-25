@@ -646,7 +646,7 @@ mod tests {
         let first_body = b"original-first";
         let second_body = b"original-second";
         let raw = format!(
-            "{:x}  {first}\\n{:x}  {second}\\n",
+            "{:x}  {first}\n{:x}  {second}\n",
             Sha256::digest(first_body),
             Sha256::digest(second_body),
         );
