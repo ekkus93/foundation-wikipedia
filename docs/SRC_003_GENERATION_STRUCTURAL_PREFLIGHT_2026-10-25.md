@@ -19,3 +19,10 @@ This is an acquisition integrity/efficiency improvement, **not** publisher
 authentication, independent Wikimedia completeness, revision-matched
 rendering, required offline visuals, or desktop/Android acceptance.
 `SRC-003` remains unchecked.
+
+## Exact-head qualification
+
+- Implementation and test corrections culminated at exact source SHA `32bc011824980d279b3cc428a51427be4fbb1e79`.
+- Rust workspace (format, Clippy and unit tests): [40204441763](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40204441763) — passed.
+- Platform shells: [40204441824](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40204441824) — passed.
+- Prior corrected fixture source `048385cd8f98d0219c62e2701bbbd2a9553d4386` failed rustfmt [40204160605](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40204160605); repaired before qualification.
