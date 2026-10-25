@@ -174,14 +174,20 @@ where
     let partial = partial_path(root, inventory, member_index);
     let mut output = open_private_partial(&partial, max_bytes)?;
     let mut offset = output.metadata().map_err(ResumeError::Io)?.len();
-    if offset > 0 {
-        // A crash may occur after the final chunk was synced but before the
-        // verified hard-link publication. Recover without any HTTP request.
-        match publish_full_partial(root, inventory, member_index, &partial, max_bytes) {
-            Ok(bytes) => return Ok(bytes),
-            Err(ResumeError::Stage(StageWriteError::DigestMismatch)) => {}
-            Err(error) => return Err(error),
+    // Do not copy and hash a potentially terabyte-sized incomplete prefix
+    // into a throwaway publication candidate on every retry. Only attempt
+    // full publication when the HTTP server confirms the prefix reached EOF
+    // (416) or the caller's maximum byte budget is already exhausted.
+    if offset == max_bytes {
+        drop(output);
+        let published = publish_full_partial(root, inventory, member_index, &partial, max_bytes);
+        if matches!(
+            published,
+            Err(ResumeError::Stage(StageWriteError::DigestMismatch))
+        ) {
+            let _ = fs::remove_file(&partial);
         }
+        return published;
     }
     let mut total = None;
     loop {
@@ -189,7 +195,25 @@ where
             return Err(ResumeError::InvalidRange);
         }
         let length = (max_bytes - offset).min(chunk_bytes as u64) as usize;
-        let response = fetch(offset, length, max_bytes).map_err(ResumeError::Transport)?;
+        let response = match fetch(offset, length, max_bytes) {
+            Ok(response) => response,
+            Err(RangeFetchError::HttpStatus(416)) if offset > 0 => {
+                // A fully synced partial may survive a crash immediately
+                // before atomic publication. Only its full pinned digest,
+                // never HTTP 416 alone, can establish completion.
+                drop(output);
+                let published =
+                    publish_full_partial(root, inventory, member_index, &partial, max_bytes);
+                if matches!(
+                    published,
+                    Err(ResumeError::Stage(StageWriteError::DigestMismatch))
+                ) {
+                    let _ = fs::remove_file(&partial);
+                }
+                return published;
+            }
+            Err(error) => return Err(ResumeError::Transport(error)),
+        };
         if response.total_bytes <= offset
             || response.total_bytes > max_bytes
             || response.bytes.is_empty()
@@ -323,6 +347,52 @@ mod tests {
             .unwrap(),
             6
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resumed_prefix_is_not_copied_until_complete_and_416_only_recovers_valid_digest() {
+        let (root, inventory) = fixture();
+        let partial = partial_path(&root, &inventory, 0);
+        fs::write(&partial, b"abc").unwrap();
+        let mut attempts = Vec::new();
+        assert_eq!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
+                attempts.push(start);
+                Ok(VerifiedRange {
+                    total_bytes: 6,
+                    bytes: b"def".to_vec(),
+                })
+            })
+            .unwrap(),
+            6
+        );
+        assert_eq!(attempts, [3]);
+        assert!(!partial.exists());
+
+        fs::remove_file(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
+        fs::write(&partial, b"abcdef").unwrap();
+        assert_eq!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
+                assert_eq!(start, 6);
+                Err(RangeFetchError::HttpStatus(416))
+            })
+            .unwrap(),
+            6
+        );
+        assert!(!partial.exists());
+
+        fs::remove_file(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
+        fs::write(&partial, b"abcxyz").unwrap();
+        assert!(matches!(
+            stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
+                assert_eq!(start, 6);
+                Err(RangeFetchError::HttpStatus(416))
+            }),
+            Err(ResumeError::Stage(StageWriteError::DigestMismatch))
+        ));
+        assert!(!partial.exists());
+        assert!(!root.join("enwiki-2026-10-01-p1p100.xml.bz2").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
