@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn official_member_urls_are_bound_to_digest_pinned_inventory_members() {
-        let first = "nested/enwiki-2026-10-01-p1p100.xml.bz2";
-        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "nested/enwiki-2026-10-01-p101p200.xml.bz2";
         let raw = format!(
-            "{}  {first}\\n{}  {second}\\n",
+            "{}  {first}\n{}  {second}\n",
             "a".repeat(64),
             "b".repeat(64)
         );
