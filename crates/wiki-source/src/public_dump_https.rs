@@ -468,7 +468,6 @@ mod tests {
 
     #[test]
     fn member_stream_publishes_only_successful_digest_pinned_http200() {
-        use std::io::Cursor;
         let body = b"compressed fixture member bytes";
         let name = "enwiki-2026-10-01-p1p100.xml.bz2";
         let sums = format!("{:x}  {name}\n", Sha256::digest(body));
@@ -500,6 +499,7 @@ mod tests {
         assert_eq!(fs::read(root.join(name)).unwrap(), body);
         fs::remove_file(exe).unwrap();
 
+        fs::remove_file(root.join(name)).unwrap();
         for (label, script) in [
             ("redirect", "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:302\n' >&2"),
             ("failed", "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2; exit 2"),
@@ -507,7 +507,6 @@ mod tests {
             ("bad-checksum", "printf 'tampered'; printf 'FW_DUMP_HTTP_CODE:200\n' >&2"),
         ] {
             let (client, exe) = fake_curl(script);
-            fs::remove_file(root.join(name)).unwrap();
             let output = client.stage_verified_member(&inventory, 0, &root, 256);
             assert!(output.is_err(), "{label}: {output:?}");
             assert!(!root.join(name).exists(), "{label}");
@@ -527,7 +526,6 @@ mod tests {
         ));
         fs::remove_file(exe).unwrap();
         fs::remove_dir_all(root).unwrap();
-        let _ = Cursor::new(body);
     }
 
     #[test]
