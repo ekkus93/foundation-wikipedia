@@ -7,7 +7,7 @@
 //! forbidden. Android requires a separate platform transport.
 
 use std::collections::VecDeque;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -18,6 +18,7 @@ use crate::public_dump_pinned::{
     PinnedInventoryError,
 };
 use crate::public_dump_stage::StageWriteError;
+use crate::public_dump_verify::{verify_dump_member, DumpVerifyError};
 
 pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
@@ -56,6 +57,7 @@ pub enum MemberFetchError {
     UnsafeRoot,
     SpawnFailed,
     Stage(StageWriteError),
+    Existing(DumpVerifyError),
 }
 
 /// The entire HTTP process must exit successfully with status 200 before
@@ -129,6 +131,81 @@ fn drain_member_stderr(
     })
 }
 
+/// A complete private shard may be reused only after its full SHA-256 is
+/// rechecked. Occupied but unsafe or corrupted paths never trigger downloads.
+/// The caller must exclude untrusted concurrent writers from the staging tree.
+fn verified_existing_member(
+    inventory: &PinnedInventory,
+    member_index: usize,
+    root: &Path,
+    max_bytes: u64,
+) -> Result<Option<u64>, MemberFetchError> {
+    let member = inventory
+        .members()
+        .get(member_index)
+        .ok_or(MemberFetchError::InvalidMember)?;
+    let relative = Path::new(&member.relative_path);
+    let mut parent = root.to_path_buf();
+    if let Some(directory) = relative.parent() {
+        for component in directory.components() {
+            parent.push(component);
+            let metadata = match fs::symlink_metadata(&parent) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(_) => return Err(MemberFetchError::UnsafeRoot),
+            };
+            if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+                return Err(MemberFetchError::UnsafeRoot);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(MemberFetchError::UnsafeRoot);
+                }
+            }
+        }
+    }
+    let target = root.join(relative);
+    let inspected = match fs::symlink_metadata(&target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(MemberFetchError::UnsafeRoot),
+    };
+    if !inspected.file_type().is_file() || inspected.file_type().is_symlink() {
+        return Err(MemberFetchError::UnsafeRoot);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if inspected.nlink() != 1 {
+            return Err(MemberFetchError::UnsafeRoot);
+        }
+    }
+    let mut file = File::open(&target).map_err(|_| MemberFetchError::UnsafeRoot)?;
+    let opened = file.metadata().map_err(|_| MemberFetchError::UnsafeRoot)?;
+    if !opened.is_file() || opened.len() != inspected.len() {
+        return Err(MemberFetchError::UnsafeRoot);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != inspected.dev()
+            || opened.ino() != inspected.ino()
+            || opened.nlink() != 1
+        {
+            return Err(MemberFetchError::UnsafeRoot);
+        }
+    }
+    let bytes = verify_dump_member(&mut file, member, max_bytes)
+        .map_err(MemberFetchError::Existing)?;
+    let after = file.metadata().map_err(|_| MemberFetchError::UnsafeRoot)?;
+    if after.len() != opened.len() {
+        return Err(MemberFetchError::UnsafeRoot);
+    }
+    Ok(Some(bytes))
+}
+
 impl InventoryCurl {
     pub fn new() -> Self {
         Self {
@@ -163,7 +240,8 @@ impl InventoryCurl {
     /// Stream exactly one member declared by the pinned inventory from its
     /// canonical official HTTPS URL into private, digest-verified staging.
     /// Source bytes are never published before curl exits with HTTP 200.
-    /// This is not resumable transfer, independent provenance or a full dump.
+    /// Verified cached members are reused without HTTP. Partial downloads are
+    /// not resumable, and this is not publisher provenance or a full dump.
     pub fn stage_verified_member(
         &self,
         inventory: &PinnedInventory,
@@ -198,6 +276,9 @@ impl InventoryCurl {
             if root_meta.permissions().mode() & 0o077 != 0 {
                 return Err(MemberFetchError::UnsafeRoot);
             }
+        }
+        if let Some(bytes) = verified_existing_member(inventory, member_index, root, max_bytes)? {
+            return Ok(bytes);
         }
         // -q first disables .curlrc; never use -k, -L or user-supplied URLs.
         let mut child = Command::new(&self.executable)
@@ -499,6 +580,22 @@ mod tests {
         assert_eq!(fs::read(root.join(name)).unwrap(), body);
         fs::remove_file(exe).unwrap();
 
+        // Valid cache hits do not spawn curl. Corrupted occupied paths cannot
+        // be silently overwritten, even when a download would be possible.
+        let (offline_client, offline_exe) = fake_curl("exit 99");
+        assert_eq!(
+            offline_client
+                .stage_verified_member(&inventory, 0, &root, 256)
+                .unwrap(),
+            body.len() as u64
+        );
+        fs::write(root.join(name), b"corrupted").unwrap();
+        assert!(matches!(
+            offline_client.stage_verified_member(&inventory, 0, &root, 256),
+            Err(MemberFetchError::Existing(DumpVerifyError::DigestMismatch))
+        ));
+        assert_eq!(fs::read(root.join(name)).unwrap(), b"corrupted");
+        fs::remove_file(offline_exe).unwrap();
         fs::remove_file(root.join(name)).unwrap();
         for (label, script) in [
             ("redirect", "printf 'compressed fixture member bytes'; printf 'FW_DUMP_HTTP_CODE:302\n' >&2"),
