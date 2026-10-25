@@ -7,7 +7,7 @@
 //! The staging directory must remain private from concurrent untrusted writes.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -188,7 +188,7 @@ where
         if offset >= max_bytes {
             return Err(ResumeError::InvalidRange);
         }
-        let length = chunk_bytes.min((max_bytes - offset) as usize);
+        let length = (max_bytes - offset).min(chunk_bytes as u64) as usize;
         let response = fetch(offset, length, max_bytes).map_err(ResumeError::Transport)?;
         if response.total_bytes <= offset
             || response.total_bytes > max_bytes
