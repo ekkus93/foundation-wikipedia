@@ -745,29 +745,35 @@ mod tests {
         // observed mainspace page before finishing the compressed member.
         let mut excess = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         let result = excess.decode_native_bzip2_member_with_expected_count(
-            Cursor::new(&compressed), 4096, 4096, 0,
+            Cursor::new(&compressed),
+            4096,
+            4096,
+            0,
         );
         assert!(
             matches!(
                 result,
-                Err(NativeCensusError::Census(PinnedCensusError::MemberCensusMismatch {
-                    expected_count: 0,
-                    observed_count: 1,
-                    ..
-                }))
+                Err(NativeCensusError::Census(
+                    PinnedCensusError::MemberCensusMismatch {
+                        expected_count: 0,
+                        observed_count: 1,
+                        ..
+                    }
+                ))
             ),
             "unexpected count-overflow outcome: {result:?}"
         );
         assert!(excess.last_member_census_receipt().is_none());
-        assert!(matches!(excess.finish(), Err(PinnedCensusError::InvalidState)));
+        assert!(matches!(
+            excess.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
 
         // Counts apply only to the selected namespace. A mainspace page is
         // not an unexpected page in a namespace-1-only census.
         let mut other_namespace = PinnedObservedCensus::new(&pinned, Vec::new(), 1).unwrap();
         other_namespace
-            .decode_native_bzip2_member_with_expected_count(
-                Cursor::new(&compressed), 4096, 4096, 0,
-            )
+            .decode_native_bzip2_member_with_expected_count(Cursor::new(&compressed), 4096, 4096, 0)
             .unwrap();
         let (bytes, count) = other_namespace.finish().unwrap();
         assert_eq!(bytes, b"");
