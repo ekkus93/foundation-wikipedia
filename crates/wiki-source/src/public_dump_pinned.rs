@@ -42,6 +42,28 @@ impl PinnedInventory {
     pub fn inventory_sha256(&self) -> &str {
         &self.inventory_sha256
     }
+
+    /// The canonical HTTPS checksum publication location for this validated
+    /// generation. The URL is a source-location hint, not TLS verification,
+    /// publisher authentication or evidence of a complete dump.
+    pub fn official_inventory_url(&self) -> String {
+        format!("{}/SHA256SUMS", self.official_export_base_url())
+    }
+
+    /// The official download location for exactly one checksum-declared member.
+    /// A caller cannot substitute an arbitrary filename or digest. The
+    /// downloaded bytes still MUST be checked against members()[index].sha256.
+    pub fn official_member_url(&self, index: usize) -> Option<String> {
+        let member = self.members.get(index)?;
+        Some(format!("{}/{}", self.official_export_base_url(), member.relative_path))
+    }
+
+    fn official_export_base_url(&self) -> String {
+        format!(
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/{}/{}/xml/bzip2",
+            self.project, self.date
+        )
+    }
 }
 
 /// The expected digest must come from a separately authenticated source.
@@ -191,6 +213,34 @@ pub fn verify_pinned_staged_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_member_urls_are_bound_to_digest_pinned_inventory_members() {
+        let first = "nested/enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let raw = format!(
+            "{}  {first}\\n{}  {second}\\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        );
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let inventory =
+            parse_pinned_inventory(raw.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+        let base =
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2";
+        assert_eq!(inventory.official_inventory_url(), format!("{base}/SHA256SUMS"));
+        assert_eq!(
+            inventory.official_member_url(0).as_deref(),
+            Some(format!("{base}/{first}").as_str())
+        );
+        assert_eq!(
+            inventory.official_member_url(1).as_deref(),
+            Some(format!("{base}/{second}").as_str())
+        );
+        assert_eq!(inventory.official_member_url(2), None);
+        assert_eq!(inventory.members()[0].sha256, "a".repeat(64));
+        assert_eq!(inventory.members()[1].sha256, "b".repeat(64));
+    }
 
     #[test]
     fn binds_exact_publication_bytes_and_generation() {
