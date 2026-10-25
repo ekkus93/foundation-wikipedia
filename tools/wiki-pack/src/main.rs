@@ -36,7 +36,7 @@ fn usage() {
     println!("       wiki-pack fetch-public-member-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
     println!("       wiki-pack fetch-public-members <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-members-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
-    println!("       wiki-pack verify-public-members <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
+    println!("       wiki-pack verify-public-members [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -306,9 +306,11 @@ fn main() {
             }
         }
         Some("verify-public-members") => {
-            let fields: Vec<OsString> = args.collect();
+            let supplied: Vec<OsString> = args.collect();
+            let json = supplied.first().is_some_and(|value| value == "--json");
+            let fields = if json { &supplied[1..] } else { &supplied[..] };
             if fields.len() != 5 {
-                eprintln!("verify-public-members requires exactly five arguments");
+                eprintln!("verify-public-members requires five arguments, optionally prefixed with --json");
                 usage();
                 std::process::exit(2);
             }
@@ -324,13 +326,24 @@ fn main() {
                 eprintln!("Compressed byte limit must be a decimal integer");
                 std::process::exit(2);
             };
-            if let Err(error) = fetch_public_dump::verify_public_members(
-                identity[0],
-                identity[1],
-                identity[2],
-                Path::new(&fields[3]),
-                max_bytes,
-            ) {
+            let result = if json {
+                fetch_public_dump::verify_public_members_json(
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    max_bytes,
+                )
+            } else {
+                fetch_public_dump::verify_public_members(
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    max_bytes,
+                )
+            };
+            if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

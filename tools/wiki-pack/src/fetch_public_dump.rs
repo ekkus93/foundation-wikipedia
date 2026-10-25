@@ -318,6 +318,66 @@ pub fn verify_public_members(
     Ok(())
 }
 
+/// Deterministic machine-readable local integrity receipt for acquisition
+/// automation. This is NOT a publisher signature, an authenticated census,
+/// an installable pack, or a rendering/media-completeness attestation.
+fn verified_generation_json(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+) -> Result<String, String> {
+    let (member_count, verified_compressed_bytes) = verify_local_generation(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )?;
+    let receipt = serde_json::json!({
+        "schema_version": 1,
+        "kind": "public_dump_local_integrity",
+        "project": project,
+        "generation": generation,
+        "inventory_sha256": inventory_sha256.to_ascii_lowercase(),
+        "member_count": member_count,
+        "verified_compressed_bytes": verified_compressed_bytes,
+        "checks": {
+            "inventory_sha256": true,
+            "member_sha256": true,
+            "clean_staging_tree": true
+        },
+        "trust": {
+            "publisher_authenticated": false,
+            "independent_page_census_verified": false,
+            "revision_rendering_verified": false,
+            "mandatory_offline_media_complete": false,
+            "pack_installed": false
+        }
+    });
+    serde_json::to_string(&receipt).map_err(|error| format!("cannot encode receipt: {error}"))
+}
+
+/// Emit exactly one JSON object on stdout, and none on any verification error.
+pub fn verify_public_members_json(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+) -> Result<(), String> {
+    let receipt = verified_generation_json(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )?;
+    println!("{receipt}");
+    Ok(())
+}
+
 fn run_member_with_fetch<F>(
     project: &str,
     generation: &str,
@@ -635,6 +695,53 @@ mod tests {
                 .0,
             2
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn json_receipt_requires_full_verification_and_never_claims_publisher_trust() {
+        let root = private_root();
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let body = b"fixture-source-bytes";
+        let raw = format!("{:x}  {name}\\n", Sha256::digest(body));
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), raw).unwrap();
+        assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::write(root.join(name), body).unwrap();
+        let receipt = verified_generation_json(
+            "enwiki",
+            "2026-10-01",
+            &pin.to_ascii_uppercase(),
+            &root,
+            1024,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&receipt).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], "public_dump_local_integrity");
+        assert_eq!(value["project"], "enwiki");
+        assert_eq!(value["generation"], "2026-10-01");
+        assert_eq!(value["inventory_sha256"], pin);
+        assert_eq!(value["member_count"], 1);
+        assert_eq!(value["verified_compressed_bytes"], body.len() as u64);
+        for check in ["inventory_sha256", "member_sha256", "clean_staging_tree"] {
+            assert_eq!(value["checks"][check], true);
+        }
+        for trust in [
+            "publisher_authenticated",
+            "independent_page_census_verified",
+            "revision_rendering_verified",
+            "mandatory_offline_media_complete",
+            "pack_installed",
+        ] {
+            assert_eq!(value["trust"][trust], false);
+        }
+        assert_eq!(
+            verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).unwrap(),
+            verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).unwrap()
+        );
+        fs::write(root.join(name), b"corrupted-source-bytes").unwrap();
+        assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
