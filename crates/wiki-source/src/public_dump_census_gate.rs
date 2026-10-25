@@ -142,6 +142,24 @@ fn sha256_file(file: &mut File) -> Result<String, CensusGateError> {
     Ok(digest)
 }
 
+/** Reject an invalid or modified independently pinned expected census before
+ * processing potentially terabytes of dump shards. The final coverage gate
+ * reopens and rehashes this file after decoding: preflight is not provenance
+ * authentication and never replaces the post-ingestion audit. */
+fn preflight_expected_census(path: &Path, sha256: &str) -> Result<(), CensusGateError> {
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(CensusGateError::InvalidDigest);
+    }
+    let (mut file, before) = open_regular(path)?;
+    if !sha256_file(&mut file)?.eq_ignore_ascii_case(sha256) {
+        return Err(CensusGateError::ExpectedDigestMismatch);
+    }
+    if !unchanged(&before, &file.metadata().map_err(CensusGateError::Io)?) {
+        return Err(CensusGateError::ChangedDuringAudit);
+    }
+    Ok(())
+}
+
 /// Audit observed IDs against a separately authenticated, SHA-256-pinned
 /// expected census for the same pinned project/generation and namespace.
 ///
@@ -255,6 +273,10 @@ where
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(VerifiedCensusStageError::Io(error)),
     }
+    // A bad independent pin is known before the first expensive XML shard
+    // read. The final audit still verifies the expected file after staging.
+    preflight_expected_census(expected_path, expected_sha256)
+        .map_err(VerifiedCensusStageError::Audit)?;
     let pending_name = format!(
         "pending-census-{}-{}.ids",
         std::process::id(),
@@ -621,6 +643,54 @@ mod tests {
         assert!(!root.join("corrupt.ids").exists());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         assert_eq!(fs::read(&ready).unwrap(), b"1\n201\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_expected_pin_fails_before_any_native_member_is_opened() {
+        let (root, expected, observed, digest) = fixture();
+        fs::remove_file(&observed).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let pinned = inventory();
+        let mut opened = 0usize;
+        for (filename, bad_digest) in [
+            ("bad-digest.ids", "not-a-sha256".to_owned()),
+            ("mismatch.ids", "0".repeat(64)),
+        ] {
+            let result = stage_and_audit_native_bzip2_census(
+                &root,
+                filename,
+                &pinned,
+                0,
+                NativeCensusAudit {
+                    expected_path: &expected,
+                    expected_sha256: &bad_digest,
+                    max_compressed_bytes: 4096,
+                    max_decoded_bytes: 4096,
+                },
+                |_| -> io::Result<std::io::Cursor<&[u8]>> {
+                    opened += 1;
+                    panic!("invalid expected pin must fail before source decoding")
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(VerifiedCensusStageError::Audit(CensusGateError::InvalidDigest))
+                    | Err(VerifiedCensusStageError::Audit(
+                        CensusGateError::ExpectedDigestMismatch
+                    ))
+            ));
+            assert!(!root.join(filename).exists());
+        }
+        assert_eq!(opened, 0);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        // A correct expected pin still reaches the native member opener;
+        // preflight is not a replacement for complete source verification.
+        assert!(preflight_expected_census(&expected, &digest).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
