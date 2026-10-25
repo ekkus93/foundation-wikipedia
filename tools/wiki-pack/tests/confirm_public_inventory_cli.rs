@@ -60,10 +60,16 @@ fn live_confirmation_cli_is_read_only_and_emits_no_receipt_on_failure() {
     );
     let receipt: serde_json::Value = serde_json::from_slice(&good.stdout).unwrap();
     assert_eq!(receipt["schema_version"], 1);
-    assert_eq!(receipt["kind"], "public_dump_live_https_inventory_confirmation");
+    assert_eq!(
+        receipt["kind"],
+        "public_dump_live_https_inventory_confirmation"
+    );
     assert_eq!(receipt["inventory_sha256"], pin);
     assert_eq!(receipt["member_count"], 1);
-    assert_eq!(receipt["checks"]["official_https_inventory_retrieved"], true);
+    assert_eq!(
+        receipt["checks"]["official_https_inventory_retrieved"],
+        true
+    );
     assert_eq!(receipt["trust"]["publisher_signature_verified"], false);
     assert_eq!(receipt["trust"]["independent_page_census_verified"], false);
     assert_eq!(good.stdout.iter().filter(|byte| **byte == b'\n').count(), 1);
