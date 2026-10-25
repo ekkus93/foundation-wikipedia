@@ -202,16 +202,32 @@ fn read_staged_inventory(
         .map_err(|e| format!("pinned staged SHA256SUMS rejected: {e:?}"))
 }
 
+/// One complete checksum-verified member in canonical page-range order.
+/// This records local byte integrity only; no publisher trust is conferred.
+#[derive(serde::Serialize)]
+struct VerifiedMember {
+    index: usize,
+    relative_path: String,
+    sha256: String,
+    verified_compressed_bytes: u64,
+}
+
+struct VerifiedGeneration {
+    member_count: usize,
+    verified_compressed_bytes: u64,
+    members: Vec<VerifiedMember>,
+}
+
 /// Audit the entire local acquisition tree after a resumable download.
 /// The digest pin is supplied independently; this does not authenticate
 /// Wikimedia publication, render articles or authorize pack installation.
-fn verify_local_generation(
+fn verify_local_generation_detailed(
     project: &str,
     generation: &str,
     inventory_sha256: &str,
     root: &Path,
     max_member_bytes: u64,
-) -> Result<(usize, u64), String> {
+) -> Result<VerifiedGeneration, String> {
     if !(1..=1_u64 << 40).contains(&max_member_bytes) {
         return Err("compressed member byte limit must be 1..=1TiB".into());
     }
@@ -280,7 +296,8 @@ fn verify_local_generation(
     // The cheap structural preflight never confers integrity. Reopen every
     // member and verify the complete pinned SHA-256 before reporting success.
     let mut verified_total = 0u64;
-    for (index, _) in inventory.members().iter().enumerate() {
+    let mut verified_members = Vec::with_capacity(inventory.members().len());
+    for (index, member) in inventory.members().iter().enumerate() {
         let bytes = verified_existing_member(&inventory, index, root, max_member_bytes)
             .map_err(|error| format!("member {index} rejected: {error:?}"))?
             .ok_or_else(|| format!("member {index} disappeared after preflight"))?;
@@ -288,11 +305,39 @@ fn verify_local_generation(
             .checked_add(bytes)
             .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
             .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+        verified_members.push(VerifiedMember {
+            index,
+            relative_path: member.relative_path.clone(),
+            sha256: member.sha256.to_ascii_lowercase(),
+            verified_compressed_bytes: bytes,
+        });
     }
     if verified_total != preflight_total {
         return Err("staged generation changed size during verification".into());
     }
-    Ok((inventory.members().len(), verified_total))
+    Ok(VerifiedGeneration {
+        member_count: inventory.members().len(),
+        verified_compressed_bytes: verified_total,
+        members: verified_members,
+    })
+}
+
+/// Preserve the simple aggregate-only verifier for existing callers.
+fn verify_local_generation(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+) -> Result<(usize, u64), String> {
+    let result = verify_local_generation_detailed(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )?;
+    Ok((result.member_count, result.verified_compressed_bytes))
 }
 
 /// Read-only post-download integrity gate. The exact pinned SHA256SUMS and
@@ -328,7 +373,7 @@ fn verified_generation_json(
     root: &Path,
     max_member_bytes: u64,
 ) -> Result<String, String> {
-    let (member_count, verified_compressed_bytes) = verify_local_generation(
+    let verified = verify_local_generation_detailed(
         project,
         generation,
         inventory_sha256,
@@ -336,13 +381,14 @@ fn verified_generation_json(
         max_member_bytes,
     )?;
     let receipt = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "public_dump_local_integrity",
         "project": project,
         "generation": generation,
         "inventory_sha256": inventory_sha256.to_ascii_lowercase(),
-        "member_count": member_count,
-        "verified_compressed_bytes": verified_compressed_bytes,
+        "member_count": verified.member_count,
+        "verified_compressed_bytes": verified.verified_compressed_bytes,
+        "verified_members": verified.members,
         "checks": {
             "inventory_sha256": true,
             "member_sha256": true,
@@ -717,13 +763,18 @@ mod tests {
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&receipt).unwrap();
-        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema_version"], 2);
         assert_eq!(value["kind"], "public_dump_local_integrity");
         assert_eq!(value["project"], "enwiki");
         assert_eq!(value["generation"], "2026-10-01");
         assert_eq!(value["inventory_sha256"], pin);
         assert_eq!(value["member_count"], 1);
         assert_eq!(value["verified_compressed_bytes"], body.len() as u64);
+        assert_eq!(value["verified_members"].as_array().unwrap().len(), 1);
+        assert_eq!(value["verified_members"][0]["index"], 0);
+        assert_eq!(value["verified_members"][0]["relative_path"], name);
+        assert_eq!(value["verified_members"][0]["sha256"], format!("{:x}", Sha256::digest(body)));
+        assert_eq!(value["verified_members"][0]["verified_compressed_bytes"], body.len() as u64);
         for check in ["inventory_sha256", "member_sha256", "clean_staging_tree"] {
             assert_eq!(value["checks"][check], true);
         }
@@ -741,6 +792,43 @@ mod tests {
             verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).unwrap()
         );
         fs::write(root.join(name), b"corrupted-source-bytes").unwrap();
+        assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn json_receipt_binds_every_verified_member_in_numeric_page_order() {
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let body_a = b"first-shard";
+        let body_b = b"second-shard";
+        // The SHA256SUMS line order is not the canonical page-range order.
+        let raw = format!(
+            "{:X}  {second}\n{:X}  {first}\n",
+            Sha256::digest(body_b),
+            Sha256::digest(body_a),
+        );
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), raw).unwrap();
+        fs::write(root.join(first), body_a).unwrap();
+        fs::write(root.join(second), body_b).unwrap();
+        let value: serde_json::Value = serde_json::from_str(
+            &verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).unwrap(),
+        )
+        .unwrap();
+        let members = value["verified_members"].as_array().unwrap();
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0]["index"], 0);
+        assert_eq!(members[0]["relative_path"], first);
+        assert_eq!(members[0]["sha256"], format!("{:x}", Sha256::digest(body_a)));
+        assert_eq!(members[0]["verified_compressed_bytes"], body_a.len() as u64);
+        assert_eq!(members[1]["index"], 1);
+        assert_eq!(members[1]["relative_path"], second);
+        assert_eq!(members[1]["sha256"], format!("{:x}", Sha256::digest(body_b)));
+        assert_eq!(members[1]["verified_compressed_bytes"], body_b.len() as u64);
+        assert_eq!(value["verified_compressed_bytes"], (body_a.len() + body_b.len()) as u64);
+        fs::write(root.join(second), b"tampered").unwrap();
         assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
         fs::remove_dir_all(root).unwrap();
     }
