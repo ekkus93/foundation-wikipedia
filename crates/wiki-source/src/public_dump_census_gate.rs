@@ -218,6 +218,7 @@ fn preflight_expected_census(
 /// shard. This extra bounded-memory pass lets the native audit fail after the
 /// first mismatching member instead of decompressing all later shards.
 /// The whole-generation independent census audit still gates publication.
+
 fn expected_member_census_receipts(
     path: &Path,
     sha256: &str,
@@ -438,6 +439,7 @@ where
         published = true;
         fs::remove_file(&pending).map_err(VerifiedCensusStageError::Io)?;
         #[cfg(unix)]
+
         File::open(root)
             .and_then(|dir| dir.sync_all())
             .map_err(VerifiedCensusStageError::Io)?;
@@ -498,17 +500,30 @@ where
                 inventory,
             )
             .map_err(|_| PinnedCensusError::ExpectedCensusChanged)?;
+            // A second independently opened and rehashed cursor advances
+            // with the XML page callbacks. It never materializes a page-ID
+            // list, and detects equal-count substitutions during decoding.
+            let (mut expected_file, _) = open_regular(audit.expected_path)
+                .map_err(|_| PinnedCensusError::ExpectedCensusChanged)?;
+            if !sha256_file(&mut expected_file)
+                .map_err(|_| PinnedCensusError::ExpectedCensusChanged)?
+                .eq_ignore_ascii_case(audit.expected_sha256)
+            {
+                return Err(PinnedCensusError::ExpectedCensusChanged);
+            }
+            let mut expected_ids = PageIdLines::new(BufReader::new(expected_file));
             for (member, (expected_digest, expected_count)) in
                 inventory.members().iter().zip(expected)
             {
                 let input =
                     open_member(&member.relative_path).map_err(PinnedCensusError::Source)?;
                 pipeline
-                    .decode_native_bzip2_member_with_expected_count(
+                    .decode_native_bzip2_member_with_expected_ids(
                         input,
                         audit.max_compressed_bytes,
                         audit.max_decoded_bytes,
                         expected_count,
+                        &mut expected_ids,
                     )
                     .map_err(|error| match error {
                         NativeCensusError::Census(error) => error,
@@ -525,6 +540,11 @@ where
                         observed_count,
                     });
                 }
+            }
+            // Do not accept trailing expected records or read errors even if
+            // every completed shard happened to match its claimed receipt.
+            if expected_ids.next().is_some() {
+                return Err(PinnedCensusError::ExpectedCensusChanged);
             }
             Ok(())
         },
@@ -658,6 +678,7 @@ mod tests {
         ];
         let sums = format!(
             "{:x}  {}\n{:x}  {}\n",
+
             Sha256::digest(&compressed[0]),
             names[0],
             Sha256::digest(&compressed[1]),
@@ -760,9 +781,9 @@ mod tests {
                 early_result,
                 Err(VerifiedCensusStageError::Stage(
                     crate::public_dump_census_ingest::CensusStageError::Census(
-                        PinnedCensusError::MemberCensusMismatch {
-                            expected_count: 1,
-                            observed_count: 1,
+                        PinnedCensusError::MemberPageIdMismatch {
+                            expected_page_id: 2,
+                            observed_page_id: 1,
                             ..
                         }
                     )
@@ -877,6 +898,7 @@ mod tests {
         assert_eq!(fs::read(&ready).unwrap(), b"1\n201\n");
         fs::remove_dir_all(root).unwrap();
     }
+
 
     #[test]
     fn invalid_expected_pin_fails_before_any_native_member_is_opened() {
@@ -1098,6 +1120,7 @@ mod tests {
             Err(CensusGateError::ExpectedDigestMismatch)
         ));
         fs::write(&observed, b"1\n202\n").unwrap();
+
         assert!(matches!(
             audit_pinned_census_files(&inventory(), 0, &expected, &digest, &observed),
             Err(CensusGateError::Coverage(

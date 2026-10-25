@@ -28,6 +28,11 @@ pub enum PinnedCensusError {
         expected_count: u64,
         observed_count: u64,
     },
+    MemberPageIdMismatch {
+        member: String,
+        expected_page_id: u64,
+        observed_page_id: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -152,7 +157,13 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         max_compressed_bytes: u64,
         max_decoded_bytes: u64,
     ) -> Result<(u64, u64), NativeCensusError> {
-        self.decode_native_bzip2_member_inner(input, max_compressed_bytes, max_decoded_bytes, None)
+        self.decode_native_bzip2_member_inner(
+            input,
+            max_compressed_bytes,
+            max_decoded_bytes,
+            None,
+            None,
+        )
     }
 
     /// Native audit variant with an independently pinned expected namespace
@@ -172,6 +183,29 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
             max_compressed_bytes,
             max_decoded_bytes,
             Some(expected_count),
+            None,
+        )
+    }
+
+    /// Compare every selected-namespace page ID against a separately pinned,
+    /// strictly streamed expected census while the native XML decoder runs.
+    /// Only the native independent-audit path should supply this iterator.
+    /// Exact member digest/count and final whole-generation audit remain
+    /// mandatory even if every decoded page ID matches this early check.
+    pub fn decode_native_bzip2_member_with_expected_ids<R: Read>(
+        &mut self,
+        input: R,
+        max_compressed_bytes: u64,
+        max_decoded_bytes: u64,
+        expected_count: u64,
+        expected_ids: &mut dyn Iterator<Item = std::io::Result<u64>>,
+    ) -> Result<(u64, u64), NativeCensusError> {
+        self.decode_native_bzip2_member_inner(
+            input,
+            max_compressed_bytes,
+            max_decoded_bytes,
+            Some(expected_count),
+            Some(expected_ids),
         )
     }
 
@@ -181,6 +215,7 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         max_compressed_bytes: u64,
         max_decoded_bytes: u64,
         expected_count: Option<u64>,
+        mut expected_ids: Option<&mut dyn Iterator<Item = std::io::Result<u64>>>,
     ) -> Result<(u64, u64), NativeCensusError> {
         if self.failed {
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
@@ -217,7 +252,26 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
                     self.push(PageEvent::RevisionId(page.revision_id))?;
                     self.push(PageEvent::Timestamp(&page.timestamp))?;
                     self.push(PageEvent::EndRevision)?;
-                    self.push(PageEvent::EndPage)
+                    // Push first so a selected-namespace count overflow is
+                    // rejected without consuming the next shard's expected ID.
+                    self.push(PageEvent::EndPage)?;
+                    if page.namespace == self.namespace {
+                        if let Some(ids) = expected_ids.as_deref_mut() {
+                            let expected_id = ids
+                                .next()
+                                .ok_or(PinnedCensusError::ExpectedCensusChanged)?
+                                .map_err(|_| PinnedCensusError::ExpectedCensusChanged)?;
+                            if expected_id != page.page_id {
+                                return Err(PinnedCensusError::MemberPageIdMismatch {
+                                    member: member.relative_path.clone(),
+                                    expected_page_id: expected_id,
+                                    observed_page_id: page.page_id,
+                                });
+                            }
+                        }
+                    }
+                    Ok(())
+
                 })();
                 if let Err(error) = push {
                     callback_error = Some(error);
@@ -438,6 +492,7 @@ where
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
+
         match options.open(&candidate) {
             Ok(output) => break (candidate, output),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -658,6 +713,7 @@ mod tests {
                         .members()
                         .iter()
                         .position(|member| member.relative_path == path)
+
                         .unwrap();
                     Ok(Cursor::new(compressed[index].as_slice()))
                 }
@@ -791,6 +847,76 @@ mod tests {
         ));
     }
 
+
+    #[test]
+    fn native_expected_id_stream_rejects_equal_count_page_substitution_mid_shard() {
+        use std::io::Cursor;
+
+        let xml = concat!(
+            "<mediawiki>",
+            "<page><title>Other</title><ns>1</ns><id>1</id><revision><id>1001</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page>",
+            "<page><title>Physics</title><ns>0</ns><id>2</id><revision><id>1002</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page>",
+            "<page><title>Chemistry</title><ns>0</ns><id>3</id><revision><id>1003</id><timestamp>2026-10-01T12:00:00Z</timestamp></revision></page>",
+            "</mediawiki>"
+        );
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+        encoder.write_all(xml.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let sums = format!(
+            "{:x}  enwiki-2026-10-01-p1p100.xml.bz2\\n",
+            Sha256::digest(&compressed)
+        );
+        let digest = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let pinned =
+            parse_pinned_inventory(sums.as_bytes(), "enwiki", "2026-10-01", &digest).unwrap();
+
+        // The first page is in another namespace, then the selected first ID
+        // matches. The second selected page is substituted: counts stay equal.
+        let mut replaced = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        let mut expected = [Ok(2), Ok(4)].into_iter();
+        let result = replaced.decode_native_bzip2_member_with_expected_ids(
+            Cursor::new(&compressed),
+            4096,
+            4096,
+            2,
+            &mut expected,
+        );
+        assert!(matches!(
+            result,
+            Err(NativeCensusError::Census(PinnedCensusError::MemberPageIdMismatch {
+                expected_page_id: 4,
+                observed_page_id: 3,
+                ..
+            }))
+        ), "unexpected early ID mismatch: {result:?}");
+        assert!(replaced.last_member_census_receipt().is_none());
+        assert!(matches!(replaced.finish(), Err(PinnedCensusError::InvalidState)));
+
+        // A matching stream succeeds without consuming IDs for other namespaces.
+        let mut matched = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        let mut correct = [Ok(2), Ok(3)].into_iter();
+        matched
+            .decode_native_bzip2_member_with_expected_ids(
+                Cursor::new(&compressed), 4096, 4096, 2, &mut correct,
+            )
+            .unwrap();
+        assert_eq!(correct.next(), None);
+        let (observed, count) = matched.finish().unwrap();
+        assert_eq!(observed, b"2\\n3\\n");
+        assert_eq!(count, 3);
+
+        // A broken expected cursor cannot silently qualify a native member.
+        let mut missing = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
+        let mut short = [Ok(2)].into_iter();
+        assert!(matches!(
+            missing.decode_native_bzip2_member_with_expected_ids(
+                Cursor::new(&compressed), 4096, 4096, 2, &mut short,
+            ),
+            Err(NativeCensusError::Census(PinnedCensusError::ExpectedCensusChanged))
+        ));
+        assert!(matches!(missing.finish(), Err(PinnedCensusError::InvalidState)));
+    }
+
     #[test]
     fn native_census_digest_failure_cannot_return_partial_census() {
         use std::io::Cursor;
@@ -878,6 +1004,7 @@ mod tests {
             pipeline.finish(),
             Err(PinnedCensusError::InvalidState)
         ));
+
 
         let mut early = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         assert!(matches!(
@@ -1098,6 +1225,7 @@ mod tests {
             "wiki-census-fail-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("unnamed")
+
         ));
         fs::create_dir(&root).unwrap();
         #[cfg(unix)]
