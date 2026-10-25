@@ -1492,44 +1492,31 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
 
         // A different HTTPS inventory must fail even when the callback succeeds.
-        let forged = confirm_origin_with_fetch(
-            "enwiki",
-            "2026-10-01",
-            &digest,
-            &root,
-            |_, _, _| Ok(b"forged remote inventory".to_vec()),
-        );
+        let forged =
+            confirm_origin_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                Ok(b"forged remote inventory".to_vec())
+            });
         assert!(forged.is_err());
-        let offline = confirm_origin_with_fetch(
-            "enwiki",
-            "2026-10-01",
-            &digest,
-            &root,
-            |_, _, _| Err("HTTP 404 or TLS failure".into()),
-        );
+        let offline =
+            confirm_origin_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                Err("HTTP 404 or TLS failure".into())
+            });
         assert!(offline.is_err());
         for (project, date, pin) in [
             ("frwiki", "2026-10-01", digest.as_str()),
             ("enwiki", "2026-10-02", digest.as_str()),
             ("enwiki", "2026-10-01", "bad"),
         ] {
-            let rejected = confirm_origin_with_fetch(
-                project,
-                date,
-                pin,
-                &root,
-                |_, _, _| panic!("invalid local identity must fail before network"),
-            );
+            let rejected = confirm_origin_with_fetch(project, date, pin, &root, |_, _, _| {
+                panic!("invalid local identity must fail before network")
+            });
             assert!(rejected.is_err());
         }
         fs::write(&local, b"tampered").unwrap();
-        let rejected = confirm_origin_with_fetch(
-            "enwiki",
-            "2026-10-01",
-            &digest,
-            &root,
-            |_, _, _| panic!("tampered local inventory must fail before network"),
-        );
+        let rejected =
+            confirm_origin_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                panic!("tampered local inventory must fail before network")
+            });
         assert!(rejected.is_err());
         assert_eq!(fs::read(&local).unwrap(), b"tampered");
         fs::remove_dir_all(root).unwrap();
