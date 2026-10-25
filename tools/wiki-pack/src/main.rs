@@ -33,7 +33,9 @@ fn usage() {
     println!("       wiki-pack audit-public-dump <private-source-dir> <project> <generation> <SHA256SUMS-sha256> <expected-ids> <expected-sha256> <namespace> <private-output-dir> <output-name> <max-compressed-bytes> <max-decoded-bytes>");
     println!("       wiki-pack fetch-public-inventory <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir>");
     println!("       wiki-pack fetch-public-member <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
+    println!("       wiki-pack fetch-public-member-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <member-index> <max-compressed-bytes>");
     println!("       wiki-pack fetch-public-members <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
+    println!("       wiki-pack fetch-public-members-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
@@ -216,7 +218,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some("fetch-public-member") => {
+        Some(command @ ("fetch-public-member" | "fetch-public-member-resume")) => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 6 {
                 eprintln!("fetch-public-member requires exactly six arguments");
@@ -237,19 +239,21 @@ fn main() {
                 eprintln!("Member index and compressed byte limit must be decimal integers");
                 std::process::exit(2);
             };
-            if let Err(error) = fetch_public_dump::run_member(
-                identity[0],
-                identity[1],
-                identity[2],
-                Path::new(&fields[3]),
-                index,
-                max_bytes,
-            ) {
+            let result = if command == "fetch-public-member-resume" {
+                fetch_public_dump::run_resumed_member(
+                    identity[0], identity[1], identity[2], Path::new(&fields[3]), index, max_bytes,
+                )
+            } else {
+                fetch_public_dump::run_member(
+                    identity[0], identity[1], identity[2], Path::new(&fields[3]), index, max_bytes,
+                )
+            };
+            if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
         }
-        Some("fetch-public-members") => {
+        Some(command @ ("fetch-public-members" | "fetch-public-members-resume")) => {
             let fields: Vec<OsString> = args.collect();
             if fields.len() != 5 {
                 eprintln!("fetch-public-members requires exactly five arguments");
@@ -268,13 +272,16 @@ fn main() {
                 eprintln!("Compressed byte limit must be a decimal integer");
                 std::process::exit(2);
             };
-            if let Err(error) = fetch_public_dump::run_all_members(
-                identity[0],
-                identity[1],
-                identity[2],
-                Path::new(&fields[3]),
-                max_bytes,
-            ) {
+            let result = if command == "fetch-public-members-resume" {
+                fetch_public_dump::run_all_resumed_members(
+                    identity[0], identity[1], identity[2], Path::new(&fields[3]), max_bytes,
+                )
+            } else {
+                fetch_public_dump::run_all_members(
+                    identity[0], identity[1], identity[2], Path::new(&fields[3]), max_bytes,
+                )
+            };
+            if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

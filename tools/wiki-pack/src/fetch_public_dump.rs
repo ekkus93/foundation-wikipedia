@@ -303,6 +303,66 @@ pub fn run_all_members(
     Ok(())
 }
 
+
+/** Resume one exact pinned member through bounded HTTP 206 byte ranges.
+ * Partial chunks remain private and are never accepted as complete until
+ * the entire compressed member passes the pinned SHA-256 publication gate.
+ */
+pub fn run_resumed_member(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    member_index: usize,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let bytes = run_member_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        member_index,
+        max_bytes,
+        |inventory, index, directory, limit| {
+            InventoryCurl::new()
+                .stage_resumed_member(inventory, index, directory, limit)
+                .map_err(|error| format!("resumable official member rejected: {error:?}"))
+        },
+    )?;
+    println!("SHA-256-verified compressed member staged/resumed: {bytes} bytes");
+    println!("Publisher provenance, independent census and renderer fidelity: NOT VERIFIED");
+    println!("No pack installed or active snapshot changed.");
+    Ok(())
+}
+
+/// Resume all members in pinned page-range order, preserving complete and
+/// incomplete verified-transfer checkpoints when a later range fails.
+pub fn run_all_resumed_members(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let client = InventoryCurl::new();
+    let (count, total) = run_all_members_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_bytes,
+        |inventory, index, directory, limit| {
+            client
+                .stage_resumed_member(inventory, index, directory, limit)
+                .map_err(|error| format!("resumable official member rejected: {error:?}"))
+        },
+    )?;
+    println!("Staged/resumed {count} SHA-256-verified compressed members ({total} bytes)");
+    println!("Publisher provenance, independent census and renderer fidelity: NOT VERIFIED");
+    println!("No pack installed or active snapshot changed.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
