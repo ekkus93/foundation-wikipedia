@@ -609,6 +609,122 @@ mod tests {
     }
 
     #[test]
+    fn resumed_generation_retry_preserves_verified_shards_and_continues_partial_second() {
+        use wiki_source::public_dump_https::{RangeFetchError, VerifiedRange};
+        use wiki_source::public_dump_resume::stage_resumed_member_with;
+
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let raw = format!(
+            "{:x}  {second}\n{:x}  {first}\n",
+            Sha256::digest(b"ghijkl"),
+            Sha256::digest(b"abcdef")
+        );
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), raw).unwrap();
+
+        // The first shard finishes; the second leaves only a private synced
+        // prefix when transport fails. The generation is not declared done.
+        let mut first_attempt = Vec::new();
+        let failed = run_all_members_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            64,
+            |inventory, index, directory, limit| {
+                stage_resumed_member_with(inventory, index, directory, limit, 3, |start, _, _| {
+                    first_attempt.push((index, start));
+                    match (index, start) {
+                        (0, 0) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"abc".to_vec(),
+                        }),
+                        (0, 3) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"def".to_vec(),
+                        }),
+                        (1, 0) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"ghi".to_vec(),
+                        }),
+                        (1, 3) => Err(RangeFetchError::IoFailure),
+                        _ => panic!("unexpected first-attempt member/offset"),
+                    }
+                })
+                .map_err(|error| format!("{error:?}"))
+            },
+        );
+        assert!(failed.unwrap_err().contains("member 1 failed"));
+        assert_eq!(first_attempt, [(0, 0), (0, 3), (1, 0), (1, 3)]);
+        assert_eq!(fs::read(root.join(first)).unwrap(), b"abcdef");
+        assert!(!root.join(second).exists());
+
+        // Retry rehashes the completed first shard without transport, then
+        // requests only the missing suffix of the second checkpoint.
+        let mut retried = Vec::new();
+        assert_eq!(
+            run_all_members_with_fetch(
+                "enwiki",
+                "2026-10-01",
+                &digest,
+                &root,
+                64,
+                |inventory, index, directory, limit| {
+                    stage_resumed_member_with(
+                        inventory,
+                        index,
+                        directory,
+                        limit,
+                        3,
+                        |start, _, _| {
+                            retried.push((index, start));
+                            assert_eq!((index, start), (1, 3));
+                            Ok(VerifiedRange {
+                                total_bytes: 6,
+                                bytes: b"jkl".to_vec(),
+                            })
+                        },
+                    )
+                    .map_err(|error| format!("{error:?}"))
+                },
+            )
+            .unwrap(),
+            (2, 12)
+        );
+        assert_eq!(retried, [(1, 3)]);
+        assert_eq!(fs::read(root.join(first)).unwrap(), b"abcdef");
+        assert_eq!(fs::read(root.join(second)).unwrap(), b"ghijkl");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
+
+        // A third invocation requires no HTTP for either member.
+        assert_eq!(
+            run_all_members_with_fetch(
+                "enwiki",
+                "2026-10-01",
+                &digest,
+                &root,
+                64,
+                |inventory, index, directory, limit| {
+                    stage_resumed_member_with(
+                        inventory,
+                        index,
+                        directory,
+                        limit,
+                        3,
+                        |_, _, _| panic!("both members must be reusable without transport"),
+                    )
+                    .map_err(|error| format!("{error:?}"))
+                },
+            )
+            .unwrap(),
+            (2, 12)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn invalid_digests_sources_and_untrusted_bytes_cannot_publish() {
         let root = private_root();
         let raw = valid_raw();
