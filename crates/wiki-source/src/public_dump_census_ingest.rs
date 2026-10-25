@@ -775,9 +775,20 @@ mod tests {
         other_namespace
             .decode_native_bzip2_member_with_expected_count(Cursor::new(&compressed), 4096, 4096, 0)
             .unwrap();
-        let (bytes, count) = other_namespace.finish().unwrap();
-        assert_eq!(bytes, b"");
-        assert_eq!(count, 0);
+        assert_eq!(
+            other_namespace
+                .last_member_census_receipt()
+                .map(|(_, count)| count),
+            Some(0)
+        );
+        // A completely empty selected namespace remains unpublishable,
+        // even though this member's expected count was not exceeded.
+        assert!(matches!(
+            other_namespace.finish(),
+            Err(PinnedCensusError::Export(
+                crate::public_dump_census_export::CensusExportError::EmptyCensus
+            ))
+        ));
     }
 
     #[test]
