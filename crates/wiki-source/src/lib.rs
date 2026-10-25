@@ -34,6 +34,8 @@ pub mod public_dump_origin;
 pub mod public_dump_page_meta;
 pub mod public_dump_pinned;
 pub mod public_dump_revision_jsonl;
+#[cfg(not(target_os = "android"))]
+pub mod public_dump_resume;
 pub mod public_dump_shards;
 pub mod public_dump_stage;
 pub mod public_dump_stream;

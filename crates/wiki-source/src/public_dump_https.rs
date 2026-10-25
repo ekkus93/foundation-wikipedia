@@ -198,7 +198,7 @@ fn drain_member_stderr(
 /// A complete private shard may be reused only after its full SHA-256 is
 /// rechecked. Occupied but unsafe or corrupted paths never trigger downloads.
 /// The caller must exclude untrusted concurrent writers from the staging tree.
-fn verified_existing_member(
+pub(crate) fn verified_existing_member(
     inventory: &PinnedInventory,
     member_index: usize,
     root: &Path,
