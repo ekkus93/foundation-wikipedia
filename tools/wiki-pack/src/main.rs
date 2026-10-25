@@ -241,11 +241,21 @@ fn main() {
             };
             let result = if command == "fetch-public-member-resume" {
                 fetch_public_dump::run_resumed_member(
-                    identity[0], identity[1], identity[2], Path::new(&fields[3]), index, max_bytes,
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    index,
+                    max_bytes,
                 )
             } else {
                 fetch_public_dump::run_member(
-                    identity[0], identity[1], identity[2], Path::new(&fields[3]), index, max_bytes,
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    index,
+                    max_bytes,
                 )
             };
             if let Err(error) = result {
@@ -274,11 +284,19 @@ fn main() {
             };
             let result = if command == "fetch-public-members-resume" {
                 fetch_public_dump::run_all_resumed_members(
-                    identity[0], identity[1], identity[2], Path::new(&fields[3]), max_bytes,
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    max_bytes,
                 )
             } else {
                 fetch_public_dump::run_all_members(
-                    identity[0], identity[1], identity[2], Path::new(&fields[3]), max_bytes,
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    Path::new(&fields[3]),
+                    max_bytes,
                 )
             };
             if let Err(error) = result {
