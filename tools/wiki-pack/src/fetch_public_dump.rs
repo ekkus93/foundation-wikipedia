@@ -1213,3 +1213,5 @@ mod tests {
         );
         fs::remove_file(alias).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+}
