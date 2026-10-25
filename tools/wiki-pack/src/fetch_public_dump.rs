@@ -39,14 +39,6 @@ fn safe_private_root(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn destination_available(path: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Err("SHA256SUMS already exists; refusing to replace existing source".into()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("cannot inspect SHA256SUMS destination: {err}")),
-    }
-}
-
 fn publish_inventory(root: &Path, raw: &[u8]) -> Result<(), String> {
     // Caller validated the complete digest-pinned inventory before writing.
     // The staged file remains private and unpublished until it is synced.
@@ -113,7 +105,16 @@ where
         return Err("invalid independently supplied SHA256SUMS digest".into());
     }
     safe_private_root(root)?;
-    destination_available(&root.join("SHA256SUMS"))?;
+    // A retry reuses only an exact digest-pinned, privately staged inventory.
+    // Occupied malformed or linked files are never overwritten or refetched.
+    match fs::symlink_metadata(root.join("SHA256SUMS")) {
+        Ok(_) => {
+            return read_staged_inventory(root, project, generation, expected_sha256)
+                .map(|inventory| inventory.members().len());
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("cannot inspect SHA256SUMS destination: {error}")),
+    }
     let raw = fetch(project, generation, expected_sha256)?;
     let inventory = parse_pinned_inventory(&raw, project, generation, expected_sha256)
         .map_err(|error| format!("downloaded SHA256SUMS rejected: {error:?}"))?;
@@ -416,16 +417,64 @@ mod tests {
                 0o600,
             );
         }
-        assert!(
+        assert_eq!(
             run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
                 fetches += 1;
-                panic!("occupied destination must avoid network access")
+                panic!("verified inventory retry must avoid network access")
             })
-            .is_err()
+            .unwrap(),
+            1
         );
         assert_eq!(fetches, 1);
         assert_eq!(fs::read(root.join("SHA256SUMS")).unwrap(), raw);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn occupied_unverified_inventory_fails_closed_without_transport_or_overwrite() {
+        let root = private_root();
+        let raw = valid_raw();
+        let digest = format!("{:x}", Sha256::digest(&raw));
+        let path = root.join("SHA256SUMS");
+        fs::write(&path, &raw).unwrap();
+
+        for (project, date, pin) in [
+            ("frwiki", "2026-10-01", digest.as_str()),
+            ("enwiki", "2026-10-02", digest.as_str()),
+            ("enwiki", "2026-10-01", "0"),
+        ] {
+            assert!(run_with_fetch(project, date, pin, &root, |_, _, _| {
+                panic!("mismatched source identity must not initiate transport")
+            })
+            .is_err());
+        }
+
+        fs::write(&path, b"tampered").unwrap();
+        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+            panic!("corrupt occupied inventory must not initiate transport")
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"tampered");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn occupied_hardlinked_inventory_is_not_accepted_as_cached() {
+        let root = private_root();
+        let raw = valid_raw();
+        let digest = format!("{:x}", Sha256::digest(&raw));
+        let path = root.join("SHA256SUMS");
+        let outside = root.with_extension("outside-inventory");
+        fs::write(&outside, &raw).unwrap();
+        fs::hard_link(&outside, &path).unwrap();
+        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+            panic!("hardlinked existing inventory must not initiate transport")
+        })
+        .is_err());
+        assert_eq!(fs::read(&outside).unwrap(), raw);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[test]
