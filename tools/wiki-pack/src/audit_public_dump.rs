@@ -142,7 +142,12 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
             &source.join(&member.relative_path),
             config.max_compressed_bytes,
         )
-        .map_err(|error| format!("source member preflight rejected {}: {error}", member.relative_path))?;
+        .map_err(|error| {
+            format!(
+                "source member preflight rejected {}: {error}",
+                member.relative_path
+            )
+        })?;
     }
     let (path, delta) = stage_and_audit_native_bzip2_census(
         &output,
