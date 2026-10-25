@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use crate::public_dump_origin::is_official_checksum_url;
@@ -224,7 +224,8 @@ mod tests {
         let (client, executable) = fake_curl(&script);
         assert_eq!(
             client
-                .fetch_verified_inventory("enwiki", "2026-10-01", &sha256)2026-10-25T08:56:19.6671892Z +                .unwrap(),
+                .fetch_verified_inventory("enwiki", "2026-10-01", &sha256)
+                .unwrap(),
             raw.as_bytes()
         );
         let args = fs::read_to_string(&args_path).unwrap();

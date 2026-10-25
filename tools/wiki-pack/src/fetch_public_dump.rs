@@ -224,7 +224,8 @@ mod tests {
         ] {
             assert!(run_with_fetch(project, date, pin, &root, |_, _, _| {
                 panic!("invalid input must fail before network access")
-            })2026-10-25T08:56:19.7933337Z +            .is_err());
+            })
+            .is_err());
         }
         assert!(
             run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
