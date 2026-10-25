@@ -355,6 +355,8 @@ mod tests {
         let (root, inventory) = fixture();
         let partial = partial_path(&root, &inventory, 0);
         fs::write(&partial, b"abc").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600)).unwrap();
         let mut attempts = Vec::new();
         assert_eq!(
             stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
@@ -372,6 +374,8 @@ mod tests {
 
         fs::remove_file(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
         fs::write(&partial, b"abcdef").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(
             stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
                 assert_eq!(start, 6);
@@ -384,6 +388,8 @@ mod tests {
 
         fs::remove_file(root.join("enwiki-2026-10-01-p1p100.xml.bz2")).unwrap();
         fs::write(&partial, b"abcxyz").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o600)).unwrap();
         assert!(matches!(
             stage_resumed_member_with(&inventory, 0, &root, 64, 3, |start, _, _| {
                 assert_eq!(start, 6);
