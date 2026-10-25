@@ -1260,7 +1260,11 @@ mod tests {
         let mut ranges = Vec::new();
 
         let failed = fetch_generation_with(
-            "enwiki", "2026-10-01", &pin, &root, 64,
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            64,
             |_, _, _| {
                 inventory_fetches += 1;
                 Ok(inventory.as_bytes().to_vec())
@@ -1269,13 +1273,23 @@ mod tests {
                 stage_resumed_member_with(pinned, index, directory, limit, 3, |start, _, _| {
                     ranges.push((index, start));
                     match (index, start) {
-                        (0, 0) => Ok(VerifiedRange { total_bytes: 6, bytes: b"abc".to_vec() }),
-                        (0, 3) => Ok(VerifiedRange { total_bytes: 6, bytes: b"def".to_vec() }),
-                        (1, 0) => Ok(VerifiedRange { total_bytes: 6, bytes: b"ghi".to_vec() }),
+                        (0, 0) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"abc".to_vec(),
+                        }),
+                        (0, 3) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"def".to_vec(),
+                        }),
+                        (1, 0) => Ok(VerifiedRange {
+                            total_bytes: 6,
+                            bytes: b"ghi".to_vec(),
+                        }),
                         (1, 3) => Err(RangeFetchError::IoFailure),
                         _ => panic!("unexpected range"),
                     }
-                }).map_err(|error| format!("{error:?}"))
+                })
+                .map_err(|error| format!("{error:?}"))
             },
         );
         assert!(failed.unwrap_err().contains("member 1 failed"));
@@ -1287,16 +1301,25 @@ mod tests {
 
         let mut resumed = Vec::new();
         let receipt = fetch_generation_with(
-            "enwiki", "2026-10-01", &pin, &root, 64,
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            64,
             |_, _, _| panic!("verified inventory must be reused without HTTP"),
             |pinned, index, directory, limit| {
                 stage_resumed_member_with(pinned, index, directory, limit, 3, |start, _, _| {
                     resumed.push((index, start));
                     assert_eq!((index, start), (1, 3));
-                    Ok(VerifiedRange { total_bytes: 6, bytes: b"jkl".to_vec() })
-                }).map_err(|error| format!("{error:?}"))
+                    Ok(VerifiedRange {
+                        total_bytes: 6,
+                        bytes: b"jkl".to_vec(),
+                    })
+                })
+                .map_err(|error| format!("{error:?}"))
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(resumed, [(1, 3)]);
         let value: serde_json::Value = serde_json::from_str(&receipt).unwrap();
         assert_eq!(value["schema_version"], 2);
@@ -1309,28 +1332,40 @@ mod tests {
 
         // The complete generation can be replayed offline without curl.
         let replay = fetch_generation_with(
-            "enwiki", "2026-10-01", &pin, &root, 64,
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            64,
             |_, _, _| panic!("inventory must be reused"),
             |pinned, index, directory, limit| {
                 stage_resumed_member_with(pinned, index, directory, limit, 3, |_, _, _| {
                     panic!("verified shard must be reused")
-                }).map_err(|error| format!("{error:?}"))
+                })
+                .map_err(|error| format!("{error:?}"))
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(replay, receipt);
 
         // Unexpected files invalidate final verification, even if all
         // declared members were successfully acquired and reused.
         fs::write(root.join("unlisted.part"), b"orphan").unwrap();
         assert!(fetch_generation_with(
-            "enwiki", "2026-10-01", &pin, &root, 64,
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            64,
             |_, _, _| panic!("inventory must be reused"),
             |pinned, index, directory, limit| {
                 stage_resumed_member_with(pinned, index, directory, limit, 3, |_, _, _| {
                     panic!("verified shard must be reused")
-                }).map_err(|error| format!("{error:?}"))
+                })
+                .map_err(|error| format!("{error:?}"))
             },
-        ).is_err());
+        )
+        .is_err());
         assert_eq!(fs::read(root.join("unlisted.part")).unwrap(), b"orphan");
         fs::remove_dir_all(root).unwrap();
     }
@@ -1339,10 +1374,15 @@ mod tests {
     fn integrated_generation_rejects_invalid_limit_before_inventory_transport() {
         let root = private_root();
         assert!(fetch_generation_with(
-            "enwiki", "2026-10-01", &"a".repeat(64), &root, 0,
+            "enwiki",
+            "2026-10-01",
+            &"a".repeat(64),
+            &root,
+            0,
             |_, _, _| panic!("invalid budget must fail before inventory HTTP"),
             |_, _, _, _| panic!("invalid budget must fail before member HTTP"),
-        ).is_err());
+        )
+        .is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
