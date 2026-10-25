@@ -109,9 +109,7 @@ where
     if !is_official_checksum_url(&checksum_url, project, generation) {
         return Err("invalid Wikimedia dump identity".into());
     }
-    if expected_sha256.len() != 64
-        || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-    {
+    if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid independently supplied SHA256SUMS digest".into());
     }
     safe_private_root(root)?;
@@ -129,11 +127,17 @@ pub fn run(
     expected_sha256: &str,
     root: &Path,
 ) -> Result<(), String> {
-    let count = run_with_fetch(project, generation, expected_sha256, root, |wiki, date, sha| {
-        InventoryCurl::new()
-            .fetch_verified_inventory(wiki, date, sha)
-            .map_err(|error| format!("official HTTPS fetch rejected: {error:?}"))
-    })?;
+    let count = run_with_fetch(
+        project,
+        generation,
+        expected_sha256,
+        root,
+        |wiki, date, sha| {
+            InventoryCurl::new()
+                .fetch_verified_inventory(wiki, date, sha)
+                .map_err(|error| format!("official HTTPS fetch rejected: {error:?}"))
+        },
+    )?;
     println!("Inventory SHA256SUMS staged and digest-verified: {count} declared members");
     println!("Wikimedia TLS transport: certificate-verified HTTPS, no redirects");
     println!("Independent publisher provenance: NOT AUTHENTICATED");
@@ -166,11 +170,7 @@ mod tests {
     }
 
     fn valid_raw() -> Vec<u8> {
-        format!(
-            "{}  enwiki-2026-10-01-p1p100.xml.bz2\n",
-            "a".repeat(64),
-        )
-        .into_bytes()
+        format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64),).into_bytes()
     }
 
     #[test]
@@ -182,7 +182,8 @@ mod tests {
         let count = run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
             fetches += 1;
             Ok(raw.clone())
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(count, 1);
         assert_eq!(fetches, 1);
         assert_eq!(fs::read(root.join("SHA256SUMS")).unwrap(), raw);
@@ -191,14 +192,21 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
-                fs::metadata(root.join("SHA256SUMS")).unwrap().permissions().mode() & 0o777,
+                fs::metadata(root.join("SHA256SUMS"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o600,
             );
         }
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            fetches += 1;
-            panic!("occupied destination must avoid network access")
-        }).is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                fetches += 1;
+                panic!("occupied destination must avoid network access")
+            })
+            .is_err()
+        );
         assert_eq!(fetches, 1);
         assert_eq!(fs::read(root.join("SHA256SUMS")).unwrap(), raw);
         fs::remove_dir_all(root).unwrap();
@@ -216,14 +224,20 @@ mod tests {
         ] {
             assert!(run_with_fetch(project, date, pin, &root, |_, _, _| {
                 panic!("invalid input must fail before network access")
-            }).is_err());
+            })2026-10-25T08:56:19.7933337Z +            .is_err());
         }
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            Ok(b"forged".to_vec())
-        }).is_err());
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            Err("transport failure".into())
-        }).is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                Ok(b"forged".to_vec())
+            })
+            .is_err()
+        );
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                Err("transport failure".into())
+            })
+            .is_err()
+        );
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
     }
@@ -237,14 +251,20 @@ mod tests {
         let digest = format!("{:x}", Sha256::digest(&raw));
         let alias = root.with_extension("alias");
         symlink(&root, &alias).unwrap();
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &alias, |_, _, _| {
-            panic!("symlinked root must fail before download")
-        }).is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &alias, |_, _, _| {
+                panic!("symlinked root must fail before download")
+            })
+            .is_err()
+        );
         let target = root.join("missing-inventory");
         symlink(target, root.join("SHA256SUMS")).unwrap();
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            panic!("dangling symlink output must fail before download")
-        }).is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                panic!("dangling symlink output must fail before download")
+            })
+            .is_err()
+        );
         fs::remove_file(alias).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

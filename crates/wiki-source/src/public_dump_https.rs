@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::public_dump_origin::is_official_checksum_url;
-use crate::public_dump_pinned::{
-    parse_origin_checked_pinned_inventory, PinnedInventoryError,
-};
+use crate::public_dump_pinned::{parse_origin_checked_pinned_inventory, PinnedInventoryError};
 
 pub const MAX_INVENTORY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
@@ -46,7 +44,9 @@ impl Default for InventoryCurl {
 
 impl InventoryCurl {
     pub fn new() -> Self {
-        Self { executable: "curl".into() }
+        Self {
+            executable: "curl".into(),
+        }
     }
 
     /// Return the exact raw publication bytes only if certificate-verified
@@ -64,16 +64,12 @@ impl InventoryCurl {
         if !is_official_checksum_url(&url, project, date) {
             return Err(InventoryFetchError::InvalidIdentity);
         }
-        if expected_sha256.len() != 64
-            || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-        {
+        if expected_sha256.len() != 64 || !expected_sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(InventoryFetchError::InvalidDigest);
         }
         let raw = self.fetch_raw(&url, MAX_INVENTORY_BYTES)?;
-        parse_origin_checked_pinned_inventory(
-            &raw, project, date, &url, expected_sha256,
-        )
-        .map_err(InventoryFetchError::Inventory)?;
+        parse_origin_checked_pinned_inventory(&raw, project, date, &url, expected_sha256)
+            .map_err(InventoryFetchError::Inventory)?;
         Ok(raw)
     }
 
@@ -86,17 +82,30 @@ impl InventoryCurl {
         // Limit stdout independently of Content-Length / --max-filesize.
         let mut child = Command::new(&self.executable)
             .args([
-                "-q", "--silent", "--show-error", "--globoff",
-                "--user-agent", "FoundationWikipedia/0.1 (dump inventory)",
-                "--header", "Accept: text/plain",
-                "--proto", "=https",
-                "--max-redirs", "0",
-                "--connect-timeout", "10",
-                "--max-time", "60",
-                "--max-filesize", &max_bytes.to_string(),
-                "--output", "-",
-                "--write-out", "%{stderr}\nFW_DUMP_HTTP_CODE:%{http_code}\n",
-                "--", url,
+                "-q",
+                "--silent",
+                "--show-error",
+                "--globoff",
+                "--user-agent",
+                "FoundationWikipedia/0.1 (dump inventory)",
+                "--header",
+                "Accept: text/plain",
+                "--proto",
+                "=https",
+                "--max-redirs",
+                "0",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                "60",
+                "--max-filesize",
+                &max_bytes.to_string(),
+                "--output",
+                "-",
+                "--write-out",
+                "%{stderr}\nFW_DUMP_HTTP_CODE:%{http_code}\n",
+                "--",
+                url,
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -109,7 +118,9 @@ impl InventoryCurl {
             let mut buffer = [0u8; 8192];
             loop {
                 let n = stderr.read(&mut buffer)?;
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 tail.extend(&buffer[..n]);
                 let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
                 tail.drain(..excess);
@@ -131,7 +142,9 @@ impl InventoryCurl {
                     return Err(InventoryFetchError::IoFailure);
                 }
             };
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             if n > max_bytes.saturating_sub(raw.len()) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -176,18 +189,22 @@ mod tests {
 
     fn fake_curl(script: &str) -> (InventoryCurl, PathBuf) {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir()
-            .join(format!("wiki-dump-inventory-curl-{}-{id}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "wiki-dump-inventory-curl-{}-{id}",
+            std::process::id()
+        ));
         fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        (InventoryCurl { executable: path.clone() }, path)
+        (
+            InventoryCurl {
+                executable: path.clone(),
+            },
+            path,
+        )
     }
 
     fn inventory_bytes() -> String {
-        format!(
-            "{}  enwiki-2026-10-01-p1p100.xml.bz2\n",
-            "a".repeat(64),
-        )
+        format!("{}  enwiki-2026-10-01-p1p100.xml.bz2\n", "a".repeat(64),)
     }
 
     #[test]
@@ -195,16 +212,19 @@ mod tests {
         let raw = inventory_bytes();
         let sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let args_path = std::env::temp_dir().join(format!(
-            "wiki-dump-curl-args-{}-{}", std::process::id(),
+            "wiki-dump-curl-args-{}-{}",
+            std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let script = format!(
             "printf '%s\\n' \"$@\" > '{}'\nprintf '%s' '{}'\nprintf 'FW_DUMP_HTTP_CODE:200\\n' >&2",
-            args_path.display(), raw
+            args_path.display(),
+            raw
         );
         let (client, executable) = fake_curl(&script);
         assert_eq!(
-            client.fetch_verified_inventory("enwiki", "2026-10-01", &sha256).unwrap(),
+            client
+                .fetch_verified_inventory("enwiki", "2026-10-01", &sha256)2026-10-25T08:56:19.6671892Z +                .unwrap(),
             raw.as_bytes()
         );
         let args = fs::read_to_string(&args_path).unwrap();
@@ -212,9 +232,13 @@ mod tests {
         assert_eq!(words.first(), Some(&"-q"));
         assert!(words.windows(2).any(|pair| pair == ["--proto", "=https"]));
         assert!(words.windows(2).any(|pair| pair == ["--max-redirs", "0"]));
-        assert!(words.windows(2).any(|pair| pair == ["--max-filesize", "33554432"]));
+        assert!(words
+            .windows(2)
+            .any(|pair| pair == ["--max-filesize", "33554432"]));
         assert!(words.windows(2).any(|pair| pair == ["--", "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS"]));
-        assert!(!words.iter().any(|word| ["-L", "-k", "--insecure", "--location"].contains(word)));
+        assert!(!words
+            .iter()
+            .any(|word| ["-L", "-k", "--insecure", "--location"].contains(word)));
         fs::remove_file(&args_path).unwrap();
         fs::remove_file(executable).unwrap();
     }
@@ -225,9 +249,24 @@ mod tests {
         let sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
         let (client, executable) = fake_curl("exit 99");
         for (project, date, digest, error) in [
-            ("bad/wiki", "2026-10-01", sha256.as_str(), InventoryFetchError::InvalidIdentity),
-            ("enwiki", "2026-02-30", sha256.as_str(), InventoryFetchError::InvalidIdentity),
-            ("enwiki", "2026-10-01", "bad", InventoryFetchError::InvalidDigest),
+            (
+                "bad/wiki",
+                "2026-10-01",
+                sha256.as_str(),
+                InventoryFetchError::InvalidIdentity,
+            ),
+            (
+                "enwiki",
+                "2026-02-30",
+                sha256.as_str(),
+                InventoryFetchError::InvalidIdentity,
+            ),
+            (
+                "enwiki",
+                "2026-10-01",
+                "bad",
+                InventoryFetchError::InvalidDigest,
+            ),
         ] {
             assert_eq!(
                 client.fetch_verified_inventory(project, date, digest),
@@ -243,11 +282,15 @@ mod tests {
         let (client, executable) = fake_curl(&script);
         assert!(matches!(
             client.fetch_verified_inventory("enwiki", "2026-10-01", &"0".repeat(64)),
-            Err(InventoryFetchError::Inventory(PinnedInventoryError::DigestMismatch))
+            Err(InventoryFetchError::Inventory(
+                PinnedInventoryError::DigestMismatch
+            ))
         ));
         assert!(matches!(
             client.fetch_verified_inventory("frwiki", "2026-10-01", &sha256),
-            Err(InventoryFetchError::Inventory(PinnedInventoryError::WrongGeneration))
+            Err(InventoryFetchError::Inventory(
+                PinnedInventoryError::WrongGeneration
+            ))
         ));
         fs::remove_file(executable).unwrap();
     }
@@ -257,9 +300,18 @@ mod tests {
         let raw = inventory_bytes();
         let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
         for (script, expected) in [
-            ("printf 'redirect'; printf 'FW_DUMP_HTTP_CODE:302\\n' >&2", InventoryFetchError::HttpStatus(302)),
-            ("printf 'missing'; printf 'FW_DUMP_HTTP_CODE:404\\n' >&2", InventoryFetchError::HttpStatus(404)),
-            ("printf 'body without status'", InventoryFetchError::ProcessFailed),
+            (
+                "printf 'redirect'; printf 'FW_DUMP_HTTP_CODE:302\\n' >&2",
+                InventoryFetchError::HttpStatus(302),
+            ),
+            (
+                "printf 'missing'; printf 'FW_DUMP_HTTP_CODE:404\\n' >&2",
+                InventoryFetchError::HttpStatus(404),
+            ),
+            (
+                "printf 'body without status'",
+                InventoryFetchError::ProcessFailed,
+            ),
         ] {
             let (client, executable) = fake_curl(script);
             assert_eq!(

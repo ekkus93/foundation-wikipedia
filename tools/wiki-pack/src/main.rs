@@ -3,8 +3,8 @@
 mod audit_diagnostic;
 mod audit_public_dump;
 mod css_graph_diagnostic;
-mod fetch_public_dump;
 mod curated_catalog;
+mod fetch_public_dump;
 mod preview_topic;
 mod visual_diagnostic;
 
@@ -207,12 +207,9 @@ fn main() {
                 eprintln!("Project, generation and SHA-256 must be UTF-8");
                 std::process::exit(2);
             };
-            if let Err(error) = fetch_public_dump::run(
-                identity[0],
-                identity[1],
-                identity[2],
-                Path::new(&fields[3]),
-            ) {
+            if let Err(error) =
+                fetch_public_dump::run(identity[0], identity[1], identity[2], Path::new(&fields[3]))
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

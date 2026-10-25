@@ -20,8 +20,6 @@ pub mod online_selection;
 pub mod online_title;
 pub mod public_dump;
 pub mod public_dump_bzip2;
-#[cfg(not(target_os = "android"))]
-pub mod public_dump_https;
 pub mod public_dump_census_export;
 pub mod public_dump_census_gate;
 pub mod public_dump_census_ingest;
@@ -29,6 +27,8 @@ pub mod public_dump_census_stream;
 pub mod public_dump_census_text;
 pub mod public_dump_checked_read;
 pub mod public_dump_coverage;
+#[cfg(not(target_os = "android"))]
+pub mod public_dump_https;
 pub mod public_dump_ingest;
 pub mod public_dump_origin;
 pub mod public_dump_page_meta;
