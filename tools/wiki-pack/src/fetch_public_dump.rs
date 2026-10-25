@@ -773,8 +773,14 @@ mod tests {
         assert_eq!(value["verified_members"].as_array().unwrap().len(), 1);
         assert_eq!(value["verified_members"][0]["index"], 0);
         assert_eq!(value["verified_members"][0]["relative_path"], name);
-        assert_eq!(value["verified_members"][0]["sha256"], format!("{:x}", Sha256::digest(body)));
-        assert_eq!(value["verified_members"][0]["verified_compressed_bytes"], body.len() as u64);
+        assert_eq!(
+            value["verified_members"][0]["sha256"],
+            format!("{:x}", Sha256::digest(body))
+        );
+        assert_eq!(
+            value["verified_members"][0]["verified_compressed_bytes"],
+            body.len() as u64
+        );
         for check in ["inventory_sha256", "member_sha256", "clean_staging_tree"] {
             assert_eq!(value["checks"][check], true);
         }
@@ -821,13 +827,22 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert_eq!(members[0]["index"], 0);
         assert_eq!(members[0]["relative_path"], first);
-        assert_eq!(members[0]["sha256"], format!("{:x}", Sha256::digest(body_a)));
+        assert_eq!(
+            members[0]["sha256"],
+            format!("{:x}", Sha256::digest(body_a))
+        );
         assert_eq!(members[0]["verified_compressed_bytes"], body_a.len() as u64);
         assert_eq!(members[1]["index"], 1);
         assert_eq!(members[1]["relative_path"], second);
-        assert_eq!(members[1]["sha256"], format!("{:x}", Sha256::digest(body_b)));
+        assert_eq!(
+            members[1]["sha256"],
+            format!("{:x}", Sha256::digest(body_b))
+        );
         assert_eq!(members[1]["verified_compressed_bytes"], body_b.len() as u64);
-        assert_eq!(value["verified_compressed_bytes"], (body_a.len() + body_b.len()) as u64);
+        assert_eq!(
+            value["verified_compressed_bytes"],
+            (body_a.len() + body_b.len()) as u64
+        );
         fs::write(root.join(second), b"tampered").unwrap();
         assert!(verified_generation_json("enwiki", "2026-10-01", &pin, &root, 1024).is_err());
         fs::remove_dir_all(root).unwrap();
@@ -1198,5 +1213,3 @@ mod tests {
         );
         fs::remove_file(alias).unwrap();
         fs::remove_dir_all(root).unwrap();
-    }
-}
