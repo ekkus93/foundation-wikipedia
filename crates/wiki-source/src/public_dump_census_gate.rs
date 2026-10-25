@@ -241,6 +241,20 @@ where
     {
         return Err(VerifiedCensusStageError::UnsafePath);
     }
+    // Reject an occupied destination before potentially decompressing an
+    // entire dump generation. The final hard-link publication below remains
+    // the authoritative no-overwrite check against concurrent writers.
+    let destination = root.join(filename);
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => {
+            return Err(VerifiedCensusStageError::Io(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "audited census destination already exists",
+            )));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(VerifiedCensusStageError::Io(error)),
+    }
     let pending_name = format!(
         "pending-census-{}-{}.ids",
         std::process::id(),
@@ -254,7 +268,6 @@ where
         feed,
     )
     .map_err(VerifiedCensusStageError::Stage)?;
-    let destination = root.join(filename);
     let mut published = false;
     let result = (|| {
         let delta = audit_pinned_census_files(
@@ -507,7 +520,9 @@ mod tests {
         assert_eq!(delta.observed_count, 2);
         assert_eq!(fs::read(&ready).unwrap(), b"1\n201\n");
 
-        // An existing published census is never overwritten.
+        // An existing published census is rejected before opening or
+        // decompressing even the first source shard.
+        let mut opens = 0usize;
         assert!(matches!(
             stage_and_audit_native_bzip2_census(
                 &root,
@@ -515,11 +530,36 @@ mod tests {
                 &pinned,
                 0,
                 audit,
-                open,
+                |name| {
+                    opens += 1;
+                    open(name)
+                },
             ),
             Err(VerifiedCensusStageError::Io(error))
                 if error.kind() == io::ErrorKind::AlreadyExists
         ));
+        assert_eq!(opens, 0, "occupied outputs must fail before expensive I/O");
+        #[cfg(unix)]
+        {
+            // A dangling symlink is still an occupied destination.
+            use std::os::unix::fs::symlink;
+            let alias = root.join("dangling.ids");
+            symlink(root.join("missing-target.ids"), &alias).unwrap();
+            assert!(matches!(
+                stage_and_audit_native_bzip2_census(
+                    &root,
+                    "dangling.ids",
+                    &pinned,
+                    0,
+                    audit,
+                    |_| -> io::Result<std::io::Cursor<&[u8]>> {
+                        panic!("must reject dangling symlink before opening a shard")
+                    },
+                ),
+                Err(VerifiedCensusStageError::Io(error))
+                    if error.kind() == io::ErrorKind::AlreadyExists
+            ));
+        }
 
         // Correctly pinned but different expected IDs must not be published.
         fs::write(&expected, b"1\n202\n").unwrap();

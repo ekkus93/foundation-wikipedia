@@ -133,6 +133,17 @@ pub fn run(config: &NativeDumpAudit<'_>) -> Result<usize, String> {
         config.inventory_sha256,
     )
     .map_err(|error| format!("pinned inventory rejected: {error:?}"))?;
+    // Fail before decoding a potentially multi-terabyte generation when an
+    // inventory member is missing, linked, oversized or not a regular file.
+    // Reopen and validate each member during the actual digest-checked read:
+    // this preflight is not a substitute for the authenticated byte stream.
+    for member in pinned.members() {
+        let _file = open_regular_bounded(
+            &source.join(&member.relative_path),
+            config.max_compressed_bytes,
+        )
+        .map_err(|error| format!("source member preflight rejected {}: {error}", member.relative_path))?;
+    }
     let (path, delta) = stage_and_audit_native_bzip2_census(
         &output,
         config.output_name,
@@ -268,6 +279,13 @@ mod tests {
         .is_err());
         assert!(!output.join("wrong-ids.ids").exists());
         fs::write(&expected, b"1\n201\n").unwrap();
+        fs::remove_file(source.join(names[1])).unwrap();
+        assert!(run(&NativeDumpAudit {
+            output_name: "missing-member.ids",
+            ..options
+        })
+        .is_err());
+        assert!(!output.join("missing-member.ids").exists());
         fs::write(source.join(names[1]), b"corrupt member").unwrap();
         assert!(run(&NativeDumpAudit {
             output_name: "bad-member.ids",
