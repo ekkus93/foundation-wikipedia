@@ -69,6 +69,15 @@ export function validReaderTitleInput(value: unknown): value is string {
   return validTitle(value) && new TextEncoder().encode(value).byteLength <= 512;
 }
 
+/** Match the Rust online search input limit before sending an IPC request.
+ * Trim UI-only outer whitespace, but never silently rewrite internal controls
+ * or malformed Unicode into a different query on the wire. */
+export function normalizedReaderSearchQuery(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return validReaderTitleInput(normalized) ? normalized : null;
+}
+
 export function parseReaderSearchHits(input: unknown): ReaderSearchHit[] {
   if (!Array.isArray(input) || input.length > 100) throw new Error("Invalid Wikipedia search response");
   const seen = new Set<number>();

@@ -5,7 +5,7 @@ import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
-import { parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
+import { normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
 export interface ReaderArticleContext {
@@ -131,13 +131,18 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!query.trim() || busy || offline || !connected || !navigator.onLine) return;
+    if (busy || offline || !connected || !navigator.onLine) return;
+    const requestedQuery = normalizedReaderSearchQuery(query);
+    if (!requestedQuery) {
+      setNotice("Invalid search: use a nonempty query of at most 512 UTF-8 bytes without control or invisible formatting characters.");
+      return;
+    }
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
     // A failed search must not destroy the currently displayed revision/history.
     try {
-      const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: query.trim(), project, offline: offline || !connected || !navigator.onLine }));
+      const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: requestedQuery, project, offline: offline || !connected || !navigator.onLine }));
       if (!requestEpoch.current.matches(epoch)) return;
       setHits(result);
       setNavigation(emptyReaderNavigation());
@@ -222,11 +227,14 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             placeholder="Article or topic"
             disabled={busy}
           />
-          <button type="submit" disabled={busy || offline || !connected || !navigator.onLine || !query.trim()}>Search</button>
-          <button type="button" disabled={busy || offline || !connected || !navigator.onLine || !query.trim()}
-            onClick={() => void openTitle(query.trim())}>Open exact title</button>
+          <button type="submit" disabled={busy || offline || !connected || !navigator.onLine || !normalizedReaderSearchQuery(query)}>Search</button>
+          <button type="button" disabled={busy || offline || !connected || !navigator.onLine || !normalizedReaderSearchQuery(query)}
+            onClick={() => void openTitle(normalizedReaderSearchQuery(query) ?? "")}>Open exact title</button>
         </div>
       </form>
+      {query.trim() && !normalizedReaderSearchQuery(query) && (
+        <p role="status">Search and exact-title input must fit in 512 UTF-8 bytes and contain no control or invisible formatting characters.</p>
+      )}
       <label><input type="checkbox" checked={offline} disabled={busy} onChange={(event) => {
         const nowOffline = event.target.checked;
         setOffline(nowOffline);
