@@ -273,9 +273,7 @@ fn expected_member_census_receipts(
         count += 1;
     }
     receipts.push((format!("{:x}", hash.finalize()), count));
-    receipts.extend((index + 1..ranges.len()).map(|_| {
-        (format!("{:x}", Sha256::digest(b"")), 0)
-    }));
+    receipts.extend((index + 1..ranges.len()).map(|_| (format!("{:x}", Sha256::digest(b"")), 0)));
     if !unchanged(&before, &file.metadata().map_err(CensusGateError::Io)?) {
         return Err(CensusGateError::ChangedDuringAudit);
     }

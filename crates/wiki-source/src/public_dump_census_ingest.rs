@@ -445,7 +445,9 @@ mod tests {
     fn member_census_receipts_track_only_selected_namespace_and_complete_members() {
         let pinned = inventory();
         let mut pipeline = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
-        pipeline.begin_member(&pinned.members()[0].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[0].relative_path)
+            .unwrap();
         assert_eq!(pipeline.last_member_census_receipt(), None);
         push_page(&mut pipeline, 1, 1).unwrap();
         push_page(&mut pipeline, 2, 0).unwrap();
@@ -454,7 +456,9 @@ mod tests {
             pipeline.last_member_census_receipt(),
             Some((format!("{:x}", Sha256::digest(b"2\n")).as_str(), 1))
         );
-        pipeline.begin_member(&pinned.members()[1].relative_path).unwrap();
+        pipeline
+            .begin_member(&pinned.members()[1].relative_path)
+            .unwrap();
         assert_eq!(pipeline.last_member_census_receipt(), None);
         push_page(&mut pipeline, 201, 1).unwrap();
         pipeline.end_member().unwrap();
