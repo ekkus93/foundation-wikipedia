@@ -109,14 +109,14 @@ test("extracts article links from an uninstantiated template rather than DOMPars
 test("sanitizes spoofed display labels without splitting supplementary Unicode", () => {
   const originalDocument = globalThis.document;
   const anchors = [
-    ["./Physics", "Phy\\u200bs\\u2060i\\ufeffcs\\ufdd0\\u{10ffff}"],
-    ["./Chemistry", "Che\\u202emistry"],
-    ["./Biology", "Bio\\u0085logy"],
-    ["./Astronomy", "Astro\\uD800nomy"],
+    ["./Physics", "Phy\u200bs\u2060i\ufeffcs\ufdd0\u{10ffff}"],
+    ["./Chemistry", "Che\u202emistry"],
+    ["./Biology", "Bio\u0085logy"],
+    ["./Astronomy", "Astro\uD800nomy"],
     ["./Zoology", "🐈".repeat(160) + "z"],
-    ["./Persian", "می\\u200cروم"],
-    ["./Indic", "क्\\u200dष"],
-    ["./Empty", "\\u200b\\ufeff"],
+    ["./Persian", "می\u200cروم"],
+    ["./Indic", "क्\u200dष"],
+    ["./Empty", "\u200b\ufeff"],
   ];
   globalThis.document = {
     createElement: () => ({
@@ -134,8 +134,8 @@ test("sanitizes spoofed display labels without splitting supplementary Unicode",
       { title: "Biology", label: "Bio logy" },
       { title: "Astronomy", label: "Astronomy" },
       { title: "Zoology", label: "🐈".repeat(160) },
-      { title: "Persian", label: "می\\u200cروم" },
-      { title: "Indic", label: "क्\\u200dष" },
+      { title: "Persian", label: "می\u200cروم" },
+      { title: "Indic", label: "क्\u200dष" },
       { title: "Empty", label: "Empty" },
     ]);
   } finally {
