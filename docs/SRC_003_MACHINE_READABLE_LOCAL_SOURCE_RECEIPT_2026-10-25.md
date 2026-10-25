@@ -24,3 +24,8 @@ installed snapshot.
 Synthetic regression covers missing members, exact JSON fields, digest
 case normalization, deterministic output, full-checksum corruption and
 explicit false trust flags. This increment does not complete SRC-003.
+
+A black-box `wiki-pack` binary regression additionally checks actual CLI argument
+parsing, single-line JSON stdout on success, unchanged human-readable mode,
+and empty stdout/nonzero exit for missing shards, bad inventory pins and
+corrupt compressed members.
