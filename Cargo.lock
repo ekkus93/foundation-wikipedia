@@ -238,6 +238,7 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
+
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
@@ -478,6 +479,7 @@ dependencies = [
 ]
 
 [[package]]
+
 name = "rmp"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -718,6 +720,7 @@ dependencies = [
  "serde_json",
  "wiki-core",
  "wiki-model",
+
  "wiki-search",
 ]
 
@@ -753,6 +756,7 @@ dependencies = [
 name = "wiki-pack"
 version = "0.1.0"
 dependencies = [
+ "bzip2",
  "serde",
  "serde_json",
  "sha2",
