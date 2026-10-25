@@ -450,10 +450,12 @@ mod tests {
         }
 
         fs::write(&path, b"tampered").unwrap();
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            panic!("corrupt occupied inventory must not initiate transport")
-        })
-        .is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                panic!("corrupt occupied inventory must not initiate transport")
+            })
+            .is_err()
+        );
         assert_eq!(fs::read(&path).unwrap(), b"tampered");
         fs::remove_dir_all(root).unwrap();
     }
@@ -468,10 +470,12 @@ mod tests {
         let outside = root.with_extension("outside-inventory");
         fs::write(&outside, &raw).unwrap();
         fs::hard_link(&outside, &path).unwrap();
-        assert!(run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
-            panic!("hardlinked existing inventory must not initiate transport")
-        })
-        .is_err());
+        assert!(
+            run_with_fetch("enwiki", "2026-10-01", &digest, &root, |_, _, _| {
+                panic!("hardlinked existing inventory must not initiate transport")
+            })
+            .is_err()
+        );
         assert_eq!(fs::read(&outside).unwrap(), raw);
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(outside).unwrap();
