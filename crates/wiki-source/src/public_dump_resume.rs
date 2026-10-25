@@ -106,7 +106,8 @@ fn cleanup_published_checkpoint(root: &Path, inventory: &PinnedInventory, index:
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1 {
+        if opened.dev() != inspected.dev() || opened.ino() != inspected.ino() || opened.nlink() != 1
+        {
             return;
         }
     }
@@ -482,7 +483,10 @@ mod tests {
                 .unwrap(),
                 6
             );
-            assert!(fs::symlink_metadata(&partial).unwrap().file_type().is_symlink());
+            assert!(fs::symlink_metadata(&partial)
+                .unwrap()
+                .file_type()
+                .is_symlink());
             assert_eq!(fs::read(&external).unwrap(), b"outside");
             fs::remove_file(&partial).unwrap();
 
