@@ -787,9 +787,15 @@ mod tests {
                 },
                 open,
             ),
-            Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
-                StreamCoverageError::MissingOrUnexpected(_)
-            )))
+            Err(VerifiedCensusStageError::Stage(
+                crate::public_dump_census_ingest::CensusStageError::Census(
+                    PinnedCensusError::MemberCensusMismatch {
+                        expected_count: 1,
+                        observed_count: 1,
+                        ..
+                    }
+                )
+            ))
         ));
 
         // A forged second-member checksum fails before expected-census audit.
