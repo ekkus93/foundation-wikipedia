@@ -241,7 +241,7 @@ pub fn run_member(
                 .map_err(|error| format!("official compressed member rejected: {error:?}"))
         },
     )?;
-    println!("HTTPS and SHA-256-verified compressed member staged: {downloaded} bytes");
+    println!("SHA-256-verified compressed member staged: {downloaded} bytes");
     println!("Expected census and Wikimedia publisher provenance: NOT AUTHENTICATED");
     println!("No pack installed or active snapshot changed.");
     Ok(())

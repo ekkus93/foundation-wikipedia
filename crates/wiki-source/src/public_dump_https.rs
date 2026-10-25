@@ -593,6 +593,25 @@ mod tests {
             Err(MemberFetchError::Existing(DumpVerifyError::DigestMismatch))
         ));
         assert_eq!(fs::read(root.join(name)).unwrap(), b"corrupted");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = root.with_extension("outside");
+            fs::write(&outside, body).unwrap();
+            fs::remove_file(root.join(name)).unwrap();
+            symlink(&outside, root.join(name)).unwrap();
+            assert!(matches!(
+                offline_client.stage_verified_member(&inventory, 0, &root, 256),
+                Err(MemberFetchError::UnsafeRoot)
+            ));
+            fs::remove_file(root.join(name)).unwrap();
+            fs::hard_link(&outside, root.join(name)).unwrap();
+            assert!(matches!(
+                offline_client.stage_verified_member(&inventory, 0, &root, 256),
+                Err(MemberFetchError::UnsafeRoot)
+            ));
+            fs::remove_file(outside).unwrap();
+        }
         fs::remove_file(offline_exe).unwrap();
         fs::remove_file(root.join(name)).unwrap();
         for (label, script) in [
