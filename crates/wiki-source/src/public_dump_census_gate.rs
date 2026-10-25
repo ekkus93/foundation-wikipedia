@@ -533,6 +533,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::public_dump_census_ingest::PinnedCensusError;
     use crate::public_dump_pinned::parse_pinned_inventory;
     use std::sync::atomic::{AtomicU64, Ordering};
 
