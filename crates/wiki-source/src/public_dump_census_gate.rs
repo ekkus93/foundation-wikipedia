@@ -559,6 +559,7 @@ mod tests {
                 Err(VerifiedCensusStageError::Io(error))
                     if error.kind() == io::ErrorKind::AlreadyExists
             ));
+            fs::remove_file(alias).unwrap();
         }
 
         // Correctly pinned but different expected IDs must not be published.
