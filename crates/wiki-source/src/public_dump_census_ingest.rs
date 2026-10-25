@@ -914,7 +914,7 @@ mod tests {
         assert!(correct.next().is_none());
         let (observed, count) = matched.finish().unwrap();
         assert_eq!(observed, b"2\n3\n");
-        assert_eq!(count, 3);
+        assert_eq!(count, 2);
 
         // A broken expected cursor cannot silently qualify a native member.
         let mut missing = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();

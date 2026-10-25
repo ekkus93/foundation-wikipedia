@@ -845,9 +845,9 @@ mod tests {
             ),
             Err(VerifiedCensusStageError::Stage(
                 crate::public_dump_census_ingest::CensusStageError::Census(
-                    PinnedCensusError::MemberCensusMismatch {
-                        expected_count: 1,
-                        observed_count: 1,
+                    PinnedCensusError::MemberPageIdMismatch {
+                        expected_page_id: 202,
+                        observed_page_id: 201,
                         ..
                     }
                 )
