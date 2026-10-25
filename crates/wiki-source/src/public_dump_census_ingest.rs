@@ -218,7 +218,6 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
         mut expected_ids: Option<&mut dyn Iterator<Item = std::io::Result<u64>>>,
     ) -> Result<(u64, u64), NativeCensusError> {
         if self.failed {
-
             return Err(NativeCensusError::Census(PinnedCensusError::InvalidState));
         }
         let Some(member) = self
@@ -272,7 +271,6 @@ impl<'a, W: Write> PinnedObservedCensus<'a, W> {
                         }
                     }
                     Ok(())
-
                 })();
                 if let Err(error) = push {
                     callback_error = Some(error);
@@ -716,7 +714,6 @@ mod tests {
                         .members()
                         .iter()
                         .position(|member| member.relative_path == path)
-
                         .unwrap();
                     Ok(Cursor::new(compressed[index].as_slice()))
                 }
@@ -850,7 +847,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn native_expected_id_stream_rejects_equal_count_page_substitution_mid_shard() {
         use std::io::Cursor;
@@ -881,27 +877,38 @@ mod tests {
             Cursor::new(&compressed),
             4096,
             4096,
-
             2,
             &mut expected,
         );
-        assert!(matches!(
-            result,
-            Err(NativeCensusError::Census(PinnedCensusError::MemberPageIdMismatch {
-                expected_page_id: 4,
-                observed_page_id: 3,
-                ..
-            }))
-        ), "unexpected early ID mismatch: {result:?}");
+        assert!(
+            matches!(
+                result,
+                Err(NativeCensusError::Census(
+                    PinnedCensusError::MemberPageIdMismatch {
+                        expected_page_id: 4,
+                        observed_page_id: 3,
+                        ..
+                    }
+                ))
+            ),
+            "unexpected early ID mismatch: {result:?}"
+        );
         assert!(replaced.last_member_census_receipt().is_none());
-        assert!(matches!(replaced.finish(), Err(PinnedCensusError::InvalidState)));
+        assert!(matches!(
+            replaced.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
 
         // A matching stream succeeds without consuming IDs for other namespaces.
         let mut matched = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         let mut correct = [Ok(2), Ok(3)].into_iter();
         matched
             .decode_native_bzip2_member_with_expected_ids(
-                Cursor::new(&compressed), 4096, 4096, 2, &mut correct,
+                Cursor::new(&compressed),
+                4096,
+                4096,
+                2,
+                &mut correct,
             )
             .unwrap();
         assert_eq!(correct.next(), None);
@@ -914,11 +921,20 @@ mod tests {
         let mut short = [Ok(2)].into_iter();
         assert!(matches!(
             missing.decode_native_bzip2_member_with_expected_ids(
-                Cursor::new(&compressed), 4096, 4096, 2, &mut short,
+                Cursor::new(&compressed),
+                4096,
+                4096,
+                2,
+                &mut short,
             ),
-            Err(NativeCensusError::Census(PinnedCensusError::ExpectedCensusChanged))
+            Err(NativeCensusError::Census(
+                PinnedCensusError::ExpectedCensusChanged
+            ))
         ));
-        assert!(matches!(missing.finish(), Err(PinnedCensusError::InvalidState)));
+        assert!(matches!(
+            missing.finish(),
+            Err(PinnedCensusError::InvalidState)
+        ));
     }
 
     #[test]
@@ -1008,7 +1024,6 @@ mod tests {
             pipeline.finish(),
             Err(PinnedCensusError::InvalidState)
         ));
-
 
         let mut early = PinnedObservedCensus::new(&pinned, Vec::new(), 0).unwrap();
         assert!(matches!(
@@ -1102,7 +1117,6 @@ mod tests {
 
     struct RejectingFlush {
         bytes: Vec<u8>,
-
     }
 
     impl Write for RejectingFlush {
@@ -1230,7 +1244,6 @@ mod tests {
             "wiki-census-fail-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("unnamed")
-
         ));
         fs::create_dir(&root).unwrap();
         #[cfg(unix)]

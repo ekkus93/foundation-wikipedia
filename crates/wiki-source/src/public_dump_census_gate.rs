@@ -439,7 +439,6 @@ where
         published = true;
         fs::remove_file(&pending).map_err(VerifiedCensusStageError::Io)?;
         #[cfg(unix)]
-
         File::open(root)
             .and_then(|dir| dir.sync_all())
             .map_err(VerifiedCensusStageError::Io)?;
@@ -678,7 +677,6 @@ mod tests {
         ];
         let sums = format!(
             "{:x}  {}\n{:x}  {}\n",
-
             Sha256::digest(&compressed[0]),
             names[0],
             Sha256::digest(&compressed[1]),
@@ -898,7 +896,6 @@ mod tests {
         assert_eq!(fs::read(&ready).unwrap(), b"1\n201\n");
         fs::remove_dir_all(root).unwrap();
     }
-
 
     #[test]
     fn invalid_expected_pin_fails_before_any_native_member_is_opened() {
