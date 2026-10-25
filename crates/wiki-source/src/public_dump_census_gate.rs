@@ -733,11 +733,11 @@ mod tests {
         }
         let pinned = inventory();
         for (index, bytes) in [
-            &b"1\\n1\\n"[..],
-            &b"201\\n1\\n"[..],
-            &b"1\\n2"[..],
-            &b"1\\nx\\n"[..],
-            &b"0\\n"[..],
+            &b"1\n1\n"[..],
+            &b"201\n1\n"[..],
+            &b"1\n2"[..],
+            &b"1\nx\n"[..],
+            &b"0\n"[..],
         ]
         .into_iter()
         .enumerate()
@@ -762,16 +762,22 @@ mod tests {
                     panic!("invalid expected census must fail before any shard opens")
                 },
             );
-            assert!(
+            let expected_error = if index < 2 {
                 matches!(
                     result,
                     Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
                         StreamCoverageError::UnsortedOrDuplicate { .. }
-                            | StreamCoverageError::Read { .. }
                     )))
-                ),
-                "bad expected census fixture {index}: {result:?}"
-            );
+                )
+            } else {
+                matches!(
+                    result,
+                    Err(VerifiedCensusStageError::Audit(CensusGateError::Coverage(
+                        StreamCoverageError::Read { .. }
+                    )))
+                )
+            };
+            assert!(expected_error, "bad expected census fixture {index}: {result:?}");
             assert_eq!(opens, 0);
             assert!(!root.join(output).exists());
         }
