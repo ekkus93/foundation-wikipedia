@@ -40,7 +40,7 @@ export function wellFormedTitleUnicode(value: string): boolean {
 
 /** Mirror the Rust navigation boundary: invisible format controls and Unicode
  * noncharacters must never be accepted as page identities. */
-function unsafeNavigationUnicode(value: string): boolean {
+export function unsafeNavigationUnicode(value: string): boolean {
   for (const character of value) {
     const codepoint = character.codePointAt(0)!;
     if ((codepoint <= 0x1f || (codepoint >= 0x7f && codepoint <= 0x9f)) ||

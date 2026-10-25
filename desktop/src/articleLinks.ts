@@ -2,7 +2,7 @@
  * The isolated preview iframe remains sandboxed with scripts and clicks disabled.
  * Only validated, same-edition mainspace titles reach the existing Rust adapter.
  */
-import { navigationTitleKey, validReaderTitleInput, wellFormedTitleUnicode } from "./readerResponse.ts";
+import { navigationTitleKey, unsafeNavigationUnicode, validReaderTitleInput, wellFormedTitleUnicode } from "./readerResponse.ts";
 
 export interface WikiArticleLink {
   title: string;
@@ -68,10 +68,17 @@ export function extractWikiArticleLinks(html: string, project: string): WikiArti
     const titleKey = navigationTitleKey(title);
     if (seen.has(titleKey)) continue;
     seen.add(titleKey);
-    const label = (anchor.textContent ?? "")
-      .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
-      .replace(/[\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/gu, "")
-      .trim().replace(/\s+/gu, " ").slice(0, 160) || title;
+    // Link text is untrusted display content. Strip identity-spoofing format
+    // controls, Unicode noncharacters and malformed UTF-16 before display;
+    // preserve legitimate ZWNJ/ZWJ and truncate on scalar boundaries.
+    const cleanLabel = Array.from(anchor.textContent ?? "", (scalar) => {
+      const cp = scalar.codePointAt(0)!;
+      if (cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) ||
+          cp === 0x2028 || cp === 0x2029) return " ";
+      if ((cp >= 0xd800 && cp <= 0xdfff) || unsafeNavigationUnicode(scalar)) return "";
+      return scalar;
+    }).join("").trim().replace(/\\s+/gu, " ");
+    const label = Array.from(cleanLabel).slice(0, 160).join("") || title;
     links.push({ title, label });
     if (links.length >= MAX_LINKS) break;
   }

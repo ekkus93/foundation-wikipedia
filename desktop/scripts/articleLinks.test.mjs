@@ -106,6 +106,44 @@ test("extracts article links from an uninstantiated template rather than DOMPars
   }
 });
 
+test("sanitizes spoofed display labels without splitting supplementary Unicode", () => {
+  const originalDocument = globalThis.document;
+  const anchors = [
+    ["./Physics", "Phy\\u200bs\\u2060i\\ufeffcs\\ufdd0\\u{10ffff}"],
+    ["./Chemistry", "Che\\u202emistry"],
+    ["./Biology", "Bio\\u0085logy"],
+    ["./Astronomy", "Astro\\uD800nomy"],
+    ["./Zoology", "🐈".repeat(160) + "z"],
+    ["./Persian", "می\\u200cروم"],
+    ["./Indic", "क्\\u200dष"],
+    ["./Empty", "\\u200b\\ufeff"],
+  ];
+  globalThis.document = {
+    createElement: () => ({
+      set innerHTML(_value) {},
+      content: { querySelectorAll: () => anchors.map(([href, textContent]) => ({
+        getAttribute: () => href,
+        textContent,
+      })) },
+    }),
+  };
+  try {
+    assert.deepEqual(extractWikiArticleLinks("<a>fixture</a>", "enwiki"), [
+      { title: "Physics", label: "Physics" },
+      { title: "Chemistry", label: "Chemistry" },
+      { title: "Biology", label: "Bio logy" },
+      { title: "Astronomy", label: "Astronomy" },
+      { title: "Zoology", label: "🐈".repeat(160) },
+      { title: "Persian", label: "می\\u200cروم" },
+      { title: "Indic", label: "क्\\u200dष" },
+      { title: "Empty", label: "Empty" },
+    ]);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
+
 test("rejects directional-format and C1 control characters in article-link destinations", () => {
   for (const href of [
     "./Phy\\u202esics",
