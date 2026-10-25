@@ -247,6 +247,62 @@ pub fn run_member(
     Ok(())
 }
 
+/// Download every member of one digest-pinned generation in page-range order.
+/// A failure stops before the next shard; already verified shards remain
+/// reusable on the next invocation. This is transport, not source acceptance.
+fn run_all_members_with_fetch<F>(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_bytes: u64,
+    mut fetch: F,
+) -> Result<(usize, u64), String>
+where
+    F: FnMut(&PinnedInventory, usize, &Path, u64) -> Result<u64, String>,
+{
+    if !(1..=1_u64 << 40).contains(&max_bytes) {
+        return Err("compressed member byte limit must be 1..=1TiB".into());
+    }
+    let inventory = read_staged_inventory(root, project, generation, inventory_sha256)?;
+    let mut total = 0u64;
+    for index in 0..inventory.members().len() {
+        let bytes = fetch(&inventory, index, root, max_bytes)
+            .map_err(|error| format!("member {index} failed: {error}"))?;
+        total = total
+            .checked_add(bytes)
+            .filter(|sum| *sum <= wiki_source::MAX_SOURCE_GENERATION_BYTES)
+            .ok_or_else(|| "compressed generation byte budget exceeded".to_owned())?;
+    }
+    Ok((inventory.members().len(), total))
+}
+
+pub fn run_all_members(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let client = InventoryCurl::new();
+    let (count, total) = run_all_members_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_bytes,
+        |inventory, index, directory, limit| {
+            client
+                .stage_verified_member(inventory, index, directory, limit)
+                .map_err(|error| format!("official compressed member rejected: {error:?}"))
+        },
+    )?;
+    println!("Staged {count} SHA-256-verified compressed members ({total} bytes)");
+    println!("Wikimedia publisher provenance and independent census: NOT AUTHENTICATED");
+    println!("No pack installed or active snapshot changed.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +430,65 @@ mod tests {
             |_, _, _, _| panic!("tampered inventory must fail before HTTP")
         )
         .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn all_members_use_one_pinned_inventory_in_page_order_and_stop_on_error() {
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        // Deliberately reverse the checksum line order: pinned inventory
+        // normalizes to ascending page ranges before download.
+        let raw = format!("{}  {second}\n{}  {first}\n", "b".repeat(64), "a".repeat(64));
+        let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+        let mut visited = Vec::new();
+        let result = run_all_members_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            1024,
+            |inventory, index, _, limit| {
+                assert_eq!(limit, 1024);
+                visited.push(inventory.members()[index].relative_path.clone());
+                Ok(index as u64 + 1)
+            },
+        )
+        .unwrap();
+        assert_eq!(result, (2, 3));
+        assert_eq!(visited, [first, second]);
+
+        let mut attempts = 0;
+        assert!(run_all_members_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &digest,
+            &root,
+            1024,
+            |_, _, _, _| {
+                attempts += 1;
+                Err("synthetic transport failure".into())
+            },
+        )
+        .is_err());
+        assert_eq!(attempts, 1);
+        for (project, pin, limit) in [
+            ("frwiki", digest.as_str(), 1024),
+            ("enwiki", "wrong", 1024),
+            ("enwiki", digest.as_str(), 0),
+        ] {
+            assert!(run_all_members_with_fetch(
+                project,
+                "2026-10-01",
+                pin,
+                &root,
+                limit,
+                |_, _, _, _| panic!("invalid preflight must not fetch"),
+            )
+            .is_err());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
