@@ -160,6 +160,33 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
     assert!(!failed_transport.status.success());
     assert!(failed_transport.stdout.is_empty());
 
+    // The subprocess must provide one canonical curl HTTP status marker.
+    // Even an exact digest-pinned response body cannot redeem malformed,
+    // ambiguous or non-200 diagnostics.
+    for diagnostics in [
+        "FW_DUMP_HTTP_CODE:200\nFW_DUMP_HTTP_CODE:200\n",
+        "FW_DUMP_HTTP_CODE:200\nFW_DUMP_HTTP_CODE:404\n",
+        "FW_DUMP_HTTP_CODE:+200\n",
+        "FW_DUMP_HTTP_CODE:0200\n",
+        "FW_DUMP_HTTP_CODE:200x\n",
+        "FW_DUMP_HTTP_CODE:206\n",
+        "",
+    ] {
+        curl_script(
+            &bin,
+            &format!(
+                "printf '%s' '{}'\nprintf '%s' '{}' >&2",
+                raw, diagnostics
+            ),
+        );
+        let malformed = invoke(&root, &bin, &pin, true);
+        assert!(
+            !malformed.status.success(),
+            "malformed status unexpectedly accepted: {diagnostics:?}"
+        );
+        assert!(malformed.stdout.is_empty());
+    }
+
     let wrong_pin = invoke(&root, &bin, &"0".repeat(64), true);
     assert!(!wrong_pin.status.success());
     assert!(wrong_pin.stdout.is_empty());

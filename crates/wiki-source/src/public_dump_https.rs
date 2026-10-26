@@ -52,6 +52,18 @@ fn unique_curl_marker<'a>(diagnostics: &'a str, prefix: &str) -> Option<&'a str>
     values.next().is_none().then_some(first)
 }
 
+
+/// Curl's %{http_code} write-out is exactly three ASCII decimal digits.
+/// Reject malformed diagnostics rather than accepting Rust's permissive
+/// integer parsing (such as +200 or 0200) as proof of HTTP success.
+fn curl_http_status(diagnostics: &str) -> Option<u16> {
+    let code = unique_curl_marker(diagnostics, "FW_DUMP_HTTP_CODE:")?;
+    if code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    code.parse().ok()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedRange {
     pub total_bytes: u64,
@@ -179,8 +191,7 @@ impl Read for MemberCurlStream {
             .join()
             .map_err(|_| io::Error::other("curl status reader panicked"))??;
         let diagnostics = String::from_utf8_lossy(&stderr_bytes);
-        let http_status = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
-            .and_then(|code| code.parse::<u16>().ok());
+        let http_status = curl_http_status(&diagnostics);
         if !status.success() || http_status != Some(200) {
             return Err(io::Error::other("verified member HTTPS request failed"));
         }
@@ -521,8 +532,7 @@ impl InventoryCurl {
             .map_err(|_| RangeFetchError::IoFailure)?
             .map_err(|_| RangeFetchError::IoFailure)?;
         let diagnostics = String::from_utf8_lossy(&diagnostics);
-        let http = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
-            .and_then(|code| code.parse::<u16>().ok());
+        let http = curl_http_status(&diagnostics);
         if let Some(code) = http {
             if code != 206 && code != 0 {
                 return Err(RangeFetchError::HttpStatus(code));
@@ -634,8 +644,7 @@ impl InventoryCurl {
             .map_err(|_| InventoryFetchError::IoFailure)?
             .map_err(|_| InventoryFetchError::IoFailure)?;
         let diagnostics = String::from_utf8_lossy(&stderr_bytes);
-        let http_status = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
-            .and_then(|code| code.parse::<u16>().ok());
+        let http_status = curl_http_status(&diagnostics);
         if let Some(code) = http_status {
             if code != 200 && code != 0 {
                 return Err(InventoryFetchError::HttpStatus(code));
