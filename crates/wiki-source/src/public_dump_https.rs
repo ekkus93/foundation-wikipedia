@@ -41,6 +41,17 @@ const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 /// Bound one resumed HTTPS transfer to 2 MiB of RAM, regardless of headers.
 pub const MAX_RANGE_BYTES: usize = 2 * 1024 * 1024;
 
+/// Curl's write-out must supply one unambiguous diagnostic marker. Never
+/// allow a later line to override an earlier status or Content-Range: such
+/// output is malformed, even if one of the values would otherwise pass.
+fn unique_curl_marker<'a>(diagnostics: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut values = diagnostics
+        .lines()
+        .filter_map(|line| line.strip_prefix(prefix));
+    let first = values.next()?;
+    values.next().is_none().then_some(first)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct VerifiedRange {
     pub total_bytes: u64,
@@ -168,10 +179,7 @@ impl Read for MemberCurlStream {
             .join()
             .map_err(|_| io::Error::other("curl status reader panicked"))??;
         let diagnostics = String::from_utf8_lossy(&stderr_bytes);
-        let http_status = diagnostics
-            .lines()
-            .filter_map(|line| line.strip_prefix("FW_DUMP_HTTP_CODE:"))
-            .last()
+        let http_status = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
             .and_then(|code| code.parse::<u16>().ok());
         if !status.success() || http_status != Some(200) {
             return Err(io::Error::other("verified member HTTPS request failed"));
@@ -513,10 +521,7 @@ impl InventoryCurl {
             .map_err(|_| RangeFetchError::IoFailure)?
             .map_err(|_| RangeFetchError::IoFailure)?;
         let diagnostics = String::from_utf8_lossy(&diagnostics);
-        let http = diagnostics
-            .lines()
-            .filter_map(|line| line.strip_prefix("FW_DUMP_HTTP_CODE:"))
-            .last()
+        let http = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
             .and_then(|code| code.parse::<u16>().ok());
         if let Some(code) = http {
             if code != 206 && code != 0 {
@@ -526,10 +531,7 @@ impl InventoryCurl {
         if !status.success() || http != Some(206) {
             return Err(RangeFetchError::InvalidContentRange);
         }
-        let header = diagnostics
-            .lines()
-            .filter_map(|line| line.strip_prefix("FW_DUMP_CONTENT_RANGE:"))
-            .last()
+        let header = unique_curl_marker(&diagnostics, "FW_DUMP_CONTENT_RANGE:")
             .ok_or(RangeFetchError::InvalidContentRange)?;
         let total = parse_exact_content_range(header, start, end, byte_budget, bytes.len())?;
         Ok(VerifiedRange {
@@ -632,10 +634,7 @@ impl InventoryCurl {
             .map_err(|_| InventoryFetchError::IoFailure)?
             .map_err(|_| InventoryFetchError::IoFailure)?;
         let diagnostics = String::from_utf8_lossy(&stderr_bytes);
-        let http_status = diagnostics
-            .lines()
-            .filter_map(|line| line.strip_prefix("FW_DUMP_HTTP_CODE:"))
-            .last()
+        let http_status = unique_curl_marker(&diagnostics, "FW_DUMP_HTTP_CODE:")
             .and_then(|code| code.parse::<u16>().ok());
         if let Some(code) = http_status {
             if code != 200 && code != 0 {
@@ -976,5 +975,78 @@ mod tests {
             Err(InventoryFetchError::ResponseTooLarge),
         );
         fs::remove_file(executable).unwrap();
+    }
+
+    #[test]
+    fn curl_diagnostic_markers_must_be_unique_for_inventory_range_and_members() {
+        let raw = inventory_bytes();
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        for diagnostics in [
+            "FW_DUMP_HTTP_CODE:200\nFW_DUMP_HTTP_CODE:200\n",
+            "FW_DUMP_HTTP_CODE:404\nFW_DUMP_HTTP_CODE:200\n",
+            "FW_DUMP_HTTP_CODE:invalid\nFW_DUMP_HTTP_CODE:200\n",
+        ] {
+            let script = format!(
+                "printf '%s' '{}'; printf '{}' >&2",
+                raw, diagnostics
+            );
+            let (client, executable) = fake_curl(&script);
+            assert_eq!(
+                client.fetch_verified_inventory("enwiki", "2026-10-01", &pin),
+                Err(InventoryFetchError::ProcessFailed)
+            );
+            fs::remove_file(executable).unwrap();
+        }
+
+        let inventory = parse_origin_checked_pinned_inventory(
+            raw.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &pin,
+        )
+        .unwrap();
+        for diagnostics in [
+            "FW_DUMP_HTTP_CODE:206\nFW_DUMP_HTTP_CODE:206\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\n",
+            "FW_DUMP_HTTP_CODE:206\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\n",
+        ] {
+            let script = format!("printf 'abcd'; printf '{}' >&2", diagnostics);
+            let (client, executable) = fake_curl(&script);
+            assert_eq!(
+                client.fetch_member_range(&inventory, 0, 0, 4, 100),
+                Err(RangeFetchError::InvalidContentRange)
+            );
+            fs::remove_file(executable).unwrap();
+        }
+
+        let body = b"member-bytes";
+        let member_name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let sums = format!("{:x}  {member_name}\n", Sha256::digest(body));
+        let member_pin = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let member_inventory = parse_origin_checked_pinned_inventory(
+            sums.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &member_pin,
+        )
+        .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-duplicate-status-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let (client, executable) = fake_curl(
+            "printf 'member-bytes'; printf 'FW_DUMP_HTTP_CODE:200\nFW_DUMP_HTTP_CODE:200\n' >&2",
+        );
+        assert!(client
+            .stage_verified_member(&member_inventory, 0, &root, 256)
+            .is_err());
+        assert!(!root.join(member_name).exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_file(executable).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }
