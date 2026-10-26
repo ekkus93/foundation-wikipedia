@@ -607,7 +607,7 @@ impl InventoryCurl {
         let mut stderr = child.stderr.take().ok_or(InventoryFetchError::IoFailure)?;
         let drain_stderr = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
             let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
-        let mut overflowed = false;
+            let mut overflowed = false;
             let mut buffer = [0u8; 8192];
             loop {
                 let n = stderr.read(&mut buffer)?;
