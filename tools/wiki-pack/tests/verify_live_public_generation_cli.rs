@@ -67,7 +67,10 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
 
     // A missing late shard must fail before curl can run at all.
     let marker = parent.join("transport-was-called");
-    curl_script(&bin, &format!("printf invoked > '{}'; exit 1", marker.display()));
+    curl_script(
+        &bin,
+        &format!("printf invoked > '{}'; exit 1", marker.display()),
+    );
     let missing = invoke(&root, &bin, &pin, true);
     assert!(!missing.status.success());
     assert!(missing.stdout.is_empty());
@@ -83,13 +86,20 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
         ),
     );
     let ok = invoke(&root, &bin, &pin, true);
-    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
     assert!(marker.exists());
     let stdout = String::from_utf8(ok.stdout).unwrap();
     assert_eq!(stdout.lines().count(), 1);
     let receipt: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(receipt["schema_version"], 3);
-    assert_eq!(receipt["kind"], "public_dump_live_https_and_local_integrity");
+    assert_eq!(
+        receipt["kind"],
+        "public_dump_live_https_and_local_integrity"
+    );
     assert_eq!(receipt["member_count"], 2);
     assert_eq!(receipt["verified_members"][0]["relative_path"], first);
     assert_eq!(receipt["verified_members"][1]["relative_path"], second);
