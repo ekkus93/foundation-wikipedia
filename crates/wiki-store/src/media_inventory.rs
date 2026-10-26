@@ -134,7 +134,10 @@ mod tests {
             bytes: bytes.len() as u64,
         };
         assert_eq!(store.verify_object_size(&digest).unwrap(), entry.bytes);
-        assert_eq!(verify_declared_media(&store, &[entry.clone()]).unwrap(), entry.bytes);
+        assert_eq!(
+            verify_declared_media(&store, &[entry.clone()]).unwrap(),
+            entry.bytes
+        );
         let path = root.join(&digest[..2]).join(&digest);
         let mut changed = bytes;
         let last = changed.len() - 1;
@@ -142,7 +145,9 @@ mod tests {
         fs::write(&path, changed).unwrap();
         assert!(matches!(
             verify_declared_media(&store, &[entry]),
-            Err(MediaInventoryError::Unreadable(MediaObjectError::DigestMismatch))
+            Err(MediaInventoryError::Unreadable(
+                MediaObjectError::DigestMismatch
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
@@ -166,9 +171,10 @@ mod tests {
         let entry = RequiredMedia { digest, bytes: 14 };
         assert!(matches!(
             verify_declared_media(&store, &[entry]),
-            Err(MediaInventoryError::Unreadable(MediaObjectError::UnsafeObject))
+            Err(MediaInventoryError::Unreadable(
+                MediaObjectError::UnsafeObject
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
-
 }
