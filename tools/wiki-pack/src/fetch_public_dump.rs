@@ -501,6 +501,78 @@ pub fn verify_public_members_json(
     Ok(())
 }
 
+/// Read-only composite gate for a private, fully staged generation.
+/// Verify every local member before making a fresh official HTTPS checksum
+/// request. HTTPS origin at check time is not a publisher signature or census.
+fn verify_live_generation_with_fetch<F>(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+    fetch: F,
+) -> Result<String, String>
+where
+    F: FnOnce(&str, &str, &str) -> Result<Vec<u8>, String>,
+{
+    let local = verified_generation_json(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+    )?;
+    // A corrupt/incomplete local generation must not trigger a network call.
+    confirm_origin_with_fetch(project, generation, inventory_sha256, root, fetch)?;
+    let mut receipt: serde_json::Value = serde_json::from_str(&local)
+        .map_err(|error| format!("cannot decode local receipt: {error}"))?;
+    receipt["schema_version"] = serde_json::json!(3);
+    receipt["kind"] = serde_json::json!("public_dump_live_https_and_local_integrity");
+    receipt["checks"]["official_https_inventory_retrieved"] = serde_json::json!(true);
+    receipt["checks"]["live_inventory_matches_local_pin"] = serde_json::json!(true);
+    // The local receipt explicitly keeps publisher_authenticated=false.
+    serde_json::to_string(&receipt)
+        .map_err(|error| format!("cannot encode live integrity receipt: {error}"))
+}
+
+/// Verify each locally staged member and check that the checksum inventory
+/// still exists at the exact official Wikimedia HTTPS URL. No pack activation.
+pub fn verify_public_generation_live(
+    project: &str,
+    generation: &str,
+    inventory_sha256: &str,
+    root: &Path,
+    max_member_bytes: u64,
+    json: bool,
+) -> Result<(), String> {
+    let receipt = verify_live_generation_with_fetch(
+        project,
+        generation,
+        inventory_sha256,
+        root,
+        max_member_bytes,
+        |wiki, date, pin| {
+            InventoryCurl::new()
+                .fetch_verified_inventory(wiki, date, pin)
+                .map_err(|error| format!("official HTTPS recheck failed: {error:?}"))
+        },
+    )?;
+    if json {
+        println!("{receipt}");
+    } else {
+        let value: serde_json::Value = serde_json::from_str(&receipt)
+            .map_err(|error| format!("cannot inspect verification receipt: {error}"))?;
+        println!(
+            "Verified {} locally staged compressed members ({} bytes)",
+            value["member_count"], value["verified_compressed_bytes"]
+        );
+        println!("Local member SHA-256 and live official HTTPS inventory: VERIFIED");
+        println!("Publisher signature, independent census, rendering and media: NOT VERIFIED");
+        println!("No pack installed or active snapshot changed.");
+    }
+    Ok(())
+}
+
 fn run_member_with_fetch<F>(
     project: &str,
     generation: &str,
@@ -1461,6 +1533,94 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn composite_live_verification_requires_local_sha256_before_https() {
+        let root = private_root();
+        let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+        let raw = format!(
+            "{:x}  {first}\\n{:x}  {second}\\n",
+            Sha256::digest(b"one"),
+            Sha256::digest(b"two")
+        );
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+        fs::write(root.join(first), b"one").unwrap();
+        assert!(verify_live_generation_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            1024,
+            |_, _, _| panic!("missing shard must reject before HTTPS"),
+        )
+        .is_err());
+
+        fs::write(root.join(second), b"bad").unwrap();
+        assert!(verify_live_generation_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            1024,
+            |_, _, _| panic!("corrupted shard must reject before HTTPS"),
+        )
+        .is_err());
+        fs::write(root.join(second), b"two").unwrap();
+
+        let mut fetches = 0;
+        let receipt = verify_live_generation_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            1024,
+            |_, _, _| {
+                fetches += 1;
+                Ok(raw.as_bytes().to_vec())
+            },
+        )
+        .unwrap();
+        assert_eq!(fetches, 1);
+        let value: serde_json::Value = serde_json::from_str(&receipt).unwrap();
+        assert_eq!(value["schema_version"], 3);
+        assert_eq!(value["kind"], "public_dump_live_https_and_local_integrity");
+        assert_eq!(value["member_count"], 2);
+        assert_eq!(value["verified_members"][0]["relative_path"], first);
+        assert_eq!(value["verified_members"][1]["relative_path"], second);
+        assert_eq!(value["checks"]["inventory_sha256"], true);
+        assert_eq!(value["checks"]["member_sha256"], true);
+        assert_eq!(value["checks"]["clean_staging_tree"], true);
+        assert_eq!(value["checks"]["official_https_inventory_retrieved"], true);
+        assert_eq!(value["checks"]["live_inventory_matches_local_pin"], true);
+        assert_eq!(value["trust"]["publisher_authenticated"], false);
+        assert_eq!(value["trust"]["independent_page_census_verified"], false);
+        assert_eq!(value["trust"]["pack_installed"], false);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
+
+        assert!(verify_live_generation_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            1024,
+            |_, _, _| Ok(b"forged remote inventory".to_vec()),
+        )
+        .is_err());
+        assert!(verify_live_generation_with_fetch(
+            "enwiki",
+            "2026-10-01",
+            &pin,
+            &root,
+            1024,
+            |_, _, _| Err("HTTP 404 or TLS unavailable".into()),
+        )
+        .is_err());
+        assert_eq!(fs::read(root.join(first)).unwrap(), b"one");
+        assert_eq!(fs::read(root.join(second)).unwrap(), b"two");
         fs::remove_dir_all(root).unwrap();
     }
 

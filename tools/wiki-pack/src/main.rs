@@ -38,6 +38,7 @@ fn usage() {
     println!("       wiki-pack fetch-public-members <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-members-resume <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack verify-public-members [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
+    println!("       wiki-pack verify-public-generation-live [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
@@ -357,6 +358,39 @@ fn main() {
                 std::process::exit(2);
             };
             if let Err(error) = fetch_public_dump::fetch_public_generation(
+                identity[0],
+                identity[1],
+                identity[2],
+                Path::new(&fields[3]),
+                max_bytes,
+                json,
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("verify-public-generation-live") => {
+            let supplied: Vec<OsString> = args.collect();
+            let json = supplied.first().is_some_and(|value| value == "--json");
+            let fields = if json { &supplied[1..] } else { &supplied[..] };
+            if fields.len() != 5 {
+                eprintln!("verify-public-generation-live requires five arguments, optionally prefixed with --json");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(identity) = [0usize, 1, 2, 4]
+                .iter()
+                .map(|index| fields[*index].to_str())
+                .collect::<Option<Vec<_>>>()
+            else {
+                eprintln!("Generation identity and byte limit must be UTF-8");
+                std::process::exit(2);
+            };
+            let Ok(max_bytes) = identity[3].parse::<u64>() else {
+                eprintln!("Compressed byte limit must be a decimal integer");
+                std::process::exit(2);
+            };
+            if let Err(error) = fetch_public_dump::verify_public_generation_live(
                 identity[0],
                 identity[1],
                 identity[2],
