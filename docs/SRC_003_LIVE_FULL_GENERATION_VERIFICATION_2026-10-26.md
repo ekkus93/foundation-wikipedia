@@ -44,3 +44,9 @@ without modifying the staged source. These are failure-path regressions only,
 not evidence of real Wikimedia publication authenticity.
 
 Extended black-box failure-path tests passed at source SHA `45efe09c6d7b312dd816ebb577c1eed54afd616e`: [Rust workspace CI 40336823014](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40336823014) and [Platform shells CI 40336823012](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40336823012). These CI passes do not qualify SRC-003 as complete.
+
+## CLI staging-alias and transport-policy regression
+
+The Unix black-box `verify_live_public_generation_cli` test at source SHA `352ad5e9b2c8edbdc0efa26dea31c859ddbd95eb` exercises the actual `wiki-pack verify-public-generation-live --json` process against a complete two-shard staged fixture. A fake curl marker proves that symlinked staging roots, symlinked or multiply hardlinked members and checksum inventories, orphan checkpoint files, undeclared directories, world-readable staging roots, and an incorrect independently supplied inventory pin all fail before any HTTP invocation. Each failure emits no JSON success receipt. After restoring the exact three declared files, the same fixture succeeds and captures curl argv to assert `-q`, HTTPS-only protocol, zero redirects, absence of insecure-TLS flags and the exact official Wikimedia checksum URL. No real Wikimedia HTTP request or signature verification occurs in this test.
+
+Exact code SHA **`352ad5e9b2c8edbdc0efa26dea31c859ddbd95eb`** passed [Rust workspace CI 40342693738](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40342693738) and [Platform shells CI 40342693539](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40342693539). These regressions do not establish publisher authenticity, independent census completeness, rendered revision fidelity, mandatory offline media or desktop/Android acceptance. **SRC-003 remains unchecked.**
