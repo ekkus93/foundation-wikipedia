@@ -169,3 +169,139 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
     assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
     fs::remove_dir_all(parent).unwrap();
 }
+
+#[test]
+fn live_generation_cli_rejects_filesystem_aliases_before_transport() {
+    use std::os::unix::fs::symlink;
+
+    let parent = private_dir();
+    let root = parent.join("staged");
+    let bin = parent.join("bin");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&bin).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let first = "enwiki-2026-10-01-p1p100.xml.bz2";
+    let second = "enwiki-2026-10-01-p101p200.xml.bz2";
+    let raw = format!(
+        "{:x}  {first}\n{:x}  {second}\n",
+        Sha256::digest(b"member-one"),
+        Sha256::digest(b"member-two")
+    );
+    let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    fs::write(root.join("SHA256SUMS"), &raw).unwrap();
+    fs::write(root.join(first), b"member-one").unwrap();
+    fs::write(root.join(second), b"member-two").unwrap();
+
+    let marker = parent.join("transport-invoked");
+    curl_script(
+        &bin,
+        &format!("printf invoked > '{}'; exit 0", marker.display()),
+    );
+    let reject_before_http = |label: &str, source: &Path, digest: &str| {
+        let result = invoke(source, &bin, digest, true);
+        assert!(
+            !result.status.success(),
+            "{label} unexpectedly succeeded: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        assert!(
+            result.stdout.is_empty(),
+            "{label} emitted a success receipt"
+        );
+        assert!(!marker.exists(), "{label} reached curl");
+    };
+
+    // A private directory cannot be made trustworthy through a symlink alias.
+    let root_alias = parent.join("root-alias");
+    symlink(&root, &root_alias).unwrap();
+    reject_before_http("symlink root", &root_alias, &pin);
+    fs::remove_file(root_alias).unwrap();
+
+    // The complete generation is untrusted if ANY member has another inode
+    // alias, even when the aliased bytes have the expected SHA-256.
+    let member_alias = parent.join("member-hardlink");
+    fs::hard_link(root.join(first), &member_alias).unwrap();
+    reject_before_http("hardlinked member", &root, &pin);
+    fs::remove_file(member_alias).unwrap();
+
+    let member_original = parent.join("member-original");
+    fs::rename(root.join(first), &member_original).unwrap();
+    symlink(&member_original, root.join(first)).unwrap();
+    reject_before_http("symlinked member", &root, &pin);
+    fs::remove_file(root.join(first)).unwrap();
+    fs::rename(member_original, root.join(first)).unwrap();
+
+    let inventory_alias = parent.join("inventory-hardlink");
+    fs::hard_link(root.join("SHA256SUMS"), &inventory_alias).unwrap();
+    reject_before_http("hardlinked inventory", &root, &pin);
+    fs::remove_file(inventory_alias).unwrap();
+
+    let inventory_original = parent.join("inventory-original");
+    fs::rename(root.join("SHA256SUMS"), &inventory_original).unwrap();
+    symlink(&inventory_original, root.join("SHA256SUMS")).unwrap();
+    reject_before_http("symlinked inventory", &root, &pin);
+    fs::remove_file(root.join("SHA256SUMS")).unwrap();
+    fs::rename(inventory_original, root.join("SHA256SUMS")).unwrap();
+
+    // Orphan checkpoints and undeclared directories also invalidate the
+    // exact staged tree, even if every declared member remains intact.
+    fs::write(root.join("orphan.part"), b"untrusted checkpoint").unwrap();
+    reject_before_http("orphan checkpoint", &root, &pin);
+    fs::remove_file(root.join("orphan.part")).unwrap();
+
+    fs::create_dir(root.join("undeclared")).unwrap();
+    reject_before_http("unlisted directory", &root, &pin);
+    fs::remove_dir(root.join("undeclared")).unwrap();
+
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+    reject_before_http("nonprivate root", &root, &pin);
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+    reject_before_http("incorrect independent pin", &root, &"0".repeat(64));
+
+    // Recovery is deterministic: all rejected cases leave the staged
+    // generation unchanged, and a later legitimate HTTPS check succeeds.
+    assert_eq!(fs::read(root.join("SHA256SUMS")).unwrap(), raw.as_bytes());
+    assert_eq!(fs::read(root.join(first)).unwrap(), b"member-one");
+    assert_eq!(fs::read(root.join(second)).unwrap(), b"member-two");
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 3);
+    assert!(!marker.exists());
+
+    let curl_args = parent.join("curl-args");
+    curl_script(
+        &bin,
+        &format!(
+            "printf '%s\\n' \"$@\" > '{}'\nprintf '%s' '{}'\nprintf 'FW_DUMP_HTTP_CODE:200\\n' >&2",
+            curl_args.display(),
+            raw
+        ),
+    );
+    let accepted = invoke(&root, &bin, &pin, true);
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(receipt["member_count"], 2);
+    assert_eq!(receipt["trust"]["publisher_authenticated"], false);
+
+    // Verify the production CLI's actual transport argv, not just its
+    // lower-level transport unit test: no redirects, no insecure TLS and no
+    // caller-controlled origin URL.
+    let args = fs::read_to_string(&curl_args).unwrap();
+    let words: Vec<_> = args.lines().collect();
+    assert_eq!(words.first(), Some(&"-q"));
+    assert!(words.windows(2).any(|pair| pair == ["--proto", "=https"]));
+    assert!(words.windows(2).any(|pair| pair == ["--max-redirs", "0"]));
+    assert!(words.windows(2).any(|pair| pair == [
+        "--",
+        "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS"
+    ]));
+    assert!(!words
+        .iter()
+        .any(|word| ["-L", "-k", "--insecure", "--location"].contains(word)));
+
+    fs::remove_dir_all(parent).unwrap();
+}
