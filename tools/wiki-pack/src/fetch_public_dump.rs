@@ -1542,7 +1542,7 @@ mod tests {
         let first = "enwiki-2026-10-01-p1p100.xml.bz2";
         let second = "enwiki-2026-10-01-p101p200.xml.bz2";
         let raw = format!(
-            "{:x}  {first}\\n{:x}  {second}\\n",
+            "{:x}  {first}\n{:x}  {second}\n",
             Sha256::digest(b"one"),
             Sha256::digest(b"two")
         );
