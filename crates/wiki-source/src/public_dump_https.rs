@@ -986,10 +986,7 @@ mod tests {
             "FW_DUMP_HTTP_CODE:404\nFW_DUMP_HTTP_CODE:200\n",
             "FW_DUMP_HTTP_CODE:invalid\nFW_DUMP_HTTP_CODE:200\n",
         ] {
-            let script = format!(
-                "printf '%s' '{}'; printf '{}' >&2",
-                raw, diagnostics
-            );
+            let script = format!("printf '%s' '{}'; printf '{}' >&2", raw, diagnostics);
             let (client, executable) = fake_curl(&script);
             assert_eq!(
                 client.fetch_verified_inventory("enwiki", "2026-10-01", &pin),
