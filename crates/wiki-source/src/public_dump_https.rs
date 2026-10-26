@@ -215,6 +215,7 @@ fn drain_member_stderr(
 ) -> std::thread::JoinHandle<io::Result<Vec<u8>>> {
     std::thread::spawn(move || {
         let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
+        let mut overflowed = false;
         let mut buffer = [0u8; 8192];
         loop {
             let count = stderr.read(&mut buffer)?;
@@ -223,9 +224,17 @@ fn drain_member_stderr(
             }
             tail.extend(&buffer[..count]);
             let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
+            overflowed |= excess > 0;
             tail.drain(..excess);
         }
-        Ok(tail.into_iter().collect())
+        if overflowed {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "curl diagnostics exceed the bounded limit",
+            ))
+        } else {
+            Ok(tail.into_iter().collect())
+        }
     })
 }
 
@@ -598,6 +607,7 @@ impl InventoryCurl {
         let mut stderr = child.stderr.take().ok_or(InventoryFetchError::IoFailure)?;
         let drain_stderr = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
             let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
+        let mut overflowed = false;
             let mut buffer = [0u8; 8192];
             loop {
                 let n = stderr.read(&mut buffer)?;
@@ -606,9 +616,17 @@ impl InventoryCurl {
                 }
                 tail.extend(&buffer[..n]);
                 let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
+                overflowed |= excess > 0;
                 tail.drain(..excess);
             }
-            Ok(tail.into_iter().collect())
+            if overflowed {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "curl diagnostics exceed the bounded limit",
+                ))
+            } else {
+                Ok(tail.into_iter().collect())
+            }
         });
 
         let mut stdout = child.stdout.take().ok_or(InventoryFetchError::IoFailure)?;
@@ -1052,6 +1070,76 @@ mod tests {
         assert!(!root.join(member_name).exists());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_file(executable).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_curl_diagnostics_never_validate_http_success() {
+        // A bounded tail alone could discard an earlier forged status marker
+        // and accept a later success marker. Overflow must poison the request.
+        let noise = "x".repeat(MAX_DIAGNOSTIC_BYTES + 1);
+        let raw = inventory_bytes();
+        let pin = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        let script = format!(
+            "printf '%s' '{}'; printf '%s' '{}FW_DUMP_HTTP_CODE:200\\n' >&2",
+            raw, noise
+        );
+        let (client, exe) = fake_curl(&script);
+        assert_eq!(
+            client.fetch_verified_inventory("enwiki", "2026-10-01", &pin),
+            Err(InventoryFetchError::IoFailure)
+        );
+        fs::remove_file(exe).unwrap();
+
+        let inventory = parse_origin_checked_pinned_inventory(
+            raw.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &pin,
+        )
+        .unwrap();
+        let script = format!(
+            "printf 'abcd'; printf '%s' '{}FW_DUMP_HTTP_CODE:206\\nFW_DUMP_CONTENT_RANGE:bytes 0-3/6\\n' >&2",
+            noise
+        );
+        let (client, exe) = fake_curl(&script);
+        assert_eq!(
+            client.fetch_member_range(&inventory, 0, 0, 4, 100),
+            Err(RangeFetchError::IoFailure)
+        );
+        fs::remove_file(exe).unwrap();
+
+        let body = b"member-bytes";
+        let name = "enwiki-2026-10-01-p1p100.xml.bz2";
+        let sums = format!("{:x}  {name}\\n", Sha256::digest(body));
+        let member_pin = format!("{:x}", Sha256::digest(sums.as_bytes()));
+        let member_inventory = parse_origin_checked_pinned_inventory(
+            sums.as_bytes(),
+            "enwiki",
+            "2026-10-01",
+            "https://dumps.wikimedia.org/other/mediawiki_content_current/enwiki/2026-10-01/xml/bzip2/SHA256SUMS",
+            &member_pin,
+        )
+        .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-oversized-curl-diagnostics-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let script = format!(
+            "printf 'member-bytes'; printf '%s' '{}FW_DUMP_HTTP_CODE:200\\n' >&2",
+            noise
+        );
+        let (client, exe) = fake_curl(&script);
+        assert!(client
+            .stage_verified_member(&member_inventory, 0, &root, 256)
+            .is_err());
+        assert!(!root.join(name).exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_file(exe).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 }
