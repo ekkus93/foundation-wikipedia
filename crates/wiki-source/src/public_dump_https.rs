@@ -1112,7 +1112,7 @@ mod tests {
 
         let body = b"member-bytes";
         let name = "enwiki-2026-10-01-p1p100.xml.bz2";
-        let sums = format!("{:x}  {name}\\n", Sha256::digest(body));
+        let sums = format!("{:x}  {name}\n", Sha256::digest(body));
         let member_pin = format!("{:x}", Sha256::digest(sums.as_bytes()));
         let member_inventory = parse_origin_checked_pinned_inventory(
             sums.as_bytes(),
