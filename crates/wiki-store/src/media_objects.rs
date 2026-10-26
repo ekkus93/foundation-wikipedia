@@ -97,8 +97,12 @@ impl MediaObjectStore {
                 .to_str()
                 .ok_or(MediaObjectError::UnsafeDirectory)?;
             if prefix.len() != 2
-                || !prefix.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                || !fs::symlink_metadata(prefix_entry.path())?.file_type().is_dir()
+                || !prefix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || !fs::symlink_metadata(prefix_entry.path())?
+                    .file_type()
+                    .is_dir()
             {
                 return Err(MediaObjectError::UnsafeDirectory);
             }

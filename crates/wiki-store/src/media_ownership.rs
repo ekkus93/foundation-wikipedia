@@ -446,10 +446,7 @@ impl MediaRegistry {
 
     /// Read-only registered-object lookup for advisory filesystem orphan
     /// audits. A row can be added concurrently after this observation.
-    pub fn registered_digest_size(
-        &self,
-        digest: &str,
-    ) -> Result<Option<u64>, MediaRegistryError> {
+    pub fn registered_digest_size(&self, digest: &str) -> Result<Option<u64>, MediaRegistryError> {
         if !valid_digest(digest) {
             return Err(MediaRegistryError::InvalidInput);
         }

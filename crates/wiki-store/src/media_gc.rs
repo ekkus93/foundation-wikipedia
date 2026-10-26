@@ -217,9 +217,18 @@ mod tests {
         );
         assert_eq!(plan.reclaimable_bytes, 19);
         assert_eq!(store.read_verified(&owned).unwrap(), b"owned media");
-        assert_eq!(store.read_verified(&unowned).unwrap(), b"registered without owner");
-        assert_eq!(store.read_verified(&orphan).unwrap(), b"unregistered orphan");
-        assert_eq!(fs::read(prefix.join(".123.456.tmp")).unwrap(), b"interrupted staging");
+        assert_eq!(
+            store.read_verified(&unowned).unwrap(),
+            b"registered without owner"
+        );
+        assert_eq!(
+            store.read_verified(&orphan).unwrap(),
+            b"unregistered orphan"
+        );
+        assert_eq!(
+            fs::read(prefix.join(".123.456.tmp")).unwrap(),
+            b"interrupted staging"
+        );
         assert!(matches!(
             plan_unregistered_media_gc(&store, &registry, 2),
             Err(MediaGcPlanError::Store(MediaObjectError::TooManyObjects))
@@ -246,7 +255,13 @@ mod tests {
             Err(MediaGcPlanError::Store(MediaObjectError::UnsafeObject))
         ));
         fs::remove_file(prefix.join("unexpected")).unwrap();
-        assert_eq!(plan_unregistered_media_gc(&store, &registry, 10).unwrap().candidates.len(), 1);
+        assert_eq!(
+            plan_unregistered_media_gc(&store, &registry, 10)
+                .unwrap()
+                .candidates
+                .len(),
+            1
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
