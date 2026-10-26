@@ -137,7 +137,8 @@ mod tests {
         assert_eq!(verify_declared_media(&store, &[entry.clone()]).unwrap(), entry.bytes);
         let path = root.join(&digest[..2]).join(&digest);
         let mut changed = bytes;
-        changed[changed.len() - 1] ^= 1;
+        let last = changed.len() - 1;
+        changed[last] ^= 1;
         fs::write(&path, changed).unwrap();
         assert!(matches!(
             verify_declared_media(&store, &[entry]),
