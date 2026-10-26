@@ -52,9 +52,9 @@ pub fn verify_declared_media(
     }
     for entry in entries {
         let bytes = store
-            .read_verified(&entry.digest)
+            .verify_object_size(&entry.digest)
             .map_err(MediaInventoryError::Unreadable)?;
-        if bytes.len() as u64 != entry.bytes {
+        if bytes != entry.bytes {
             return Err(MediaInventoryError::WrongSize);
         }
     }
@@ -114,4 +114,60 @@ mod tests {
         ));
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn large_media_inventory_streams_and_rejects_same_size_corruption() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-inventory-stream-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let bytes = vec![0x5a; 4 * 1024 * 1024 + 13];
+        let digest = store.store_bytes(&bytes).unwrap();
+        let entry = RequiredMedia {
+            digest: digest.clone(),
+            bytes: bytes.len() as u64,
+        };
+        assert_eq!(store.verify_object_size(&digest).unwrap(), entry.bytes);
+        assert_eq!(verify_declared_media(&store, &[entry.clone()]).unwrap(), entry.bytes);
+        let path = root.join(&digest[..2]).join(&digest);
+        let mut changed = bytes;
+        changed[changed.len() - 1] ^= 1;
+        fs::write(&path, changed).unwrap();
+        assert!(matches!(
+            verify_declared_media(&store, &[entry]),
+            Err(MediaInventoryError::Unreadable(MediaObjectError::DigestMismatch))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streaming_media_audit_rejects_external_hardlinks() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-inventory-link-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"offline figure").unwrap();
+        let alias = root.join("external-alias");
+        fs::hard_link(root.join(&digest[..2]).join(&digest), &alias).unwrap();
+        let entry = RequiredMedia { digest, bytes: 14 };
+        assert!(matches!(
+            verify_declared_media(&store, &[entry]),
+            Err(MediaInventoryError::Unreadable(MediaObjectError::UnsafeObject))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }

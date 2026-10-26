@@ -136,6 +136,67 @@ impl MediaObjectStore {
         Ok(digest)
     }
 
+    /// Verify a stored object with bounded memory, returning its byte length.
+    /// Pack-wide media audits should not allocate an entire 64 MiB image just
+    /// to check its digest. This validates bytes, not provenance or licensing.
+    pub fn verify_object_size(&self, digest: &str) -> Result<u64, MediaObjectError> {
+        let path = self.object_path(digest)?;
+        let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
+        let directory = fs::symlink_metadata(parent)?;
+        if !directory.file_type().is_dir() || directory.file_type().is_symlink() {
+            return Err(MediaObjectError::UnsafeDirectory);
+        }
+        let before = fs::symlink_metadata(&path)?;
+        if !before.file_type().is_file() || before.file_type().is_symlink() {
+            return Err(MediaObjectError::UnsafeObject);
+        }
+        if before.len() == 0 || before.len() > MAX_OBJECT_BYTES {
+            return Err(MediaObjectError::ObjectTooLarge);
+        }
+        let mut file = File::open(&path)?;
+        let opened = file.metadata()?;
+        if !opened.is_file() || opened.len() != before.len() {
+            return Err(MediaObjectError::UnsafeObject);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if before.ino() != opened.ino() || before.dev() != opened.dev() {
+                return Err(MediaObjectError::UnsafeObject);
+            }
+            require_single_link(&file)?;
+        }
+
+        let mut hasher = Sha256::new();
+        let mut total = 0u64;
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total = total
+                .checked_add(count as u64)
+                .ok_or(MediaObjectError::ObjectTooLarge)?;
+            if total > MAX_OBJECT_BYTES {
+                return Err(MediaObjectError::ObjectTooLarge);
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let after = file.metadata()?;
+        if total != opened.len() || after.len() != opened.len() {
+            return Err(MediaObjectError::UnsafeObject);
+        }
+        #[cfg(unix)]
+        {
+            require_single_link(&file)?;
+        }
+        if format!("{:x}", hasher.finalize()) != digest {
+            return Err(MediaObjectError::DigestMismatch);
+        }
+        Ok(total)
+    }
+
     /// Verify a bounded object from its on-disk bytes on every read.
     pub fn read_verified(&self, digest: &str) -> Result<Vec<u8>, MediaObjectError> {
         let path = self.object_path(digest)?;
