@@ -18,6 +18,7 @@ pub enum MediaRegistryError {
     ConflictingMime,
     UnknownObject,
     TooManyCandidates,
+    TooManyNotices,
 }
 
 impl From<rusqlite::Error> for MediaRegistryError {
@@ -617,6 +618,47 @@ impl MediaRegistry {
             ));
         }
         Ok(entries)
+    }
+
+    /// Check every persisted attribution notice for a registered digest,
+    /// including media without a current owner. An object with no valid notice
+    /// is not safe to present as an attributed offline visual. Bound rows to
+    /// prevent a corrupted registry from exhausting memory or audit time.
+    /// This is a read-only SQLite observation, not publisher authentication.
+    pub fn audit_registered_notices(
+        &self,
+        digest: &str,
+        max_notices: usize,
+    ) -> Result<usize, MediaRegistryError> {
+        if !valid_digest(digest) || !(1..=1024).contains(&max_notices) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT mime, source_url, creator, license FROM media_notices
+             WHERE digest=?1 ORDER BY mime, source_url, creator, license LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![digest, (max_notices + 1) as i64], |row| {
+            Ok(MediaNotice {
+                mime: row.get(0)?,
+                source_url: row.get(1)?,
+                creator: row.get(2)?,
+                license: row.get(3)?,
+            })
+        })?;
+        let mut count = 0usize;
+        for notice in rows {
+            count += 1;
+            if count > max_notices {
+                return Err(MediaRegistryError::TooManyNotices);
+            }
+            if !notice?.validate() {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+        }
+        if count == 0 {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        Ok(count)
     }
 
     pub fn notice_count(&self, digest: &str) -> Result<u64, MediaRegistryError> {

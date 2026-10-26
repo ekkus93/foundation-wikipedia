@@ -106,7 +106,9 @@ pub fn plan_unregistered_media_gc(
 /// actively pack-owned, cached and user-pinned assets. Unowned-only GC
 /// preflights cannot detect damaged media that is still needed for reading.
 /// Verify each digest and declared size through the bounded streaming reader.
-/// Missing/corrupt/unsafe objects abort the audit rather than being skipped.
+/// Also require at least one valid, bounded attribution notice for each object,
+/// including currently unowned bytes. Missing/corrupt/unsafe objects or
+/// malformed/missing attribution abort the audit rather than being skipped.
 ///
 /// The registry is sampled before filesystem reads. Concurrent writes may
 /// change its state, so success is not a transactional pack-activation proof,
@@ -127,6 +129,9 @@ pub fn audit_registered_media_integrity(
         .map_err(MediaGcPlanError::Registry)?;
     let mut verified_bytes = 0u64;
     for (digest, declared_bytes) in &claims {
+        registry
+            .audit_registered_notices(digest, 1024)
+            .map_err(MediaGcPlanError::Registry)?;
         let actual_bytes = store
             .verify_object_size(digest)
             .map_err(MediaGcPlanError::Store)?;
@@ -217,6 +222,78 @@ mod tests {
             audit_registered_media_integrity(&store, &registry, 10),
             Err(MediaGcPlanError::Store(MediaObjectError::Io(_)))
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_integrity_audit_requires_valid_bounded_attribution() {
+        let (root, store, _) = setup();
+        let db = root.join("attribution.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let digest = store.store_bytes(b"attributed visual").unwrap();
+        registry
+            .register_verified_bytes(b"attributed visual", &notice())
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "science")
+            .unwrap();
+        assert_eq!(
+            audit_registered_media_integrity(&store, &registry, 10)
+                .unwrap()
+                .objects,
+            1
+        );
+
+        let mut raw = rusqlite::Connection::open(&db).unwrap();
+        raw.execute(
+            "UPDATE media_notices SET creator='bad' || char(10) WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        raw.execute(
+            "DELETE FROM media_notices WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+
+        registry
+            .register_verified_bytes(b"attributed visual", &notice())
+            .unwrap();
+        let tx = raw.transaction().unwrap();
+        for index in 0..1024 {
+            tx.execute(
+                "INSERT INTO media_notices(digest,mime,source_url,creator,license)
+                 VALUES (?1,'image/png','https://commons.wikimedia.org/wiki/File:Diagram.png',?2,'CC BY-SA 4.0')",
+                rusqlite::params![digest, format!("Contributor {index}")],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyNotices))
+        ));
+        raw.execute(
+            "DELETE FROM media_notices WHERE creator LIKE 'Contributor %'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            audit_registered_media_integrity(&store, &registry, 10)
+                .unwrap()
+                .verified_bytes,
+            b"attributed visual".len() as u64
+        );
+        drop(raw);
+        drop(registry);
         fs::remove_dir_all(root).unwrap();
     }
 
