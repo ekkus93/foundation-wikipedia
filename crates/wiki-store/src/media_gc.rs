@@ -76,10 +76,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-media-gc-plan-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-media-gc-plan-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let store = MediaObjectStore::new(&root);
         let registry = MediaRegistry::in_memory().unwrap();
@@ -99,31 +97,55 @@ mod tests {
     fn only_unowned_registered_bytes_are_reported_without_deletion() {
         let (root, store, mut registry) = setup();
         let shared = store.store_bytes(b"shared diagram").unwrap();
-        registry.register_verified_bytes(b"shared diagram", &notice()).unwrap();
-        registry.add_owner(&shared, OwnerKind::Pack, "physics").unwrap();
-        registry.add_owner(&shared, OwnerKind::Cache, "reader").unwrap();
-        registry.add_owner(&shared, OwnerKind::UserPin, "saved").unwrap();
+        registry
+            .register_verified_bytes(b"shared diagram", &notice())
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::Cache, "reader")
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::UserPin, "saved")
+            .unwrap();
 
         let orphan = store.store_bytes(b"unowned plot").unwrap();
-        registry.register_verified_bytes(b"unowned plot", &notice()).unwrap();
+        registry
+            .register_verified_bytes(b"unowned plot", &notice())
+            .unwrap();
         let initial = plan_unowned_media_gc(&store, &registry, 10).unwrap();
         assert_eq!(initial.reclaimable_bytes, 12);
-        assert_eq!(initial.candidates, vec![MediaGcCandidate {
-            digest: orphan.clone(),
-            bytes: 12,
-        }]);
+        assert_eq!(
+            initial.candidates,
+            vec![MediaGcCandidate {
+                digest: orphan.clone(),
+                bytes: 12,
+            }]
+        );
         assert_eq!(store.read_verified(&orphan).unwrap(), b"unowned plot");
 
-        registry.remove_owner(&shared, OwnerKind::Pack, "physics").unwrap();
-        registry.remove_owner(&shared, OwnerKind::Cache, "reader").unwrap();
-        assert_eq!(plan_unowned_media_gc(&store, &registry, 10).unwrap(), initial);
-        registry.remove_owner(&shared, OwnerKind::UserPin, "saved").unwrap();
+        registry
+            .remove_owner(&shared, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .remove_owner(&shared, OwnerKind::Cache, "reader")
+            .unwrap();
+        assert_eq!(
+            plan_unowned_media_gc(&store, &registry, 10).unwrap(),
+            initial
+        );
+        registry
+            .remove_owner(&shared, OwnerKind::UserPin, "saved")
+            .unwrap();
         let all = plan_unowned_media_gc(&store, &registry, 10).unwrap();
         assert_eq!(all.candidates.len(), 2);
         assert_eq!(all.reclaimable_bytes, 26);
         assert!(matches!(
             plan_unowned_media_gc(&store, &registry, 1),
-            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyCandidates))
+            Err(MediaGcPlanError::Registry(
+                MediaRegistryError::TooManyCandidates
+            ))
         ));
         assert_eq!(store.read_verified(&shared).unwrap(), b"shared diagram");
         fs::remove_dir_all(root).unwrap();
@@ -133,7 +155,9 @@ mod tests {
     fn missing_or_corrupt_candidates_fail_closed_and_leave_bytes_untouched() {
         let (root, store, mut registry) = setup();
         let digest = store.store_bytes(b"plot").unwrap();
-        registry.register_verified_bytes(b"plot", &notice()).unwrap();
+        registry
+            .register_verified_bytes(b"plot", &notice())
+            .unwrap();
         assert!(matches!(
             plan_unowned_media_gc(&store, &registry, 0),
             Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
