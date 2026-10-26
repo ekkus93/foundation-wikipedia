@@ -333,6 +333,8 @@ mod tests {
             rusqlite::params![digest],
         )
         .unwrap();
+        // Simulate a damaged database written without foreign-key enforcement.
+        raw.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
         let orphan = "0".repeat(64);
         raw.execute(
             "INSERT INTO media_owners(digest,kind,owner_id) VALUES (?1,'pack','ghost')",
