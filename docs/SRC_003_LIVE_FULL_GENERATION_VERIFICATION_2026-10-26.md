@@ -15,3 +15,24 @@ The optional JSON result is schema 3, kind `public_dump_live_https_and_local_int
 The HTTPS result is **observed official TLS origin at check time**, not a signed Wikimedia publication, an independently authenticated publisher statement or independent page-census completeness. Revision-matched rendering, offline visuals and device acceptance are still missing. As with previous private-stage verification, untrusted concurrent writers must be excluded.
 
 Synthetic two-shard regression covers missing/corrupt local inputs failing before HTTP, live exact-match receipt, changed/failed HTTPS inventory, unchanged staged data, canonical member ordering and conservative trust claims.
+
+## Verification evidence
+
+The initial implementation at `f623d13e228f4fbf1d95091e97ced9411421af9a`
+failed Rust tests because a fixture embedded literal backslash-n sequences
+rather than inventory line terminators. Corrected implementation
+`e867e0825bd348bb09464e211f4ae7464dfbe9f7` passed Rust workspace CI
+[40322795806](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40322795806)
+and Platform shells CI
+[40322795810](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40322795810).
+
+The actual CLI dispatch is also exercised by the Unix integration test at
+`tools/wiki-pack/tests/verify_live_public_generation_cli.rs`. Its first SHA
+`37b633939815ac8279f39c0d50c984bca45fafb5` failed rustfmt;
+corrected exact code SHA `3a208bf3264184a3c69c38781a3a230eefa0051e`
+passed [Rust workspace CI 40324004437](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40324004437)
+and [Platform shells CI 40324004344](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40324004344).
+The integration test checks success JSON/human mode, missing/corrupt members
+before HTTP, live 404, bad pin, no success stdout on failures and immutable
+staging. All HTTP observations are **synthetic**; no live publisher signature,
+page census or revision-rendering claim is made.
