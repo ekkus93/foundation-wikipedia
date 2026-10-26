@@ -17,6 +17,7 @@ pub enum MediaRegistryError {
     ConflictingInventory,
     ConflictingMime,
     UnknownObject,
+    TooManyCandidates,
 }
 
 impl From<rusqlite::Error> for MediaRegistryError {
@@ -407,6 +408,40 @@ impl MediaRegistry {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(hashes)
+    }
+
+    /// Bounded, read-only snapshot of registered objects with no pack, cache,
+    /// or user-pin owners. This is advisory GC input, never deletion authority:
+    /// ownership can change immediately after the query, and an interrupted
+    /// installer may have stored bytes without creating a registry row.
+    pub fn unowned_media_candidates(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, u64)>, MediaRegistryError> {
+        if !(1..=10_000).contains(&limit) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT o.digest, o.bytes FROM media_objects o
+             WHERE NOT EXISTS (
+               SELECT 1 FROM media_owners r WHERE r.digest=o.digest
+             ) ORDER BY o.digest LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![(limit + 1) as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (digest, bytes) = row?;
+            if !valid_digest(&digest) || !(1..=64 * 1024 * 1024).contains(&bytes) {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+            candidates.push((digest, bytes as u64));
+            if candidates.len() > limit {
+                return Err(MediaRegistryError::TooManyCandidates);
+            }
+        }
+        Ok(candidates)
     }
 
     /// Efficient owner-scoped digest lookup for on-demand asset reads. This
