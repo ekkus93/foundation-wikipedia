@@ -22,6 +22,8 @@ pub enum MediaObjectError {
     UnsafeObject,
     ObjectTooLarge,
     DigestMismatch,
+    InvalidLimit,
+    TooManyObjects,
 }
 
 /// The no-overwrite hard-link publisher temporarily holds two links until
@@ -74,6 +76,65 @@ impl MediaObjectStore {
             }
         }
         Ok(self.root.join(&digest[..2]).join(digest))
+    }
+
+    /// Enumerate fully published digest paths for a read-only orphan audit.
+    /// Staging files are excluded; this snapshot is never deletion authority.
+    /// Unexpected paths or aliases fail closed rather than being followed.
+    pub fn published_object_digests(
+        &self,
+        max_objects: usize,
+    ) -> Result<Vec<String>, MediaObjectError> {
+        if !(1..=10_000).contains(&max_objects) {
+            return Err(MediaObjectError::InvalidLimit);
+        }
+        self.object_path(&"0".repeat(64))?;
+        let mut digests = Vec::new();
+        for prefix_entry in fs::read_dir(&self.root)? {
+            let prefix_entry = prefix_entry?;
+            let prefix_name = prefix_entry.file_name();
+            let prefix = prefix_name
+                .to_str()
+                .ok_or(MediaObjectError::UnsafeDirectory)?;
+            if prefix.len() != 2
+                || !prefix.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || !fs::symlink_metadata(prefix_entry.path())?.file_type().is_dir()
+            {
+                return Err(MediaObjectError::UnsafeDirectory);
+            }
+            for entry in fs::read_dir(prefix_entry.path())? {
+                let entry = entry?;
+                let filename = entry.file_name();
+                let name = filename.to_str().ok_or(MediaObjectError::UnsafeObject)?;
+                // Interrupted no-overwrite publication can leave private
+                // .PID.COUNTER.tmp files; they are not published objects.
+                let staging = name
+                    .strip_prefix('.')
+                    .and_then(|rest| rest.strip_suffix(".tmp"))
+                    .and_then(|rest| rest.split_once('.'))
+                    .is_some_and(|(pid, counter)| {
+                        !pid.is_empty()
+                            && !counter.is_empty()
+                            && pid.bytes().all(|byte| byte.is_ascii_digit())
+                            && counter.bytes().all(|byte| byte.is_ascii_digit())
+                    });
+                if staging {
+                    continue;
+                }
+                if !valid_digest(name)
+                    || !name.starts_with(prefix)
+                    || !fs::symlink_metadata(entry.path())?.file_type().is_file()
+                {
+                    return Err(MediaObjectError::UnsafeObject);
+                }
+                digests.push(name.to_owned());
+                if digests.len() > max_objects {
+                    return Err(MediaObjectError::TooManyObjects);
+                }
+            }
+        }
+        digests.sort_unstable();
+        Ok(digests)
     }
 
     /// Publish verified bytes with a no-overwrite hard-link promotion. A

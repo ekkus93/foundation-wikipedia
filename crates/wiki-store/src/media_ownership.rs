@@ -444,6 +444,33 @@ impl MediaRegistry {
         Ok(candidates)
     }
 
+    /// Read-only registered-object lookup for advisory filesystem orphan
+    /// audits. A row can be added concurrently after this observation.
+    pub fn registered_digest_size(
+        &self,
+        digest: &str,
+    ) -> Result<Option<u64>, MediaRegistryError> {
+        if !valid_digest(digest) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let bytes: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT bytes FROM media_objects WHERE digest=?1",
+                params![digest],
+                |row| row.get(0),
+            )
+            .optional()?;
+        bytes
+            .map(|size| {
+                if !(1..=64 * 1024 * 1024).contains(&size) {
+                    return Err(MediaRegistryError::InvalidInput);
+                }
+                Ok(size as u64)
+            })
+            .transpose()
+    }
+
     /// Efficient owner-scoped digest lookup for on-demand asset reads. This
     /// checks a registered claim, not the bytes, manifest, or media license.
     pub fn owned_digest_size(

@@ -64,6 +64,44 @@ pub fn plan_unowned_media_gc(
     })
 }
 
+/// Enumerate canonical published media bytes that have no SQLite registry
+/// row. This complements the registered-but-unowned planner: a crash between
+/// byte publication and ownership registration can leave orphaned objects.
+/// The scan is bounded, verifies every reported object's SHA-256, and never
+/// unlinks files or changes registry state. Concurrent installers may register
+/// an object after the query, so this is NOT safe deletion authorization.
+pub fn plan_unregistered_media_gc(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_scanned_objects: usize,
+) -> Result<MediaGcPlan, MediaGcPlanError> {
+    let digests = store
+        .published_object_digests(max_scanned_objects)
+        .map_err(MediaGcPlanError::Store)?;
+    let mut candidates = Vec::new();
+    let mut reclaimable_bytes = 0u64;
+    for digest in digests {
+        if registry
+            .registered_digest_size(&digest)
+            .map_err(MediaGcPlanError::Registry)?
+            .is_some()
+        {
+            continue;
+        }
+        let bytes = store
+            .verify_object_size(&digest)
+            .map_err(MediaGcPlanError::Store)?;
+        reclaimable_bytes = reclaimable_bytes
+            .checked_add(bytes)
+            .ok_or(MediaGcPlanError::SizeOverflow)?;
+        candidates.push(MediaGcCandidate { digest, bytes });
+    }
+    Ok(MediaGcPlan {
+        candidates,
+        reclaimable_bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +187,94 @@ mod tests {
         ));
         assert_eq!(store.read_verified(&shared).unwrap(), b"shared diagram");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unregistered_published_bytes_are_reported_without_touching_registered_media() {
+        let (root, store, mut registry) = setup();
+        let owned = store.store_bytes(b"owned media").unwrap();
+        registry
+            .register_verified_bytes(b"owned media", &notice())
+            .unwrap();
+        registry
+            .add_owner(&owned, OwnerKind::Pack, "physics")
+            .unwrap();
+        let unowned = store.store_bytes(b"registered without owner").unwrap();
+        registry
+            .register_verified_bytes(b"registered without owner", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"unregistered orphan").unwrap();
+        let prefix = root.join(&orphan[..2]);
+        fs::write(prefix.join(".123.456.tmp"), b"interrupted staging").unwrap();
+
+        let plan = plan_unregistered_media_gc(&store, &registry, 10).unwrap();
+        assert_eq!(
+            plan.candidates,
+            vec![MediaGcCandidate {
+                digest: orphan.clone(),
+                bytes: b"unregistered orphan".len() as u64,
+            }]
+        );
+        assert_eq!(plan.reclaimable_bytes, 19);
+        assert_eq!(store.read_verified(&owned).unwrap(), b"owned media");
+        assert_eq!(store.read_verified(&unowned).unwrap(), b"registered without owner");
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"unregistered orphan");
+        assert_eq!(fs::read(prefix.join(".123.456.tmp")).unwrap(), b"interrupted staging");
+        assert!(matches!(
+            plan_unregistered_media_gc(&store, &registry, 2),
+            Err(MediaGcPlanError::Store(MediaObjectError::TooManyObjects))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn orphan_scan_rejects_corruption_and_unexpected_paths_without_mutation() {
+        let (root, store, registry) = setup();
+        let orphan = store.store_bytes(b"orphan diagram").unwrap();
+        let prefix = root.join(&orphan[..2]);
+        let path = prefix.join(&orphan);
+        fs::write(&path, b"corrupt bytes!").unwrap();
+        assert!(matches!(
+            plan_unregistered_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"corrupt bytes!");
+        fs::write(&path, b"orphan diagram").unwrap();
+        fs::write(prefix.join("unexpected"), b"not a digest").unwrap();
+        assert!(matches!(
+            plan_unregistered_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::UnsafeObject))
+        ));
+        fs::remove_file(prefix.join("unexpected")).unwrap();
+        assert_eq!(plan_unregistered_media_gc(&store, &registry, 10).unwrap().candidates.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_scan_rejects_symlinked_prefix_and_published_digest() {
+        use std::os::unix::fs::symlink;
+        let (root, store, registry) = setup();
+        let orphan = store.store_bytes(b"unregistered figure").unwrap();
+        let path = root.join(&orphan[..2]).join(&orphan);
+        fs::remove_file(&path).unwrap();
+        symlink(root.join("missing"), &path).unwrap();
+        assert!(matches!(
+            plan_unregistered_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::UnsafeObject))
+        ));
+        fs::remove_file(&path).unwrap();
+        let prefix = root.join(&orphan[..2]);
+        let target = root.with_extension("outside");
+        fs::create_dir(&target).unwrap();
+        fs::remove_dir(&prefix).unwrap();
+        symlink(&target, &prefix).unwrap();
+        assert!(matches!(
+            plan_unregistered_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::UnsafeDirectory))
+        ));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(target).unwrap();
     }
 
     #[test]
