@@ -174,10 +174,7 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
     ] {
         curl_script(
             &bin,
-            &format!(
-                "printf '%s' '{}'\nprintf '%s' '{}' >&2",
-                raw, diagnostics
-            ),
+            &format!("printf '%s' '{}'\nprintf '%s' '{}' >&2", raw, diagnostics),
         );
         let malformed = invoke(&root, &bin, &pin, true);
         assert!(

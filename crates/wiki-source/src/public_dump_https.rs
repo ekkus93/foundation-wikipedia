@@ -52,7 +52,6 @@ fn unique_curl_marker<'a>(diagnostics: &'a str, prefix: &str) -> Option<&'a str>
     values.next().is_none().then_some(first)
 }
 
-
 /// Curl's %{http_code} write-out is exactly three ASCII decimal digits.
 /// Reject malformed diagnostics rather than accepting Rust's permissive
 /// integer parsing (such as +200 or 0200) as proof of HTTP success.
