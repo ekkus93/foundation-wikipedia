@@ -42,3 +42,5 @@ upstream inventory** and a **synthetic transport failure after otherwise valid
 response bytes/status**. Both must fail without a JSON success receipt and
 without modifying the staged source. These are failure-path regressions only,
 not evidence of real Wikimedia publication authenticity.
+
+Extended black-box failure-path tests passed at source SHA `45efe09c6d7b312dd816ebb577c1eed54afd616e`: [Rust workspace CI 40336823014](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40336823014) and [Platform shells CI 40336823012](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40336823012). These CI passes do not qualify SRC-003 as complete.
