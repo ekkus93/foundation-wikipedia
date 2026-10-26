@@ -574,14 +574,15 @@ impl MediaRegistry {
             "SELECT mime, source_url, creator, license FROM media_notices
              WHERE digest=?1 ORDER BY source_url, creator, license, mime LIMIT ?2",
         )?;
-        let rows = statement.query_map(params![digest, (MAX_SCOPED_NOTICES + 1) as i64], |row| {
-            Ok(MediaNotice {
-                mime: row.get(0)?,
-                source_url: row.get(1)?,
-                creator: row.get(2)?,
-                license: row.get(3)?,
-            })
-        })?;
+        let rows =
+            statement.query_map(params![digest, (MAX_SCOPED_NOTICES + 1) as i64], |row| {
+                Ok(MediaNotice {
+                    mime: row.get(0)?,
+                    source_url: row.get(1)?,
+                    creator: row.get(2)?,
+                    license: row.get(3)?,
+                })
+            })?;
         let mut notices = Vec::new();
         let mut mime: Option<String> = None;
         for notice in rows {
