@@ -19,6 +19,7 @@ pub enum MediaRegistryError {
     UnknownObject,
     TooManyCandidates,
     TooManyNotices,
+    TooManyOwners,
 }
 
 impl From<rusqlite::Error> for MediaRegistryError {
@@ -646,19 +647,80 @@ impl MediaRegistry {
             })
         })?;
         let mut count = 0usize;
+        let mut mime: Option<String> = None;
         for notice in rows {
             count += 1;
             if count > max_notices {
                 return Err(MediaRegistryError::TooManyNotices);
             }
-            if !notice?.validate() {
+            let notice = notice?;
+            if !notice.validate() {
                 return Err(MediaRegistryError::InvalidInput);
+            }
+            if let Some(previous) = &mime {
+                if previous != &notice.mime {
+                    return Err(MediaRegistryError::ConflictingMime);
+                }
+            } else {
+                mime = Some(notice.mime);
             }
         }
         if count == 0 {
             return Err(MediaRegistryError::InvalidInput);
         }
         Ok(count)
+    }
+
+    /// Validate bounded pack/cache/pin owner claims for one registered digest.
+    /// This read-only check is not authorization to delete unowned bytes.
+    pub fn audit_registered_owners(
+        &self,
+        digest: &str,
+        max_owners: usize,
+    ) -> Result<usize, MediaRegistryError> {
+        if !valid_digest(digest) || !(1..=1024).contains(&max_owners) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, owner_id FROM media_owners
+             WHERE digest=?1 ORDER BY kind, owner_id LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![digest, (max_owners + 1) as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut count = 0usize;
+        for row in rows {
+            count += 1;
+            if count > max_owners {
+                return Err(MediaRegistryError::TooManyOwners);
+            }
+            let (kind, owner_id) = row?;
+            if !matches!(kind.as_str(), "pack" | "cache" | "pin")
+                || !valid_owner_id(&owner_id)
+            {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+        }
+        Ok(count)
+    }
+
+    /// Detect dangling owners/notices that object-scoped integrity checks miss.
+    pub fn audit_unregistered_references(&self) -> Result<(), MediaRegistryError> {
+        let dangling: i64 = self.conn.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM media_owners r
+               WHERE NOT EXISTS (SELECT 1 FROM media_objects o WHERE o.digest=r.digest)
+             ) OR EXISTS(
+               SELECT 1 FROM media_notices n
+               WHERE NOT EXISTS (SELECT 1 FROM media_objects o WHERE o.digest=n.digest)
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        if dangling != 0 {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        Ok(())
     }
 
     pub fn notice_count(&self, digest: &str) -> Result<u64, MediaRegistryError> {

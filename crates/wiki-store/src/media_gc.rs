@@ -106,6 +106,7 @@ pub fn plan_unregistered_media_gc(
 /// actively pack-owned, cached and user-pinned assets. Unowned-only GC
 /// preflights cannot detect damaged media that is still needed for reading.
 /// Verify each digest and declared size through the bounded streaming reader.
+/// Also reject invalid ownership, dangling references and conflicting MIME claims.
 /// Also require at least one valid, bounded attribution notice for each object,
 /// including currently unowned bytes. Missing/corrupt/unsafe objects or
 /// malformed/missing attribution abort the audit rather than being skipped.
@@ -124,6 +125,9 @@ pub fn audit_registered_media_integrity(
     registry: &MediaRegistry,
     max_objects: usize,
 ) -> Result<RegisteredMediaAudit, MediaGcPlanError> {
+    registry
+        .audit_unregistered_references()
+        .map_err(MediaGcPlanError::Registry)?;
     let claims = registry
         .registered_media_candidates(max_objects)
         .map_err(MediaGcPlanError::Registry)?;
@@ -131,6 +135,9 @@ pub fn audit_registered_media_integrity(
     for (digest, declared_bytes) in &claims {
         registry
             .audit_registered_notices(digest, 1024)
+            .map_err(MediaGcPlanError::Registry)?;
+        registry
+            .audit_registered_owners(digest, 1024)
             .map_err(MediaGcPlanError::Registry)?;
         let actual_bytes = store
             .verify_object_size(digest)
@@ -294,6 +301,92 @@ mod tests {
                 .verified_bytes,
             b"attributed visual".len() as u64
         );
+        drop(raw);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_integrity_audit_rejects_corrupt_owner_and_dangling_rows() {
+        let (root, store, _) = setup();
+        let db = root.join("owners.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let digest = store.store_bytes(b"owned visual").unwrap();
+        registry.register_verified_bytes(b"owned visual", &notice()).unwrap();
+        registry.add_owner(&digest, OwnerKind::Pack, "science").unwrap();
+        let raw = rusqlite::Connection::open(&db).unwrap();
+        raw.execute(
+            "UPDATE media_owners SET owner_id='bad/owner' WHERE digest=?1",
+            rusqlite::params![digest],
+        ).unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        raw.execute(
+            "UPDATE media_owners SET owner_id='science' WHERE digest=?1",
+            rusqlite::params![digest],
+        ).unwrap();
+        let orphan = "0".repeat(64);
+        raw.execute(
+            "INSERT INTO media_owners(digest,kind,owner_id) VALUES (?1,'pack','ghost')",
+            rusqlite::params![orphan],
+        ).unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        raw.execute("DELETE FROM media_owners WHERE digest=?1", rusqlite::params![orphan]).unwrap();
+        raw.execute(
+            "INSERT INTO media_notices(digest,mime,source_url,creator,license)
+             VALUES (?1,'image/png','https://commons.wikimedia.org/wiki/File:Orphan.png',
+                     'Creator','CC BY-SA 4.0')",
+            rusqlite::params![orphan],
+        ).unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        raw.execute("DELETE FROM media_notices WHERE digest=?1", rusqlite::params![orphan]).unwrap();
+        assert_eq!(audit_registered_media_integrity(&store, &registry, 10).unwrap().objects, 1);
+        drop(raw);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_integrity_audit_rejects_mime_conflict_and_owner_fanout() {
+        let (root, store, _) = setup();
+        let db = root.join("fanout.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let digest = store.store_bytes(b"shared visual").unwrap();
+        registry.register_verified_bytes(b"shared visual", &notice()).unwrap();
+        let mut svg = notice();
+        svg.mime = "image/svg+xml".into();
+        registry.register_verified_bytes(b"shared visual", &svg).unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::ConflictingMime))
+        ));
+        let mut raw = rusqlite::Connection::open(&db).unwrap();
+        raw.execute(
+            "DELETE FROM media_notices WHERE digest=?1 AND mime='image/svg+xml'",
+            rusqlite::params![digest],
+        ).unwrap();
+        let tx = raw.transaction().unwrap();
+        for i in 0..1025 {
+            tx.execute(
+                "INSERT INTO media_owners(digest,kind,owner_id) VALUES (?1,'pack',?2)",
+                rusqlite::params![digest, format!("pack_{i}")],
+            ).unwrap();
+        }
+        tx.commit().unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyOwners))
+        ));
+        raw.execute("DELETE FROM media_owners WHERE owner_id='pack_1024'", []).unwrap();
+        assert_eq!(audit_registered_media_integrity(&store, &registry, 10).unwrap().objects, 1);
         drop(raw);
         drop(registry);
         fs::remove_dir_all(root).unwrap();
