@@ -695,9 +695,7 @@ impl MediaRegistry {
                 return Err(MediaRegistryError::TooManyOwners);
             }
             let (kind, owner_id) = row?;
-            if !matches!(kind.as_str(), "pack" | "cache" | "pin")
-                || !valid_owner_id(&owner_id)
-            {
+            if !matches!(kind.as_str(), "pack" | "cache" | "pin") || !valid_owner_id(&owner_id) {
                 return Err(MediaRegistryError::InvalidInput);
             }
         }
