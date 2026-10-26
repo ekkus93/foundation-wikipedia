@@ -90,6 +90,7 @@ impl MediaObjectStore {
         }
         self.object_path(&"0".repeat(64))?;
         let mut digests = Vec::new();
+        let mut staged_count = 0usize;
         for prefix_entry in fs::read_dir(&self.root)? {
             let prefix_entry = prefix_entry?;
             let prefix_name = prefix_entry.file_name();
@@ -123,6 +124,17 @@ impl MediaObjectStore {
                             && counter.bytes().all(|byte| byte.is_ascii_digit())
                     });
                 if staging {
+                    // A staging-looking symlink or directory must not evade
+                    // the path audit. Also bound the number of ignored files:
+                    // an unbounded staging flood would make a bounded scan
+                    // take arbitrarily long without counting any objects.
+                    if !fs::symlink_metadata(entry.path())?.file_type().is_file() {
+                        return Err(MediaObjectError::UnsafeObject);
+                    }
+                    staged_count += 1;
+                    if staged_count > max_objects {
+                        return Err(MediaObjectError::TooManyObjects);
+                    }
                     continue;
                 }
                 if !valid_digest(name)
@@ -405,6 +417,58 @@ mod tests {
             fs::read_dir(prefix).unwrap().filter_map(Result::ok).count(),
             1
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn published_scan_bounds_ignored_staging_files_without_removing_them() {
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"published visual").unwrap();
+        let prefix = root.join(&digest[..2]);
+        let first = prefix.join(".123.456.tmp");
+        let second = prefix.join(".123.457.tmp");
+        fs::write(&first, b"partial one").unwrap();
+        fs::write(&second, b"partial two").unwrap();
+
+        assert!(matches!(
+            store.published_object_digests(1),
+            Err(MediaObjectError::TooManyObjects)
+        ));
+        assert_eq!(store.published_object_digests(2).unwrap(), vec![digest]);
+        assert_eq!(fs::read(first).unwrap(), b"partial one");
+        assert_eq!(fs::read(second).unwrap(), b"partial two");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn published_scan_rejects_staging_symlinks_and_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"published visual").unwrap();
+        let prefix = root.join(&digest[..2]);
+        let staged = prefix.join(".123.456.tmp");
+        let target = root.with_extension("external-stage");
+        fs::write(&target, b"outside").unwrap();
+        symlink(&target, &staged).unwrap();
+        assert!(matches!(
+            store.published_object_digests(10),
+            Err(MediaObjectError::UnsafeObject)
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"outside");
+        fs::remove_file(&staged).unwrap();
+
+        fs::create_dir(&staged).unwrap();
+        assert!(matches!(
+            store.published_object_digests(10),
+            Err(MediaObjectError::UnsafeObject)
+        ));
+        fs::remove_dir(&staged).unwrap();
+        assert_eq!(store.published_object_digests(10).unwrap(), vec![digest]);
+        fs::remove_file(target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
