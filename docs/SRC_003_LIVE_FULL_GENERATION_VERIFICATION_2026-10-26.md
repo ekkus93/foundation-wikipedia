@@ -36,3 +36,9 @@ The integration test checks success JSON/human mode, missing/corrupt members
 before HTTP, live 404, bad pin, no success stdout on failures and immutable
 staging. All HTTP observations are **synthetic**; no live publisher signature,
 page census or revision-rendering claim is made.
+
+Follow-up black-box cases also exercise a **synthetic HTTP 200 with a changed
+upstream inventory** and a **synthetic transport failure after otherwise valid
+response bytes/status**. Both must fail without a JSON success receipt and
+without modifying the staged source. These are failure-path regressions only,
+not evidence of real Wikimedia publication authenticity.

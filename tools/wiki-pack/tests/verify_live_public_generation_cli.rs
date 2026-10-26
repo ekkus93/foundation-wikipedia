@@ -128,6 +128,38 @@ fn live_generation_cli_outputs_only_successful_verification_receipts() {
     let unavailable = invoke(&root, &bin, &pin, true);
     assert!(!unavailable.status.success());
     assert!(unavailable.stdout.is_empty());
+    // HTTP 200 alone is insufficient: the official inventory must match the
+    // exact pinned local publication, even when all staged shards are intact.
+    let changed_inventory = raw.replacen(
+        &format!("{:x}", Sha256::digest(b"member-two")),
+        &"0".repeat(64),
+        1,
+    );
+    assert_ne!(changed_inventory, raw);
+    curl_script(
+        &bin,
+        &format!(
+            "printf '%s' '{}'\\nprintf 'FW_DUMP_HTTP_CODE:200\\\\n' >&2",
+            changed_inventory
+        ),
+    );
+    let changed = invoke(&root, &bin, &pin, true);
+    assert!(!changed.status.success());
+    assert!(changed.stdout.is_empty());
+
+    // A transport failure must not be converted into success by a 200 marker
+    // and otherwise correct response bytes.
+    curl_script(
+        &bin,
+        &format!(
+            "printf '%s' '{}'\\nprintf 'FW_DUMP_HTTP_CODE:200\\\\n' >&2\\nexit 7",
+            raw
+        ),
+    );
+    let failed_transport = invoke(&root, &bin, &pin, true);
+    assert!(!failed_transport.status.success());
+    assert!(failed_transport.stdout.is_empty());
+
     let wrong_pin = invoke(&root, &bin, &"0".repeat(64), true);
     assert!(!wrong_pin.status.success());
     assert!(wrong_pin.stdout.is_empty());
