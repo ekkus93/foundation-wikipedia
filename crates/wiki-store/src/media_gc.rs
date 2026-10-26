@@ -225,12 +225,18 @@ mod tests {
         let (root, store, mut registry) = setup();
         for (name, content) in [("one", b"one".as_slice()), ("two", b"two".as_slice())] {
             let digest = store.store_bytes(content).unwrap();
-            registry.register_verified_bytes(content, &notice()).unwrap();
-            registry.add_owner(&digest, OwnerKind::UserPin, name).unwrap();
+            registry
+                .register_verified_bytes(content, &notice())
+                .unwrap();
+            registry
+                .add_owner(&digest, OwnerKind::UserPin, name)
+                .unwrap();
         }
         assert!(matches!(
             audit_registered_media_integrity(&store, &registry, 1),
-            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyCandidates))
+            Err(MediaGcPlanError::Registry(
+                MediaRegistryError::TooManyCandidates
+            ))
         ));
         for limit in [0, 10_001] {
             assert!(matches!(

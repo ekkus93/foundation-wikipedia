@@ -455,9 +455,9 @@ impl MediaRegistry {
         if !(1..=10_000).contains(&limit) {
             return Err(MediaRegistryError::InvalidInput);
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT digest, bytes FROM media_objects ORDER BY digest LIMIT ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT digest, bytes FROM media_objects ORDER BY digest LIMIT ?1")?;
         let rows = stmt.query_map(params![(limit + 1) as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
