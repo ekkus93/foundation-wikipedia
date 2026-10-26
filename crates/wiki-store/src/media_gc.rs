@@ -102,6 +102,47 @@ pub fn plan_unregistered_media_gc(
     })
 }
 
+/// A read-only integrity audit of *every* registered media object, including
+/// actively pack-owned, cached and user-pinned assets. Unowned-only GC
+/// preflights cannot detect damaged media that is still needed for reading.
+/// Verify each digest and declared size through the bounded streaming reader.
+/// Missing/corrupt/unsafe objects abort the audit rather than being skipped.
+///
+/// The registry is sampled before filesystem reads. Concurrent writes may
+/// change its state, so success is not a transactional pack-activation proof,
+/// an official-source authenticity claim, or permission to garbage-collect.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisteredMediaAudit {
+    pub objects: usize,
+    pub verified_bytes: u64,
+}
+
+pub fn audit_registered_media_integrity(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_objects: usize,
+) -> Result<RegisteredMediaAudit, MediaGcPlanError> {
+    let claims = registry
+        .registered_media_candidates(max_objects)
+        .map_err(MediaGcPlanError::Registry)?;
+    let mut verified_bytes = 0u64;
+    for (digest, declared_bytes) in &claims {
+        let actual_bytes = store
+            .verify_object_size(digest)
+            .map_err(MediaGcPlanError::Store)?;
+        if actual_bytes != *declared_bytes {
+            return Err(MediaGcPlanError::SizeMismatch);
+        }
+        verified_bytes = verified_bytes
+            .checked_add(actual_bytes)
+            .ok_or(MediaGcPlanError::SizeOverflow)?;
+    }
+    Ok(RegisteredMediaAudit {
+        objects: claims.len(),
+        verified_bytes,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +170,81 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn registered_integrity_audit_covers_owned_and_unowned_but_not_orphaned_bytes() {
+        let (root, store, mut registry) = setup();
+        let owned = store.store_bytes(b"owned diagram").unwrap();
+        registry
+            .register_verified_bytes(b"owned diagram", &notice())
+            .unwrap();
+        registry
+            .add_owner(&owned, OwnerKind::Pack, "physics")
+            .unwrap();
+        let unowned = store.store_bytes(b"unowned plot").unwrap();
+        registry
+            .register_verified_bytes(b"unowned plot", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"unregistered figure").unwrap();
+
+        let audit = audit_registered_media_integrity(&store, &registry, 10).unwrap();
+        assert_eq!(
+            audit,
+            RegisteredMediaAudit {
+                objects: 2,
+                verified_bytes: (b"owned diagram".len() + b"unowned plot".len()) as u64,
+            }
+        );
+        assert_eq!(
+            plan_unregistered_media_gc(&store, &registry, 10)
+                .unwrap()
+                .candidates[0]
+                .digest,
+            orphan
+        );
+        assert_eq!(store.read_verified(&unowned).unwrap(), b"unowned plot");
+
+        let owned_path = root.join(&owned[..2]).join(&owned);
+        fs::write(&owned_path, b"bad!! diagram").unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        fs::write(&owned_path, b"owned diagram").unwrap();
+        fs::remove_file(&owned_path).unwrap();
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::Io(_)))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_integrity_audit_is_bounded_even_if_all_objects_are_owned() {
+        let (root, store, mut registry) = setup();
+        for (name, content) in [("one", b"one".as_slice()), ("two", b"two".as_slice())] {
+            let digest = store.store_bytes(content).unwrap();
+            registry.register_verified_bytes(content, &notice()).unwrap();
+            registry.add_owner(&digest, OwnerKind::UserPin, name).unwrap();
+        }
+        assert!(matches!(
+            audit_registered_media_integrity(&store, &registry, 1),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyCandidates))
+        ));
+        for limit in [0, 10_001] {
+            assert!(matches!(
+                audit_registered_media_integrity(&store, &registry, limit),
+                Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+            ));
+        }
+        assert_eq!(
+            audit_registered_media_integrity(&store, &registry, 2)
+                .unwrap()
+                .verified_bytes,
+            6
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

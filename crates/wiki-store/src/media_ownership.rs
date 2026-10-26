@@ -444,6 +444,37 @@ impl MediaRegistry {
         Ok(candidates)
     }
 
+    /// Bounded, deterministic inventory of *all* registered objects, including
+    /// pack/cache/pin-owned media. The unowned GC candidate query is insufficient
+    /// for an integrity audit: corruption of a still-owned figure must be caught.
+    /// This is a read-only SQLite snapshot, not deletion authorization.
+    pub fn registered_media_candidates(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, u64)>, MediaRegistryError> {
+        if !(1..=10_000).contains(&limit) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT digest, bytes FROM media_objects ORDER BY digest LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![(limit + 1) as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut objects = Vec::new();
+        for row in rows {
+            let (digest, bytes) = row?;
+            if !valid_digest(&digest) || !(1..=64 * 1024 * 1024).contains(&bytes) {
+                return Err(MediaRegistryError::InvalidInput);
+            }
+            objects.push((digest, bytes as u64));
+            if objects.len() > limit {
+                return Err(MediaRegistryError::TooManyCandidates);
+            }
+        }
+        Ok(objects)
+    }
+
     /// Read-only registered-object lookup for advisory filesystem orphan
     /// audits. A row can be added concurrently after this observation.
     pub fn registered_digest_size(&self, digest: &str) -> Result<Option<u64>, MediaRegistryError> {
