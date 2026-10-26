@@ -279,7 +279,9 @@ mod tests {
         tx.commit().unwrap();
         assert!(matches!(
             audit_registered_media_integrity(&store, &registry, 10),
-            Err(MediaGcPlanError::Registry(MediaRegistryError::TooManyNotices))
+            Err(MediaGcPlanError::Registry(
+                MediaRegistryError::TooManyNotices
+            ))
         ));
         raw.execute(
             "DELETE FROM media_notices WHERE creator LIKE 'Contributor %'",
