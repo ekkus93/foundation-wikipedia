@@ -548,12 +548,16 @@ impl MediaRegistry {
         if rows.next()?.is_some() {
             return Err(MediaRegistryError::ConflictingMime);
         }
+        if !safe_media_mime(&mime) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
         Ok(Some(mime))
     }
 
-    /// Return every distinct attribution notice for a verified owner-scoped object.
+    /// Return bounded, MIME-consistent attribution for an owner-scoped object.
     /// This preserves creator/source/license records without treating caller-supplied
-    /// notice fields as authenticated Wikimedia provenance.
+    /// notice fields as authenticated Wikimedia provenance. A corrupt registry with
+    /// over 1,024 notices or conflicting MIME claims must not reach a reader UI.
     pub fn owned_digest_notices(
         &self,
         kind: OwnerKind,
@@ -563,11 +567,14 @@ impl MediaRegistry {
         if self.owned_digest_size(kind, owner_id, digest)?.is_none() {
             return Ok(Vec::new());
         }
+        // This reader-facing API must bound corrupted SQLite notice fanout.
+        // One extra row distinguishes exactly-at-limit from over-limit.
+        const MAX_SCOPED_NOTICES: usize = 1024;
         let mut statement = self.conn.prepare(
             "SELECT mime, source_url, creator, license FROM media_notices
-             WHERE digest=?1 ORDER BY source_url, creator, license, mime",
+             WHERE digest=?1 ORDER BY source_url, creator, license, mime LIMIT ?2",
         )?;
-        let rows = statement.query_map(params![digest], |row| {
+        let rows = statement.query_map(params![digest, (MAX_SCOPED_NOTICES + 1) as i64], |row| {
             Ok(MediaNotice {
                 mime: row.get(0)?,
                 source_url: row.get(1)?,
@@ -576,10 +583,21 @@ impl MediaRegistry {
             })
         })?;
         let mut notices = Vec::new();
+        let mut mime: Option<String> = None;
         for notice in rows {
+            if notices.len() == MAX_SCOPED_NOTICES {
+                return Err(MediaRegistryError::TooManyNotices);
+            }
             let notice = notice?;
             if !notice.validate() {
                 return Err(MediaRegistryError::InvalidInput);
+            }
+            if let Some(previous) = &mime {
+                if previous != &notice.mime {
+                    return Err(MediaRegistryError::ConflictingMime);
+                }
+            } else {
+                mime = Some(notice.mime.clone());
             }
             notices.push(notice);
         }
@@ -851,6 +869,85 @@ mod tests {
             .owned_digest_notices(OwnerKind::Pack, "math", &digest)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn owner_scoped_notice_reads_reject_conflicting_mime_and_excessive_fanout() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry
+            .register_verified_bytes(b"scoped visual", &notice("Alice"))
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
+        let mut conflicting = notice("Bob");
+        conflicting.mime = "image/svg+xml".into();
+        registry
+            .register_verified_bytes(b"scoped visual", &conflicting)
+            .unwrap();
+        assert!(matches!(
+            registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::ConflictingMime)
+        ));
+        registry
+            .conn
+            .execute(
+                "DELETE FROM media_notices WHERE digest=?1 AND mime='image/svg+xml'",
+                params![digest],
+            )
+            .unwrap();
+        // The original Alice notice plus 1,024 unique creators exceeds the
+        // reader-facing limit. A different pack cannot see these notices.
+        for i in 0..1024 {
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO media_notices(digest,mime,source_url,creator,license)
+                     VALUES (?1,?2,?3,?4,?5)",
+                    params![
+                        digest,
+                        "image/png",
+                        "https://commons.wikimedia.org/wiki/File:Diagram.png",
+                        format!("Creator {i}"),
+                        "CC BY-SA 4.0"
+                    ],
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::TooManyNotices)
+        ));
+        assert!(registry
+            .owned_digest_notices(OwnerKind::Pack, "math", &digest)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn owner_scoped_mime_and_notice_reads_reject_corrupt_mime() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry
+            .register_verified_bytes(b"scoped visual", &notice("Alice"))
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .conn
+            .execute(
+                "UPDATE media_notices SET mime='text/html; charset=utf-8' WHERE digest=?1",
+                params![digest],
+            )
+            .unwrap();
+        assert!(matches!(
+            registry.owned_digest_mime(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert!(matches!(
+            registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::InvalidInput)
+        ));
     }
 
     #[test]
