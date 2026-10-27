@@ -300,8 +300,12 @@ pub(crate) fn prepare_registry_path(path: &Path) -> Result<(), MediaRegistryErro
             }
             #[cfg(unix)]
             {
-                use std::os::unix::fs::MetadataExt;
-                if metadata.nlink() != 1 {
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                // A group/world-writable ownership database lets an
+                // uncooperative local writer forge ownership or root binding
+                // despite the media lease. Fail closed before opening SQLite.
+                // Read-only access by others is a separate privacy concern.
+                if metadata.nlink() != 1 || metadata.permissions().mode() & 0o022 != 0 {
                     return Err(MediaRegistryError::UnsafePath);
                 }
             }
@@ -1290,6 +1294,40 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_registry_refuses_group_or_world_writable_ownership_database() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-media-registry-mode-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.join("registry.sqlite");
+        let registry = MediaRegistry::open(&database).unwrap();
+        drop(registry);
+        for mode in [0o620, 0o602, 0o666] {
+            fs::set_permissions(&database, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                MediaRegistry::open_existing(&database),
+                Err(MediaRegistryError::UnsafePath)
+            ));
+            assert!(matches!(
+                MediaRegistry::open(&database),
+                Err(MediaRegistryError::UnsafePath)
+            ));
+        }
+        fs::set_permissions(&database, fs::Permissions::from_mode(0o600)).unwrap();
+        MediaRegistry::open_existing(&database).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
