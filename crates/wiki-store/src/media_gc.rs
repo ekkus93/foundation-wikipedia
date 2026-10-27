@@ -680,14 +680,11 @@ mod tests {
             .add_owner(&pinned, OwnerKind::UserPin, "saved")
             .unwrap();
 
-        let outcome = run_bounded_media_maintenance_with_unlink(
-            &store,
-            &mut registry,
-            10,
-            10,
-            |_| Err(MediaObjectError::UnsafeObject),
-        )
-        .unwrap();
+        let outcome =
+            run_bounded_media_maintenance_with_unlink(&store, &mut registry, 10, 10, |_| {
+                Err(MediaObjectError::UnsafeObject)
+            })
+            .unwrap();
         assert!(matches!(
             outcome.registered,
             Err(MediaGcPlanError::PostCommitDeletion {
