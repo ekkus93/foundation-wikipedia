@@ -195,9 +195,9 @@ mod tests {
                 OwnerKind::Pack,
                 "physics"
             ),
-            Err(ManifestMediaInstallError::Install(MediaInstallError::Registry(
-                MediaRegistryError::UnboundRoot
-            )))
+            Err(ManifestMediaInstallError::Install(
+                MediaInstallError::Registry(MediaRegistryError::UnboundRoot)
+            ))
         ));
         for required_object in &required {
             assert!(!root
@@ -220,9 +220,9 @@ mod tests {
                 OwnerKind::Pack,
                 "physics"
             ),
-            Err(ManifestMediaInstallError::Install(MediaInstallError::Registry(
-                MediaRegistryError::RootMismatch
-            )))
+            Err(ManifestMediaInstallError::Install(
+                MediaInstallError::Registry(MediaRegistryError::RootMismatch)
+            ))
         ));
         for required_object in &required {
             assert!(!wrong_root
