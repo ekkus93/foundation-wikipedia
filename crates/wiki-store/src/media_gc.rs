@@ -98,7 +98,10 @@ pub fn preview_bound_media_maintenance(
         .map_err(MediaGcPlanError::Registry)?;
     let registered = verify_unowned_candidates(store, &claims, true)?;
     let orphans = plan_unregistered_media_gc_under_lease(store, registry, max_scanned)?;
-    Ok(BoundMediaMaintenancePreview { registered, orphans })
+    Ok(BoundMediaMaintenancePreview {
+        registered,
+        orphans,
+    })
 }
 
 /// Revalidate a bounded SQLite snapshot while it remains protected by a
@@ -917,8 +920,14 @@ mod tests {
         assert_eq!(preview.registered.candidates[0].digest, unowned);
         assert_eq!(preview.orphans.candidates.len(), 1);
         assert_eq!(preview.orphans.candidates[0].digest, orphan);
-        assert_eq!(preview.registered.reclaimable_bytes, b"obsolete diagram".len() as u64);
-        assert_eq!(preview.orphans.reclaimable_bytes, b"interrupted import".len() as u64);
+        assert_eq!(
+            preview.registered.reclaimable_bytes,
+            b"obsolete diagram".len() as u64
+        );
+        assert_eq!(
+            preview.orphans.reclaimable_bytes,
+            b"interrupted import".len() as u64
+        );
         assert_eq!(store.read_verified(&pinned).unwrap(), b"retained visual");
         assert_eq!(store.read_verified(&unowned).unwrap(), b"obsolete diagram");
         assert_eq!(store.read_verified(&orphan).unwrap(), b"interrupted import");
