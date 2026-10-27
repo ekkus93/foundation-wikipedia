@@ -803,6 +803,42 @@ impl MediaRegistry {
         Ok(Ok((verified, entries)))
     }
 
+    /// Filter a scanned published-object inventory under an IMMEDIATE SQLite
+    /// writer reservation. The caller must already hold the EXCLUSIVE media
+    /// lease, which excludes cooperating installers, readers and publishers.
+    /// The callback may reclaim only objects with no registry row, and runs
+    /// before the SQLite reservation is released. A crash after unlink
+    /// cannot invalidate a registered owner because there was no row.
+    pub(crate) fn with_reserved_unregistered_media<T>(
+        &mut self,
+        observed_digests: &[String],
+        inspect: impl FnOnce(&[String]) -> T,
+    ) -> Result<T, MediaRegistryError> {
+        if observed_digests.len() > 10_000
+            || observed_digests.windows(2).any(|pair| pair[0] >= pair[1])
+            || observed_digests.iter().any(|digest| !valid_digest(digest))
+        {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut absent = Vec::new();
+        for digest in observed_digests {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM media_objects WHERE digest=?1)",
+                params![digest],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                absent.push(digest.clone());
+            }
+        }
+        let outcome = inspect(&absent);
+        drop(tx);
+        Ok(outcome)
+    }
+
     /// Bounded, deterministic inventory of *all* registered objects, including
     /// pack/cache/pin-owned media. The unowned GC candidate query is insufficient
     /// for an integrity audit: corruption of a still-owned figure must be caught.

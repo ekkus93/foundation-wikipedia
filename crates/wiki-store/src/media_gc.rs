@@ -213,6 +213,60 @@ pub fn plan_unregistered_media_gc(
     })
 }
 
+/// Recover disk space from unregistered, fully published objects left by
+/// interrupted installs or a SQLite-first GC crash. This path never deletes
+/// a registered object, even if that object currently has zero owners.
+///
+/// Under the EXCLUSIVE media lease, enumerate canonical published objects,
+/// acquire SQLite's IMMEDIATE writer reservation, identify absent rows,
+/// verify ALL candidate hashes first, then unlink/sync those files before
+/// releasing the registry reservation. A crash midway may leave remaining
+/// orphans but never dangling SQLite owner records. Temporary publication
+/// staging files are deliberately left untouched.
+pub fn collect_unregistered_media_orphans(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_scanned_objects: usize,
+) -> Result<MediaGcSweep, MediaGcPlanError> {
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    let digests = store
+        .published_object_digests_unlocked(max_scanned_objects)
+        .map_err(MediaGcPlanError::Store)?;
+    registry
+        .with_reserved_unregistered_media(&digests, |absent| {
+            // Ensure a corrupt or unsafe orphan rejects the entire pass
+            // before deleting any candidate from this bounded snapshot.
+            let mut sizes = Vec::with_capacity(absent.len());
+            for digest in absent {
+                let bytes = store
+                    .verify_object_size_unlocked(digest)
+                    .map_err(MediaGcPlanError::Store)?;
+                sizes.push((digest, bytes));
+            }
+            let mut report = MediaGcSweep {
+                removed_objects: 0,
+                reclaimed_bytes: 0,
+            };
+            for (digest, expected) in sizes {
+                let bytes = store
+                    .unlink_verified_unlocked(digest)
+                    .map_err(MediaGcPlanError::Store)?;
+                if bytes != expected {
+                    return Err(MediaGcPlanError::SizeMismatch);
+                }
+                report.removed_objects += 1;
+                report.reclaimed_bytes = report
+                    .reclaimed_bytes
+                    .checked_add(bytes)
+                    .ok_or(MediaGcPlanError::SizeOverflow)?;
+            }
+            Ok(report)
+        })
+        .map_err(MediaGcPlanError::Registry)?
+}
+
 /// A read-only integrity audit of *every* registered media object, including
 /// actively pack-owned, cached and user-pinned assets. Unowned-only GC
 /// preflights cannot detect damaged media that is still needed for reading.
@@ -293,6 +347,56 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn orphan_collector_reclaims_only_unregistered_bytes_and_keeps_staging() {
+        let (root, store, mut registry) = setup();
+        let owned = store.store_bytes(b"owned chart").unwrap();
+        registry
+            .register_verified_bytes(b"owned chart", &notice())
+            .unwrap();
+        registry.add_owner(&owned, OwnerKind::Pack, "math").unwrap();
+        let registered_unowned = store.store_bytes(b"not yet owned").unwrap();
+        registry
+            .register_verified_bytes(b"not yet owned", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"interrupted install").unwrap();
+        let staging = root.join(&orphan[..2]).join(".123.456.tmp");
+        fs::write(&staging, b"partial staging").unwrap();
+
+        let sweep = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
+        assert_eq!(sweep.removed_objects, 1);
+        assert_eq!(sweep.reclaimed_bytes, b"interrupted install".len() as u64);
+        assert!(matches!(store.read_verified(&orphan), Err(MediaObjectError::Io(_))));
+        assert_eq!(store.read_verified(&owned).unwrap(), b"owned chart");
+        assert_eq!(
+            store.read_verified(&registered_unowned).unwrap(),
+            b"not yet owned"
+        );
+        assert_eq!(fs::read(staging).unwrap(), b"partial staging");
+        assert_eq!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn orphan_collector_rejects_corruption_without_partial_deletion() {
+        let (root, store, mut registry) = setup();
+        let first = store.store_bytes(b"orphan A").unwrap();
+        let second = store.store_bytes(b"orphan B").unwrap();
+        fs::write(root.join(&second[..2]).join(&second), b"corrupt!").unwrap();
+        assert!(matches!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert_eq!(store.read_verified(&first).unwrap(), b"orphan A");
+        assert!(root.join(&second[..2]).join(&second).is_file());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -397,6 +501,15 @@ mod tests {
         assert_eq!(store.read_verified(&digest).unwrap(), b"crash window");
         let orphan = plan_unregistered_media_gc(&store, &registry, 10).unwrap();
         assert_eq!(orphan.candidates[0].digest, digest);
+        let recovered = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
+        assert_eq!(recovered.removed_objects, 1);
+        assert_eq!(recovered.reclaimed_bytes, b"crash window".len() as u64);
+        assert_eq!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
