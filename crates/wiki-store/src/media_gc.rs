@@ -242,6 +242,68 @@ pub fn release_owner_and_reclaim_media(
     })
 }
 
+/// Result of one bounded maintenance pass. Each phase reports its own
+/// outcome because a registered-media failure may happen after SQLite commit
+/// and the orphan sweep may still recover its leftover published bytes.
+#[derive(Debug)]
+pub struct MediaMaintenanceOutcome {
+    pub registered: Result<MediaGcSweep, MediaGcPlanError>,
+    pub orphans: Result<MediaGcSweep, MediaGcPlanError>,
+}
+
+/// Run both registered-unowned reclamation and orphan recovery under ONE
+/// exclusive media lease. Callers can invoke this on startup or from a
+/// maintenance job; this does not itself install a timer or background task.
+///
+/// Validate both budgets before acquiring the lease or modifying the
+/// registry. The registered phase commits SQLite removal before unlinking.
+/// Even if that phase fails, run the orphan phase: it can reclaim files left
+/// by an interrupted registered deletion without risking any owned media.
+/// Always inspect both phase results; an outer Ok is not proof both passed.
+pub fn run_bounded_media_maintenance(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+) -> Result<MediaMaintenanceOutcome, MediaGcPlanError> {
+    run_bounded_media_maintenance_with_unlink(
+        store,
+        registry,
+        max_registered_candidates,
+        max_scanned_objects,
+        |digest| store.unlink_verified_unlocked(digest),
+    )
+}
+
+fn run_bounded_media_maintenance_with_unlink(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+    mut unlink: impl FnMut(&str) -> Result<u64, MediaObjectError>,
+) -> Result<MediaMaintenanceOutcome, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_registered_candidates)
+        || !(1..=10_000).contains(&max_scanned_objects)
+    {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    let registered = collect_unowned_registered_media_under_lease(
+        store,
+        registry,
+        max_registered_candidates,
+        &mut unlink,
+    );
+    let orphans =
+        collect_unregistered_media_orphans_under_lease(store, registry, max_scanned_objects);
+    Ok(MediaMaintenanceOutcome {
+        registered,
+        orphans,
+    })
+}
+
 /// Enumerate canonical published media bytes that have no SQLite registry
 /// row. This complements the registered-but-unowned planner: a crash between
 /// byte publication and ownership registration can leave orphaned objects.
@@ -303,6 +365,15 @@ pub fn collect_unregistered_media_orphans(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_exclusive()
         .map_err(MediaGcPlanError::Lease)?;
+    collect_unregistered_media_orphans_under_lease(store, registry, max_scanned_objects)
+}
+
+/// Internal orphan collector assumes an EXCLUSIVE media lease is held.
+fn collect_unregistered_media_orphans_under_lease(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_scanned_objects: usize,
+) -> Result<MediaGcSweep, MediaGcPlanError> {
     let digests = store
         .published_object_digests_unlocked(max_scanned_objects)
         .map_err(MediaGcPlanError::Store)?;
@@ -543,6 +614,99 @@ mod tests {
                 .removed_objects,
             1
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_maintenance_reclaims_registered_and_orphaned_media_but_keeps_pins() {
+        let (root, store, mut registry) = setup();
+        let mut unowned = Vec::new();
+        for content in [b"obsolete figure".as_slice(), b"obsolete map".as_slice()] {
+            let digest = store.store_bytes(content).unwrap();
+            registry
+                .register_verified_bytes(content, &notice())
+                .unwrap();
+            unowned.push(digest);
+        }
+        let orphan = store.store_bytes(b"interrupted import").unwrap();
+        let pinned = store.store_bytes(b"saved diagram").unwrap();
+        registry
+            .register_verified_bytes(b"saved diagram", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
+
+        assert!(matches!(
+            run_bounded_media_maintenance(&store, &mut registry, 10, 0),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(matches!(
+            run_bounded_media_maintenance(&store, &mut registry, 0, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert_eq!(registry.unowned_digests().unwrap().len(), 2);
+
+        let result = run_bounded_media_maintenance(&store, &mut registry, 10, 10).unwrap();
+        assert_eq!(result.registered.unwrap().removed_objects, 2);
+        assert_eq!(result.orphans.unwrap().removed_objects, 1);
+        for digest in unowned {
+            assert!(registry.registered_digest_size(&digest).unwrap().is_none());
+        }
+        assert!(matches!(
+            store.read_verified(&orphan),
+            Err(MediaObjectError::Io(_))
+        ));
+        assert_eq!(store.read_verified(&pinned).unwrap(), b"saved diagram");
+        let repeat = run_bounded_media_maintenance(&store, &mut registry, 10, 10).unwrap();
+        assert_eq!(repeat.registered.unwrap().removed_objects, 0);
+        assert_eq!(repeat.orphans.unwrap().removed_objects, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn maintenance_orphan_phase_recovers_registered_postcommit_unlink_failure() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"committed then interrupted").unwrap();
+        registry
+            .register_verified_bytes(b"committed then interrupted", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"prior orphan").unwrap();
+        let pinned = store.store_bytes(b"pinned media").unwrap();
+        registry
+            .register_verified_bytes(b"pinned media", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
+
+        let outcome = run_bounded_media_maintenance_with_unlink(
+            &store,
+            &mut registry,
+            10,
+            10,
+            |_| Err(MediaObjectError::UnsafeObject),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome.registered,
+            Err(MediaGcPlanError::PostCommitDeletion {
+                completed_objects: 0,
+                ..
+            })
+        ));
+        let orphan_sweep = outcome.orphans.unwrap();
+        assert_eq!(orphan_sweep.removed_objects, 2);
+        assert_eq!(
+            orphan_sweep.reclaimed_bytes,
+            (b"committed then interrupted".len() + b"prior orphan".len()) as u64
+        );
+        assert!(registry.registered_digest_size(&digest).unwrap().is_none());
+        assert!(matches!(
+            store.read_verified(&orphan),
+            Err(MediaObjectError::Io(_))
+        ));
+        assert_eq!(store.read_verified(&pinned).unwrap(), b"pinned media");
         fs::remove_dir_all(root).unwrap();
     }
 
