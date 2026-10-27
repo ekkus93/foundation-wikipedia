@@ -13,7 +13,7 @@ use crate::media_install::{
 use crate::media_inventory::RequiredMedia;
 use crate::media_lease::MediaLeaseCoordinator;
 use crate::media_objects::MediaObjectStore;
-use crate::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
+use crate::media_ownership::{valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind};
 
 #[derive(Debug)]
 pub enum ManifestMediaInstallError {
@@ -86,6 +86,14 @@ fn install_manifest_media_batch_with_binding(
     after_commit: impl FnOnce(),
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     let (kind, owner_id) = owner;
+    // The unlocked batch publisher assumes its caller has validated the owner.
+    // Reject malformed identities before staging content-addressed objects,
+    // rather than publishing unowned bytes and failing at the SQLite commit.
+    if !valid_owner_id(owner_id) {
+        return Err(ManifestMediaInstallError::Install(
+            MediaInstallError::Registry(MediaRegistryError::InvalidInput),
+        ));
+    }
     if required.is_empty()
         || required.len() > 100_000
         || assets.is_empty()
@@ -309,6 +317,29 @@ mod tests {
             .is_empty());
 
         registry.bind_media_root(&root).unwrap();
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                assets,
+                &required,
+                OwnerKind::Pack,
+                "../invalid"
+            ),
+            Err(ManifestMediaInstallError::Install(
+                MediaInstallError::Registry(MediaRegistryError::InvalidInput)
+            ))
+        ));
+        for required_object in &required {
+            assert!(!root
+                .join(&required_object.digest[..2])
+                .join(&required_object.digest)
+                .exists());
+        }
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
         assert!(matches!(
             install_bound_manifest_media_batch(
                 &wrong_store,
