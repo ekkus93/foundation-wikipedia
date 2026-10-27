@@ -16,6 +16,11 @@ pub enum MediaGcPlanError {
     Store(MediaObjectError),
     SizeMismatch,
     SizeOverflow,
+    PostCommitDeletion {
+        source: MediaObjectError,
+        completed_objects: usize,
+    },
+    PostCommitSizeMismatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +104,77 @@ fn verify_unowned_candidates(
         candidates,
         reclaimable_bytes,
     })
+}
+
+/// Completed media reclamation; only counts bytes after durable filesystem
+/// unlink and parent-directory sync. No owner or pinned content is eligible.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaGcSweep {
+    pub removed_objects: usize,
+    pub reclaimed_bytes: u64,
+}
+
+/// Commit removal of only currently unowned registered media, then unlink
+/// their bytes while the EXCLUSIVE cross-process media lease remains held.
+/// The SQLite commit always precedes unlink, so an interruption may leave
+/// unregistered byte orphans but cannot strand an owner with missing media.
+/// The existing orphan audit can identify such leftovers for later recovery.
+///
+/// All cooperating installers and readers must use their SHARED media lease.
+/// External non-cooperating filesystem writers and malicious directory
+/// replacement are beyond this lease protocol; do not expose a public
+/// untrusted storage root or treat this as publisher provenance verification.
+pub fn collect_unowned_registered_media(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_candidates: usize,
+) -> Result<MediaGcSweep, MediaGcPlanError> {
+    collect_unowned_registered_media_with_unlink(store, registry, max_candidates, |digest| {
+        store.unlink_verified_unlocked(digest)
+    })
+}
+
+fn collect_unowned_registered_media_with_unlink(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_candidates: usize,
+    mut unlink: impl FnMut(&str) -> Result<u64, MediaObjectError>,
+) -> Result<MediaGcSweep, MediaGcPlanError> {
+    // Lock order must be filesystem lease first, SQLite writer second.
+    // Keep the exclusive lease until every committed deletion is durable.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    let (_, candidates) = registry
+        .commit_verified_unowned_media(max_candidates, |claims| {
+            verify_unowned_candidates(store, claims, true)
+        })
+        .map_err(MediaGcPlanError::Registry)??;
+
+    let mut report = MediaGcSweep {
+        removed_objects: 0,
+        reclaimed_bytes: 0,
+    };
+    for (digest, bytes) in candidates {
+        // A filesystem error here happens AFTER SQLite commit. The
+        // unlinked remainder is now an unregistered orphan, which is
+        // discoverable by the existing orphan inventory audit.
+        let removed = unlink(&digest).map_err(|source| {
+            MediaGcPlanError::PostCommitDeletion {
+                source,
+                completed_objects: report.removed_objects,
+            }
+        })?;
+        if removed != bytes {
+            return Err(MediaGcPlanError::PostCommitSizeMismatch);
+        }
+        report.removed_objects += 1;
+        report.reclaimed_bytes = report
+            .reclaimed_bytes
+            .checked_add(removed)
+            .ok_or(MediaGcPlanError::SizeOverflow)?;
+    }
+    Ok(report)
 }
 
 /// Enumerate canonical published media bytes that have no SQLite registry
@@ -219,6 +295,102 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn registered_gc_reclaims_only_unowned_and_preserves_shared_pins() {
+        let (root, store, mut registry) = setup();
+        let kept = store.store_bytes(b"pinned image").unwrap();
+        registry
+            .register_verified_bytes(b"pinned image", &notice())
+            .unwrap();
+        registry.add_owner(&kept, OwnerKind::Pack, "biology").unwrap();
+        registry.add_owner(&kept, OwnerKind::UserPin, "saved").unwrap();
+        let released = store.store_bytes(b"released image").unwrap();
+        registry
+            .register_verified_bytes(b"released image", &notice())
+            .unwrap();
+        let before = plan_unowned_media_gc(&store, &registry, 10).unwrap();
+        assert_eq!(before.candidates.len(), 1);
+        assert_eq!(before.candidates[0].digest, released);
+
+        let sweep = collect_unowned_registered_media(&store, &mut registry, 10).unwrap();
+        assert_eq!(sweep.removed_objects, 1);
+        assert_eq!(sweep.reclaimed_bytes, b"released image".len() as u64);
+        assert!(registry.registered_digest_size(&released).unwrap().is_none());
+        assert!(matches!(
+            store.read_verified(&released),
+            Err(MediaObjectError::Io(_))
+        ));
+        assert_eq!(store.read_verified(&kept).unwrap(), b"pinned image");
+        assert_eq!(registry.notice_count(&kept).unwrap(), 1);
+        assert_eq!(
+            collect_unowned_registered_media(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        registry.remove_owner(&kept, OwnerKind::Pack, "biology").unwrap();
+        assert_eq!(
+            collect_unowned_registered_media(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        registry.remove_owner(&kept, OwnerKind::UserPin, "saved").unwrap();
+        assert_eq!(
+            collect_unowned_registered_media(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_gc_corrupt_candidate_rolls_back_all_registry_deletes() {
+        let (root, store, mut registry) = setup();
+        for bytes in [b"first plot".as_slice(), b"second plot".as_slice()] {
+            let digest = store.store_bytes(bytes).unwrap();
+            registry.register_verified_bytes(bytes, &notice()).unwrap();
+            if bytes == b"second plot" {
+                fs::write(root.join(&digest[..2]).join(&digest), b"corrupt plot").unwrap();
+            }
+        }
+        assert!(matches!(
+            collect_unowned_registered_media(&store, &mut registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert_eq!(registry.unowned_media_candidates(10).unwrap().len(), 2);
+        assert_eq!(registry.registered_media_candidates(10).unwrap().len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_after_registry_commit_leaves_safe_orphan_for_recovery() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"crash window").unwrap();
+        registry
+            .register_verified_bytes(b"crash window", &notice())
+            .unwrap();
+        let result = collect_unowned_registered_media_with_unlink(
+            &store,
+            &mut registry,
+            10,
+            |_| Err(MediaObjectError::UnsafeObject),
+        );
+        assert!(matches!(
+            result,
+            Err(MediaGcPlanError::PostCommitDeletion {
+                completed_objects: 0,
+                ..
+            })
+        ));
+        assert_eq!(registry.registered_digest_size(&digest).unwrap(), None);
+        assert_eq!(store.read_verified(&digest).unwrap(), b"crash window");
+        let orphan = plan_unregistered_media_gc(&store, &registry, 10).unwrap();
+        assert_eq!(orphan.candidates[0].digest, digest);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

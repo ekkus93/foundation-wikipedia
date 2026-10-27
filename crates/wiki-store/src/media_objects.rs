@@ -370,6 +370,24 @@ impl MediaObjectStore {
         Ok(total)
     }
 
+    /// Remove an already-unregistered, SHA-256-verified object while the
+    /// caller holds the EXCLUSIVE media lease. Filesystem removal happens
+    /// only after SQLite commits dropping all unowned registration rows.
+    /// Reverify immediately before unlinking and sync the prefix directory.
+    /// A failure can leave an unregistered orphan; it cannot invalidate a
+    /// committed owner reference if all callers honor the lease protocol.
+    pub(crate) fn unlink_verified_unlocked(
+        &self,
+        digest: &str,
+    ) -> Result<u64, MediaObjectError> {
+        let bytes = self.verify_object_size_unlocked(digest)?;
+        let path = self.object_path(digest)?;
+        let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
+        fs::remove_file(&path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(bytes)
+    }
+
     /// Verify a bounded object from its on-disk bytes on every read.
     pub fn read_verified(&self, digest: &str) -> Result<Vec<u8>, MediaObjectError> {
         self.object_path(digest)?;

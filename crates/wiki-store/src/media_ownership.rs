@@ -735,6 +735,70 @@ impl MediaRegistry {
         Ok(output)
     }
 
+    /// Atomically remove registry rows for a bounded, validated unowned
+    /// inventory while holding SQLite's IMMEDIATE writer reservation.
+    /// Called only by a collector that holds the EXCLUSIVE media lease.
+    /// If validation fails, the transaction rolls back without deleting
+    /// *any* registration, attribution or ownership row. Once committed,
+    /// physical file unlinking must happen before releasing that lease.
+    ///
+    /// The returned registered digests have *no owners*. A crash after the
+    /// commit but before unlinking leaves recoverable unregistered byte
+    /// orphans, never registered media that points to already-deleted bytes.
+    pub(crate) fn commit_verified_unowned_media<T, E>(
+        &mut self,
+        limit: usize,
+        validate: impl FnOnce(&[(String, u64)]) -> Result<T, E>,
+    ) -> Result<Result<(T, Vec<(String, u64)>), E>, MediaRegistryError> {
+        if !(1..=10_000).contains(&limit) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let entries = {
+            let mut statement = tx.prepare(
+                "SELECT o.digest, o.bytes FROM media_objects o
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM media_owners r WHERE r.digest=o.digest
+                 ) ORDER BY o.digest LIMIT ?1",
+            )?;
+            let rows = statement.query_map(params![(limit + 1) as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            let mut entries = Vec::new();
+            for row in rows {
+                let (digest, bytes) = row?;
+                if !valid_digest(&digest) || !(1..=64 * 1024 * 1024).contains(&bytes) {
+                    return Err(MediaRegistryError::InvalidInput);
+                }
+                entries.push((digest, bytes as u64));
+                if entries.len() > limit {
+                    return Err(MediaRegistryError::TooManyCandidates);
+                }
+            }
+            entries
+        };
+        let verified = match validate(&entries) {
+            Ok(receipt) => receipt,
+            Err(error) => return Ok(Err(error)),
+        };
+        for (digest, bytes) in &entries {
+            let affected = tx.execute(
+                "DELETE FROM media_objects
+                 WHERE digest=?1 AND bytes=?2 AND NOT EXISTS (
+                   SELECT 1 FROM media_owners WHERE media_owners.digest=media_objects.digest
+                 )",
+                params![digest, *bytes as i64],
+            )?;
+            if affected != 1 {
+                return Err(MediaRegistryError::ConflictingInventory);
+            }
+        }
+        tx.commit()?;
+        Ok(Ok((verified, entries)))
+    }
+
     /// Bounded, deterministic inventory of *all* registered objects, including
     /// pack/cache/pin-owned media. The unowned GC candidate query is insufficient
     /// for an integrity audit: corruption of a still-owned figure must be caught.
