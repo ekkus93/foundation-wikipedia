@@ -337,9 +337,12 @@ pub fn collect_unregistered_media_orphans(
 /// including currently unowned bytes. Missing/corrupt/unsafe objects or
 /// malformed/missing attribution abort the audit rather than being skipped.
 ///
-/// The registry is sampled before filesystem reads. Concurrent writes may
-/// change its state, so success is not a transactional pack-activation proof,
-/// an official-source authenticity claim, or permission to garbage-collect.
+/// A single SHARED media lease covers the registry inventory, attribution
+/// audit and every streaming digest verification, preventing a cooperating
+/// EXCLUSIVE collector from deleting media between snapshot and file reads.
+/// Direct SQLite writers can still change registry rows: this is not an
+/// immutable ownership snapshot, publisher authentication, pack activation
+/// or permission to garbage-collect.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegisteredMediaAudit {
     pub objects: usize,
@@ -351,6 +354,12 @@ pub fn audit_registered_media_integrity(
     registry: &MediaRegistry,
     max_objects: usize,
 ) -> Result<RegisteredMediaAudit, MediaGcPlanError> {
+    // Acquire before sampling SQLite and retain through all file reads.
+    // Calling the public leased verify_object_size from this scope could
+    // deadlock behind a queued EXCLUSIVE collector.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
     registry
         .audit_unregistered_references()
         .map_err(MediaGcPlanError::Registry)?;
@@ -366,7 +375,7 @@ pub fn audit_registered_media_integrity(
             .audit_registered_owners(digest, 1024)
             .map_err(MediaGcPlanError::Registry)?;
         let actual_bytes = store
-            .verify_object_size(digest)
+            .verify_object_size_unlocked(digest)
             .map_err(MediaGcPlanError::Store)?;
         if actual_bytes != *declared_bytes {
             return Err(MediaGcPlanError::SizeMismatch);
@@ -810,6 +819,56 @@ mod tests {
                 .is_empty()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registered_integrity_audit_waits_for_exclusive_gc_lease_across_inventory() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (root, store, _) = setup();
+        let database = root.with_extension("registered-audit.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        for content in [b"first chart".as_slice(), b"second chart".as_slice()] {
+            let digest = store.store_bytes(content).unwrap();
+            registry
+                .register_verified_bytes(content, &notice())
+                .unwrap();
+            registry
+                .add_owner(&digest, OwnerKind::Pack, "physics")
+                .unwrap();
+        }
+        drop(registry);
+
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker_database = database.clone();
+        let worker = std::thread::spawn(move || {
+            let store = MediaObjectStore::new(&worker_root);
+            let registry = MediaRegistry::open(&worker_database).unwrap();
+            started_tx.send(()).unwrap();
+            let audit = audit_registered_media_integrity(&store, &registry, 10).unwrap();
+            finished_tx.send(audit).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(150)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(exclusive);
+        let audit = finished_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(audit.objects, 2);
+        assert_eq!(
+            audit.verified_bytes,
+            (b"first chart".len() + b"second chart".len()) as u64
+        );
+        worker.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(database).unwrap();
     }
 
     #[test]
