@@ -1094,7 +1094,9 @@ mod tests {
             .register_verified_bytes(b"candidate bytes", &notice("Creator"))
             .unwrap();
         let other = Connection::open(&database).unwrap();
-        other.busy_timeout(std::time::Duration::from_millis(0)).unwrap();
+        other
+            .busy_timeout(std::time::Duration::from_millis(0))
+            .unwrap();
 
         let candidates = registry
             .with_reserved_unowned_media(1, |candidates| {

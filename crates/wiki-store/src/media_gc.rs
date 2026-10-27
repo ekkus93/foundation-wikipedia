@@ -90,7 +90,6 @@ fn verify_unowned_candidates(
     })
 }
 
-
 /// Enumerate canonical published media bytes that have no SQLite registry
 /// row. This complements the registered-but-unowned planner: a crash between
 /// byte publication and ownership registration can leave orphaned objects.
@@ -237,10 +236,12 @@ mod tests {
         registry
             .add_owner(&digest, OwnerKind::UserPin, "reader")
             .unwrap();
-        assert!(plan_unowned_media_gc_with_registry_reservation(&store, &mut registry, 10)
-            .unwrap()
-            .candidates
-            .is_empty());
+        assert!(
+            plan_unowned_media_gc_with_registry_reservation(&store, &mut registry, 10)
+                .unwrap()
+                .candidates
+                .is_empty()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
