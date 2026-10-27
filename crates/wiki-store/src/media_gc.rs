@@ -27,7 +27,7 @@ pub enum MediaGcPlanError {
     /// Never bind while any such file remains unexplained.
     UnregisteredOrphans {
         count: usize,
-    }
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
