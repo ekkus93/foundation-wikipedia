@@ -430,4 +430,37 @@ mod tests {
         );
         fs::remove_dir_all(base).unwrap();
     }
+    #[test]
+    fn packaged_user_timer_is_opt_in_and_invokes_the_bounded_due_gate() {
+        let service = include_str!("../systemd/foundation-wikipedia-media-maintenance.service");
+        let timer = include_str!("../systemd/foundation-wikipedia-media-maintenance.timer");
+        let environment = include_str!("../systemd/media-maintenance.env.example");
+
+        // Never interpret user-controlled paths through a shell. Each
+        // environment expansion is a single systemd ExecStart argument.
+        assert!(service.contains("Type=oneshot"));
+        assert!(service.contains("UMask=0077"));
+        assert!(service.contains(
+            "EnvironmentFile=%h/.config/foundation-wikipedia/media-maintenance.env"
+        ));
+        assert!(service.contains(
+            "ExecStart=%h/.local/bin/wiki-pack media-maintenance --run-if-due ${MEDIA_ROOT} ${REGISTRY_PATH} ${MAX_REGISTERED} ${MAX_SCANNED} ${INTERVAL_SECONDS}"
+        ));
+        assert!(!service.contains("/bin/sh"));
+        assert!(!service.contains("ExecStartPre="));
+        assert!(timer.contains("OnCalendar=hourly"));
+        assert!(timer.contains("Persistent=true"));
+        assert!(timer.contains("Unit=foundation-wikipedia-media-maintenance.service"));
+        assert!(!timer.contains("[Install]\nWantedBy=default.target"));
+        for variable in [
+            "MEDIA_ROOT=",
+            "REGISTRY_PATH=",
+            "MAX_REGISTERED=",
+            "MAX_SCANNED=",
+            "INTERVAL_SECONDS=",
+        ] {
+            assert!(environment.contains(variable));
+        }
+    }
+
 }

@@ -1,0 +1,13 @@
+# Opt-in user timer; the SQLite due gate determines actual sweep frequency.
+[Unit]
+Description=Check whether Foundation Wikipedia media maintenance is due
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+AccuracySec=1min
+Unit=foundation-wikipedia-media-maintenance.service
+
+[Install]
+WantedBy=timers.target

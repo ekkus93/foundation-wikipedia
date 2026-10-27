@@ -1,0 +1,13 @@
+# Opt-in user unit. Install manually; never enabled by a package build.
+# The executable must be installed at ~/.local/bin/wiki-pack.
+[Unit]
+Description=Foundation Wikipedia bounded media garbage collection
+Documentation=man:systemd.service(5)
+
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=true
+EnvironmentFile=%h/.config/foundation-wikipedia/media-maintenance.env
+ExecStart=%h/.local/bin/wiki-pack media-maintenance --run-if-due ${MEDIA_ROOT} ${REGISTRY_PATH} ${MAX_REGISTERED} ${MAX_SCANNED} ${INTERVAL_SECONDS}
+TimeoutStartSec=30min
