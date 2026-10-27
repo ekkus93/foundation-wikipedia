@@ -707,7 +707,9 @@ mod tests {
             b"gamma graph".as_slice(),
         ] {
             let digest = store.store_bytes(content).unwrap();
-            registry.register_verified_bytes(content, &notice()).unwrap();
+            registry
+                .register_verified_bytes(content, &notice())
+                .unwrap();
             digests.push(digest);
         }
         let pin = store.store_bytes(b"saved thumbnail").unwrap();
@@ -719,18 +721,14 @@ mod tests {
             .unwrap();
 
         let mut deleted = 0usize;
-        let failed = collect_unowned_registered_media_with_unlink(
-            &store,
-            &mut registry,
-            10,
-            |digest| {
+        let failed =
+            collect_unowned_registered_media_with_unlink(&store, &mut registry, 10, |digest| {
                 if deleted == 1 {
                     return Err(MediaObjectError::UnsafeObject);
                 }
                 deleted += 1;
                 store.unlink_verified_unlocked(digest)
-            },
-        );
+            });
         assert!(matches!(
             failed,
             Err(MediaGcPlanError::PostCommitDeletion {
@@ -749,7 +747,11 @@ mod tests {
         let remaining_bytes: u64 = published
             .iter()
             .filter(|digest| *digest != &pin)
-            .map(|digest| fs::metadata(root.join(&digest[..2]).join(digest)).unwrap().len())
+            .map(|digest| {
+                fs::metadata(root.join(&digest[..2]).join(digest))
+                    .unwrap()
+                    .len()
+            })
             .sum();
         drop(registry);
 
