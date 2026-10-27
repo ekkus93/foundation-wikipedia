@@ -53,6 +53,19 @@ pub fn run(
         return Err("media budgets must each be between 1 and 10000".into());
     }
     safe_directory(root)?;
+    #[cfg(unix)]
+    if matches!(mode, "--confirm-delete" | "--bind-registry") {
+        use std::os::unix::fs::PermissionsExt;
+        // The SQLite-backed lease only coordinates cooperating processes.
+        // Never authorize deletion or binding in a root writable by another
+        // local user or group, even if all digest files look valid right now.
+        let permissions = fs::symlink_metadata(root)
+            .map_err(|error| format!("cannot inspect media root permissions: {error}"))?
+            .permissions();
+        if permissions.mode() & 0o022 != 0 {
+            return Err("media root must not be group/world writable for destructive operations".into());
+        }
+    }
     let root_canonical = fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
     let registry_canonical = fs::canonicalize(registry_path)
         .map_err(|error| format!("existing registry required: {error}"))?;
@@ -182,6 +195,16 @@ mod tests {
         assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
         run("--bind-registry", &root, &db, 10, 10).unwrap();
         run("--bind-registry", &root, &db, 10, 10).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
+            assert!(run("--bind-registry", &root, &db, 10, 10).is_err());
+            assert_eq!(store.read_verified(&pinned).unwrap(), b"saved graph");
+            assert_eq!(store.read_verified(&unowned).unwrap(), b"obsolete graph");
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let orphan = store.store_bytes(b"interrupted import").unwrap();
         let other_root = base.join("wrong-media");
         fs::create_dir_all(&other_root).unwrap();
