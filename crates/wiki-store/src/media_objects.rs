@@ -353,10 +353,7 @@ impl MediaObjectStore {
 
     /// The caller must already hold a shared lease or be publishing under
     /// its own verified temporary staging protocol.
-    pub(crate) fn read_verified_unlocked(
-        &self,
-        digest: &str,
-    ) -> Result<Vec<u8>, MediaObjectError> {
+    pub(crate) fn read_verified_unlocked(&self, digest: &str) -> Result<Vec<u8>, MediaObjectError> {
         let path = self.object_path(digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
         let directory = fs::symlink_metadata(parent)?;
