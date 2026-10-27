@@ -386,18 +386,26 @@ mod tests {
         registry
             .register_verified_bytes(b"shared visual", &notice())
             .unwrap();
-        let mut svg = notice();
-        svg.mime = "image/svg+xml".into();
+        let mut second = notice();
+        second.creator = "Second creator".into();
         registry
-            .register_verified_bytes(b"shared visual", &svg)
+            .register_verified_bytes(b"shared visual", &second)
             .unwrap();
+        // Simulate a damaged historical database; public registration now
+        // rejects conflicting MIME before committing any attribution.
+        let mut raw = rusqlite::Connection::open(&db).unwrap();
+        raw.execute(
+            "UPDATE media_notices SET mime='image/svg+xml'
+             WHERE digest=?1 AND creator='Second creator'",
+            rusqlite::params![digest],
+        )
+        .unwrap();
         assert!(matches!(
             audit_registered_media_integrity(&store, &registry, 10),
             Err(MediaGcPlanError::Registry(
                 MediaRegistryError::ConflictingMime
             ))
         ));
-        let mut raw = rusqlite::Connection::open(&db).unwrap();
         raw.execute(
             "DELETE FROM media_notices WHERE digest=?1 AND mime='image/svg+xml'",
             rusqlite::params![digest],

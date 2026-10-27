@@ -28,6 +28,27 @@ impl From<rusqlite::Error> for MediaRegistryError {
     }
 }
 
+/// Enforce one declared MIME per content digest at the write boundary.
+/// Call only inside the same SQLite write transaction that inserts notices:
+/// separate read-before-write checks would race another installer.
+fn require_consistent_mime(
+    tx: &rusqlite::Transaction<'_>,
+    digest: &str,
+    mime: &str,
+) -> Result<(), MediaRegistryError> {
+    let conflict: bool = tx.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM media_notices WHERE digest=?1 AND mime<>?2
+         )",
+        params![digest, mime],
+        |row| row.get(0),
+    )?;
+    if conflict {
+        return Err(MediaRegistryError::ConflictingMime);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerKind {
     Pack,
@@ -200,7 +221,7 @@ impl MediaRegistry {
         content: &[u8],
         notice: &MediaNotice,
     ) -> Result<String, MediaRegistryError> {
-        if content.is_empty() || !notice.validate() {
+        if content.is_empty() || content.len() > 64 * 1024 * 1024 || !notice.validate() {
             return Err(MediaRegistryError::InvalidInput);
         }
         let bytes = i64::try_from(content.len()).map_err(|_| MediaRegistryError::InvalidInput)?;
@@ -218,6 +239,7 @@ impl MediaRegistry {
         if actual != bytes {
             return Err(MediaRegistryError::ConflictingSize);
         }
+        require_consistent_mime(&tx, &digest, &notice.mime)?;
         tx.execute(
             "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
              VALUES (?1,?2,?3,?4,?5)",
@@ -304,6 +326,7 @@ impl MediaRegistry {
             if actual != bytes {
                 return Err(MediaRegistryError::ConflictingSize);
             }
+            require_consistent_mime(&tx, &digest, &notice.mime)?;
             tx.execute(
                 "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
                  VALUES (?1,?2,?3,?4,?5)",
@@ -886,10 +909,18 @@ mod tests {
         registry
             .add_owner(&digest, OwnerKind::Pack, "physics")
             .unwrap();
-        let mut conflicting = notice("Bob");
-        conflicting.mime = "image/svg+xml".into();
+        // Inject a damaged historical row directly: public writes now reject
+        // conflicting MIME, but reader validation must still detect corruption.
         registry
-            .register_verified_bytes(b"scoped visual", &conflicting)
+            .register_verified_bytes(b"scoped visual", &notice("Bob"))
+            .unwrap();
+        registry
+            .conn
+            .execute(
+                "UPDATE media_notices SET mime='image/svg+xml'
+                 WHERE digest=?1 AND creator='Bob'",
+                params![digest],
+            )
             .unwrap();
         assert!(matches!(
             registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
@@ -1063,10 +1094,16 @@ mod tests {
                 .unwrap(),
             Some("image/png".into())
         );
-        let mut conflicting = notice("Bob");
-        conflicting.mime = "image/svg+xml".into();
         registry
-            .register_verified_bytes(b"asset", &conflicting)
+            .register_verified_bytes(b"asset", &notice("Bob"))
+            .unwrap();
+        registry
+            .conn
+            .execute(
+                "UPDATE media_notices SET mime='image/svg+xml'
+                 WHERE digest=?1 AND creator='Bob'",
+                params![digest],
+            )
             .unwrap();
         assert!(matches!(
             registry.owned_digest_mime(OwnerKind::Pack, "math", &digest),
@@ -1246,6 +1283,87 @@ mod tests {
         assert_eq!(registry.notice_count(&first_digest).unwrap(), 0);
         assert_eq!(registry.notice_count(&second_digest).unwrap(), 0);
         assert_eq!(registry.unowned_digests().unwrap(), vec![second_digest]);
+    }
+
+    #[test]
+    fn write_time_mime_conflict_rejects_new_attribution_without_mutation() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry
+            .register_verified_bytes(b"same figure", &notice("Alice"))
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "math")
+            .unwrap();
+        let mut conflicting = notice("Bob");
+        conflicting.mime = "image/svg+xml".into();
+        assert!(matches!(
+            registry.register_verified_bytes(b"same figure", &conflicting),
+            Err(MediaRegistryError::ConflictingMime)
+        ));
+        assert_eq!(registry.notice_count(&digest).unwrap(), 1);
+        assert_eq!(
+            registry
+                .owned_digest_mime(OwnerKind::Pack, "math", &digest)
+                .unwrap(),
+            Some("image/png".into())
+        );
+        // Distinct creators with the same MIME remain valid for shared bytes.
+        registry
+            .register_verified_bytes(b"same figure", &notice("Bob"))
+            .unwrap();
+        assert_eq!(registry.notice_count(&digest).unwrap(), 2);
+    }
+
+    #[test]
+    fn batch_mime_conflict_rolls_back_all_objects_notices_and_owners() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let png = notice("Alice");
+        let mut svg = notice("Bob");
+        svg.mime = "image/svg+xml".into();
+        let assets = [
+            (b"new figure".as_slice(), &png),
+            (b"shared figure".as_slice(), &png),
+            (b"shared figure".as_slice(), &svg),
+        ];
+        assert!(matches!(
+            registry.register_verified_owned_batch(&assets, OwnerKind::Pack, "physics"),
+            Err(MediaRegistryError::ConflictingMime)
+        ));
+        assert!(registry.unowned_digests().unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
+
+        let initial = [(b"shared figure".as_slice(), &png)];
+        let digests = registry
+            .register_verified_owned_batch(&initial, OwnerKind::Pack, "math")
+            .unwrap();
+        let conflicting = [(b"another figure".as_slice(), &png), (b"shared figure".as_slice(), &svg)];
+        assert!(matches!(
+            registry.register_verified_owned_batch(&conflicting, OwnerKind::Pack, "physics"),
+            Err(MediaRegistryError::ConflictingMime)
+        ));
+        assert_eq!(registry.notice_count(&digests[0]).unwrap(), 1);
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "math").unwrap(),
+            vec![(digests[0].clone(), b"shared figure".len() as u64)]
+        );
+    }
+
+    #[test]
+    fn single_registration_rejects_oversized_bytes_before_hashing_or_writing() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let oversized = vec![0u8; 64 * 1024 * 1024 + 1];
+        assert!(matches!(
+            registry.register_verified_bytes(&oversized, &notice("Alice")),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert!(registry.unowned_digests().unwrap().is_empty());
     }
 
     #[test]
