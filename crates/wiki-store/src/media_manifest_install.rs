@@ -41,8 +41,7 @@ pub fn install_manifest_media_batch(
         registry,
         assets,
         required,
-        kind,
-        owner_id,
+        (kind, owner_id),
         false,
         || {},
     )
@@ -71,8 +70,7 @@ pub fn install_bound_manifest_media_batch(
         registry,
         assets,
         required,
-        kind,
-        owner_id,
+        (kind, owner_id),
         true,
         || {},
     )
@@ -83,11 +81,11 @@ fn install_manifest_media_batch_with_binding(
     registry: &mut MediaRegistry,
     assets: &[(&[u8], &MediaNotice)],
     required: &[RequiredMedia],
-    kind: OwnerKind,
-    owner_id: &str,
+    owner: (OwnerKind, &str),
     require_binding: bool,
     after_commit: impl FnOnce(),
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
+    let (kind, owner_id) = owner;
     if required.is_empty()
         || required.len() > 100_000
         || assets.is_empty()
@@ -179,7 +177,9 @@ fn install_manifest_media_batch_with_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media_install::verify_required_owner_media;
+    use crate::media_install::{
+        verify_bound_required_owner_media, verify_required_owner_media,
+    };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -226,8 +226,7 @@ mod tests {
             &mut registry,
             &assets,
             &required,
-            OwnerKind::Pack,
-            "physics",
+            (OwnerKind::Pack, "physics"),
             true,
             || {
                 // SQLite's EXCLUSIVE lease is a stand-in for a cooperating
