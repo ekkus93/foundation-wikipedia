@@ -457,10 +457,22 @@ mod tests {
                 .unwrap()
         });
         started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let (writer_started_tx, writer_started_rx) = mpsc::channel();
+        let writer_root = root.clone();
+        let writer = std::thread::spawn(move || {
+            writer_started_tx.send(()).unwrap();
+            MediaObjectStore::new(writer_root)
+                .store_bytes(b"new leased media")
+                .unwrap()
+        });
+        writer_started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert!(!reader.is_finished());
+        assert!(!writer.is_finished());
         drop(exclusive);
         assert_eq!(reader.join().unwrap(), b"leased media");
+        let new_digest = writer.join().unwrap();
+        assert_eq!(store.read_verified(&new_digest).unwrap(), b"new leased media");
         assert_eq!(
             store.verify_object_size(&digest).unwrap(),
             b"leased media".len() as u64
