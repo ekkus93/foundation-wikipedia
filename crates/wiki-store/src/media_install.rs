@@ -80,16 +80,53 @@ pub fn install_owned_media(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<String, MediaInstallError> {
+    install_owned_media_with_binding(store, registry, content, notice, kind, owner_id, false)
+}
+
+/// Production entry point for a root-bound owner installation. The SHARED
+/// cross-process media lease covers the binding check, byte publication and
+/// SQLite owner registration. A wrong or unbound registry fails *before*
+/// publishing any bytes. This does not authenticate upstream media or activate
+/// a pack; callers must independently verify the signed required-media list.
+///
+/// The unbound installer remains available for controlled import fixtures and
+/// initial migration. Production callers using root-bound GC must use this
+/// bound entry point rather than bypassing the registry-to-root association.
+pub fn install_bound_owned_media(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    content: &[u8],
+    notice: &MediaNotice,
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<String, MediaInstallError> {
+    install_owned_media_with_binding(store, registry, content, notice, kind, owner_id, true)
+}
+
+fn install_owned_media_with_binding(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    content: &[u8],
+    notice: &MediaNotice,
+    kind: OwnerKind,
+    owner_id: &str,
+    require_binding: bool,
+) -> Result<String, MediaInstallError> {
     if !valid_owner_id(owner_id) || !notice.validate() {
         return Err(MediaInstallError::Registry(
             MediaRegistryError::InvalidInput,
         ));
     }
-    // Hold the shared cross-process lease from byte publication through
-    // the final ownership write, not merely during the filesystem write.
+    // Hold the shared lease from binding validation through publication and
+    // the final owner commit. Never acquire a nested lease in this scope.
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaInstallError::Registry)?;
+    }
     let stored_digest = store
         .store_bytes_unlocked(content)
         .map_err(MediaInstallError::Store)?;
@@ -116,6 +153,31 @@ pub fn install_owned_media_batch(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<Vec<String>, MediaInstallError> {
+    install_owned_media_batch_with_binding(store, registry, assets, kind, owner_id, false)
+}
+
+/// Install an entire owner-scoped batch only into the registry's bound media
+/// root. The SHARED lease spans the root check, every staged object, and the
+/// atomic batch ownership transaction. An unbound or mismatched registry is
+/// rejected before creating even the first published digest.
+pub fn install_bound_owned_media_batch(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<Vec<String>, MediaInstallError> {
+    install_owned_media_batch_with_binding(store, registry, assets, kind, owner_id, true)
+}
+
+fn install_owned_media_batch_with_binding(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    kind: OwnerKind,
+    owner_id: &str,
+    require_binding: bool,
+) -> Result<Vec<String>, MediaInstallError> {
     if !valid_owner_id(owner_id)
         || assets.is_empty()
         || assets.len() > 100_000
@@ -127,10 +189,15 @@ pub fn install_owned_media_batch(
             MediaRegistryError::InvalidInput,
         ));
     }
-    // The shared lease covers the entire staging/registry transaction gap.
+    // The shared lease covers binding, staging and registry commit.
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaInstallError::Registry)?;
+    }
     let mut staged = Vec::with_capacity(assets.len());
     for &(content, _) in assets {
         staged.push(
@@ -220,6 +287,130 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn bound_installers_reject_unbound_and_wrong_root_before_any_publication() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-bound-install-{}-{stamp}",
+            std::process::id()
+        ));
+        let other = std::env::temp_dir().join(format!(
+            "wiki-bound-install-other-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&other).unwrap();
+        let database = root.with_extension("registry.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let wrong_store = MediaObjectStore::new(&other);
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let author = notice("Creator A");
+        let assets: &[(&[u8], &MediaNotice)] = &[
+            (b"first bound diagram", &author),
+            (b"second bound diagram", &author),
+        ];
+
+        assert!(matches!(
+            install_bound_owned_media(
+                &store,
+                &mut registry,
+                b"first bound diagram",
+                &author,
+                OwnerKind::Pack,
+                "math",
+            ),
+            Err(MediaInstallError::Registry(MediaRegistryError::UnboundRoot))
+        ));
+        assert!(matches!(
+            install_bound_owned_media_batch(
+                &store,
+                &mut registry,
+                assets,
+                OwnerKind::Pack,
+                "math",
+            ),
+            Err(MediaInstallError::Registry(MediaRegistryError::UnboundRoot))
+        ));
+        assert!(store.published_object_digests(10).unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "math")
+            .unwrap()
+            .is_empty());
+
+        // Bind the empty store explicitly, then reject a different valid
+        // media root with the same database before staging any bytes.
+        registry.bind_media_root(&root).unwrap();
+        assert!(matches!(
+            install_bound_owned_media(
+                &wrong_store,
+                &mut registry,
+                b"first bound diagram",
+                &author,
+                OwnerKind::Pack,
+                "math",
+            ),
+            Err(MediaInstallError::Registry(MediaRegistryError::RootMismatch))
+        ));
+        assert!(matches!(
+            install_bound_owned_media_batch(
+                &wrong_store,
+                &mut registry,
+                assets,
+                OwnerKind::Pack,
+                "math",
+            ),
+            Err(MediaInstallError::Registry(MediaRegistryError::RootMismatch))
+        ));
+        assert!(wrong_store.published_object_digests(10).unwrap().is_empty());
+
+        let digests = install_bound_owned_media_batch(
+            &store,
+            &mut registry,
+            assets,
+            OwnerKind::Pack,
+            "math",
+        )
+        .unwrap();
+        assert_eq!(digests.len(), 2);
+        let duplicate = install_bound_owned_media(
+            &store,
+            &mut registry,
+            b"first bound diagram",
+            &author,
+            OwnerKind::UserPin,
+            "saved",
+        )
+        .unwrap();
+        assert_eq!(duplicate, digests[0]);
+        assert_eq!(store.published_object_digests(10).unwrap().len(), 2);
+        drop(registry);
+
+        // Binding and ownership survive a separate SQLite connection.
+        let registry = MediaRegistry::open_existing(&database).unwrap();
+        registry.require_media_root_binding(&root).unwrap();
+        assert_eq!(
+            registry
+                .owned_media(OwnerKind::Pack, "math")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            registry
+                .owned_media(OwnerKind::UserPin, "saved")
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(other).unwrap();
+        fs::remove_file(database).unwrap();
     }
 
     #[test]
