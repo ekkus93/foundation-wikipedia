@@ -494,26 +494,55 @@ impl MediaRegistry {
         Ok(())
     }
 
-    /// Release every reference held by one owner in one SQLite transaction.
-    /// The returned digests are *not* deletion authorization: another pack,
-    /// cache or user pin may still own them, and byte GC must recheck under
-    /// its own concurrency-safe protocol before deleting any object.
+    /// Release one owner's references in a bounded, IMMEDIATE transaction.
+    /// This acquires SQLite's writer reservation before enumerating the owner:
+    /// another installer cannot append a new claim between the inventory
+    /// snapshot and the DELETE. Refuse oversized/corrupt inventories without
+    /// deleting even a subset of the owner's claims.
+    ///
+    /// Returned digests are advisory only, NEVER filesystem deletion authority:
+    /// another pack, cache or user pin may still own them, and byte GC must
+    /// coordinate with concurrent installers and readers separately.
     pub fn remove_all_for_owner(
         &mut self,
         kind: OwnerKind,
         owner_id: &str,
     ) -> Result<Vec<String>, MediaRegistryError> {
-        if !valid_owner_id(owner_id) {
+        self.remove_all_for_owner_bounded(kind, owner_id, 100_000)
+    }
+
+    fn remove_all_for_owner_bounded(
+        &mut self,
+        kind: OwnerKind,
+        owner_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, MediaRegistryError> {
+        if !valid_owner_id(owner_id) || !(1..=100_000).contains(&limit) {
             return Err(MediaRegistryError::InvalidInput);
         }
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let digests = {
             let mut stmt = tx.prepare(
                 "SELECT digest FROM media_owners
-                 WHERE kind=?1 AND owner_id=?2 ORDER BY digest",
+                 WHERE kind=?1 AND owner_id=?2 ORDER BY digest LIMIT ?3",
             )?;
-            let rows = stmt.query_map(params![kind.as_str(), owner_id], |row| row.get(0))?;
-            rows.collect::<Result<Vec<String>, _>>()?
+            let rows = stmt.query_map(params![kind.as_str(), owner_id, (limit + 1) as i64], |row| {
+                row.get::<_, String>(0)
+            })?;
+            let mut digests = Vec::new();
+            for row in rows {
+                let digest = row?;
+                if !valid_digest(&digest) {
+                    return Err(MediaRegistryError::InvalidInput);
+                }
+                digests.push(digest);
+                if digests.len() > limit {
+                    return Err(MediaRegistryError::TooManyCandidates);
+                }
+            }
+            digests
         };
         tx.execute(
             "DELETE FROM media_owners WHERE kind=?1 AND owner_id=?2",
@@ -1601,6 +1630,62 @@ mod tests {
             Err(MediaRegistryError::InvalidInput)
         ));
         assert!(registry.unowned_digests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn owner_release_is_bounded_atomic_and_preserves_other_owners() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let mut digests = Vec::new();
+        for bytes in [b"alpha".as_slice(), b"bravo".as_slice(), b"charlie".as_slice()] {
+            let digest = registry.register_verified_bytes(bytes, &notice("A")).unwrap();
+            registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+            digests.push(digest);
+        }
+        registry
+            .add_owner(&digests[0], OwnerKind::Pack, "mathematics")
+            .unwrap();
+        registry
+            .add_owner(&digests[1], OwnerKind::UserPin, "saved")
+            .unwrap();
+
+        assert!(matches!(
+            registry.remove_all_for_owner_bounded(OwnerKind::Pack, "physics", 2),
+            Err(MediaRegistryError::TooManyCandidates)
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().len(), 3);
+        assert!(registry.unowned_digests().unwrap().is_empty());
+
+        for invalid_limit in [0, 100_001] {
+            assert!(matches!(
+                registry.remove_all_for_owner_bounded(OwnerKind::Pack, "physics", invalid_limit),
+                Err(MediaRegistryError::InvalidInput)
+            ));
+        }
+        assert!(matches!(
+            registry.remove_all_for_owner(OwnerKind::Pack, "../outside"),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+
+        let mut released = registry
+            .remove_all_for_owner_bounded(OwnerKind::Pack, "physics", 3)
+            .unwrap();
+        released.sort_unstable();
+        digests.sort_unstable();
+        assert_eq!(released, digests);
+        assert!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().is_empty());
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "mathematics").unwrap().len(),
+            1
+        );
+        assert_eq!(
+            registry.owned_media(OwnerKind::UserPin, "saved").unwrap().len(),
+            1
+        );
+        assert_eq!(registry.unowned_digests().unwrap().len(), 1);
+        assert!(registry
+            .remove_all_for_owner(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
