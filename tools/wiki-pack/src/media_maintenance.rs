@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
-    audit_registered_media_integrity, plan_unowned_media_gc, plan_unregistered_media_gc,
+    bind_registry_after_complete_media_audit, plan_unowned_media_gc, plan_unregistered_media_gc,
     run_bounded_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
@@ -58,18 +58,15 @@ pub fn run(
     let store = MediaObjectStore::new(root);
     if mode == "--bind-registry" {
         // A wrong but initialized registry could otherwise be bound to a
-        // populated media tree. Require a complete bounded registered-object
-        // audit and NO unexplained published orphans before binding.
-        let audit = audit_registered_media_integrity(&store, &registry, max_registered)
-            .map_err(|error| format!("registry integrity before binding: {error:?}"))?;
-        let orphans = plan_unregistered_media_gc(&store, &registry, max_scanned)
-            .map_err(|error| format!("orphan audit before binding: {error:?}"))?;
-        if !orphans.candidates.is_empty() {
-            return Err("cannot bind a registry while unregistered media orphans exist".into());
-        }
-        registry
-            .bind_media_root(root)
-            .map_err(|error| format!("cannot bind registry to media root: {error:?}"))?;
+        // populated media tree. One EXCLUSIVE lease must span both complete
+        // audits and the binding commit, excluding cooperating installers/GC.
+        let audit = bind_registry_after_complete_media_audit(
+            &store,
+            &mut registry,
+            max_registered,
+            max_scanned,
+        )
+        .map_err(|error| format!("registry integrity/binding rejected: {error:?}"))?;
         println!(
             "Registry bound to media root after auditing {} objects ({} bytes); no files deleted",
             audit.objects, audit.verified_bytes

@@ -23,6 +23,9 @@ pub enum MediaGcPlanError {
         completed_objects: usize,
     },
     PostCommitSizeMismatch,
+    /// An unregistered published object could belong to a different registry.
+    /// Never bind while any such file remains unexplained.
+    UnregisteredOrphans { count: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -320,6 +323,16 @@ pub fn plan_unregistered_media_gc(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaGcPlanError::Lease)?;
+    plan_unregistered_media_gc_under_lease(store, registry, max_scanned_objects)
+}
+
+/// Read-only orphan audit when a SHARED or EXCLUSIVE lease is already held.
+/// Avoid nested lease acquisition while an exclusive binder is running.
+fn plan_unregistered_media_gc_under_lease(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_scanned_objects: usize,
+) -> Result<MediaGcPlan, MediaGcPlanError> {
     let digests = store
         .published_object_digests_unlocked(max_scanned_objects)
         .map_err(MediaGcPlanError::Store)?;
@@ -442,6 +455,15 @@ pub fn audit_registered_media_integrity(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaGcPlanError::Lease)?;
+    audit_registered_media_integrity_under_lease(store, registry, max_objects)
+}
+
+/// Complete read-only registered-object audit under a caller-held media lease.
+fn audit_registered_media_integrity_under_lease(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_objects: usize,
+) -> Result<RegisteredMediaAudit, MediaGcPlanError> {
     registry
         .audit_unregistered_references()
         .map_err(MediaGcPlanError::Registry)?;
@@ -472,6 +494,42 @@ pub fn audit_registered_media_integrity(
     })
 }
 
+/// Explicitly bind an existing registry only after an entire, bounded
+/// registered-media integrity audit AND an orphan-free published-media scan.
+/// A single EXCLUSIVE lease spans both preflights and the SQLite binding
+/// commit, excluding cooperating installers, readers and garbage collectors
+/// throughout. This is intentionally separate from destructive maintenance.
+///
+/// Reject oversized scans, corrupt registered bytes, missing notices and any
+/// unexplained published object. The caller must additionally require an
+/// existing registry outside the media root and explicit operator approval.
+/// Non-cooperating direct SQLite writers and hostile directory races are
+/// outside this advisory lease protocol; no publisher trust is conferred.
+pub fn bind_registry_after_complete_media_audit(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered: usize,
+    max_scanned: usize,
+) -> Result<RegisteredMediaAudit, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    let audit = audit_registered_media_integrity_under_lease(store, registry, max_registered)?;
+    let orphans = plan_unregistered_media_gc_under_lease(store, registry, max_scanned)?;
+    if !orphans.candidates.is_empty() {
+        return Err(MediaGcPlanError::UnregisteredOrphans {
+            count: orphans.candidates.len(),
+        });
+    }
+    registry
+        .bind_media_root(store.root())
+        .map_err(MediaGcPlanError::Registry)?;
+    Ok(audit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +557,75 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn exclusive_registry_binding_requires_complete_clean_media_and_is_idempotent() {
+        let (root, store, mut registry) = setup();
+        let owned = store.store_bytes(b"owned figure").unwrap();
+        registry
+            .register_verified_bytes(b"owned figure", &notice())
+            .unwrap();
+        registry
+            .add_owner(&owned, OwnerKind::UserPin, "saved")
+            .unwrap();
+        let orphan = store.store_bytes(b"unknown source").unwrap();
+        assert!(matches!(
+            bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10),
+            Err(MediaGcPlanError::UnregisteredOrphans { count: 1 })
+        ));
+        assert!(matches!(
+            registry.require_media_root_binding(&root),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"unknown source");
+        assert!(matches!(
+            bind_registry_after_complete_media_audit(&store, &mut registry, 0, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(matches!(
+            registry.require_media_root_binding(&root),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        assert_eq!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            1
+        );
+        let audit = bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10)
+            .unwrap();
+        assert_eq!(audit.objects, 1);
+        assert_eq!(audit.verified_bytes, b"owned figure".len() as u64);
+        registry.require_media_root_binding(&root).unwrap();
+        assert_eq!(
+            bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10).unwrap(),
+            audit
+        );
+        assert_eq!(store.read_verified(&owned).unwrap(), b"owned figure");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exclusive_registry_binding_rejects_corrupt_owned_bytes_without_binding() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"owned image").unwrap();
+        registry
+            .register_verified_bytes(b"owned image", &notice())
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "biology")
+            .unwrap();
+        fs::write(root.join(&digest[..2]).join(&digest), b"corrupted image").unwrap();
+        assert!(matches!(
+            bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert!(matches!(
+            registry.require_media_root_binding(&root),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
