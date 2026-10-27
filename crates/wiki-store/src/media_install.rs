@@ -166,6 +166,72 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_gc_lease_blocks_installer_until_released() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-install-lease-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.join("owners.sqlite");
+        let registry = MediaRegistry::open(&database).unwrap();
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker_db = database.clone();
+        let worker = std::thread::spawn(move || {
+            let store = MediaObjectStore::new(&worker_root);
+            let mut registry = MediaRegistry::open(&worker_db).unwrap();
+            started_tx.send(()).unwrap();
+            finished_tx
+                .send(install_owned_media(
+                    &store,
+                    &mut registry,
+                    b"protected bytes",
+                    &notice("Author"),
+                    OwnerKind::Pack,
+                    "science",
+                ))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "science")
+            .unwrap()
+            .is_empty());
+
+        drop(exclusive);
+        let digest = finished_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert_eq!(
+            registry
+                .owned_digest_size(OwnerKind::Pack, "science", &digest)
+                .unwrap(),
+            Some(b"protected bytes".len() as u64)
+        );
+        assert_eq!(
+            MediaObjectStore::new(&root).read_verified(&digest).unwrap(),
+            b"protected bytes"
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn batch_ownership_is_atomic_and_persists_across_reopen() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
