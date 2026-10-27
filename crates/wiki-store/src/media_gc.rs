@@ -1169,6 +1169,69 @@ mod tests {
     }
 
     #[test]
+    fn both_advisory_gc_planners_wait_for_exclusive_media_lease() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (root, store, _) = setup();
+        let database = root.with_extension("advisory-gc.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let registered = store.store_bytes(b"registered chart").unwrap();
+        registry
+            .register_verified_bytes(b"registered chart", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"unregistered diagram").unwrap();
+        drop(registry);
+
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let mut workers = Vec::new();
+        for kind in ["registered", "orphan"] {
+            let worker_root = root.clone();
+            let worker_database = database.clone();
+            let started_tx = started_tx.clone();
+            let done_tx = done_tx.clone();
+            workers.push(std::thread::spawn(move || {
+                let store = MediaObjectStore::new(&worker_root);
+                let registry = MediaRegistry::open(&worker_database).unwrap();
+                started_tx.send(()).unwrap();
+                let plan = if kind == "registered" {
+                    plan_unowned_media_gc(&store, &registry, 10)
+                } else {
+                    plan_unregistered_media_gc(&store, &registry, 10)
+                }
+                .unwrap();
+                done_tx.send((kind, plan)).unwrap();
+            }));
+        }
+        for _ in 0..2 {
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_millis(150)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(exclusive);
+        let mut results = std::collections::BTreeMap::new();
+        for _ in 0..2 {
+            let (kind, plan) = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            results.insert(kind, plan);
+        }
+        assert_eq!(results["registered"].candidates[0].digest, registered);
+        assert_eq!(results["registered"].candidates.len(), 1);
+        assert_eq!(results["orphan"].candidates[0].digest, orphan);
+        assert_eq!(results["orphan"].candidates.len(), 1);
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(database).unwrap();
+    }
+
+    #[test]
     fn only_unowned_registered_bytes_are_reported_without_deletion() {
         let (root, store, mut registry) = setup();
         let shared = store.store_bytes(b"shared diagram").unwrap();
