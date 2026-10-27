@@ -11,12 +11,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
+use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
+
 const MAX_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum MediaObjectError {
     Io(std::io::Error),
+    Lease(MediaLeaseError),
     InvalidDigest,
     UnsafeDirectory,
     UnsafeObject,
@@ -238,7 +241,7 @@ impl MediaObjectStore {
             match fs::hard_link(&temp, &path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if self.read_verified(&digest)? != bytes {
+                    if self.read_verified_unlocked(&digest)? != bytes {
                         return Err(MediaObjectError::DigestMismatch);
                     }
                 }
@@ -270,6 +273,18 @@ impl MediaObjectStore {
     /// Pack-wide media audits should not allocate an entire 64 MiB image just
     /// to check its digest. This validates bytes, not provenance or licensing.
     pub fn verify_object_size(&self, digest: &str) -> Result<u64, MediaObjectError> {
+        self.object_path(digest)?;
+        let _lease = MediaLeaseCoordinator::new(&self.root)
+            .acquire_shared()
+            .map_err(MediaObjectError::Lease)?;
+        self.verify_object_size_unlocked(digest)
+    }
+
+    /// The caller must already hold the shared or exclusive lease.
+    pub(crate) fn verify_object_size_unlocked(
+        &self,
+        digest: &str,
+    ) -> Result<u64, MediaObjectError> {
         let path = self.object_path(digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
         let directory = fs::symlink_metadata(parent)?;
@@ -329,6 +344,19 @@ impl MediaObjectStore {
 
     /// Verify a bounded object from its on-disk bytes on every read.
     pub fn read_verified(&self, digest: &str) -> Result<Vec<u8>, MediaObjectError> {
+        self.object_path(digest)?;
+        let _lease = MediaLeaseCoordinator::new(&self.root)
+            .acquire_shared()
+            .map_err(MediaObjectError::Lease)?;
+        self.read_verified_unlocked(digest)
+    }
+
+    /// The caller must already hold a shared lease or be publishing under
+    /// its own verified temporary staging protocol.
+    pub(crate) fn read_verified_unlocked(
+        &self,
+        digest: &str,
+    ) -> Result<Vec<u8>, MediaObjectError> {
         let path = self.object_path(digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;
         let directory = fs::symlink_metadata(parent)?;

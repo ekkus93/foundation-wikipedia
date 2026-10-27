@@ -46,7 +46,7 @@ pub fn plan_unowned_media_gc(
     let claims = registry
         .unowned_media_candidates(max_candidates)
         .map_err(MediaGcPlanError::Registry)?;
-    verify_unowned_candidates(store, &claims)
+    verify_unowned_candidates(store, &claims, false)
 }
 
 /// Revalidate a bounded SQLite snapshot while it remains protected by a
@@ -65,7 +65,7 @@ pub fn plan_unowned_media_gc_with_registry_reservation(
         .map_err(MediaGcPlanError::Lease)?;
     registry
         .with_reserved_unowned_media(max_candidates, |claims| {
-            verify_unowned_candidates(store, claims)
+            verify_unowned_candidates(store, claims, true)
         })
         .map_err(MediaGcPlanError::Registry)?
 }
@@ -73,13 +73,17 @@ pub fn plan_unowned_media_gc_with_registry_reservation(
 fn verify_unowned_candidates(
     store: &MediaObjectStore,
     claims: &[(String, u64)],
+    exclusive_lease_held: bool,
 ) -> Result<MediaGcPlan, MediaGcPlanError> {
     let mut candidates = Vec::with_capacity(claims.len());
     let mut reclaimable_bytes = 0u64;
     for (digest, bytes) in claims {
-        let verified = store
-            .verify_object_size(digest)
-            .map_err(MediaGcPlanError::Store)?;
+        let verified = if exclusive_lease_held {
+            store.verify_object_size_unlocked(digest)
+        } else {
+            store.verify_object_size(digest)
+        }
+        .map_err(MediaGcPlanError::Store)?;
         if verified != *bytes {
             return Err(MediaGcPlanError::SizeMismatch);
         }
