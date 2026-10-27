@@ -744,7 +744,13 @@ mod tests {
             assert!(registry.registered_digest_size(digest).unwrap().is_none());
         }
         assert_eq!(registry.registered_digest_size(&pin).unwrap(), Some(15));
-        assert_eq!(store.published_object_digests(10).unwrap().len(), 3);
+        let published = store.published_object_digests(10).unwrap();
+        assert_eq!(published.len(), 3);
+        let remaining_bytes: u64 = published
+            .iter()
+            .filter(|digest| *digest != &pin)
+            .map(|digest| fs::metadata(root.join(&digest[..2]).join(digest)).unwrap().len())
+            .sum();
         drop(registry);
 
         // Restart/reopen after the injected crash window. The separate
@@ -752,11 +758,6 @@ mod tests {
         let mut registry = MediaRegistry::open(&db).unwrap();
         let recovered = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
         assert_eq!(recovered.removed_objects, 2);
-        let remaining_bytes = b"alpha graph".len() as u64
-            + b"beta graph".len() as u64
-            + b"gamma graph".len() as u64
-            - b"alpha graph".len() as u64;
-        // All three fixtures happen to have the same byte length.
         assert_eq!(recovered.reclaimed_bytes, remaining_bytes);
         assert_eq!(
             store.published_object_digests(10).unwrap(),
