@@ -460,4 +460,5 @@ mod tests {
         ] {
             assert!(environment.contains(variable));
         }
-    }}
+     }
+}
