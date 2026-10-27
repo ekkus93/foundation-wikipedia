@@ -42,7 +42,24 @@ impl MediaLeaseCoordinator {
     }
 
     fn acquire(&self, exclusive: bool) -> Result<MediaLease, MediaLeaseError> {
-        prepare_registry_path(&self.path).map_err(MediaLeaseError::RegistryPath)?;
+        // Multiple first-time readers may race to create the same private
+        // lock database. The registry path preflight deliberately rejects
+        // create_new(AlreadyExists); retry only after a fresh full path audit.
+        // Unsafe symlinks, hardlinks and traversal remain rejected.
+        let mut ready = false;
+        for _ in 0..3 {
+            match prepare_registry_path(&self.path) {
+                Ok(()) => {
+                    ready = true;
+                    break;
+                }
+                Err(MediaRegistryError::UnsafePath) => continue,
+                Err(error) => return Err(MediaLeaseError::RegistryPath(error)),
+            }
+        }
+        if !ready {
+            return Err(MediaLeaseError::RegistryPath(MediaRegistryError::UnsafePath));
+        }
         let conn = Connection::open(&self.path).map_err(MediaLeaseError::Sql)?;
         conn.busy_timeout(Duration::from_secs(10))
             .map_err(MediaLeaseError::Sql)?;
@@ -108,6 +125,28 @@ mod tests {
             .execute_batch("BEGIN DEFERRED; SELECT COUNT(*) FROM sqlite_master; ROLLBACK;")
             .unwrap();
         drop(contender);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_first_open_revalidates_private_lock_file() {
+        use std::sync::{Arc, Barrier};
+        let root = root();
+        let barrier = Arc::new(Barrier::new(8));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let path = root.clone();
+            let ready = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || {
+                ready.wait();
+                let coordinator = MediaLeaseCoordinator::new(&path);
+                let _lease = coordinator.acquire_shared().unwrap();
+                std::thread::sleep(Duration::from_millis(10));
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
