@@ -21,3 +21,9 @@ Initial source `146f455d0aa8a0828d6f3c799daa4b3018f0733d` failed formatting ([Ru
 - The ownership transaction is not a complete pack install. Snapshot/catalog activation, rollback, persisted pack metadata and desktop/Android lifecycle wiring remain outstanding.
 - The root-binding check prevents accidental wrong-root use by cooperating callers; it is not a defense against same-user hostile direct SQLite writes, filesystem replacement, or physical power-loss faults.
 - Real pack/device acceptance and fault injection are still required. **Do not check STORE-002 complete.**
+
+## Concurrent owner-inventory regression (follow-up)
+
+Added a separate disk-backed, bound-root race test in source SHA `17b2ce869e5f472cd529cf7f725eb1c1338f57bd`. Two SQLite connections synchronize before competing installations of different required-media manifests for the **same** pack owner. Exactly one operation succeeds. The final persisted owner inventory contains only one digest, and bound required-media verification rehashes that winning object. This tests the existing IMMEDIATE SQLite transaction conflict check through the new production-facing composition; an unsuccessful contender may leave unowned staged bytes, which remain subject to the guarded orphan collector.
+
+[Rust workspace CI 40588413254](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40588413254) and [Android Rust ABI CI 40588413438](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40588413438) passed. [Platform shells 40588413331](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40588413331) and [Android record codec 40588413233](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40588413233) remained in progress at documentation.
