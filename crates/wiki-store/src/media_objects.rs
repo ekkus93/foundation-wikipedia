@@ -423,6 +423,39 @@ mod tests {
     }
 
     #[test]
+    fn verified_media_reads_wait_for_exclusive_gc_lease() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"leased media").unwrap();
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker_digest = digest.clone();
+        let reader = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            MediaObjectStore::new(worker_root)
+                .read_verified(&worker_digest)
+                .unwrap()
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!reader.is_finished());
+        drop(exclusive);
+        assert_eq!(reader.join().unwrap(), b"leased media");
+        assert_eq!(
+            store.verify_object_size(&digest).unwrap(),
+            b"leased media".len() as u64
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn lexical_parent_traversal_is_rejected_for_reads_writes_and_scans() {
         let root = root();
         fs::create_dir(root.join("child")).unwrap();
