@@ -49,6 +49,46 @@ fn require_consistent_mime(
     Ok(())
 }
 
+/// Keep the write-side notice ceiling aligned with reader and audit limits.
+/// Duplicate registration remains idempotent at the ceiling; a new distinct
+/// notice is rejected inside the same write transaction as the insertion.
+fn require_notice_capacity(
+    tx: &rusqlite::Transaction<'_>,
+    digest: &str,
+    notice: &MediaNotice,
+) -> Result<(), MediaRegistryError> {
+    const MAX_NOTICES: i64 = 1024;
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM media_notices WHERE digest=?1",
+        params![digest],
+        |row| row.get(0),
+    )?;
+    if count < 0 || count > MAX_NOTICES {
+        return Err(MediaRegistryError::TooManyNotices);
+    }
+    if count == MAX_NOTICES {
+        let already_registered: bool = tx.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM media_notices
+               WHERE digest=?1 AND mime=?2 AND source_url=?3
+                 AND creator=?4 AND license=?5
+             )",
+            params![
+                digest,
+                notice.mime,
+                notice.source_url,
+                notice.creator,
+                notice.license
+            ],
+            |row| row.get(0),
+        )?;
+        if !already_registered {
+            return Err(MediaRegistryError::TooManyNotices);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerKind {
     Pack,
@@ -240,6 +280,7 @@ impl MediaRegistry {
             return Err(MediaRegistryError::ConflictingSize);
         }
         require_consistent_mime(&tx, &digest, &notice.mime)?;
+        require_notice_capacity(&tx, &digest, notice)?;
         tx.execute(
             "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
              VALUES (?1,?2,?3,?4,?5)",
@@ -327,6 +368,7 @@ impl MediaRegistry {
                 return Err(MediaRegistryError::ConflictingSize);
             }
             require_consistent_mime(&tx, &digest, &notice.mime)?;
+            require_notice_capacity(&tx, &digest, notice)?;
             tx.execute(
                 "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
                  VALUES (?1,?2,?3,?4,?5)",
@@ -1356,6 +1398,56 @@ mod tests {
             registry.owned_media(OwnerKind::Pack, "math").unwrap(),
             vec![(digests[0].clone(), b"shared figure".len() as u64)]
         );
+    }
+
+    #[test]
+    fn notice_write_limit_preserves_readability_and_idempotent_registration() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let first = notice("Author 0");
+        let digest = registry.register_verified_bytes(b"figure", &first).unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "physics")
+            .unwrap();
+        for index in 1..1024 {
+            registry
+                .register_verified_bytes(b"figure", &notice(&format!("Author {index}")))
+                .unwrap();
+        }
+        assert_eq!(registry.notice_count(&digest).unwrap(), 1024);
+        registry.register_verified_bytes(b"figure", &first).unwrap();
+        assert!(matches!(
+            registry.register_verified_bytes(b"figure", &notice("Overflow")),
+            Err(MediaRegistryError::TooManyNotices)
+        ));
+        assert_eq!(registry.notice_count(&digest).unwrap(), 1024);
+        assert_eq!(
+            registry
+                .owned_digest_notices(OwnerKind::Pack, "physics", &digest)
+                .unwrap()
+                .len(),
+            1024
+        );
+    }
+
+    #[test]
+    fn batch_notice_overflow_rolls_back_all_rows() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let notices: Vec<_> = (0..1025)
+            .map(|index| notice(&format!("Author {index}")))
+            .collect();
+        let assets: Vec<_> = notices
+            .iter()
+            .map(|notice| (b"shared image".as_slice(), notice))
+            .collect();
+        assert!(matches!(
+            registry.register_verified_owned_batch(&assets, OwnerKind::Pack, "physics"),
+            Err(MediaRegistryError::TooManyNotices)
+        ));
+        assert!(registry.unowned_digests().unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
