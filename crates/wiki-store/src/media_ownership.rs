@@ -528,9 +528,10 @@ impl MediaRegistry {
                 "SELECT digest FROM media_owners
                  WHERE kind=?1 AND owner_id=?2 ORDER BY digest LIMIT ?3",
             )?;
-            let rows = stmt.query_map(params![kind.as_str(), owner_id, (limit + 1) as i64], |row| {
-                row.get::<_, String>(0)
-            })?;
+            let rows = stmt.query_map(
+                params![kind.as_str(), owner_id, (limit + 1) as i64],
+                |row| row.get::<_, String>(0),
+            )?;
             let mut digests = Vec::new();
             for row in rows {
                 let digest = row?;
@@ -1636,9 +1637,17 @@ mod tests {
     fn owner_release_is_bounded_atomic_and_preserves_other_owners() {
         let mut registry = MediaRegistry::in_memory().unwrap();
         let mut digests = Vec::new();
-        for bytes in [b"alpha".as_slice(), b"bravo".as_slice(), b"charlie".as_slice()] {
-            let digest = registry.register_verified_bytes(bytes, &notice("A")).unwrap();
-            registry.add_owner(&digest, OwnerKind::Pack, "physics").unwrap();
+        for bytes in [
+            b"alpha".as_slice(),
+            b"bravo".as_slice(),
+            b"charlie".as_slice(),
+        ] {
+            let digest = registry
+                .register_verified_bytes(bytes, &notice("A"))
+                .unwrap();
+            registry
+                .add_owner(&digest, OwnerKind::Pack, "physics")
+                .unwrap();
             digests.push(digest);
         }
         registry
@@ -1652,7 +1661,13 @@ mod tests {
             registry.remove_all_for_owner_bounded(OwnerKind::Pack, "physics", 2),
             Err(MediaRegistryError::TooManyCandidates)
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().len(), 3);
+        assert_eq!(
+            registry
+                .owned_media(OwnerKind::Pack, "physics")
+                .unwrap()
+                .len(),
+            3
+        );
         assert!(registry.unowned_digests().unwrap().is_empty());
 
         for invalid_limit in [0, 100_001] {
@@ -1672,13 +1687,22 @@ mod tests {
         released.sort_unstable();
         digests.sort_unstable();
         assert_eq!(released, digests);
-        assert!(registry.owned_media(OwnerKind::Pack, "physics").unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
         assert_eq!(
-            registry.owned_media(OwnerKind::Pack, "mathematics").unwrap().len(),
+            registry
+                .owned_media(OwnerKind::Pack, "mathematics")
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            registry.owned_media(OwnerKind::UserPin, "saved").unwrap().len(),
+            registry
+                .owned_media(OwnerKind::UserPin, "saved")
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(registry.unowned_digests().unwrap().len(), 1);
