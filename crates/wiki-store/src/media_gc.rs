@@ -874,6 +874,102 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Child-only test body: the parent invokes this exact test through the
+    /// Rust test harness and expects an immediate exit after the first
+    /// SQLite-committed, directory-synced file unlink.
+    #[test]
+    fn registered_gc_subprocess_killpoint_child() {
+        let Some(root) = std::env::var_os("FW_STORE_002_GC_CHILD_ROOT") else {
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let store = MediaObjectStore::new(&root);
+        let database = root.with_extension("process-kill.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let _ = collect_unowned_registered_media_with_unlink(
+            &store,
+            &mut registry,
+            10,
+            |digest| {
+                let bytes = store.unlink_verified_unlocked(digest)?;
+                // This is deliberately a process termination, not a returned
+                // error: no Rust destructors or SQLite RAII cleanup run.
+                if std::env::var_os("FW_STORE_002_GC_CHILD_ROOT").is_some() {
+                    std::process::exit(77);
+                }
+                Ok(bytes)
+            },
+        );
+        panic!("child must terminate at the post-commit unlink killpoint");
+    }
+
+    #[test]
+    fn process_exit_after_first_unlink_recovers_orphans_on_reopen() {
+        let (root, store, _) = setup();
+        let database = root.with_extension("process-kill.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let mut unowned = Vec::new();
+        for content in [
+            b"first chart".as_slice(),
+            b"second map".as_slice(),
+            b"third image".as_slice(),
+        ] {
+            let digest = store.store_bytes(content).unwrap();
+            registry
+                .register_verified_bytes(content, &notice())
+                .unwrap();
+            unowned.push(digest);
+        }
+        let pinned = store.store_bytes(b"saved figure").unwrap();
+        registry
+            .register_verified_bytes(b"saved figure", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
+        drop(registry);
+
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("media_gc::tests::registered_gc_subprocess_killpoint_child")
+            .env("FW_STORE_002_GC_CHILD_ROOT", &root)
+            .output()
+            .unwrap();
+        assert_eq!(
+            child.status.code(),
+            Some(77),
+            "child did not reach killpoint: {}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+
+        // The OS must release the dead child's EXCLUSIVE SQLite lease.
+        // The committed registry no longer references any of the three
+        // unowned objects, although only one file was actually removed.
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        for digest in &unowned {
+            assert!(registry.registered_digest_size(digest).unwrap().is_none());
+        }
+        assert_eq!(
+            registry.registered_digest_size(&pinned).unwrap(),
+            Some(b"saved figure".len() as u64)
+        );
+        let orphans = plan_unregistered_media_gc(&store, &registry, 10).unwrap();
+        assert_eq!(orphans.candidates.len(), 2);
+        let recovered = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
+        assert_eq!(recovered.removed_objects, 2);
+        assert_eq!(recovered.reclaimed_bytes, orphans.reclaimable_bytes);
+        assert_eq!(store.read_verified(&pinned).unwrap(), b"saved figure");
+        assert_eq!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(database).unwrap();
+    }
+
     #[test]
     fn partial_unlink_failure_recovers_remaining_orphans_after_registry_reopen() {
         let (root, store, _) = setup();
