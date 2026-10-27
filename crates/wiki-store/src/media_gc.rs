@@ -609,6 +609,64 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_registry_binding_waits_for_active_shared_media_reader() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (root, store, _) = setup();
+        let db = root.with_extension("bind-reservation.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let digest = store.store_bytes(b"locked visual").unwrap();
+        registry
+            .register_verified_bytes(b"locked visual", &notice())
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::UserPin, "reader")
+            .unwrap();
+        drop(registry);
+
+        let reader_lease = MediaLeaseCoordinator::new(&root).acquire_shared().unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let other_root = root.clone();
+        let other_db = db.clone();
+        let worker = std::thread::spawn(move || {
+            let store = MediaObjectStore::new(&other_root);
+            let mut registry = MediaRegistry::open_existing(&other_db).unwrap();
+            ready_tx.send(()).unwrap();
+            result_tx
+                .send(bind_registry_after_complete_media_audit(
+                    &store,
+                    &mut registry,
+                    10,
+                    10,
+                ))
+                .unwrap();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(150)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let registry = MediaRegistry::open_existing(&db).unwrap();
+        assert!(matches!(
+            registry.require_media_root_binding(&root),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        drop(registry);
+        drop(reader_lease);
+        let audit = result_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(audit.objects, 1);
+        worker.join().unwrap();
+        let registry = MediaRegistry::open_existing(&db).unwrap();
+        registry.require_media_root_binding(&root).unwrap();
+        assert_eq!(store.read_verified(&digest).unwrap(), b"locked visual");
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(db).unwrap();
+    }
+
+    #[test]
     fn exclusive_registry_binding_rejects_corrupt_owned_bytes_without_binding() {
         let (root, store, mut registry) = setup();
         let digest = store.store_bytes(b"owned image").unwrap();
