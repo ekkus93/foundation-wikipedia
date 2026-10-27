@@ -5,6 +5,8 @@
 //! does not certify an object as installed or authorize deletion of its bytes.
 
 use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
@@ -12,6 +14,8 @@ use sha2::{Digest, Sha256};
 #[derive(Debug)]
 pub enum MediaRegistryError {
     Sql(rusqlite::Error),
+    Io(std::io::Error),
+    UnsafePath,
     InvalidInput,
     ConflictingSize,
     ConflictingInventory,
@@ -25,6 +29,12 @@ pub enum MediaRegistryError {
 impl From<rusqlite::Error> for MediaRegistryError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sql(error)
+    }
+}
+
+impl From<std::io::Error> for MediaRegistryError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
     }
 }
 
@@ -253,8 +263,79 @@ pub struct MediaRegistry {
     conn: Connection,
 }
 
+/// Fail closed on registry aliases before SQLite opens a mutable ownership
+/// database. This is a pathname preflight, not a defense against concurrent
+/// directory replacement by an untrusted process.
+fn prepare_registry_path(path: &Path) -> Result<(), MediaRegistryError> {
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(MediaRegistryError::UnsafePath);
+    }
+    let parent = path
+        .parent()
+        .filter(|part| !part.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    for ancestor in parent.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(ancestor)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(MediaRegistryError::UnsafePath);
+        }
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                return Err(MediaRegistryError::UnsafePath);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if metadata.nlink() != 1 {
+                    return Err(MediaRegistryError::UnsafePath);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // SQLite's default file creation may be world-readable under a
+            // permissive umask. Reserve a private inode before opening it.
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(path) {
+                Ok(file) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if file.metadata()?.nlink() != 1 {
+                            return Err(MediaRegistryError::UnsafePath);
+                        }
+                    }
+                    drop(file);
+                }
+                // Another process created a new file after the preflight.
+                // Refuse the race rather than opening an unexamined inode.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return Err(MediaRegistryError::UnsafePath);
+                }
+                Err(error) => return Err(MediaRegistryError::Io(error)),
+            }
+        }
+        Err(error) => return Err(MediaRegistryError::Io(error)),
+    }
+    Ok(())
+}
+
 impl MediaRegistry {
-    pub fn open(path: &std::path::Path) -> Result<Self, MediaRegistryError> {
+    pub fn open(path: &Path) -> Result<Self, MediaRegistryError> {
+        prepare_registry_path(path)?;
         Self::initialize(Connection::open(path)?)
     }
 
@@ -940,6 +1021,78 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_registry_rejects_symlink_hardlink_and_traversal_aliases() {
+        use std::os::unix::fs::{symlink, MetadataExt};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-media-registry-path-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.join("registry.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let digest = registry
+            .register_verified_bytes(b"diagram", &notice("Author"))
+            .unwrap();
+        assert_eq!(fs::metadata(&database).unwrap().mode() & 0o777, 0o600);
+        drop(registry);
+        assert_eq!(
+            MediaRegistry::open(&database)
+                .unwrap()
+                .registered_digest_size(&digest)
+                .unwrap(),
+            Some(7)
+        );
+
+        let alias = root.join("alias.sqlite");
+        symlink(&database, &alias).unwrap();
+        assert!(matches!(
+            MediaRegistry::open(&alias),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        let linked = root.join("linked.sqlite");
+        fs::hard_link(&database, &linked).unwrap();
+        assert!(matches!(
+            MediaRegistry::open(&database),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        assert!(matches!(
+            MediaRegistry::open(&linked),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        fs::remove_file(&linked).unwrap();
+
+        let parent_alias = root.join("alias-parent");
+        symlink(&root, &parent_alias).unwrap();
+        assert!(matches!(
+            MediaRegistry::open(&parent_alias.join("registry.sqlite")),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        assert!(matches!(
+            MediaRegistry::open(&root.join("subdir").join("..").join("registry.sqlite")),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        assert!(matches!(
+            MediaRegistry::open(&root),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        assert_eq!(
+            MediaRegistry::open(&database)
+                .unwrap()
+                .registered_digest_size(&digest)
+                .unwrap(),
+            Some(7)
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
