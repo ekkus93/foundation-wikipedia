@@ -60,6 +60,16 @@ impl MediaObjectStore {
     }
 
     fn object_path(&self, digest: &str) -> Result<PathBuf, MediaObjectError> {
+        // Reject lexical traversal even when the resolved directory happens
+        // to be inside the store. A later directory replacement could turn
+        // an otherwise harmless ".." component into an escape.
+        if self
+            .root
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(MediaObjectError::UnsafeDirectory);
+        }
         if !valid_digest(digest) {
             return Err(MediaObjectError::InvalidDigest);
         }
@@ -128,8 +138,18 @@ impl MediaObjectStore {
                     // the path audit. Also bound the number of ignored files:
                     // an unbounded staging flood would make a bounded scan
                     // take arbitrarily long without counting any objects.
-                    if !fs::symlink_metadata(entry.path())?.file_type().is_file() {
+                    let metadata = fs::symlink_metadata(entry.path())?;
+                    if !metadata.file_type().is_file() {
                         return Err(MediaObjectError::UnsafeObject);
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        // An ignored staging filename must not conceal an
+                        // external hard-link alias into the object store.
+                        if metadata.nlink() != 1 {
+                            return Err(MediaObjectError::UnsafeObject);
+                        }
                     }
                     staged_count += 1;
                     if staged_count > max_objects {
@@ -208,9 +228,23 @@ impl MediaObjectStore {
             File::open(parent)?.sync_all()?;
             Ok(())
         })();
-        let _ = fs::remove_file(&temp);
-        result?;
-        Ok(digest)
+        match result {
+            Ok(()) => {
+                // The promotion above briefly leaves two hard links to the
+                // same inode. Persist removal of the staging name before
+                // reporting success, or a crash could leave an apparently
+                // permanently hardlinked (and therefore unreadable) object.
+                fs::remove_file(&temp)?;
+                File::open(parent)?.sync_all()?;
+                Ok(digest)
+            }
+            Err(error) => {
+                // Failed installs never remove published bytes. A leftover
+                // staging file is conservatively retained if cleanup fails.
+                let _ = fs::remove_file(&temp);
+                Err(error)
+            }
+        }
     }
 
     /// Verify a stored object with bounded memory, returning its byte length.
@@ -345,6 +379,48 @@ mod tests {
     }
 
     #[test]
+    fn lexical_parent_traversal_is_rejected_for_reads_writes_and_scans() {
+        let root = root();
+        fs::create_dir(root.join("child")).unwrap();
+        let valid = MediaObjectStore::new(&root);
+        let digest = valid.store_bytes(b"valid object").unwrap();
+        let traversal = MediaObjectStore::new(root.join("child").join(".."));
+        assert!(matches!(
+            traversal.store_bytes(b"new object"),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert!(matches!(
+            traversal.read_verified(&digest),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert!(matches!(
+            traversal.published_object_digests(10),
+            Err(MediaObjectError::UnsafeDirectory)
+        ));
+        assert_eq!(valid.read_verified(&digest).unwrap(), b"valid object");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_promotion_removes_staging_hardlink_before_returning() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"durable figure").unwrap();
+        let parent = root.join(&digest[..2]);
+        let object = parent.join(&digest);
+        assert_eq!(fs::metadata(&object).unwrap().nlink(), 1);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        assert_eq!(store.store_bytes(b"durable figure").unwrap(), digest);
+        assert_eq!(fs::metadata(&object).unwrap().nlink(), 1);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        assert_eq!(store.read_verified(&digest).unwrap(), b"durable figure");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn same_bytes_dedupe_and_tampering_is_rejected() {
         let root = root();
         let store = MediaObjectStore::new(&root);
@@ -438,6 +514,27 @@ mod tests {
         assert_eq!(store.published_object_digests(2).unwrap(), vec![digest]);
         assert_eq!(fs::read(first).unwrap(), b"partial one");
         assert_eq!(fs::read(second).unwrap(), b"partial two");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn published_scan_rejects_hardlinked_staging_aliases() {
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"published figure").unwrap();
+        let staging = root.join(&digest[..2]).join(".123.456.tmp");
+        let outside = root.with_extension("outside-staging-hardlink");
+        fs::write(&outside, b"external bytes").unwrap();
+        fs::hard_link(&outside, &staging).unwrap();
+        assert!(matches!(
+            store.published_object_digests(10),
+            Err(MediaObjectError::UnsafeObject)
+        ));
+        assert_eq!(fs::read(&outside).unwrap(), b"external bytes");
+        fs::remove_file(&staging).unwrap();
+        assert_eq!(store.published_object_digests(10).unwrap(), vec![digest]);
+        fs::remove_file(outside).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
