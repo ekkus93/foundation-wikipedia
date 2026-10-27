@@ -532,31 +532,18 @@ impl MediaRegistry {
             .transpose()
     }
 
-    /// Resolve one pack-owned object's unique declared MIME, if unambiguous.
-    /// Neither this attribution metadata nor a registered digest proves the
-    /// media bytes' actual type or upstream authenticity.
+    /// Resolve one pack-owned object's declared MIME only when its complete
+    /// bounded attribution set is valid. A MIME-only reader must not bypass
+    /// the same notice integrity and fanout checks as the attribution UI.
+    /// Neither this metadata nor a registered digest proves upstream authenticity.
     pub fn owned_digest_mime(
         &self,
         kind: OwnerKind,
         owner_id: &str,
         digest: &str,
     ) -> Result<Option<String>, MediaRegistryError> {
-        if self.owned_digest_size(kind, owner_id, digest)?.is_none() {
-            return Ok(None);
-        }
-        let mut statement = self.conn.prepare(
-            "SELECT DISTINCT mime FROM media_notices WHERE digest=?1 ORDER BY mime LIMIT 2",
-        )?;
-        let mut rows = statement.query(params![digest])?;
-        let first = rows.next()?.ok_or(MediaRegistryError::InvalidInput)?;
-        let mime: String = first.get(0)?;
-        if rows.next()?.is_some() {
-            return Err(MediaRegistryError::ConflictingMime);
-        }
-        if !safe_media_mime(&mime) {
-            return Err(MediaRegistryError::InvalidInput);
-        }
-        Ok(Some(mime))
+        let notices = self.owned_digest_notices(kind, owner_id, digest)?;
+        Ok(notices.first().map(|notice| notice.mime.clone()))
     }
 
     /// Return bounded, MIME-consistent attribution for an owner-scoped object.
@@ -937,6 +924,10 @@ mod tests {
             registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
             Err(MediaRegistryError::TooManyNotices)
         ));
+        assert!(matches!(
+            registry.owned_digest_mime(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::TooManyNotices)
+        ));
         assert!(registry
             .owned_digest_notices(OwnerKind::Pack, "math", &digest)
             .unwrap()
@@ -967,6 +958,27 @@ mod tests {
             registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
             Err(MediaRegistryError::InvalidInput)
         ));
+        registry
+            .conn
+            .execute(
+                "UPDATE media_notices SET mime='image/png', creator='Alice' || char(10) WHERE digest=?1",
+                params![digest],
+            )
+            .unwrap();
+        assert!(matches!(
+            registry.owned_digest_mime(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert!(matches!(
+            registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert_eq!(
+            registry
+                .owned_digest_mime(OwnerKind::Pack, "unrelated", &digest)
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
