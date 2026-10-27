@@ -5,10 +5,11 @@ use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
     audit_media_for_registry_binding, bind_registry_after_complete_media_audit,
-    plan_unowned_media_gc, plan_unregistered_media_gc, run_bound_media_maintenance,
+    plan_unowned_media_gc, plan_unregistered_media_gc, release_bound_owner_and_reclaim_media,
+    run_bound_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
-use wiki_store::media_ownership::MediaRegistry;
+use wiki_store::media_ownership::{MediaRegistry, OwnerKind};
 
 fn safe_directory(path: &Path) -> Result<(), String> {
     if path
@@ -150,6 +151,69 @@ pub fn run(
         }
         (registered, orphans) => Err(format!(
             "maintenance incomplete; registered phase: {registered:?}; orphan phase: {orphans:?}"
+        )),
+    }
+}
+
+/// Explicit owner removal for an operator-managed pack, cache or user pin.
+/// This is NOT a pack uninstall transaction: the caller must separately
+/// coordinate its installed-pack/catalog state. Never infer ownership from
+/// a filename or an untrusted manifest; the operator supplies an exact ID.
+pub fn release_owner(
+    root: &Path,
+    registry_path: &Path,
+    kind: &str,
+    owner_id: &str,
+    max_candidates: usize,
+) -> Result<(), String> {
+    if !(1..=10_000).contains(&max_candidates) {
+        return Err("owner-release candidate limit must be between 1 and 10000".into());
+    }
+    let owner_kind = match kind {
+        "pack" => OwnerKind::Pack,
+        "cache" => OwnerKind::Cache,
+        "pin" => OwnerKind::UserPin,
+        _ => return Err("owner kind must be exactly pack, cache or pin".into()),
+    };
+    safe_directory(root)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::symlink_metadata(root)
+            .map_err(|error| format!("cannot inspect media root permissions: {error}"))?
+            .permissions();
+        if permissions.mode() & 0o022 != 0 {
+            return Err("owner release requires a media root not writable by group/others".into());
+        }
+    }
+    let root_canonical = fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
+    let registry_canonical = fs::canonicalize(registry_path)
+        .map_err(|error| format!("existing registry required: {error}"))?;
+    if registry_canonical.starts_with(&root_canonical) {
+        return Err("registry must be outside the media-object root".into());
+    }
+    let mut registry = MediaRegistry::open_existing(registry_path)
+        .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
+    let store = MediaObjectStore::new(root);
+    let outcome = release_bound_owner_and_reclaim_media(
+        &store,
+        &mut registry,
+        owner_kind,
+        owner_id,
+        max_candidates,
+    )
+    .map_err(|error| format!("owner release rejected; no owner claims removed: {error:?}"))?;
+    match outcome.cleanup {
+        Ok(sweep) => {
+            println!(
+                "OWNER RELEASE COMMITTED: {} claims removed for {kind}/{owner_id}; reclaimed {} objects ({} bytes)",
+                outcome.released_objects, sweep.removed_objects, sweep.reclaimed_bytes
+            );
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "OWNER RELEASE COMMITTED: {} claims removed for {kind}/{owner_id}; cleanup incomplete: {error:?}. Do NOT retry the uninstall as a transaction; run bound media maintenance to retry cleanup.",
+            outcome.released_objects
         )),
     }
 }

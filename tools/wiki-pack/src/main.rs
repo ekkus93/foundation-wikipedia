@@ -29,6 +29,7 @@ fn usage() {
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
+    println!("       wiki-pack media-owner-release --confirm-release <media-root> <existing-registry.sqlite> <pack|cache|pin> <owner-id> <max-candidates>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
@@ -583,6 +584,32 @@ fn main() {
                 }
             };
             if let Err(error) = preview_topic::run(Path::new(input), json_output) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("media-owner-release") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 6 || fields[0] != "--confirm-release" {
+                eprintln!("media-owner-release requires explicit --confirm-release, root, registry, kind, owner-id and candidate limit");
+                usage();
+                std::process::exit(2);
+            }
+            let (Some(kind), Some(owner_id), Some(limit)) = (
+                fields[3].to_str(),
+                fields[4].to_str(),
+                fields[5].to_str().and_then(|value| value.parse::<usize>().ok()),
+            ) else {
+                eprintln!("Owner kind/id and candidate limit must be UTF-8 decimal values");
+                std::process::exit(2);
+            };
+            if let Err(error) = media_maintenance::release_owner(
+                Path::new(&fields[1]),
+                Path::new(&fields[2]),
+                kind,
+                owner_id,
+                limit,
+            ) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
