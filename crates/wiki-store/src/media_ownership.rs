@@ -683,6 +683,58 @@ impl MediaRegistry {
         Ok(candidates)
     }
 
+    /// Inspect a bounded list of unowned registered media while holding a
+    /// SQLite IMMEDIATE write reservation. Competing registry writers cannot
+    /// add a new owner until the callback returns and the reservation drops.
+    /// Read connections remain free to inspect their existing snapshots.
+    ///
+    /// This is a registry-side building block, NOT filesystem deletion
+    /// authority: installers may publish bytes before registering them,
+    /// active readers may retain file handles, and foreign processes may
+    /// write outside this registry. Never unlink files in this callback
+    /// without a separately enforced filesystem/reader protocol.
+    pub fn with_reserved_unowned_media<T>(
+        &mut self,
+        limit: usize,
+        inspect: impl FnOnce(&[(String, u64)]) -> T,
+    ) -> Result<T, MediaRegistryError> {
+        if !(1..=10_000).contains(&limit) {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let candidates = {
+            let mut stmt = tx.prepare(
+                "SELECT o.digest, o.bytes FROM media_objects o
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM media_owners r WHERE r.digest=o.digest
+                 ) ORDER BY o.digest LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![(limit + 1) as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            let mut candidates = Vec::new();
+            for row in rows {
+                let (digest, bytes) = row?;
+                if !valid_digest(&digest) || !(1..=64 * 1024 * 1024).contains(&bytes) {
+                    return Err(MediaRegistryError::InvalidInput);
+                }
+                candidates.push((digest, bytes as u64));
+                if candidates.len() > limit {
+                    return Err(MediaRegistryError::TooManyCandidates);
+                }
+            }
+            candidates
+        };
+        let output = inspect(&candidates);
+        // No data changes are made by this reservation. Dropping the
+        // transaction releases the cross-connection writer reservation even
+        // if the callback returned an error as its generic output.
+        drop(tx);
+        Ok(output)
+    }
+
     /// Bounded, deterministic inventory of *all* registered objects, including
     /// pack/cache/pin-owned media. The unowned GC candidate query is insufficient
     /// for an integrity audit: corruption of a still-owned figure must be caught.
@@ -1024,6 +1076,73 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn reserved_unowned_snapshot_blocks_competing_sqlite_owner_writes() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-gc-reservation-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.join("registry.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let digest = registry
+            .register_verified_bytes(b"candidate bytes", &notice("Creator"))
+            .unwrap();
+        let other = Connection::open(&database).unwrap();
+        other.busy_timeout(std::time::Duration::from_millis(0)).unwrap();
+
+        let candidates = registry
+            .with_reserved_unowned_media(1, |candidates| {
+                assert_eq!(candidates, &[(digest.clone(), 15)]);
+                // SQLite allows another connection to read, but a competing
+                // owner insert must not commit during our write reservation.
+                let other_size: i64 = other
+                    .query_row(
+                        "SELECT bytes FROM media_objects WHERE digest=?1",
+                        params![digest],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(other_size, 15);
+                assert!(other
+                    .execute(
+                        "INSERT INTO media_owners(digest,kind,owner_id)
+                         VALUES (?1,'pack','late-install')",
+                        params![digest],
+                    )
+                    .is_err());
+                candidates.to_vec()
+            })
+            .unwrap();
+        assert_eq!(candidates.len(), 1);
+        // The writer reservation was released without deleting metadata.
+        other
+            .execute(
+                "INSERT INTO media_owners(digest,kind,owner_id)
+                 VALUES (?1,'pack','late-install')",
+                params![digest],
+            )
+            .unwrap();
+        assert!(registry
+            .with_reserved_unowned_media(1, |items| items.to_vec())
+            .unwrap()
+            .is_empty());
+
+        // Invalid bounds do not call the callback or reserve a writer.
+        assert!(matches!(
+            registry.with_reserved_unowned_media(0, |_| panic!("invalid limit")),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        drop(other);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn disk_registry_rejects_symlink_hardlink_and_traversal_aliases() {
         use std::os::unix::fs::{symlink, MetadataExt};

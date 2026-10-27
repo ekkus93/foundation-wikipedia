@@ -44,25 +44,52 @@ pub fn plan_unowned_media_gc(
     let claims = registry
         .unowned_media_candidates(max_candidates)
         .map_err(MediaGcPlanError::Registry)?;
+    verify_unowned_candidates(store, &claims)
+}
+
+/// Revalidate a bounded SQLite snapshot while it remains protected by a
+/// registry writer reservation. The reservation excludes competing SQLite
+/// owner inserts, but this remains advisory until installers and file readers
+/// participate in a shared filesystem lease and crash-recovery protocol.
+pub fn plan_unowned_media_gc_with_registry_reservation(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_candidates: usize,
+) -> Result<MediaGcPlan, MediaGcPlanError> {
+    registry
+        .with_reserved_unowned_media(max_candidates, |claims| {
+            verify_unowned_candidates(store, claims)
+        })
+        .map_err(MediaGcPlanError::Registry)?
+}
+
+fn verify_unowned_candidates(
+    store: &MediaObjectStore,
+    claims: &[(String, u64)],
+) -> Result<MediaGcPlan, MediaGcPlanError> {
     let mut candidates = Vec::with_capacity(claims.len());
     let mut reclaimable_bytes = 0u64;
     for (digest, bytes) in claims {
         let verified = store
-            .verify_object_size(&digest)
+            .verify_object_size(digest)
             .map_err(MediaGcPlanError::Store)?;
-        if verified != bytes {
+        if verified != *bytes {
             return Err(MediaGcPlanError::SizeMismatch);
         }
         reclaimable_bytes = reclaimable_bytes
-            .checked_add(bytes)
+            .checked_add(*bytes)
             .ok_or(MediaGcPlanError::SizeOverflow)?;
-        candidates.push(MediaGcCandidate { digest, bytes });
+        candidates.push(MediaGcCandidate {
+            digest: digest.clone(),
+            bytes: *bytes,
+        });
     }
     Ok(MediaGcPlan {
         candidates,
         reclaimable_bytes,
     })
 }
+
 
 /// Enumerate canonical published media bytes that have no SQLite registry
 /// row. This complements the registered-but-unowned planner: a crash between
@@ -182,6 +209,39 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn reserved_gc_planner_is_read_only_and_releases_sqlite_writer_on_error() {
+        let (root, store, _) = setup();
+        let database = root.join("registry.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        let digest = store.store_bytes(b"unowned plan").unwrap();
+        registry
+            .register_verified_bytes(b"unowned plan", &notice())
+            .unwrap();
+        let plan =
+            plan_unowned_media_gc_with_registry_reservation(&store, &mut registry, 10).unwrap();
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].digest, digest);
+        assert_eq!(plan.reclaimable_bytes, b"unowned plan".len() as u64);
+        assert_eq!(registry.registered_digest_size(&digest).unwrap(), Some(12));
+
+        // A failed digest verification also releases the reservation. It
+        // cannot delete an object or its attribution/ownership metadata.
+        fs::write(root.join(&digest[..2]).join(&digest), b"corrupted...").unwrap();
+        assert!(matches!(
+            plan_unowned_media_gc_with_registry_reservation(&store, &mut registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        registry
+            .add_owner(&digest, OwnerKind::UserPin, "reader")
+            .unwrap();
+        assert!(plan_unowned_media_gc_with_registry_reservation(&store, &mut registry, 10)
+            .unwrap()
+            .candidates
+            .is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
