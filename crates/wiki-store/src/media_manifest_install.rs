@@ -7,10 +7,11 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::media_install::{
-    install_bound_owned_media_batch, install_owned_media_batch, verify_bound_required_owner_media,
-    verify_required_owner_media, MediaInstallError,
+    install_owned_media_batch, install_owned_media_batch_unlocked,
+    verify_required_owner_media, verify_required_owner_media_unlocked, MediaInstallError,
 };
 use crate::media_inventory::RequiredMedia;
+use crate::media_lease::MediaLeaseCoordinator;
 use crate::media_objects::MediaObjectStore;
 use crate::media_ownership::{MediaNotice, MediaRegistry, OwnerKind};
 
@@ -36,16 +37,17 @@ pub fn install_manifest_media_batch(
     owner_id: &str,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     install_manifest_media_batch_with_binding(
-        store, registry, assets, required, kind, owner_id, false,
+        store, registry, assets, required, kind, owner_id, false, || {},
     )
 }
 
 /// Production manifest-aware media installer. Reject an unbound or wrong-root
-/// registry before any bytes are published. The bound batch installer holds
-/// a SHARED media lease across the root check, byte staging and atomic owner
-/// registration; final required-media verification also checks binding under
-/// its own SHARED lease. The manifest must already be authenticated and must
-/// enumerate every visual required by the exact article revisions.
+/// registry before any bytes are published. A *single* SHARED media lease
+/// spans root binding, owner preflight, publication, atomic ownership commit,
+/// and final SHA-256/required-inventory verification. A cooperating exclusive
+/// GC or owner-release operation cannot interleave between commit and audit.
+/// The manifest must already be authenticated and enumerate every visual
+/// required by the exact article revisions.
 ///
 /// This function registers media ownership, NOT an installed/active pack.
 /// Snapshot activation and upstream signature validation are separate gates.
@@ -58,7 +60,7 @@ pub fn install_bound_manifest_media_batch(
     owner_id: &str,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     install_manifest_media_batch_with_binding(
-        store, registry, assets, required, kind, owner_id, true,
+        store, registry, assets, required, kind, owner_id, true, || {},
     )
 }
 
@@ -70,6 +72,7 @@ fn install_manifest_media_batch_with_binding(
     kind: OwnerKind,
     owner_id: &str,
     require_binding: bool,
+    after_commit: impl FnOnce(),
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     if required.is_empty()
         || required.len() > 100_000
@@ -111,6 +114,22 @@ fn install_manifest_media_batch_with_binding(
         return Err(ManifestMediaInstallError::InventoryMismatch);
     }
 
+    // Acquire the lease BEFORE consulting the owner's inventory. Retain it
+    // across the final post-commit verification, so a cooperating exclusive
+    // collector cannot remove bytes between installation and its audit.
+    // The unlocked helpers below must never acquire another SQLite lease.
+    let _lease = if require_binding {
+        let lease = MediaLeaseCoordinator::new(store.root())
+            .acquire_shared()
+            .map_err(|error| ManifestMediaInstallError::Install(MediaInstallError::Lease(error)))?;
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(|error| ManifestMediaInstallError::Install(MediaInstallError::Registry(error)))?;
+        Some(lease)
+    } else {
+        None
+    };
+
     // Reject an obvious reinstall conflict before staging any new bytes.
     // The registry repeats this check *inside* an IMMEDIATE SQLite transaction,
     // since another installer can change ownership after this preflight.
@@ -122,15 +141,18 @@ fn install_manifest_media_batch_with_binding(
     }
 
     let installed = if require_binding {
-        install_bound_owned_media_batch(store, registry, assets, kind, owner_id)
+        install_owned_media_batch_unlocked(store, registry, assets, kind, owner_id)
     } else {
         install_owned_media_batch(store, registry, assets, kind, owner_id)
     }
     .map_err(ManifestMediaInstallError::Install)?;
+    // Test seam: assert the lease is still held after the SQLite owner commit.
+    // Production callers pass a no-op; this is never a public callback API.
+    after_commit();
     // Never report a successful install without checking both the exact owner
-    // inventory and the stored bytes against the caller-authenticated manifest.
+    // inventory and stored bytes against the caller-authenticated manifest.
     if require_binding {
-        verify_bound_required_owner_media(store, registry, kind, owner_id, required)
+        verify_required_owner_media_unlocked(store, registry, kind, owner_id, required)
     } else {
         verify_required_owner_media(store, registry, kind, owner_id, required)
     }
@@ -159,6 +181,67 @@ mod tests {
             digest: format!("{:x}", Sha256::digest(bytes)),
             bytes: bytes.len() as u64,
         }
+    }
+
+    #[test]
+    fn bound_manifest_install_retains_shared_lease_through_post_commit_verification() {
+        use rusqlite::Connection;
+        use std::time::Duration;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-bound-manifest-lease-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let db = root.with_extension("registry.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        registry.bind_media_root(&root).unwrap();
+        let author = notice("Author");
+        let required = [entry(b"leased figure")];
+        let assets = [(b"leased figure".as_slice(), &author)];
+
+        let installed = install_manifest_media_batch_with_binding(
+            &store,
+            &mut registry,
+            &assets,
+            &required,
+            OwnerKind::Pack,
+            "physics",
+            true,
+            || {
+                // SQLite's EXCLUSIVE lease is a stand-in for a cooperating
+                // collector. It must be blocked AFTER owner commit and BEFORE
+                // the final manifest verification, not only during staging.
+                let contender = Connection::open(root.join(".media-lease.sqlite")).unwrap();
+                contender.busy_timeout(Duration::ZERO).unwrap();
+                assert!(contender.execute_batch("BEGIN EXCLUSIVE;").is_err());
+            },
+        )
+        .unwrap();
+        assert_eq!(installed, vec![required[0].digest.clone()]);
+        // Once the install returns, the exclusive lease is available again.
+        let contender = Connection::open(root.join(".media-lease.sqlite")).unwrap();
+        contender.busy_timeout(Duration::ZERO).unwrap();
+        contender.execute_batch("BEGIN EXCLUSIVE; ROLLBACK;").unwrap();
+        assert_eq!(
+            verify_bound_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "physics",
+                &required,
+            )
+            .unwrap(),
+            b"leased figure".len() as u64
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(db).unwrap();
     }
 
     #[test]

@@ -225,6 +225,19 @@ fn install_owned_media_batch_with_binding(
             .require_media_root_binding(store.root())
             .map_err(MediaInstallError::Registry)?;
     }
+    install_owned_media_batch_unlocked(store, registry, assets, kind, owner_id)
+}
+
+/// Caller must hold a SHARED media lease and validate registry-root binding
+/// before calling. The manifest installer uses this to keep its single lease
+/// alive through post-commit verification without recursively locking SQLite.
+pub(crate) fn install_owned_media_batch_unlocked(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<Vec<String>, MediaInstallError> {
     let mut staged = Vec::with_capacity(assets.len());
     for &(content, _) in assets {
         staged.push(
@@ -335,6 +348,18 @@ fn verify_required_owner_media_with_binding(
             .require_media_root_binding(store.root())
             .map_err(MediaInstallError::Registry)?;
     }
+    verify_required_owner_media_unlocked(store, registry, kind, owner_id, required)
+}
+
+/// Caller must already hold a SHARED media lease. The manifest installer
+/// verifies the committed owner inventory without releasing its install lease.
+pub(crate) fn verify_required_owner_media_unlocked(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    required: &[RequiredMedia],
+) -> Result<u64, MediaInstallError> {
     let registered = registry
         .owned_media(kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
