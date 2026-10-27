@@ -129,9 +129,7 @@ impl MediaObjectStore {
             let prefix = prefix_name
                 .to_str()
                 .ok_or(MediaObjectError::UnsafeDirectory)?;
-            if prefix == ".media-lease.sqlite"
-                || prefix == ".media-lease.sqlite-journal"
-            {
+            if prefix == ".media-lease.sqlite" || prefix == ".media-lease.sqlite-journal" {
                 // The exact private coordination file and its SQLite DELETE
                 // journal sidecar are not digest prefixes. BEGIN EXCLUSIVE
                 // may create the journal; no other sqlite sidecar name is
