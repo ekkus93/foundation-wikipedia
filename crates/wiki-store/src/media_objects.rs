@@ -106,6 +106,21 @@ impl MediaObjectStore {
             return Err(MediaObjectError::InvalidLimit);
         }
         self.object_path(&"0".repeat(64))?;
+        let _lease = MediaLeaseCoordinator::new(&self.root)
+            .acquire_shared()
+            .map_err(MediaObjectError::Lease)?;
+        self.published_object_digests_unlocked(max_objects)
+    }
+
+    /// The caller must already hold the shared or exclusive media lease.
+    pub(crate) fn published_object_digests_unlocked(
+        &self,
+        max_objects: usize,
+    ) -> Result<Vec<String>, MediaObjectError> {
+        if !(1..=10_000).contains(&max_objects) {
+            return Err(MediaObjectError::InvalidLimit);
+        }
+        self.object_path(&"0".repeat(64))?;
         let mut digests = Vec::new();
         let mut staged_count = 0usize;
         for prefix_entry in fs::read_dir(&self.root)? {
