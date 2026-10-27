@@ -237,15 +237,10 @@ mod tests {
         )
         .unwrap();
 
-        let owned = read_verified_owned_media(
-            &store,
-            &registry,
-            OwnerKind::Pack,
-            "science",
-            &digest,
-        )
-        .unwrap()
-        .unwrap();
+        let owned =
+            read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest)
+                .unwrap()
+                .unwrap();
         assert_eq!(owned.bytes, b"verified visual");
         assert_eq!(owned.notices, vec![attribution]);
         assert!(read_verified_owned_media(
@@ -277,7 +272,9 @@ mod tests {
         .unwrap();
         assert!(matches!(
             read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest),
-            Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput))
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::InvalidInput
+            ))
         ));
         raw.execute(
             "UPDATE media_notices SET creator='Creator A' WHERE digest=?1",
@@ -310,15 +307,11 @@ mod tests {
         registry
             .remove_owner(&digest, OwnerKind::Pack, "science")
             .unwrap();
-        assert!(read_verified_owned_media(
-            &store,
-            &registry,
-            OwnerKind::Pack,
-            "science",
-            &digest,
-        )
-        .unwrap()
-        .is_none());
+        assert!(
+            read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest,)
+                .unwrap()
+                .is_none()
+        );
         drop(raw);
         drop(registry);
         fs::remove_dir_all(root).unwrap();
