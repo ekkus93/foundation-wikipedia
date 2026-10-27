@@ -153,6 +153,22 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_lease_journal_is_not_mistaken_for_published_media() {
+        use crate::media_objects::MediaObjectStore;
+        let root = root();
+        let store = MediaObjectStore::new(&root);
+        let digest = store.store_bytes(b"offline map").unwrap();
+        let coordinator = MediaLeaseCoordinator::new(&root);
+        let lease = coordinator.acquire_exclusive().unwrap();
+        assert_eq!(
+            store.published_object_digests_unlocked(2).unwrap(),
+            vec![digest]
+        );
+        drop(lease);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn lock_file_is_private_and_media_inventory_skips_it() {
         use crate::media_objects::MediaObjectStore;
         let root = root();
