@@ -17,6 +17,8 @@ pub enum MediaRegistryError {
     Io(std::io::Error),
     UnsafePath,
     MissingSchema,
+    UnboundRoot,
+    RootMismatch,
     InvalidInput,
     ConflictingSize,
     ConflictingInventory,
@@ -338,6 +340,27 @@ pub(crate) fn prepare_registry_path(path: &Path) -> Result<(), MediaRegistryErro
     Ok(())
 }
 
+/// Stable operator-facing media-root identity. A renamed root or replaced
+/// directory inode is a different store and requires deliberate re-binding.
+/// This is an accident guard, not authentication against a malicious writer.
+fn media_root_identity(root: &Path) -> Result<String, MediaRegistryError> {
+    let canonical = fs::canonicalize(root)?;
+    let metadata = fs::metadata(&canonical)?;
+    if !metadata.is_dir() {
+        return Err(MediaRegistryError::UnsafePath);
+    }
+    let path = canonical.to_str().ok_or(MediaRegistryError::UnsafePath)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(format!("{}|{}|{}", path, metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(path.to_owned())
+    }
+}
+
 impl MediaRegistry {
     pub fn open(path: &Path) -> Result<Self, MediaRegistryError> {
         prepare_registry_path(path)?;
@@ -396,6 +419,70 @@ impl MediaRegistry {
              );",
         )?;
         Ok(Self { conn })
+    }
+
+    /// Explicitly bind a registry to the canonical media directory and
+    /// underlying directory inode. Call only after a full media-integrity
+    /// preflight and an operator's separate binding confirmation. Rebinding
+    /// to a different root is never implicit, even if the registry is empty.
+    pub fn bind_media_root(&mut self, root: &Path) -> Result<(), MediaRegistryError> {
+        let identity = media_root_identity(root)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS media_registry_binding (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                root_identity TEXT NOT NULL
+            );",
+        )?;
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT root_identity FROM media_registry_binding WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match existing {
+            Some(bound) if bound != identity => return Err(MediaRegistryError::RootMismatch),
+            Some(_) => {}
+            None => {
+                tx.execute(
+                    "INSERT INTO media_registry_binding(singleton,root_identity) VALUES (1,?1)",
+                    params![identity],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Fail closed on unbound or mismatched registries before any maintenance
+    /// preflight or deletion. Never create binding tables on this read path.
+    pub fn require_media_root_binding(&self, root: &Path) -> Result<(), MediaRegistryError> {
+        let identity = media_root_identity(root)?;
+        let table_exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master
+             WHERE type='table' AND name='media_registry_binding')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !table_exists {
+            return Err(MediaRegistryError::UnboundRoot);
+        }
+        let existing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT root_identity FROM media_registry_binding WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match existing {
+            None => Err(MediaRegistryError::UnboundRoot),
+            Some(bound) if bound != identity => Err(MediaRegistryError::RootMismatch),
+            Some(_) => Ok(()),
+        }
     }
 
     /// Register a digest derived from actual supplied bytes, never from a
@@ -2035,6 +2122,43 @@ mod tests {
             Err(MediaRegistryError::InvalidInput)
         ));
         assert!(registry.unowned_digests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn registry_root_binding_is_persistent_idempotent_and_rejects_other_root() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "wiki-registry-root-binding-{}-{stamp}",
+            std::process::id()
+        ));
+        let first = base.join("media");
+        let second = base.join("different");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let db = base.join("owners.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        assert!(matches!(
+            registry.require_media_root_binding(&first),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        registry.bind_media_root(&first).unwrap();
+        registry.bind_media_root(&first).unwrap();
+        assert!(matches!(
+            registry.bind_media_root(&second),
+            Err(MediaRegistryError::RootMismatch)
+        ));
+        drop(registry);
+        let reopened = MediaRegistry::open_existing(&db).unwrap();
+        reopened.require_media_root_binding(&first).unwrap();
+        assert!(matches!(
+            reopened.require_media_root_binding(&second),
+            Err(MediaRegistryError::RootMismatch)
+        ));
+        drop(reopened);
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

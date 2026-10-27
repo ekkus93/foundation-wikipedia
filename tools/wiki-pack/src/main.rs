@@ -27,7 +27,7 @@ fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
-    println!("       wiki-pack media-maintenance <--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
+    println!("       wiki-pack media-maintenance <--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");

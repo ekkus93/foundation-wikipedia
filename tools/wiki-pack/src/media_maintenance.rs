@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
-    plan_unowned_media_gc, plan_unregistered_media_gc, run_bounded_media_maintenance,
+    audit_registered_media_integrity, plan_unowned_media_gc, plan_unregistered_media_gc,
+    run_bounded_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
@@ -39,8 +40,8 @@ pub fn run(
     max_registered: usize,
     max_scanned: usize,
 ) -> Result<(), String> {
-    if !matches!(mode, "--dry-run" | "--confirm-delete") {
-        return Err("explicit --dry-run or --confirm-delete required".into());
+    if !matches!(mode, "--dry-run" | "--confirm-delete" | "--bind-registry") {
+        return Err("explicit --bind-registry, --dry-run or --confirm-delete required".into());
     }
     if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
         return Err("media budgets must each be between 1 and 10000".into());
@@ -55,6 +56,29 @@ pub fn run(
     let mut registry = MediaRegistry::open_existing(registry_path)
         .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
     let store = MediaObjectStore::new(root);
+    if mode == "--bind-registry" {
+        // A wrong but initialized registry could otherwise be bound to a
+        // populated media tree. Require a complete bounded registered-object
+        // audit and NO unexplained published orphans before binding.
+        let audit = audit_registered_media_integrity(&store, &registry, max_registered)
+            .map_err(|error| format!("registry integrity before binding: {error:?}"))?;
+        let orphans = plan_unregistered_media_gc(&store, &registry, max_scanned)
+            .map_err(|error| format!("orphan audit before binding: {error:?}"))?;
+        if !orphans.candidates.is_empty() {
+            return Err("cannot bind a registry while unregistered media orphans exist".into());
+        }
+        registry
+            .bind_media_root(root)
+            .map_err(|error| format!("cannot bind registry to media root: {error:?}"))?;
+        println!(
+            "Registry bound to media root after auditing {} objects ({} bytes); no files deleted",
+            audit.objects, audit.verified_bytes
+        );
+        return Ok(());
+    }
+    registry
+        .require_media_root_binding(root)
+        .map_err(|error| format!("media registry root binding required: {error:?}"))?;
     if mode == "--dry-run" {
         let registered = plan_unowned_media_gc(&store, &registry, max_registered)
             .map_err(|error| format!("registered preflight: {error:?}"))?;
@@ -108,7 +132,6 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let db = base.join("owners.sqlite");
         let store = MediaObjectStore::new(&root);
-        let orphan = store.store_bytes(b"interrupted import").unwrap();
         assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
         assert!(!db.exists());
         let mut registry = MediaRegistry::open(&db).unwrap();
@@ -130,6 +153,14 @@ mod tests {
             .register_verified_bytes(b"obsolete graph", &notice)
             .unwrap();
         drop(registry);
+        assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
+        run("--bind-registry", &root, &db, 10, 10).unwrap();
+        run("--bind-registry", &root, &db, 10, 10).unwrap();
+        let orphan = store.store_bytes(b"interrupted import").unwrap();
+        let other_root = base.join("wrong-media");
+        fs::create_dir_all(&other_root).unwrap();
+        assert!(run("--confirm-delete", &other_root, &db, 10, 10).is_err());
+        assert!(run("--bind-registry", &other_root, &db, 10, 10).is_err());
 
         assert!(run("no-confirm", &root, &db, 10, 10).is_err());
         assert!(run("--confirm-delete", &root, &db, 0, 10).is_err());
@@ -156,4 +187,28 @@ mod tests {
         run("--confirm-delete", &root, &db, 10, 10).unwrap();
         fs::remove_dir_all(base).unwrap();
     }
+    #[test]
+    fn registry_binding_refuses_unregistered_orphans_and_preserves_files() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "wiki-pack-bind-guard-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("media");
+        fs::create_dir_all(&root).unwrap();
+        let db = base.join("owners.sqlite");
+        let registry = MediaRegistry::open(&db).unwrap();
+        drop(registry);
+        let store = MediaObjectStore::new(&root);
+        let orphan = store.store_bytes(b"unregistered payload").unwrap();
+        assert!(run("--bind-registry", &root, &db, 10, 10).is_err());
+        assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"unregistered payload");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+
 }
