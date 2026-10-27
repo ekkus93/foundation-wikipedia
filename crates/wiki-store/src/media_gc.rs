@@ -225,6 +225,46 @@ pub fn release_owner_and_reclaim_media(
     owner_id: &str,
     max_candidates: usize,
 ) -> Result<OwnerReleaseGcOutcome, MediaGcPlanError> {
+    release_owner_and_reclaim_media_with_binding(
+        store,
+        registry,
+        kind,
+        owner_id,
+        max_candidates,
+        false,
+    )
+}
+
+/// Root-bound owner removal for production pack/cache/pin lifecycle callers.
+/// Check the persistent registry binding under the SAME exclusive lease that
+/// protects owner release and the subsequent reclaim pass. A mismatched or
+/// unbound registry must never revoke owners or delete files through this API.
+/// The legacy low-level release API remains available for in-memory fixtures.
+pub fn release_bound_owner_and_reclaim_media(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    max_candidates: usize,
+) -> Result<OwnerReleaseGcOutcome, MediaGcPlanError> {
+    release_owner_and_reclaim_media_with_binding(
+        store,
+        registry,
+        kind,
+        owner_id,
+        max_candidates,
+        true,
+    )
+}
+
+fn release_owner_and_reclaim_media_with_binding(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    max_candidates: usize,
+    require_binding: bool,
+) -> Result<OwnerReleaseGcOutcome, MediaGcPlanError> {
     // Fail invalid sweep bounds *before* mutating the owner's inventory.
     if !(1..=10_000).contains(&max_candidates) {
         return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
@@ -232,6 +272,11 @@ pub fn release_owner_and_reclaim_media(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_exclusive()
         .map_err(MediaGcPlanError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaGcPlanError::Registry)?;
+    }
     let released = registry
         .remove_all_for_owner(kind, owner_id)
         .map_err(MediaGcPlanError::Registry)?;
@@ -644,6 +689,66 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn bound_owner_release_rejects_wrong_registry_before_revocation() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"saved figure").unwrap();
+        registry
+            .register_verified_bytes(b"saved figure", &notice())
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::UserPin, "saved")
+            .unwrap();
+        assert!(matches!(
+            release_bound_owner_and_reclaim_media(
+                &store,
+                &mut registry,
+                OwnerKind::UserPin,
+                "saved",
+                10
+            ),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::UnboundRoot))
+        ));
+        assert!(registry
+            .owned_digest_size(OwnerKind::UserPin, "saved", &digest)
+            .unwrap()
+            .is_some());
+
+        registry.bind_media_root(&root).unwrap();
+        let other_root = root.with_extension("other");
+        fs::create_dir(&other_root).unwrap();
+        let other_store = MediaObjectStore::new(&other_root);
+        assert!(matches!(
+            release_bound_owner_and_reclaim_media(
+                &other_store,
+                &mut registry,
+                OwnerKind::UserPin,
+                "saved",
+                10
+            ),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::RootMismatch))
+        ));
+        assert!(registry
+            .owned_digest_size(OwnerKind::UserPin, "saved", &digest)
+            .unwrap()
+            .is_some());
+        assert_eq!(store.read_verified(&digest).unwrap(), b"saved figure");
+
+        let outcome = release_bound_owner_and_reclaim_media(
+            &store,
+            &mut registry,
+            OwnerKind::UserPin,
+            "saved",
+            10,
+        )
+        .unwrap();
+        assert_eq!(outcome.released_objects, 1);
+        assert_eq!(outcome.cleanup.unwrap().removed_objects, 1);
+        assert!(registry.registered_digest_size(&digest).unwrap().is_none());
+        fs::remove_dir_all(other_root).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
