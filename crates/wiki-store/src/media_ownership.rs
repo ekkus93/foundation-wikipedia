@@ -1339,7 +1339,10 @@ mod tests {
         let digests = registry
             .register_verified_owned_batch(&initial, OwnerKind::Pack, "math")
             .unwrap();
-        let conflicting = [(b"another figure".as_slice(), &png), (b"shared figure".as_slice(), &svg)];
+        let conflicting = [
+            (b"another figure".as_slice(), &png),
+            (b"shared figure".as_slice(), &svg),
+        ];
         assert!(matches!(
             registry.register_verified_owned_batch(&conflicting, OwnerKind::Pack, "physics"),
             Err(MediaRegistryError::ConflictingMime)
