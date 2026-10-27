@@ -206,9 +206,10 @@ mod tests {
         let orphan = store.store_bytes(b"unregistered payload").unwrap();
         assert!(run("--bind-registry", &root, &db, 10, 10).is_err());
         assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
-        assert_eq!(store.read_verified(&orphan).unwrap(), b"unregistered payload");
+        assert_eq!(
+            store.read_verified(&orphan).unwrap(),
+            b"unregistered payload"
+        );
         fs::remove_dir_all(base).unwrap();
     }
-
-
 }
