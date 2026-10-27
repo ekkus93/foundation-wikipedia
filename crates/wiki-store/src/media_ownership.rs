@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug)]
@@ -16,6 +16,7 @@ pub enum MediaRegistryError {
     Sql(rusqlite::Error),
     Io(std::io::Error),
     UnsafePath,
+    MissingSchema,
     InvalidInput,
     ConflictingSize,
     ConflictingInventory,
@@ -341,6 +342,31 @@ impl MediaRegistry {
     pub fn open(path: &Path) -> Result<Self, MediaRegistryError> {
         prepare_registry_path(path)?;
         Self::initialize(Connection::open(path)?)
+    }
+
+    /// Open an existing, initialized ownership database without creating a
+    /// missing file. Maintenance must never mistake a wrong or empty registry
+    /// for permission to reclaim every published media object.
+    ///
+    /// This prevents accidental path mistakes, not hostile path replacement.
+    pub fn open_existing(path: &Path) -> Result<Self, MediaRegistryError> {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_file() && !meta.file_type().is_symlink() => {}
+            _ => return Err(MediaRegistryError::UnsafePath),
+        }
+        prepare_registry_path(path)?;
+        // No SQLITE_OPEN_CREATE: refuse missing or replaced databases.
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type='table' AND name IN ('media_objects', 'media_notices', 'media_owners')",
+            [],
+            |row| row.get(0),
+        )?;
+        if count != 3 {
+            return Err(MediaRegistryError::MissingSchema);
+        }
+        Self::initialize(conn)
     }
 
     pub fn in_memory() -> Result<Self, MediaRegistryError> {
@@ -2009,6 +2035,40 @@ mod tests {
             Err(MediaRegistryError::InvalidInput)
         ));
         assert!(registry.unowned_digests().unwrap().is_empty());
+    }
+
+    #[test]
+    fn existing_registry_open_refuses_missing_and_uninitialized_database() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-existing-registry-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("owners.sqlite");
+        assert!(matches!(
+            MediaRegistry::open_existing(&path),
+            Err(MediaRegistryError::UnsafePath)
+        ));
+        assert!(!path.exists());
+        fs::write(&path, b"").unwrap();
+        assert!(matches!(
+            MediaRegistry::open_existing(&path),
+            Err(MediaRegistryError::MissingSchema)
+        ));
+        fs::remove_file(&path).unwrap();
+        let mut registry = MediaRegistry::open(&path).unwrap();
+        let digest = registry
+            .register_verified_bytes(b"keep figure", &notice("Alice"))
+            .unwrap();
+        drop(registry);
+        let reopened = MediaRegistry::open_existing(&path).unwrap();
+        assert_eq!(reopened.registered_digest_size(&digest).unwrap(), Some(11));
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
