@@ -63,7 +63,9 @@ pub fn run(
             .map_err(|error| format!("cannot inspect media root permissions: {error}"))?
             .permissions();
         if permissions.mode() & 0o022 != 0 {
-            return Err("media root must not be group/world writable for destructive operations".into());
+            return Err(
+                "media root must not be group/world writable for destructive operations".into(),
+            );
         }
     }
     let root_canonical = fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
