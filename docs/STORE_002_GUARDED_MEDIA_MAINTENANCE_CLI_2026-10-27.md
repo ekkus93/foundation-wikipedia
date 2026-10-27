@@ -1,7 +1,7 @@
 # STORE-002 — Guarded local media maintenance CLI
 
 Date: 2026-10-27  
-Status: **partial qualification, corrected code CI inconclusive; STORE-002 unchecked**
+Status: **partial qualification, Rust/Platform/Android ABI passed; STORE-002 unchecked**
 
 ## Motivation
 
@@ -31,7 +31,7 @@ Regression tests cover missing/empty registry rejection, read-only dry-run, inva
 - [Corrected Rust workspace CI 40517823086](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517823086): workflow **failure**, but its only job remained **queued** with **zero steps** and no diagnostic; this is inconclusive source evidence, not a verified test failure.
 - [Corrected Platform shells CI 40517823255](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517823255): **queued** at follow-up.
 
-Do not claim a CI pass until the exact corrected source commit completes all relevant checks. Recheck the queued/inconclusive CI before accepting this feature.
+The subsequent lockfile-corrected exact source SHA **`b370074d781324cd275bbd6641a0f519a302bcd0`** passed [Rust workspace CI 40518382716](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40518382716), [Platform shells CI 40518382703](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40518382703), and [Android Rust ABI CI 40518382727](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40518382727). [Android record codec probe 40518382697](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40518382697) remained in progress when documented. The final source also updates `Cargo.lock` for the new direct `wiki-store` CLI dependency. These checks qualify the bounded CLI and its synthetic tests, not a full publisher-authenticated pack lifecycle or real-device deletion acceptance.
 
 ## Remaining safety and acceptance gaps
 
