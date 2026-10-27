@@ -89,6 +89,40 @@ fn require_notice_capacity(
     Ok(())
 }
 
+/// Match the 1,024-owner ceiling enforced by integrity audits. A repeated
+/// ownership claim is valid at the ceiling; a new owner must be refused.
+/// Call inside the same SQLite write transaction as the eventual insertion.
+fn require_owner_capacity(
+    tx: &rusqlite::Transaction<'_>,
+    digest: &str,
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<(), MediaRegistryError> {
+    const MAX_OWNERS: i64 = 1024;
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM media_owners WHERE digest=?1",
+        params![digest],
+        |row| row.get(0),
+    )?;
+    if !(0..=MAX_OWNERS).contains(&count) {
+        return Err(MediaRegistryError::TooManyOwners);
+    }
+    if count == MAX_OWNERS {
+        let already_owned: bool = tx.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM media_owners
+               WHERE digest=?1 AND kind=?2 AND owner_id=?3
+             )",
+            params![digest, kind.as_str(), owner_id],
+            |row| row.get(0),
+        )?;
+        if !already_owned {
+            return Err(MediaRegistryError::TooManyOwners);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnerKind {
     Pack,
@@ -380,6 +414,7 @@ impl MediaRegistry {
                     notice.license
                 ],
             )?;
+            require_owner_capacity(&tx, &digest, kind, owner_id)?;
             tx.execute(
                 "INSERT OR IGNORE INTO media_owners(digest,kind,owner_id) VALUES (?1,?2,?3)",
                 params![digest, kind.as_str(), owner_id],
@@ -410,10 +445,36 @@ impl MediaRegistry {
         if count.is_none() {
             return Err(MediaRegistryError::UnknownObject);
         }
-        self.conn.execute(
-            "INSERT OR IGNORE INTO media_owners(digest,kind,owner_id) VALUES (?1,?2,?3)",
+        // The count predicate and insertion run in one SQLite write
+        // statement. A separate count-then-insert would let two connections
+        // independently observe 1,023 owners and both exceed the audit limit.
+        let current: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM media_owners WHERE digest=?1",
+            params![digest],
+            |row| row.get(0),
+        )?;
+        if !(0..=1024).contains(&current) {
+            return Err(MediaRegistryError::TooManyOwners);
+        }
+        let inserted = self.conn.execute(
+            "INSERT OR IGNORE INTO media_owners(digest,kind,owner_id)
+             SELECT ?1,?2,?3
+             WHERE (SELECT COUNT(*) FROM media_owners WHERE digest=?1) < 1024",
             params![digest, kind.as_str(), owner_id],
         )?;
+        if inserted == 0 {
+            let already_owned: bool = self.conn.query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM media_owners
+                   WHERE digest=?1 AND kind=?2 AND owner_id=?3
+                 )",
+                params![digest, kind.as_str(), owner_id],
+                |row| row.get(0),
+            )?;
+            if !already_owned {
+                return Err(MediaRegistryError::TooManyOwners);
+            }
+        }
         Ok(())
     }
 
@@ -1448,6 +1509,71 @@ mod tests {
             .owned_media(OwnerKind::Pack, "physics")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn owner_write_limit_preserves_existing_claims_and_allows_replacement() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let digest = registry
+            .register_verified_bytes(b"shared figure", &notice("Alice"))
+            .unwrap();
+        for index in 0..1024 {
+            registry
+                .add_owner(&digest, OwnerKind::Pack, &format!("pack_{index}"))
+                .unwrap();
+        }
+        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
+        registry.add_owner(&digest, OwnerKind::Pack, "pack_0").unwrap();
+        assert!(matches!(
+            registry.add_owner(&digest, OwnerKind::UserPin, "overflow"),
+            Err(MediaRegistryError::TooManyOwners)
+        ));
+        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
+        registry.remove_owner(&digest, OwnerKind::Pack, "pack_1").unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::UserPin, "replacement")
+            .unwrap();
+        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
+    }
+
+    #[test]
+    fn batch_owner_overflow_rolls_back_new_objects_and_notices() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let shared = registry
+            .register_verified_bytes(b"shared figure", &notice("Alice"))
+            .unwrap();
+        for index in 0..1024 {
+            registry
+                .add_owner(&shared, OwnerKind::Pack, &format!("pack_{index}"))
+                .unwrap();
+        }
+        let bob = notice("Bob");
+        let assets = [
+            (b"new figure".as_slice(), &bob),
+            (b"shared figure".as_slice(), &bob),
+        ];
+        assert!(matches!(
+            registry.register_verified_owned_batch(&assets, OwnerKind::Pack, "new_pack"),
+            Err(MediaRegistryError::TooManyOwners)
+        ));
+        let new_digest = format!("{:x}", Sha256::digest(b"new figure"));
+        assert_eq!(registry.notice_count(&new_digest).unwrap(), 0);
+        assert_eq!(registry.notice_count(&shared).unwrap(), 1);
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "new_pack")
+            .unwrap()
+            .is_empty());
+        assert!(registry.unowned_digests().unwrap().is_empty());
+        assert_eq!(registry.audit_registered_owners(&shared, 1024).unwrap(), 1024);
+
+        // Reinstalling the exact inventory for an existing owner is valid.
+        let same = [(b"shared figure".as_slice(), &notice("Alice"))];
+        assert_eq!(
+            registry
+                .register_verified_owned_batch(&same, OwnerKind::Pack, "pack_0")
+                .unwrap(),
+            vec![shared]
+        );
     }
 
     #[test]
