@@ -480,14 +480,19 @@ mod tests {
                 .store_bytes(b"new leased media")
                 .unwrap()
         });
-        writer_started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        writer_started_rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert!(!reader.is_finished());
         assert!(!writer.is_finished());
         drop(exclusive);
         assert_eq!(reader.join().unwrap(), b"leased media");
         let new_digest = writer.join().unwrap();
-        assert_eq!(store.read_verified(&new_digest).unwrap(), b"new leased media");
+        assert_eq!(
+            store.read_verified(&new_digest).unwrap(),
+            b"new leased media"
+        );
         assert_eq!(
             store.verify_object_size(&digest).unwrap(),
             b"leased media".len() as u64
