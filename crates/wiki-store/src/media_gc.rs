@@ -439,7 +439,10 @@ mod tests {
         assert_eq!(result.released_objects, 2);
         assert_eq!(result.cleanup.unwrap().removed_objects, 1);
         assert_eq!(store.read_verified(&shared).unwrap(), b"shared figure");
-        assert!(registry.registered_digest_size(&physics_only).unwrap().is_none());
+        assert!(registry
+            .registered_digest_size(&physics_only)
+            .unwrap()
+            .is_none());
         assert_eq!(
             registry
                 .owned_digest_size(OwnerKind::Pack, "mathematics", &shared)
@@ -463,14 +466,9 @@ mod tests {
         assert_eq!(other.released_objects, 1);
         assert_eq!(other.cleanup.unwrap().removed_objects, 0);
         assert_eq!(store.read_verified(&shared).unwrap(), b"shared figure");
-        let pin = release_owner_and_reclaim_media(
-            &store,
-            &mut registry,
-            OwnerKind::UserPin,
-            "saved",
-            10,
-        )
-        .unwrap();
+        let pin =
+            release_owner_and_reclaim_media(&store, &mut registry, OwnerKind::UserPin, "saved", 10)
+                .unwrap();
         assert_eq!(pin.released_objects, 1);
         assert_eq!(pin.cleanup.unwrap().removed_objects, 1);
         assert!(registry.registered_digest_size(&shared).unwrap().is_none());
@@ -488,28 +486,21 @@ mod tests {
             .add_owner(&digest, OwnerKind::Cache, "offline")
             .unwrap();
         assert!(matches!(
-            release_owner_and_reclaim_media(
-                &store,
-                &mut registry,
-                OwnerKind::Cache,
-                "offline",
-                0
-            ),
+            release_owner_and_reclaim_media(&store, &mut registry, OwnerKind::Cache, "offline", 0),
             Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
         ));
         assert!(registry
             .owned_digest_size(OwnerKind::Cache, "offline", &digest)
             .unwrap()
             .is_some());
-        fs::write(root.join(&digest[..2]).join(&digest), b"tampered offline figure").unwrap();
-        let outcome = release_owner_and_reclaim_media(
-            &store,
-            &mut registry,
-            OwnerKind::Cache,
-            "offline",
-            10,
+        fs::write(
+            root.join(&digest[..2]).join(&digest),
+            b"tampered offline figure",
         )
         .unwrap();
+        let outcome =
+            release_owner_and_reclaim_media(&store, &mut registry, OwnerKind::Cache, "offline", 10)
+                .unwrap();
         assert_eq!(outcome.released_objects, 1);
         assert!(matches!(
             outcome.cleanup,
@@ -521,7 +512,11 @@ mod tests {
             .is_empty());
         assert_eq!(registry.unowned_digests().unwrap(), vec![digest.clone()]);
         // A later cleanup can be retried without rerunning owner release.
-        fs::write(root.join(&digest[..2]).join(&digest), b"broken offline figure").unwrap();
+        fs::write(
+            root.join(&digest[..2]).join(&digest),
+            b"broken offline figure",
+        )
+        .unwrap();
         assert_eq!(
             collect_unowned_registered_media(&store, &mut registry, 10)
                 .unwrap()
