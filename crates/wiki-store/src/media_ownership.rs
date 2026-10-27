@@ -523,7 +523,12 @@ impl MediaRegistry {
             )
             .optional()?;
         bytes
-            .map(|size| u64::try_from(size).map_err(|_| MediaRegistryError::InvalidInput))
+            .map(|size| {
+                if !(1..=64 * 1024 * 1024).contains(&size) {
+                    return Err(MediaRegistryError::InvalidInput);
+                }
+                Ok(size as u64)
+            })
             .transpose()
     }
 
@@ -609,33 +614,45 @@ impl MediaRegistry {
     }
 
     /// Return only this owner's registered digest/byte claims, in stable order.
+    /// Bound the owner inventory to the same 100,000-object ceiling as the
+    /// batch installer. A corrupted or oversized SQLite registry must fail
+    /// closed rather than allocate an unbounded inventory for pack verification.
     /// These claims are not proof that the objects still exist on disk.
     pub fn owned_media(
         &self,
         kind: OwnerKind,
         owner_id: &str,
     ) -> Result<Vec<(String, u64)>, MediaRegistryError> {
-        if !valid_owner_id(owner_id) {
+        self.owned_media_bounded(kind, owner_id, 100_000)
+    }
+
+    fn owned_media_bounded(
+        &self,
+        kind: OwnerKind,
+        owner_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, u64)>, MediaRegistryError> {
+        if !valid_owner_id(owner_id) || !(1..=100_000).contains(&limit) {
             return Err(MediaRegistryError::InvalidInput);
         }
         let mut stmt = self.conn.prepare(
             "SELECT o.digest, o.bytes FROM media_objects o
              JOIN media_owners r ON r.digest=o.digest
-             WHERE r.kind=?1 AND r.owner_id=?2 ORDER BY o.digest",
+             WHERE r.kind=?1 AND r.owner_id=?2 ORDER BY o.digest LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![kind.as_str(), owner_id], |row| {
+        let rows = stmt.query_map(params![kind.as_str(), owner_id, (limit + 1) as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
         let mut entries = Vec::new();
         for row in rows {
             let (digest, size) = row?;
-            if !valid_digest(&digest) || size <= 0 {
+            if !valid_digest(&digest) || !(1..=64 * 1024 * 1024).contains(&size) {
                 return Err(MediaRegistryError::InvalidInput);
             }
-            entries.push((
-                digest,
-                u64::try_from(size).map_err(|_| MediaRegistryError::InvalidInput)?,
-            ));
+            if entries.len() == limit {
+                return Err(MediaRegistryError::TooManyCandidates);
+            }
+            entries.push((digest, size as u64));
         }
         Ok(entries)
     }
@@ -949,6 +966,62 @@ mod tests {
             registry.owned_digest_notices(OwnerKind::Pack, "physics", &digest),
             Err(MediaRegistryError::InvalidInput)
         ));
+    }
+
+    #[test]
+    fn owner_inventory_is_bounded_and_rejects_corrupt_size_claims() {
+        let mut registry = MediaRegistry::in_memory().unwrap();
+        let mut digests = Vec::new();
+        for bytes in [b"first".as_slice(), b"second", b"third"] {
+            let digest = registry.register_verified_bytes(bytes, &notice("A")).unwrap();
+            registry
+                .add_owner(&digest, OwnerKind::Pack, "science")
+                .unwrap();
+            digests.push(digest);
+        }
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "science").unwrap().len(),
+            3
+        );
+        assert!(matches!(
+            registry.owned_media_bounded(OwnerKind::Pack, "science", 2),
+            Err(MediaRegistryError::TooManyCandidates)
+        ));
+        assert!(matches!(
+            registry.owned_media_bounded(OwnerKind::Pack, "science", 0),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert_eq!(
+            registry
+                .owned_media_bounded(OwnerKind::Pack, "science", 3)
+                .unwrap()
+                .len(),
+            3
+        );
+
+        // A positive but impossible SQLite size must never reach the
+        // pack's required-media comparison or an owner-scoped reader.
+        registry
+            .conn
+            .execute(
+                "UPDATE media_objects SET bytes=?2 WHERE digest=?1",
+                params![digests[0], 64_i64 * 1024 * 1024 + 1],
+            )
+            .unwrap();
+        assert!(matches!(
+            registry.owned_media(OwnerKind::Pack, "science"),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert!(matches!(
+            registry.owned_digest_size(OwnerKind::Pack, "science", &digests[0]),
+            Err(MediaRegistryError::InvalidInput)
+        ));
+        assert_eq!(
+            registry
+                .owned_digest_size(OwnerKind::Pack, "unrelated", &digests[0])
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
