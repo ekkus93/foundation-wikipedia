@@ -21,6 +21,55 @@ pub enum MediaInstallError {
     Inventory(MediaInventoryError),
 }
 
+/// Verified bytes and the complete, validated attribution notices for one
+/// digest claimed by the requested pack, cache entry, or user pin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedOwnedMedia {
+    pub bytes: Vec<u8>,
+    pub notices: Vec<MediaNotice>,
+}
+
+/// Read an owner's media bytes and attribution under a single shared
+/// cross-process media lease. A future collector holding the exclusive lease
+/// cannot remove the underlying file between ownership lookup and the
+/// completed SHA-256-verified read.
+///
+/// This checks *local* ownership and notice integrity, not publisher trust,
+/// authenticated pack activation, or access authorization. Other registry
+/// connections can revoke ownership concurrently; the lease protects file
+/// lifetime, not an immutable ownership snapshot.
+pub fn read_verified_owned_media(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    digest: &str,
+) -> Result<Option<VerifiedOwnedMedia>, MediaInstallError> {
+    // Acquire before checking ownership: a collector must not slip between
+    // the lookup and the file open. Calling the public read_verified here
+    // would recursively acquire a second SQLite lease and could deadlock
+    // against a waiting exclusive collector.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaInstallError::Lease)?;
+    let Some(declared_bytes) = registry
+        .owned_digest_size(kind, owner_id, digest)
+        .map_err(MediaInstallError::Registry)?
+    else {
+        return Ok(None);
+    };
+    let notices = registry
+        .owned_digest_notices(kind, owner_id, digest)
+        .map_err(MediaInstallError::Registry)?;
+    let bytes = store
+        .read_verified_unlocked(digest)
+        .map_err(MediaInstallError::Store)?;
+    if bytes.len() as u64 != declared_bytes {
+        return Err(MediaInstallError::IdentityMismatch);
+    }
+    Ok(Some(VerifiedOwnedMedia { bytes, notices }))
+}
+
 /// Persist and rehash the object first, then register attribution and owner.
 /// A failure before the final ownership write must not activate a pack.
 pub fn install_owned_media(
@@ -163,6 +212,180 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn verified_owned_reader_enforces_owner_attribution_and_byte_integrity() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("wiki-owned-read-{}-{stamp}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let db = root.join("owners.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let attribution = notice("Creator A");
+        let digest = install_owned_media(
+            &store,
+            &mut registry,
+            b"verified visual",
+            &attribution,
+            OwnerKind::Pack,
+            "science",
+        )
+        .unwrap();
+
+        let owned = read_verified_owned_media(
+            &store,
+            &registry,
+            OwnerKind::Pack,
+            "science",
+            &digest,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(owned.bytes, b"verified visual");
+        assert_eq!(owned.notices, vec![attribution]);
+        assert!(read_verified_owned_media(
+            &store,
+            &registry,
+            OwnerKind::Pack,
+            "another-pack",
+            &digest,
+        )
+        .unwrap()
+        .is_none());
+        assert!(read_verified_owned_media(
+            &store,
+            &registry,
+            OwnerKind::UserPin,
+            "science",
+            &digest,
+        )
+        .unwrap()
+        .is_none());
+
+        // A corrupt attribution row must never reach a reader together with
+        // otherwise correctly hashed media bytes.
+        let raw = rusqlite::Connection::open(&db).unwrap();
+        raw.execute(
+            "UPDATE media_notices SET creator='bad' || char(10) WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+        assert!(matches!(
+            read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest),
+            Err(MediaInstallError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        raw.execute(
+            "UPDATE media_notices SET creator='Creator A' WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+
+        // Registry size corruption is rejected after the actual file read.
+        raw.execute(
+            "UPDATE media_objects SET bytes=bytes+1 WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+        assert!(matches!(
+            read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest),
+            Err(MediaInstallError::IdentityMismatch)
+        ));
+        raw.execute(
+            "UPDATE media_objects SET bytes=bytes-1 WHERE digest=?1",
+            rusqlite::params![digest],
+        )
+        .unwrap();
+        fs::write(root.join(&digest[..2]).join(&digest), b"tampered visual").unwrap();
+        assert!(matches!(
+            read_verified_owned_media(&store, &registry, OwnerKind::Pack, "science", &digest),
+            Err(MediaInstallError::Store(MediaObjectError::DigestMismatch))
+        ));
+        fs::write(root.join(&digest[..2]).join(&digest), b"verified visual").unwrap();
+
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "science")
+            .unwrap();
+        assert!(read_verified_owned_media(
+            &store,
+            &registry,
+            OwnerKind::Pack,
+            "science",
+            &digest,
+        )
+        .unwrap()
+        .is_none());
+        drop(raw);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verified_owned_reader_waits_for_exclusive_gc_lease() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-owned-read-lease-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let db = root.join("owners.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let digest = install_owned_media(
+            &store,
+            &mut registry,
+            b"lease protected media",
+            &notice("Author"),
+            OwnerKind::Pack,
+            "science",
+        )
+        .unwrap();
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker_db = db.clone();
+        let worker_digest = digest.clone();
+        let worker = std::thread::spawn(move || {
+            let store = MediaObjectStore::new(worker_root);
+            let registry = MediaRegistry::open(&worker_db).unwrap();
+            started_tx.send(()).unwrap();
+            finished_tx
+                .send(read_verified_owned_media(
+                    &store,
+                    &registry,
+                    OwnerKind::Pack,
+                    "science",
+                    &worker_digest,
+                ))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+        drop(exclusive);
+        let media = finished_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(media.bytes, b"lease protected media");
+        worker.join().unwrap();
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
