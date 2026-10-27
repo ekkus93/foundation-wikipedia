@@ -45,13 +45,40 @@ pub fn read_verified_owned_media(
     owner_id: &str,
     digest: &str,
 ) -> Result<Option<VerifiedOwnedMedia>, MediaInstallError> {
-    // Acquire before checking ownership: a collector must not slip between
-    // the lookup and the file open. Calling the public read_verified here
-    // would recursively acquire a second SQLite lease and could deadlock
-    // against a waiting exclusive collector.
+    read_verified_owned_media_with_binding(store, registry, kind, owner_id, digest, false)
+}
+
+/// Production owner-scoped media read: reject an unbound or wrong-root
+/// registry before consulting its owner claims, notices or object bytes.
+/// The binding check and SHA-256 read share one SHARED media lease.
+pub fn read_verified_bound_owned_media(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    digest: &str,
+) -> Result<Option<VerifiedOwnedMedia>, MediaInstallError> {
+    read_verified_owned_media_with_binding(store, registry, kind, owner_id, digest, true)
+}
+
+fn read_verified_owned_media_with_binding(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    digest: &str,
+    require_binding: bool,
+) -> Result<Option<VerifiedOwnedMedia>, MediaInstallError> {
+    // Acquire before checking binding or ownership: a collector must not
+    // slip between the lookup and file open. Nested SQLite leases deadlock.
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaInstallError::Registry)?;
+    }
     let Some(declared_bytes) = registry
         .owned_digest_size(kind, owner_id, digest)
         .map_err(MediaInstallError::Registry)?
@@ -223,9 +250,36 @@ pub fn verify_registered_owner_bytes(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<u64, MediaInstallError> {
+    verify_registered_owner_bytes_with_binding(store, registry, kind, owner_id, false)
+}
+
+/// Rehash a complete owner inventory only after verifying its registry
+/// belongs to the media root. This is an integrity check, not proof that an
+/// authenticated pack manifest declared every required visual.
+pub fn verify_bound_registered_owner_bytes(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<u64, MediaInstallError> {
+    verify_registered_owner_bytes_with_binding(store, registry, kind, owner_id, true)
+}
+
+fn verify_registered_owner_bytes_with_binding(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    require_binding: bool,
+) -> Result<u64, MediaInstallError> {
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaInstallError::Registry)?;
+    }
     let claims = registry
         .owned_media(kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
@@ -247,11 +301,40 @@ pub fn verify_required_owner_media(
     owner_id: &str,
     required: &[RequiredMedia],
 ) -> Result<u64, MediaInstallError> {
-    // Hold the lease across owner lookup, inventory comparison and every
-    // digest read. The unlocked verifier avoids nested SQLite lease locks.
+    verify_required_owner_media_with_binding(store, registry, kind, owner_id, required, false)
+}
+
+/// Production manifest-to-owner verification: validate the registry's media
+/// root under the same SHARED lease as the exact inventory comparison and
+/// streamed SHA-256 reads. This does not authenticate the supplied manifest.
+pub fn verify_bound_required_owner_media(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    required: &[RequiredMedia],
+) -> Result<u64, MediaInstallError> {
+    verify_required_owner_media_with_binding(store, registry, kind, owner_id, required, true)
+}
+
+fn verify_required_owner_media_with_binding(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    required: &[RequiredMedia],
+    require_binding: bool,
+) -> Result<u64, MediaInstallError> {
+    // Hold the lease across binding, owner lookup, inventory comparison and
+    // every digest read. The unlocked verifier avoids nested SQLite locks.
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaInstallError::Registry)?;
+    }
     let registered = registry
         .owned_media(kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
@@ -395,6 +478,68 @@ mod tests {
                 .len(),
             1
         );
+        let owned = read_verified_bound_owned_media(
+            &store,
+            &registry,
+            OwnerKind::Pack,
+            "math",
+            &digests[0],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(owned.bytes, b"first bound diagram");
+        assert_eq!(owned.notices, vec![author.clone()]);
+        assert!(matches!(
+            read_verified_bound_owned_media(
+                &wrong_store,
+                &registry,
+                OwnerKind::Pack,
+                "math",
+                &digests[0],
+            ),
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::RootMismatch
+            ))
+        ));
+        let required = vec![
+            RequiredMedia {
+                digest: digests[0].clone(),
+                bytes: b"first bound diagram".len() as u64,
+            },
+            RequiredMedia {
+                digest: digests[1].clone(),
+                bytes: b"second bound diagram".len() as u64,
+            },
+        ];
+        let total = required.iter().map(|entry| entry.bytes).sum::<u64>();
+        assert_eq!(
+            verify_bound_registered_owner_bytes(&store, &registry, OwnerKind::Pack, "math")
+                .unwrap(),
+            total
+        );
+        assert_eq!(
+            verify_bound_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "math",
+                &required,
+            )
+            .unwrap(),
+            total
+        );
+        assert!(matches!(
+            verify_bound_required_owner_media(
+                &wrong_store,
+                &registry,
+                OwnerKind::Pack,
+                "math",
+                &required,
+            ),
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::RootMismatch
+            ))
+        ));
         drop(registry);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(other).unwrap();
