@@ -1522,18 +1522,31 @@ mod tests {
                 .add_owner(&digest, OwnerKind::Pack, &format!("pack_{index}"))
                 .unwrap();
         }
-        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
-        registry.add_owner(&digest, OwnerKind::Pack, "pack_0").unwrap();
+        assert_eq!(
+            registry.audit_registered_owners(&digest, 1024).unwrap(),
+            1024
+        );
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "pack_0")
+            .unwrap();
         assert!(matches!(
             registry.add_owner(&digest, OwnerKind::UserPin, "overflow"),
             Err(MediaRegistryError::TooManyOwners)
         ));
-        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
-        registry.remove_owner(&digest, OwnerKind::Pack, "pack_1").unwrap();
+        assert_eq!(
+            registry.audit_registered_owners(&digest, 1024).unwrap(),
+            1024
+        );
+        registry
+            .remove_owner(&digest, OwnerKind::Pack, "pack_1")
+            .unwrap();
         registry
             .add_owner(&digest, OwnerKind::UserPin, "replacement")
             .unwrap();
-        assert_eq!(registry.audit_registered_owners(&digest, 1024).unwrap(), 1024);
+        assert_eq!(
+            registry.audit_registered_owners(&digest, 1024).unwrap(),
+            1024
+        );
     }
 
     #[test]
@@ -1564,7 +1577,10 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(registry.unowned_digests().unwrap().is_empty());
-        assert_eq!(registry.audit_registered_owners(&shared, 1024).unwrap(), 1024);
+        assert_eq!(
+            registry.audit_registered_owners(&shared, 1024).unwrap(),
+            1024
+        );
 
         // Reinstalling the exact inventory for an existing owner is valid.
         let same = [(b"shared figure".as_slice(), &notice("Alice"))];
