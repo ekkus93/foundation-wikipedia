@@ -368,7 +368,10 @@ mod tests {
         let sweep = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
         assert_eq!(sweep.removed_objects, 1);
         assert_eq!(sweep.reclaimed_bytes, b"interrupted install".len() as u64);
-        assert!(matches!(store.read_verified(&orphan), Err(MediaObjectError::Io(_))));
+        assert!(matches!(
+            store.read_verified(&orphan),
+            Err(MediaObjectError::Io(_))
+        ));
         assert_eq!(store.read_verified(&owned).unwrap(), b"owned chart");
         assert_eq!(
             store.read_verified(&registered_unowned).unwrap(),
