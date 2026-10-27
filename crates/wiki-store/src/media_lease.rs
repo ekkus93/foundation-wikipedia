@@ -77,10 +77,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-media-lease-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-media-lease-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         root
     }
@@ -97,7 +95,9 @@ mod tests {
         drop(first);
         assert!(contender.execute_batch("BEGIN EXCLUSIVE;").is_err());
         drop(second);
-        contender.execute_batch("BEGIN EXCLUSIVE; ROLLBACK;").unwrap();
+        contender
+            .execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
+            .unwrap();
         let exclusive = coordinator.acquire_exclusive().unwrap();
         assert!(contender
             .execute_batch("BEGIN DEFERRED; SELECT COUNT(*) FROM sqlite_master;")
@@ -125,7 +125,11 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
-                fs::metadata(&coordinator.path).unwrap().permissions().mode() & 0o777,
+                fs::metadata(&coordinator.path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
                 0o600
             );
         }
@@ -142,7 +146,9 @@ mod tests {
         fs::hard_link(&coordinator.path, &alias).unwrap();
         assert!(matches!(
             coordinator.acquire_shared(),
-            Err(MediaLeaseError::RegistryPath(MediaRegistryError::UnsafePath))
+            Err(MediaLeaseError::RegistryPath(
+                MediaRegistryError::UnsafePath
+            ))
         ));
         fs::remove_dir_all(root).unwrap();
     }
