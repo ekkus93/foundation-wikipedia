@@ -759,6 +759,7 @@ dependencies = [
  "sha2",
  "wiki-pack-builder",
  "wiki-source",
+ "wiki-store",
 ]
 
 [[package]]
