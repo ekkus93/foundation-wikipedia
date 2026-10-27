@@ -58,7 +58,9 @@ impl MediaLeaseCoordinator {
             }
         }
         if !ready {
-            return Err(MediaLeaseError::RegistryPath(MediaRegistryError::UnsafePath));
+            return Err(MediaLeaseError::RegistryPath(
+                MediaRegistryError::UnsafePath,
+            ));
         }
         let conn = Connection::open(&self.path).map_err(MediaLeaseError::Sql)?;
         conn.busy_timeout(Duration::from_secs(10))
