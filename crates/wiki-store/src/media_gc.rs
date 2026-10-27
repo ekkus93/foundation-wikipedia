@@ -694,6 +694,87 @@ mod tests {
     }
 
     #[test]
+    fn partial_unlink_failure_recovers_remaining_orphans_after_registry_reopen() {
+        let (root, store, _) = setup();
+        // Persist the registry OUTSIDE the published-digest root: the scanner
+        // deliberately refuses unrelated SQLite files inside the media root.
+        let db = root.with_extension("registry.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let mut digests = Vec::new();
+        for content in [
+            b"alpha graph".as_slice(),
+            b"beta graph".as_slice(),
+            b"gamma graph".as_slice(),
+        ] {
+            let digest = store.store_bytes(content).unwrap();
+            registry.register_verified_bytes(content, &notice()).unwrap();
+            digests.push(digest);
+        }
+        let pin = store.store_bytes(b"saved thumbnail").unwrap();
+        registry
+            .register_verified_bytes(b"saved thumbnail", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pin, OwnerKind::UserPin, "saved")
+            .unwrap();
+
+        let mut deleted = 0usize;
+        let failed = collect_unowned_registered_media_with_unlink(
+            &store,
+            &mut registry,
+            10,
+            |digest| {
+                if deleted == 1 {
+                    return Err(MediaObjectError::UnsafeObject);
+                }
+                deleted += 1;
+                store.unlink_verified_unlocked(digest)
+            },
+        );
+        assert!(matches!(
+            failed,
+            Err(MediaGcPlanError::PostCommitDeletion {
+                completed_objects: 1,
+                ..
+            })
+        ));
+        // The SQL transaction committed the three unowned object removals
+        // before touching any file. One file is now gone, two survive.
+        for digest in &digests {
+            assert!(registry.registered_digest_size(digest).unwrap().is_none());
+        }
+        assert_eq!(registry.registered_digest_size(&pin).unwrap(), Some(15));
+        assert_eq!(store.published_object_digests(10).unwrap().len(), 3);
+        drop(registry);
+
+        // Restart/reopen after the injected crash window. The separate
+        // orphan sweep must reclaim only the two files remaining unregistered.
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let recovered = collect_unregistered_media_orphans(&store, &mut registry, 10).unwrap();
+        assert_eq!(recovered.removed_objects, 2);
+        let remaining_bytes = b"alpha graph".len() as u64
+            + b"beta graph".len() as u64
+            + b"gamma graph".len() as u64
+            - b"alpha graph".len() as u64;
+        // All three fixtures happen to have the same byte length.
+        assert_eq!(recovered.reclaimed_bytes, remaining_bytes);
+        assert_eq!(
+            store.published_object_digests(10).unwrap(),
+            vec![pin.clone()]
+        );
+        assert_eq!(store.read_verified(&pin).unwrap(), b"saved thumbnail");
+        assert_eq!(
+            collect_unregistered_media_orphans(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(db).unwrap();
+    }
+
+    #[test]
     fn reserved_gc_planner_is_read_only_and_releases_sqlite_writer_on_error() {
         let (root, store, _) = setup();
         let database = root.join("registry.sqlite");
