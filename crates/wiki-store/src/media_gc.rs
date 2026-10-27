@@ -346,6 +346,84 @@ pub fn run_bound_media_maintenance(
     )
 }
 
+/// Result of an opt-in periodic maintenance invocation. The external timer
+/// (cron/systemd/app job) invokes the CLI; the persisted success watermark
+/// makes repeated invocations safe and avoids duplicate sweeps.
+#[derive(Debug)]
+pub enum ScheduledMediaMaintenance {
+    NotDue { next_due_epoch_seconds: u64 },
+    Ran {
+        maintenance: MediaMaintenanceOutcome,
+        /// Ok(true) only when both phases succeeded and the durable success
+        /// timestamp was committed. Ok(false) means cleanup was incomplete
+        /// and should be retried; Err means cleanup passed but the checkpoint
+        /// write failed, so the next invocation may repeat the empty sweep.
+        checkpoint: Result<bool, MediaRegistryError>,
+    },
+}
+
+/// Run a bounded, explicitly authorized cleanup only when its last *fully
+/// successful* pass is older than the interval. The exclusive media lease
+/// protects the bound-root check, persisted due check, both cleanup phases
+/// and success checkpoint from cooperating concurrent scheduled invocations.
+/// A failed/partial cleanup never advances the success watermark.
+///
+/// This function does not start a daemon, authenticate a publisher, or defend
+/// against hostile unleased registry/filesystem writers. Callers must ensure
+/// private directory permissions and invoke it via an opt-in host scheduler.
+pub fn run_bound_media_maintenance_if_due(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+    interval_seconds: u64,
+    now_epoch_seconds: u64,
+) -> Result<ScheduledMediaMaintenance, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_registered_candidates)
+        || !(1..=10_000).contains(&max_scanned_objects)
+        || !(60..=2_592_000).contains(&interval_seconds)
+        || now_epoch_seconds == 0
+        || now_epoch_seconds > i64::MAX as u64
+    {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    registry
+        .require_media_root_binding(store.root())
+        .map_err(MediaGcPlanError::Registry)?;
+    if let Some(last) = registry
+        .media_maintenance_last_success()
+        .map_err(MediaGcPlanError::Registry)?
+    {
+        let next_due_epoch_seconds = last.saturating_add(interval_seconds);
+        if now_epoch_seconds < next_due_epoch_seconds {
+            return Ok(ScheduledMediaMaintenance::NotDue {
+                next_due_epoch_seconds,
+            });
+        }
+    }
+    let maintenance = run_maintenance_phases_under_lease(
+        store,
+        registry,
+        max_registered_candidates,
+        max_scanned_objects,
+        &mut |digest| store.unlink_verified_unlocked(digest),
+    );
+    let checkpoint = if maintenance.registered.is_ok() && maintenance.orphans.is_ok() {
+        registry
+            .mark_media_maintenance_success(now_epoch_seconds)
+            .map(|()| true)
+    } else {
+        Ok(false)
+    };
+    Ok(ScheduledMediaMaintenance::Ran {
+        maintenance,
+        checkpoint,
+    })
+}
+
 fn run_bounded_media_maintenance_with_unlink(
     store: &MediaObjectStore,
     registry: &mut MediaRegistry,
@@ -384,18 +462,36 @@ fn run_bounded_media_maintenance_with_unlink_and_binding(
             .require_media_root_binding(store.root())
             .map_err(MediaGcPlanError::Registry)?;
     }
+    Ok(run_maintenance_phases_under_lease(
+        store,
+        registry,
+        max_registered_candidates,
+        max_scanned_objects,
+        &mut unlink,
+    ))
+}
+
+/// Both GC phases under an already-held EXCLUSIVE media lease. Never take a
+/// nested SQLite-backed lease here: a waiting writer could deadlock it.
+fn run_maintenance_phases_under_lease(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+    unlink: &mut impl FnMut(&str) -> Result<u64, MediaObjectError>,
+) -> MediaMaintenanceOutcome {
     let registered = collect_unowned_registered_media_under_lease(
         store,
         registry,
         max_registered_candidates,
-        &mut unlink,
+        unlink,
     );
     let orphans =
         collect_unregistered_media_orphans_under_lease(store, registry, max_scanned_objects);
-    Ok(MediaMaintenanceOutcome {
+    MediaMaintenanceOutcome {
         registered,
         orphans,
-    })
+    }
 }
 
 /// Enumerate canonical published media bytes that have no SQLite registry
@@ -1171,6 +1267,152 @@ mod tests {
         ));
         assert_eq!(store.read_verified(&pinned).unwrap(), b"pinned media");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scheduled_bound_maintenance_respects_interval_and_retains_pinned_media() {
+        let (root, store, mut registry) = setup();
+        registry.bind_media_root(&root).unwrap();
+        let pinned = store.store_bytes(b"saved diagram").unwrap();
+        registry
+            .register_verified_bytes(b"saved diagram", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
+        let stale = store.store_bytes(b"obsolete diagram").unwrap();
+        registry
+            .register_verified_bytes(b"obsolete diagram", &notice())
+            .unwrap();
+        let first =
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1000).unwrap();
+        match first {
+            ScheduledMediaMaintenance::Ran {
+                maintenance,
+                checkpoint,
+            } => {
+                assert_eq!(maintenance.registered.unwrap().removed_objects, 1);
+                assert_eq!(maintenance.orphans.unwrap().removed_objects, 0);
+                assert!(checkpoint.unwrap());
+            }
+            _ => panic!("first invocation must run"),
+        }
+        assert!(registry.registered_digest_size(&stale).unwrap().is_none());
+        let orphan = store.store_bytes(b"interrupted download").unwrap();
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1059).unwrap(),
+            ScheduledMediaMaintenance::NotDue {
+                next_due_epoch_seconds: 1060
+            }
+        ));
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 999).unwrap(),
+            ScheduledMediaMaintenance::NotDue { .. }
+        ));
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"interrupted download");
+        let due =
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1060).unwrap();
+        match due {
+            ScheduledMediaMaintenance::Ran {
+                maintenance,
+                checkpoint,
+            } => {
+                assert_eq!(maintenance.registered.unwrap().removed_objects, 0);
+                assert_eq!(maintenance.orphans.unwrap().removed_objects, 1);
+                assert!(checkpoint.unwrap());
+            }
+            _ => panic!("due invocation must run"),
+        }
+        assert!(store.read_verified(&orphan).is_err());
+        assert_eq!(store.read_verified(&pinned).unwrap(), b"saved diagram");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scheduled_maintenance_retries_failed_pass_without_advancing_checkpoint() {
+        let (root, store, mut registry) = setup();
+        registry.bind_media_root(&root).unwrap();
+        let digest = store.store_bytes(b"damaged graph").unwrap();
+        registry
+            .register_verified_bytes(b"damaged graph", &notice())
+            .unwrap();
+        fs::write(root.join(&digest[..2]).join(&digest), b"corrupt graph").unwrap();
+        let failure =
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1000).unwrap();
+        match failure {
+            ScheduledMediaMaintenance::Ran {
+                maintenance,
+                checkpoint,
+            } => {
+                assert!(maintenance.registered.is_err());
+                assert!(!checkpoint.unwrap());
+            }
+            _ => panic!("first invocation must run"),
+        }
+        assert_eq!(registry.media_maintenance_last_success().unwrap(), None);
+        fs::write(root.join(&digest[..2]).join(&digest), b"damaged graph").unwrap();
+        let retried =
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1000).unwrap();
+        assert!(matches!(
+            retried,
+            ScheduledMediaMaintenance::Ran {
+                checkpoint: Ok(true),
+                ..
+            }
+        ));
+        assert_eq!(registry.media_maintenance_last_success().unwrap(), Some(1000));
+        assert!(registry.registered_digest_size(&digest).unwrap().is_none());
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 0, 10, 60, 1060),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 1, 1060),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scheduled_checkpoint_persists_across_registry_reopen_and_refuses_wrong_root() {
+        let (root, store, _) = setup();
+        let db = root.with_extension("scheduled.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        registry.bind_media_root(&root).unwrap();
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1000).unwrap(),
+            ScheduledMediaMaintenance::Ran {
+                checkpoint: Ok(true),
+                ..
+            }
+        ));
+        drop(registry);
+        let mut registry = MediaRegistry::open_existing(&db).unwrap();
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1050).unwrap(),
+            ScheduledMediaMaintenance::NotDue {
+                next_due_epoch_seconds: 1060
+            }
+        ));
+        let other_root = root.with_extension("wrong-root");
+        fs::create_dir(&other_root).unwrap();
+        let other = MediaObjectStore::new(&other_root);
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&other, &mut registry, 10, 10, 60, 1060),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::RootMismatch))
+        ));
+        assert_eq!(registry.media_maintenance_last_success().unwrap(), Some(1000));
+        assert!(matches!(
+            run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1060).unwrap(),
+            ScheduledMediaMaintenance::Ran {
+                checkpoint: Ok(true),
+                ..
+            }
+        ));
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(other_root).unwrap();
+        fs::remove_file(db).unwrap();
     }
 
     #[test]

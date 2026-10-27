@@ -489,6 +489,65 @@ impl MediaRegistry {
         }
     }
 
+    /// Last fully successful, scheduled, bound media maintenance pass.
+    /// Missing schedule metadata means no pass has yet succeeded. A malformed
+    /// timestamp fails closed instead of permitting accidental early GC.
+    pub(crate) fn media_maintenance_last_success(
+        &self,
+    ) -> Result<Option<u64>, MediaRegistryError> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master
+             WHERE type='table' AND name='media_maintenance_schedule')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+        let last: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT last_success FROM media_maintenance_schedule WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match last {
+            Some(value) if value >= 0 => Ok(Some(value as u64)),
+            None => Ok(None),
+            _ => Err(MediaRegistryError::InvalidInput),
+        }
+    }
+
+    /// Called only after both GC phases succeed while holding the EXCLUSIVE
+    /// media lease. Persist the success watermark in the ownership registry,
+    /// not an unauthenticated file inside the media-object tree.
+    pub(crate) fn mark_media_maintenance_success(
+        &mut self,
+        now_epoch_seconds: u64,
+    ) -> Result<(), MediaRegistryError> {
+        let timestamp =
+            i64::try_from(now_epoch_seconds).map_err(|_| MediaRegistryError::InvalidInput)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS media_maintenance_schedule (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                last_success INTEGER NOT NULL CHECK(last_success >= 0)
+            );",
+        )?;
+        tx.execute(
+            "INSERT INTO media_maintenance_schedule(singleton,last_success)
+             VALUES (1,?1)
+             ON CONFLICT(singleton) DO UPDATE
+             SET last_success=MAX(last_success,excluded.last_success)",
+            params![timestamp],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Register a digest derived from actual supplied bytes, never from a
     /// caller-provided hash. Identical bytes may have multiple attribution
     /// notices without duplicating object ownership.

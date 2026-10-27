@@ -28,6 +28,7 @@ fn usage() {
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
+    println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
@@ -588,22 +589,21 @@ fn main() {
         }
         Some("media-maintenance") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 5 {
-                eprintln!("media-maintenance requires mode, media root, registry and two budgets");
-                usage();
-                std::process::exit(2);
-            }
-            let Some(mode) = fields[0].to_str() else {
+            let Some(mode) = fields.first().and_then(|value| value.to_str()) else {
                 eprintln!("Media maintenance mode must be UTF-8");
                 std::process::exit(2);
             };
+            let scheduled = mode == "--run-if-due";
+            if (scheduled && fields.len() != 6) || (!scheduled && fields.len() != 5) {
+                eprintln!("media-maintenance requires mode, root, registry, two budgets and an interval only for --run-if-due");
+                usage();
+                std::process::exit(2);
+            }
             if !matches!(
                 mode,
-                "--audit-unbound" | "--bind-registry" | "--dry-run" | "--confirm-delete"
+                "--audit-unbound" | "--bind-registry" | "--dry-run" | "--confirm-delete" | "--run-if-due"
             ) {
-                eprintln!(
-                    "Explicit --audit-unbound, --bind-registry, --dry-run or --confirm-delete required"
-                );
+                eprintln!("Explicit media maintenance mode required");
                 std::process::exit(2);
             }
             let Some(limits) = fields[3..5]
@@ -614,13 +614,30 @@ fn main() {
                 eprintln!("Media maintenance budgets must be decimal integers");
                 std::process::exit(2);
             };
-            if let Err(error) = media_maintenance::run(
-                mode,
-                Path::new(&fields[1]),
-                Path::new(&fields[2]),
-                limits[0],
-                limits[1],
-            ) {
+            let result = if scheduled {
+                let interval = fields[5]
+                    .to_str()
+                    .and_then(|value| value.parse::<u64>().ok());
+                match interval {
+                    Some(seconds) => media_maintenance::run_if_due(
+                        Path::new(&fields[1]),
+                        Path::new(&fields[2]),
+                        limits[0],
+                        limits[1],
+                        seconds,
+                    ),
+                    None => Err("scheduled interval must be a decimal integer".into()),
+                }
+            } else {
+                media_maintenance::run(
+                    mode,
+                    Path::new(&fields[1]),
+                    Path::new(&fields[2]),
+                    limits[0],
+                    limits[1],
+                )
+            };
+            if let Err(error) = result {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

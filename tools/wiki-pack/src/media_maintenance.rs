@@ -154,6 +154,82 @@ pub fn run(
     }
 }
 
+/// One opt-in invocation from cron/systemd or a host application job.
+/// Never starts a background daemon or silently enables destructive cleanup.
+pub fn run_if_due(
+    root: &Path,
+    registry_path: &Path,
+    max_registered: usize,
+    max_scanned: usize,
+    interval_seconds: u64,
+) -> Result<(), String> {
+    if !(1..=10_000).contains(&max_registered)
+        || !(1..=10_000).contains(&max_scanned)
+        || !(60..=2_592_000).contains(&interval_seconds)
+    {
+        return Err("scheduled budgets must be 1..10000 and interval 60..2592000 seconds".into());
+    }
+    safe_directory(root)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::symlink_metadata(root)
+            .map_err(|error| format!("cannot inspect media root permissions: {error}"))?
+            .permissions();
+        if permissions.mode() & 0o022 != 0 {
+            return Err("scheduled media root must not be group/world writable".into());
+        }
+    }
+    let root_canonical = fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
+    let registry_canonical = fs::canonicalize(registry_path)
+        .map_err(|error| format!("existing registry required: {error}"))?;
+    if registry_canonical.starts_with(&root_canonical) {
+        return Err("registry must be outside the media-object root".into());
+    }
+    let mut registry = MediaRegistry::open_existing(registry_path)
+        .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("invalid system clock: {error}"))?
+        .as_secs();
+    let store = MediaObjectStore::new(root);
+    match wiki_store::media_gc::run_bound_media_maintenance_if_due(
+        &store,
+        &mut registry,
+        max_registered,
+        max_scanned,
+        interval_seconds,
+        now,
+    )
+    .map_err(|error| format!("scheduled maintenance rejected: {error:?}"))?
+    {
+        wiki_store::media_gc::ScheduledMediaMaintenance::NotDue {
+            next_due_epoch_seconds,
+        } => {
+            println!("NOT DUE: next scheduled media cleanup at Unix time {next_due_epoch_seconds}; no files deleted");
+            Ok(())
+        }
+        wiki_store::media_gc::ScheduledMediaMaintenance::Ran {
+            maintenance,
+            checkpoint,
+        } => match (maintenance.registered, maintenance.orphans, checkpoint) {
+            (Ok(registered), Ok(orphans), Ok(true)) => {
+                println!(
+                    "SCHEDULED RUN: reclaimed {} registered objects ({} bytes), {} orphans ({} bytes); success checkpoint persisted",
+                    registered.removed_objects,
+                    registered.reclaimed_bytes,
+                    orphans.removed_objects,
+                    orphans.reclaimed_bytes
+                );
+                Ok(())
+            }
+            (registered, orphans, checkpoint) => Err(format!(
+                "scheduled maintenance incomplete or checkpoint failed; registered: {registered:?}; orphans: {orphans:?}; checkpoint: {checkpoint:?}"
+            )),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
