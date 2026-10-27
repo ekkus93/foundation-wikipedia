@@ -2,6 +2,7 @@
 //! The caller must independently authenticate the manifest and prove that
 //! every required visual was declared. This check only verifies local bytes.
 
+use crate::media_lease::MediaLeaseCoordinator;
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use std::collections::BTreeSet;
 
@@ -19,11 +20,33 @@ pub enum MediaInventoryError {
     WrongSize,
 }
 
-/// Rehash every declared object; never trust only a manifest checksum.
+/// Rehash every declared object under one shared media lease. An exclusive
+/// collector cannot unlink earlier inventory members during later checks.
 pub fn verify_declared_media(
     store: &MediaObjectStore,
     entries: &[RequiredMedia],
 ) -> Result<u64, MediaInventoryError> {
+    let total = validate_inventory(entries)?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(|error| MediaInventoryError::Unreadable(MediaObjectError::Lease(error)))?;
+    verify_entries_unlocked(store, entries, total)
+}
+
+/// The caller must already hold the shared/exclusive lease. This avoids
+/// nested SQLite locks during owner inventory and manifest verification.
+pub(crate) fn verify_declared_media_unlocked(
+    store: &MediaObjectStore,
+    entries: &[RequiredMedia],
+) -> Result<u64, MediaInventoryError> {
+    let total = validate_inventory(entries)?;
+    verify_entries_unlocked(store, entries, total)
+}
+
+fn validate_inventory(entries: &[RequiredMedia]) -> Result<u64, MediaInventoryError> {
     if entries.len() > 100_000 {
         return Err(MediaInventoryError::InvalidManifest);
     }
@@ -50,9 +73,17 @@ pub fn verify_declared_media(
             .filter(|n| *n <= (1u64 << 40))
             .ok_or(MediaInventoryError::InvalidManifest)?;
     }
+    Ok(total)
+}
+
+fn verify_entries_unlocked(
+    store: &MediaObjectStore,
+    entries: &[RequiredMedia],
+    total: u64,
+) -> Result<u64, MediaInventoryError> {
     for entry in entries {
         let bytes = store
-            .verify_object_size(&entry.digest)
+            .verify_object_size_unlocked(&entry.digest)
             .map_err(MediaInventoryError::Unreadable)?;
         if bytes != entry.bytes {
             return Err(MediaInventoryError::WrongSize);
@@ -66,6 +97,37 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn inventory_verification_waits_for_exclusive_lease() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("wiki-inventory-lease-{}-{stamp}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let store = MediaObjectStore::new(&root);
+        let entries = [b"first visual".as_slice(), b"second visual".as_slice()]
+            .iter()
+            .map(|bytes| RequiredMedia {
+                digest: store.store_bytes(bytes).unwrap(),
+                bytes: bytes.len() as u64,
+            })
+            .collect::<Vec<_>>();
+        let exclusive = MediaLeaseCoordinator::new(&root).acquire_exclusive().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            finished_tx.send(verify_declared_media(&MediaObjectStore::new(worker_root), &entries)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(exclusive);
+        assert_eq!(finished_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 25);
+        worker.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn inventory_verifies_bytes_and_rejects_corruption() {

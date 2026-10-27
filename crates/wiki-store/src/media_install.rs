@@ -5,7 +5,9 @@
 //! activating a snapshot. An interrupted installation may leave unowned
 //! content-addressed bytes; it must never make missing bytes look installed.
 
-use crate::media_inventory::{verify_declared_media, MediaInventoryError, RequiredMedia};
+use crate::media_inventory::{
+    verify_declared_media_unlocked, MediaInventoryError, RequiredMedia,
+};
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{
@@ -156,6 +158,9 @@ pub fn verify_registered_owner_bytes(
     kind: OwnerKind,
     owner_id: &str,
 ) -> Result<u64, MediaInstallError> {
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaInstallError::Lease)?;
     let claims = registry
         .owned_media(kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
@@ -163,7 +168,7 @@ pub fn verify_registered_owner_bytes(
         .into_iter()
         .map(|(digest, bytes)| RequiredMedia { digest, bytes })
         .collect();
-    verify_declared_media(store, &entries).map_err(MediaInstallError::Inventory)
+    verify_declared_media_unlocked(store, &entries).map_err(MediaInstallError::Inventory)
 }
 
 /// Compare an authenticated manifest's required-media inventory with exactly
@@ -177,6 +182,11 @@ pub fn verify_required_owner_media(
     owner_id: &str,
     required: &[RequiredMedia],
 ) -> Result<u64, MediaInstallError> {
+    // Hold the lease across owner lookup, inventory comparison and every
+    // digest read. The unlocked verifier avoids nested SQLite lease locks.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaInstallError::Lease)?;
     let registered = registry
         .owned_media(kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
@@ -195,7 +205,7 @@ pub fn verify_required_owner_media(
     {
         return Err(MediaInstallError::IdentityMismatch);
     }
-    verify_declared_media(store, required).map_err(MediaInstallError::Inventory)
+    verify_declared_media_unlocked(store, required).map_err(MediaInstallError::Inventory)
 }
 
 #[cfg(test)]
