@@ -488,6 +488,77 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_bound_manifest_reinstalls_never_union_owner_inventory() {
+        use crate::media_install::verify_bound_required_owner_media;
+        use std::sync::{Arc, Barrier};
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-bound-manifest-race-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let db = root.with_extension("owners.sqlite");
+        let mut initial = MediaRegistry::open(&db).unwrap();
+        initial.bind_media_root(&root).unwrap();
+        drop(initial);
+        let barrier = Arc::new(Barrier::new(2));
+        let workers: Vec<_> = [b"diagram".as_slice(), b"plot".as_slice()]
+            .into_iter()
+            .map(|content| {
+                let barrier = Arc::clone(&barrier);
+                let root = root.clone();
+                let db = db.clone();
+                std::thread::spawn(move || {
+                    let mut registry = MediaRegistry::open_existing(&db).unwrap();
+                    let store = MediaObjectStore::new(&root);
+                    let author = notice("Author");
+                    let required = [entry(content)];
+                    let assets = [(content, &author)];
+                    barrier.wait();
+                    install_bound_manifest_media_batch(
+                        &store,
+                        &mut registry,
+                        &assets,
+                        &required,
+                        OwnerKind::Pack,
+                        "physics",
+                    )
+                    .is_ok()
+                })
+            })
+            .collect();
+        let successes: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_eq!(successes.iter().filter(|ok| **ok).count(), 1);
+        let registry = MediaRegistry::open_existing(&db).unwrap();
+        let owned = registry.owned_media(OwnerKind::Pack, "physics").unwrap();
+        assert_eq!(owned.len(), 1);
+        let store = MediaObjectStore::new(&root);
+        assert_eq!(
+            verify_bound_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "physics",
+                &[RequiredMedia {
+                    digest: owned[0].0.clone(),
+                    bytes: owned[0].1,
+                }],
+            )
+            .unwrap(),
+            owned[0].1
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(db).unwrap();
+    }
+
+    #[test]
     fn concurrent_conflicting_reinstalls_never_union_owner_inventory() {
         use std::sync::{Arc, Barrier};
         let stamp = SystemTime::now()
