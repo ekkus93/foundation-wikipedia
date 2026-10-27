@@ -655,7 +655,10 @@ mod tests {
         ));
         drop(registry);
         drop(reader_lease);
-        let audit = result_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        let audit = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
         assert_eq!(audit.objects, 1);
         worker.join().unwrap();
         let registry = MediaRegistry::open_existing(&db).unwrap();
