@@ -343,3 +343,67 @@ fn owner_release_cli_reports_committed_revocation_separately_from_cleanup_failur
     assert!(store.read_verified(&digest).is_err());
     fs::remove_dir_all(base).unwrap();
 }
+
+#[test]
+fn owner_release_preview_warns_when_gc_budget_cannot_cover_all_unowned_objects() {
+    let (base, root, db) = fixture();
+    let store = MediaObjectStore::new(&root);
+    let registry = MediaRegistry::open(&db).unwrap();
+    for bytes in [b"first private".as_slice(), b"second private".as_slice()] {
+        let digest = store.store_bytes(bytes).unwrap();
+        registry.register_verified_bytes(bytes, &notice()).unwrap();
+        registry.add_owner(&digest, OwnerKind::Pack, "atlas").unwrap();
+    }
+    let existing = store.store_bytes(b"previously unowned").unwrap();
+    registry
+        .register_verified_bytes(b"previously unowned", &notice())
+        .unwrap();
+    let pinned = store.store_bytes(b"protected figure").unwrap();
+    registry
+        .register_verified_bytes(b"protected figure", &notice())
+        .unwrap();
+    registry
+        .add_owner(&pinned, OwnerKind::UserPin, "saved")
+        .unwrap();
+    drop(registry);
+    assert!(invoke("--bind-registry", &root, &db).status.success());
+
+    let preview = invoke_owner_release("--dry-run", &root, &db, "pack", "atlas", "2");
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let output = String::from_utf8_lossy(&preview.stdout);
+    assert!(output.contains("DRY RUN: 2 claims"), "{output}");
+    assert!(output.contains("2 would become unowned"), "{output}");
+    assert!(output.contains("1 already unowned"), "{output}");
+    assert!(output.contains("WARNING:"), "{output}");
+    let registry = MediaRegistry::open_existing(&db).unwrap();
+    assert_eq!(
+        registry.owned_media(OwnerKind::Pack, "atlas").unwrap().len(),
+        2
+    );
+    drop(registry);
+    assert_eq!(
+        store.read_verified(&existing).unwrap(),
+        b"previously unowned"
+    );
+    assert_eq!(store.read_verified(&pinned).unwrap(), b"protected figure");
+
+    let confirmed = invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "2");
+    assert!(!confirmed.status.success());
+    let diagnostic = String::from_utf8_lossy(&confirmed.stderr);
+    assert!(diagnostic.contains("OWNER RELEASE COMMITTED"), "{diagnostic}");
+    assert!(diagnostic.contains("cleanup incomplete"), "{diagnostic}");
+    let registry = MediaRegistry::open_existing(&db).unwrap();
+    assert!(registry
+        .owned_media(OwnerKind::Pack, "atlas")
+        .unwrap()
+        .is_empty());
+    drop(registry);
+    assert!(invoke("--confirm-delete", &root, &db).status.success());
+    assert_eq!(store.read_verified(&pinned).unwrap(), b"protected figure");
+    assert!(store.read_verified(&existing).is_err());
+    fs::remove_dir_all(base).unwrap();
+}
