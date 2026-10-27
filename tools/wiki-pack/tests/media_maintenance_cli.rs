@@ -116,3 +116,64 @@ fn public_cli_audits_orphans_but_refuses_binding_or_deletion() {
     assert_eq!(store.read_verified(&orphan).unwrap(), b"unregistered image");
     fs::remove_dir_all(base).unwrap();
 }
+
+fn invoke_scheduled(root: &Path, db: &Path, interval: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
+        .args([
+            "media-maintenance",
+            "--run-if-due",
+            root.to_str().unwrap(),
+            db.to_str().unwrap(),
+            "10",
+            "10",
+            interval,
+        ])
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn scheduled_cli_requires_binding_and_persists_success_between_invocations() {
+    let (base, root, db) = fixture();
+    let store = MediaObjectStore::new(&root);
+    let mut registry = MediaRegistry::open(&db).unwrap();
+    let pinned = store.store_bytes(b"saved illustration").unwrap();
+    registry
+        .register_verified_bytes(b"saved illustration", &notice())
+        .unwrap();
+    registry
+        .add_owner(&pinned, OwnerKind::UserPin, "saved")
+        .unwrap();
+    let stale = store.store_bytes(b"unused illustration").unwrap();
+    registry
+        .register_verified_bytes(b"unused illustration", &notice())
+        .unwrap();
+    drop(registry);
+
+    assert!(!invoke_scheduled(&root, &db, "60").status.success());
+    assert!(!invoke_scheduled(&root, &db, "0").status.success());
+    assert!(invoke("--bind-registry", &root, &db).status.success());
+    assert_eq!(store.read_verified(&stale).unwrap(), b"unused illustration");
+
+    let first = invoke_scheduled(&root, &db, "60");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).contains("SCHEDULED RUN:"));
+    assert!(store.read_verified(&stale).is_err());
+    assert_eq!(store.read_verified(&pinned).unwrap(), b"saved illustration");
+
+    let orphan = store.store_bytes(b"new interrupted object").unwrap();
+    let repeat = invoke_scheduled(&root, &db, "60");
+    assert!(
+        repeat.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeat.stderr)
+    );
+    assert!(String::from_utf8_lossy(&repeat.stdout).contains("NOT DUE:"));
+    assert_eq!(store.read_verified(&orphan).unwrap(), b"new interrupted object");
+    assert!(!invoke_scheduled(&root, &db, "2592001").status.success());
+    fs::remove_dir_all(base).unwrap();
+}
