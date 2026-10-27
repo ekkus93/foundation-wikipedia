@@ -376,10 +376,7 @@ impl MediaObjectStore {
     /// Reverify immediately before unlinking and sync the prefix directory.
     /// A failure can leave an unregistered orphan; it cannot invalidate a
     /// committed owner reference if all callers honor the lease protocol.
-    pub(crate) fn unlink_verified_unlocked(
-        &self,
-        digest: &str,
-    ) -> Result<u64, MediaObjectError> {
+    pub(crate) fn unlink_verified_unlocked(&self, digest: &str) -> Result<u64, MediaObjectError> {
         let bytes = self.verify_object_size_unlocked(digest)?;
         let path = self.object_path(digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;

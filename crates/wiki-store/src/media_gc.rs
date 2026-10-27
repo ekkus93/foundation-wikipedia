@@ -159,11 +159,9 @@ fn collect_unowned_registered_media_with_unlink(
         // A filesystem error here happens AFTER SQLite commit. The
         // unlinked remainder is now an unregistered orphan, which is
         // discoverable by the existing orphan inventory audit.
-        let removed = unlink(&digest).map_err(|source| {
-            MediaGcPlanError::PostCommitDeletion {
-                source,
-                completed_objects: report.removed_objects,
-            }
+        let removed = unlink(&digest).map_err(|source| MediaGcPlanError::PostCommitDeletion {
+            source,
+            completed_objects: report.removed_objects,
         })?;
         if removed != bytes {
             return Err(MediaGcPlanError::PostCommitSizeMismatch);
@@ -304,8 +302,12 @@ mod tests {
         registry
             .register_verified_bytes(b"pinned image", &notice())
             .unwrap();
-        registry.add_owner(&kept, OwnerKind::Pack, "biology").unwrap();
-        registry.add_owner(&kept, OwnerKind::UserPin, "saved").unwrap();
+        registry
+            .add_owner(&kept, OwnerKind::Pack, "biology")
+            .unwrap();
+        registry
+            .add_owner(&kept, OwnerKind::UserPin, "saved")
+            .unwrap();
         let released = store.store_bytes(b"released image").unwrap();
         registry
             .register_verified_bytes(b"released image", &notice())
@@ -317,7 +319,10 @@ mod tests {
         let sweep = collect_unowned_registered_media(&store, &mut registry, 10).unwrap();
         assert_eq!(sweep.removed_objects, 1);
         assert_eq!(sweep.reclaimed_bytes, b"released image".len() as u64);
-        assert!(registry.registered_digest_size(&released).unwrap().is_none());
+        assert!(registry
+            .registered_digest_size(&released)
+            .unwrap()
+            .is_none());
         assert!(matches!(
             store.read_verified(&released),
             Err(MediaObjectError::Io(_))
@@ -330,14 +335,18 @@ mod tests {
                 .removed_objects,
             0
         );
-        registry.remove_owner(&kept, OwnerKind::Pack, "biology").unwrap();
+        registry
+            .remove_owner(&kept, OwnerKind::Pack, "biology")
+            .unwrap();
         assert_eq!(
             collect_unowned_registered_media(&store, &mut registry, 10)
                 .unwrap()
                 .removed_objects,
             0
         );
-        registry.remove_owner(&kept, OwnerKind::UserPin, "saved").unwrap();
+        registry
+            .remove_owner(&kept, OwnerKind::UserPin, "saved")
+            .unwrap();
         assert_eq!(
             collect_unowned_registered_media(&store, &mut registry, 10)
                 .unwrap()
@@ -373,12 +382,10 @@ mod tests {
         registry
             .register_verified_bytes(b"crash window", &notice())
             .unwrap();
-        let result = collect_unowned_registered_media_with_unlink(
-            &store,
-            &mut registry,
-            10,
-            |_| Err(MediaObjectError::UnsafeObject),
-        );
+        let result =
+            collect_unowned_registered_media_with_unlink(&store, &mut registry, 10, |_| {
+                Err(MediaObjectError::UnsafeObject)
+            });
         assert!(matches!(
             result,
             Err(MediaGcPlanError::PostCommitDeletion {
