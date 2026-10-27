@@ -355,7 +355,7 @@ pub enum ScheduledMediaMaintenance {
         next_due_epoch_seconds: u64,
     },
     Ran {
-        maintenance: MediaMaintenanceOutcome,
+        maintenance: Box<MediaMaintenanceOutcome>,
         /// Ok(true) only when both phases succeeded and the durable success
         /// timestamp was committed. Ok(false) means cleanup was incomplete
         /// and should be retried; Err means cleanup passed but the checkpoint
@@ -406,13 +406,13 @@ pub fn run_bound_media_maintenance_if_due(
             });
         }
     }
-    let maintenance = run_maintenance_phases_under_lease(
+    let maintenance = Box::new(run_maintenance_phases_under_lease(
         store,
         registry,
         max_registered_candidates,
         max_scanned_objects,
         &mut |digest| store.unlink_verified_unlocked(digest),
-    );
+    ));
     let checkpoint = if maintenance.registered.is_ok() && maintenance.orphans.is_ok() {
         registry
             .mark_media_maintenance_success(now_epoch_seconds)
