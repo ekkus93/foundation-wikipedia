@@ -590,7 +590,9 @@ fn main() {
         }
         Some("media-owner-release") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 6 || !matches!(fields[0].to_str(), Some("--dry-run" | "--confirm-release")) {
+            if fields.len() != 6
+                || !matches!(fields[0].to_str(), Some("--dry-run" | "--confirm-release"))
+            {
                 eprintln!("media-owner-release requires explicit --dry-run or --confirm-release, root, registry, kind, owner-id and candidate limit");
                 usage();
                 std::process::exit(2);

@@ -200,14 +200,9 @@ pub fn release_owner(
         .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
     let store = MediaObjectStore::new(root);
     if mode == "--dry-run" {
-        let preview = preview_bound_owner_release(
-            &store,
-            &registry,
-            owner_kind,
-            owner_id,
-            max_candidates,
-        )
-        .map_err(|error| format!("owner-release preview rejected: {error:?}"))?;
+        let preview =
+            preview_bound_owner_release(&store, &registry, owner_kind, owner_id, max_candidates)
+                .map_err(|error| format!("owner-release preview rejected: {error:?}"))?;
         println!(
             "DRY RUN: {} claims for {kind}/{owner_id}; {} would become unowned ({} verified bytes); {} already unowned ({} verified bytes)",
             preview.owned_claims,
