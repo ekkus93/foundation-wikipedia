@@ -10,7 +10,10 @@ use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
 
 fn safe_directory(path: &Path) -> Result<(), String> {
-    if path.components().any(|part| matches!(part, Component::ParentDir)) {
+    if path
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
         return Err("media root cannot contain parent traversal".into());
     }
     for ancestor in path.ancestors() {
@@ -43,8 +46,7 @@ pub fn run(
         return Err("media budgets must each be between 1 and 10000".into());
     }
     safe_directory(root)?;
-    let root_canonical =
-        fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
+    let root_canonical = fs::canonicalize(root).map_err(|error| format!("media root: {error}"))?;
     let registry_canonical = fs::canonicalize(registry_path)
         .map_err(|error| format!("existing registry required: {error}"))?;
     if registry_canonical.starts_with(&root_canonical) {
@@ -68,13 +70,8 @@ pub fn run(
         println!("No registry rows or media bytes were deleted.");
         return Ok(());
     }
-    let outcome = run_bounded_media_maintenance(
-        &store,
-        &mut registry,
-        max_registered,
-        max_scanned,
-    )
-    .map_err(|error| format!("maintenance could not acquire lease: {error:?}"))?;
+    let outcome = run_bounded_media_maintenance(&store, &mut registry, max_registered, max_scanned)
+        .map_err(|error| format!("maintenance could not acquire lease: {error:?}"))?;
     match (outcome.registered, outcome.orphans) {
         (Ok(registered), Ok(orphans)) => {
             println!(
@@ -122,15 +119,28 @@ mod tests {
             license: "CC BY-SA 4.0".into(),
         };
         let pinned = store.store_bytes(b"saved graph").unwrap();
-        registry.register_verified_bytes(b"saved graph", &notice).unwrap();
-        registry.add_owner(&pinned, OwnerKind::UserPin, "saved").unwrap();
+        registry
+            .register_verified_bytes(b"saved graph", &notice)
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
         let unowned = store.store_bytes(b"obsolete graph").unwrap();
-        registry.register_verified_bytes(b"obsolete graph", &notice).unwrap();
+        registry
+            .register_verified_bytes(b"obsolete graph", &notice)
+            .unwrap();
         drop(registry);
 
         assert!(run("no-confirm", &root, &db, 10, 10).is_err());
         assert!(run("--confirm-delete", &root, &db, 0, 10).is_err());
-        assert!(run("--confirm-delete", &root, &root.join("owners.sqlite"), 10, 10).is_err());
+        assert!(run(
+            "--confirm-delete",
+            &root,
+            &root.join("owners.sqlite"),
+            10,
+            10
+        )
+        .is_err());
         run("--dry-run", &root, &db, 10, 10).unwrap();
         assert!(store.read_verified(&orphan).is_ok());
         assert!(store.read_verified(&unowned).is_ok());

@@ -5,9 +5,9 @@ mod audit_public_dump;
 mod css_graph_diagnostic;
 mod curated_catalog;
 mod fetch_public_dump;
+mod media_maintenance;
 mod preview_topic;
 mod visual_diagnostic;
-mod media_maintenance;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
