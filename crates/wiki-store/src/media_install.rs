@@ -5,9 +5,7 @@
 //! activating a snapshot. An interrupted installation may leave unowned
 //! content-addressed bytes; it must never make missing bytes look installed.
 
-use crate::media_inventory::{
-    verify_declared_media_unlocked, MediaInventoryError, RequiredMedia,
-};
+use crate::media_inventory::{verify_declared_media_unlocked, MediaInventoryError, RequiredMedia};
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{
