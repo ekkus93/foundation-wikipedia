@@ -7,6 +7,7 @@ mod curated_catalog;
 mod fetch_public_dump;
 mod preview_topic;
 mod visual_diagnostic;
+mod media_maintenance;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -26,6 +27,7 @@ fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify <file.wpack>");
     println!("       wiki-pack inspect <file.wpack>");
+    println!("       wiki-pack media-maintenance <--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
@@ -580,6 +582,40 @@ fn main() {
                 }
             };
             if let Err(error) = preview_topic::run(Path::new(input), json_output) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("media-maintenance") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 5 {
+                eprintln!("media-maintenance requires mode, media root, registry and two budgets");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(mode) = fields[0].to_str() else {
+                eprintln!("Mode must be --dry-run or --confirm-delete");
+                std::process::exit(2);
+            };
+            if !matches!(mode, "--dry-run" | "--confirm-delete") {
+                eprintln!("Explicit --dry-run or --confirm-delete is required");
+                std::process::exit(2);
+            }
+            let Some(limits) = fields[3..5]
+                .iter()
+                .map(|value| value.to_str()?.parse::<usize>().ok())
+                .collect::<Option<Vec<_>>>()
+            else {
+                eprintln!("Media maintenance budgets must be decimal integers");
+                std::process::exit(2);
+            };
+            if let Err(error) = media_maintenance::run(
+                mode,
+                Path::new(&fields[1]),
+                Path::new(&fields[2]),
+                limits[0],
+                limits[1],
+            ) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
