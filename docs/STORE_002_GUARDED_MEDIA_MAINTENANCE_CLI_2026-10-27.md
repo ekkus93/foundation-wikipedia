@@ -1,7 +1,7 @@
 # STORE-002 — Guarded local media maintenance CLI
 
 Date: 2026-10-27  
-Status: **partial qualification, CI queued at documentation; STORE-002 unchecked**
+Status: **partial qualification, corrected code CI inconclusive; STORE-002 unchecked**
 
 ## Motivation
 
@@ -26,10 +26,12 @@ Regression tests cover missing/empty registry rejection, read-only dry-run, inva
 
 - Registry guard commit: `e616057a6ef471e28dd3e08154d4d49500e404b9`.
 - CLI source commit: `c531db5f864dfda5a7f5942104c6631db26cd550`.
-- [Rust workspace CI 40517080313](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517080313): **queued at documentation**.
-- [Platform shells CI 40517080094](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517080094): **queued at documentation**.
+- [Rust workspace CI 40517080313](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517080313): **failed rustfmt**, no test execution.
+- Corrected source: **`627369d6a9a36acab8506753edeef489f366ea4b`**.
+- [Corrected Rust workspace CI 40517823086](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517823086): workflow **failure**, but its only job remained **queued** with **zero steps** and no diagnostic; this is inconclusive source evidence, not a verified test failure.
+- [Corrected Platform shells CI 40517823255](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40517823255): **queued** at follow-up.
 
-Do not claim a CI pass until the exact source commit completes all relevant checks.
+Do not claim a CI pass until the exact corrected source commit completes all relevant checks. Recheck the queued/inconclusive CI before accepting this feature.
 
 ## Remaining safety and acceptance gaps
 
