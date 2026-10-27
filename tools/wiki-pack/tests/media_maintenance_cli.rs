@@ -223,31 +223,47 @@ fn owner_release_cli_requires_confirmation_and_preserves_other_packs_and_pins() 
     registry
         .register_verified_bytes(b"atlas-only image", &notice())
         .unwrap();
-    registry.add_owner(&private, OwnerKind::Pack, "atlas").unwrap();
+    registry
+        .add_owner(&private, OwnerKind::Pack, "atlas")
+        .unwrap();
     drop(registry);
 
-    assert!(!invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "10")
-        .status
-        .success());
-    assert!(!invoke_owner_release("--dry-run", &root, &db, "pack", "atlas", "10")
-        .status
-        .success());
-    assert!(!invoke_owner_release("--confirm-release", &root, &db, "unknown", "atlas", "10")
-        .status
-        .success());
-    assert!(!invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "0")
-        .status
-        .success());
+    assert!(
+        !invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "10")
+            .status
+            .success()
+    );
+    assert!(
+        !invoke_owner_release("--dry-run", &root, &db, "pack", "atlas", "10")
+            .status
+            .success()
+    );
+    assert!(
+        !invoke_owner_release("--confirm-release", &root, &db, "unknown", "atlas", "10")
+            .status
+            .success()
+    );
+    assert!(
+        !invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "0")
+            .status
+            .success()
+    );
     assert_eq!(store.read_verified(&private).unwrap(), b"atlas-only image");
 
     assert!(invoke("--bind-registry", &root, &db).status.success());
     let wrong_root = base.join("wrong-root");
     fs::create_dir(&wrong_root).unwrap();
-    assert!(!invoke_owner_release(
-        "--confirm-release", &wrong_root, &db, "pack", "atlas", "10"
-    ).status.success());
+    assert!(
+        !invoke_owner_release("--confirm-release", &wrong_root, &db, "pack", "atlas", "10")
+            .status
+            .success()
+    );
     let release = invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "10");
-    assert!(release.status.success(), "{}", String::from_utf8_lossy(&release.stderr));
+    assert!(
+        release.status.success(),
+        "{}",
+        String::from_utf8_lossy(&release.stderr)
+    );
     assert!(String::from_utf8_lossy(&release.stdout).contains("2 claims removed"));
     assert!(store.read_verified(&private).is_err());
     assert_eq!(store.read_verified(&shared).unwrap(), b"shared image");
@@ -255,13 +271,17 @@ fn owner_release_cli_requires_confirmation_and_preserves_other_packs_and_pins() 
     assert!(repeat.status.success());
     assert!(String::from_utf8_lossy(&repeat.stdout).contains("0 claims removed"));
 
-    assert!(invoke_owner_release(
-        "--confirm-release", &root, &db, "pack", "reference", "10"
-    ).status.success());
+    assert!(
+        invoke_owner_release("--confirm-release", &root, &db, "pack", "reference", "10")
+            .status
+            .success()
+    );
     assert_eq!(store.read_verified(&shared).unwrap(), b"shared image");
-    assert!(invoke_owner_release(
-        "--confirm-release", &root, &db, "pin", "saved", "10"
-    ).status.success());
+    assert!(
+        invoke_owner_release("--confirm-release", &root, &db, "pin", "saved", "10")
+            .status
+            .success()
+    );
     assert!(store.read_verified(&shared).is_err());
     fs::remove_dir_all(base).unwrap();
 }
@@ -275,19 +295,25 @@ fn owner_release_cli_reports_committed_revocation_separately_from_cleanup_failur
     registry
         .register_verified_bytes(b"cache preview", &notice())
         .unwrap();
-    registry.add_owner(&digest, OwnerKind::Cache, "thumbnail").unwrap();
+    registry
+        .add_owner(&digest, OwnerKind::Cache, "thumbnail")
+        .unwrap();
     drop(registry);
     assert!(invoke("--bind-registry", &root, &db).status.success());
     fs::write(root.join(&digest[..2]).join(&digest), b"tampered bytes").unwrap();
-    let release = invoke_owner_release(
-        "--confirm-release", &root, &db, "cache", "thumbnail", "10"
-    );
+    let release = invoke_owner_release("--confirm-release", &root, &db, "cache", "thumbnail", "10");
     assert!(!release.status.success());
     let diagnostic = String::from_utf8_lossy(&release.stderr);
-    assert!(diagnostic.contains("OWNER RELEASE COMMITTED"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("OWNER RELEASE COMMITTED"),
+        "{diagnostic}"
+    );
     assert!(diagnostic.contains("cleanup incomplete"), "{diagnostic}");
     let registry = MediaRegistry::open_existing(&db).unwrap();
-    assert!(registry.owned_media(OwnerKind::Cache, "thumbnail").unwrap().is_empty());
+    assert!(registry
+        .owned_media(OwnerKind::Cache, "thumbnail")
+        .unwrap()
+        .is_empty());
     assert_eq!(registry.registered_digest_size(&digest).unwrap(), Some(13));
     drop(registry);
     fs::write(root.join(&digest[..2]).join(&digest), b"cache preview").unwrap();
@@ -295,4 +321,3 @@ fn owner_release_cli_reports_committed_revocation_separately_from_cleanup_failur
     assert!(store.read_verified(&digest).is_err());
     fs::remove_dir_all(base).unwrap();
 }
-

@@ -598,7 +598,9 @@ fn main() {
             let (Some(kind), Some(owner_id), Some(limit)) = (
                 fields[3].to_str(),
                 fields[4].to_str(),
-                fields[5].to_str().and_then(|value| value.parse::<usize>().ok()),
+                fields[5]
+                    .to_str()
+                    .and_then(|value| value.parse::<usize>().ok()),
             ) else {
                 eprintln!("Owner kind/id and candidate limit must be UTF-8 decimal values");
                 std::process::exit(2);
