@@ -40,18 +40,22 @@ pub struct MediaGcPlan {
 /// corrupted, symlinked, hardlinked, or size-mismatched objects abort the
 /// entire plan; they must never be silently counted as reclaimable.
 ///
-/// This does not enumerate orphan files absent from SQLite and must not be
-/// used as a precondition for unlinking objects without a new exclusive
-/// ownership check and coordination with concurrent installers/readers.
+/// Hold one SHARED media lease from SQLite inventory lookup through the
+/// entire streaming verification pass. This excludes cooperating collectors,
+/// but does not freeze direct SQLite owner changes or authorize deletion.
+/// Unregistered orphan files are not included in this advisory result.
 pub fn plan_unowned_media_gc(
     store: &MediaObjectStore,
     registry: &MediaRegistry,
     max_candidates: usize,
 ) -> Result<MediaGcPlan, MediaGcPlanError> {
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
     let claims = registry
         .unowned_media_candidates(max_candidates)
         .map_err(MediaGcPlanError::Registry)?;
-    verify_unowned_candidates(store, &claims, false)
+    verify_unowned_candidates(store, &claims, true)
 }
 
 /// Revalidate a bounded SQLite snapshot while it remains protected by a
@@ -78,12 +82,12 @@ pub fn plan_unowned_media_gc_with_registry_reservation(
 fn verify_unowned_candidates(
     store: &MediaObjectStore,
     claims: &[(String, u64)],
-    exclusive_lease_held: bool,
+    lease_held: bool,
 ) -> Result<MediaGcPlan, MediaGcPlanError> {
     let mut candidates = Vec::with_capacity(claims.len());
     let mut reclaimable_bytes = 0u64;
     for (digest, bytes) in claims {
-        let verified = if exclusive_lease_held {
+        let verified = if lease_held {
             store.verify_object_size_unlocked(digest)
         } else {
             store.verify_object_size(digest)
@@ -240,15 +244,20 @@ pub fn release_owner_and_reclaim_media(
 /// row. This complements the registered-but-unowned planner: a crash between
 /// byte publication and ownership registration can leave orphaned objects.
 /// The scan is bounded, verifies every reported object's SHA-256, and never
-/// unlinks files or changes registry state. Concurrent installers may register
-/// an object after the query, so this is NOT safe deletion authorization.
+/// unlinks files or changes registry state. A single SHARED lease covers the
+/// directory scan, registry lookups and all file verification, excluding
+/// cooperating collectors. Direct registry writers can still change owners;
+/// this is NOT safe deletion authorization.
 pub fn plan_unregistered_media_gc(
     store: &MediaObjectStore,
     registry: &MediaRegistry,
     max_scanned_objects: usize,
 ) -> Result<MediaGcPlan, MediaGcPlanError> {
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
     let digests = store
-        .published_object_digests(max_scanned_objects)
+        .published_object_digests_unlocked(max_scanned_objects)
         .map_err(MediaGcPlanError::Store)?;
     let mut candidates = Vec::new();
     let mut reclaimable_bytes = 0u64;
@@ -261,7 +270,7 @@ pub fn plan_unregistered_media_gc(
             continue;
         }
         let bytes = store
-            .verify_object_size(&digest)
+            .verify_object_size_unlocked(&digest)
             .map_err(MediaGcPlanError::Store)?;
         reclaimable_bytes = reclaimable_bytes
             .checked_add(bytes)
