@@ -13,7 +13,9 @@ use crate::media_install::{
 use crate::media_inventory::RequiredMedia;
 use crate::media_lease::MediaLeaseCoordinator;
 use crate::media_objects::MediaObjectStore;
-use crate::media_ownership::{valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind};
+use crate::media_ownership::{
+    valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind,
+};
 
 #[derive(Debug)]
 pub enum ManifestMediaInstallError {
