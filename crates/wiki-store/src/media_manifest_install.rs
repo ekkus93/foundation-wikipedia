@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::media_install::{
-    install_owned_media_batch, install_owned_media_batch_unlocked,
-    verify_required_owner_media, verify_required_owner_media_unlocked, MediaInstallError,
+    install_owned_media_batch, install_owned_media_batch_unlocked, verify_required_owner_media,
+    verify_required_owner_media_unlocked, MediaInstallError,
 };
 use crate::media_inventory::RequiredMedia;
 use crate::media_lease::MediaLeaseCoordinator;
@@ -37,7 +37,14 @@ pub fn install_manifest_media_batch(
     owner_id: &str,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     install_manifest_media_batch_with_binding(
-        store, registry, assets, required, kind, owner_id, false, || {},
+        store,
+        registry,
+        assets,
+        required,
+        kind,
+        owner_id,
+        false,
+        || {},
     )
 }
 
@@ -60,7 +67,14 @@ pub fn install_bound_manifest_media_batch(
     owner_id: &str,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     install_manifest_media_batch_with_binding(
-        store, registry, assets, required, kind, owner_id, true, || {},
+        store,
+        registry,
+        assets,
+        required,
+        kind,
+        owner_id,
+        true,
+        || {},
     )
 }
 
@@ -124,7 +138,9 @@ fn install_manifest_media_batch_with_binding(
             .map_err(|error| ManifestMediaInstallError::Install(MediaInstallError::Lease(error)))?;
         registry
             .require_media_root_binding(store.root())
-            .map_err(|error| ManifestMediaInstallError::Install(MediaInstallError::Registry(error)))?;
+            .map_err(|error| {
+                ManifestMediaInstallError::Install(MediaInstallError::Registry(error))
+            })?;
         Some(lease)
     } else {
         None
@@ -227,7 +243,9 @@ mod tests {
         // Once the install returns, the exclusive lease is available again.
         let contender = Connection::open(root.join(".media-lease.sqlite")).unwrap();
         contender.busy_timeout(Duration::ZERO).unwrap();
-        contender.execute_batch("BEGIN EXCLUSIVE; ROLLBACK;").unwrap();
+        contender
+            .execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
+            .unwrap();
         assert_eq!(
             verify_bound_required_owner_media(
                 &store,
