@@ -440,9 +440,8 @@ mod tests {
         // environment expansion is a single systemd ExecStart argument.
         assert!(service.contains("Type=oneshot"));
         assert!(service.contains("UMask=0077"));
-        assert!(service.contains(
-            "EnvironmentFile=%h/.config/foundation-wikipedia/media-maintenance.env"
-        ));
+        assert!(service
+            .contains("EnvironmentFile=%h/.config/foundation-wikipedia/media-maintenance.env"));
         assert!(service.contains(
             "ExecStart=%h/.local/bin/wiki-pack media-maintenance --run-if-due ${MEDIA_ROOT} ${REGISTRY_PATH} ${MAX_REGISTERED} ${MAX_SCANNED} ${INTERVAL_SECONDS}"
         ));
@@ -461,6 +460,4 @@ mod tests {
         ] {
             assert!(environment.contains(variable));
         }
-    }
-
-}
+    }}
