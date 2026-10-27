@@ -173,7 +173,10 @@ fn scheduled_cli_requires_binding_and_persists_success_between_invocations() {
         String::from_utf8_lossy(&repeat.stderr)
     );
     assert!(String::from_utf8_lossy(&repeat.stdout).contains("NOT DUE:"));
-    assert_eq!(store.read_verified(&orphan).unwrap(), b"new interrupted object");
+    assert_eq!(
+        store.read_verified(&orphan).unwrap(),
+        b"new interrupted object"
+    );
     assert!(!invoke_scheduled(&root, &db, "2592001").status.success());
     fs::remove_dir_all(base).unwrap();
 }
