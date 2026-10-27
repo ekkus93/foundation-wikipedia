@@ -263,6 +263,10 @@ pub struct MediaRegistry {
     conn: Connection,
 }
 
+/// Nested result distinguishes SQLite transaction failure from a caller's
+/// failed media-byte verification, both of which must leave the transaction uncommitted.
+type VerifiedUnownedCommit<T, E> = Result<Result<(T, Vec<(String, u64)>), E>, MediaRegistryError>;
+
 /// Fail closed on registry aliases before SQLite opens a mutable ownership
 /// database. This is a pathname preflight, not a defense against concurrent
 /// directory replacement by an untrusted process.
@@ -749,7 +753,7 @@ impl MediaRegistry {
         &mut self,
         limit: usize,
         validate: impl FnOnce(&[(String, u64)]) -> Result<T, E>,
-    ) -> Result<Result<(T, Vec<(String, u64)>), E>, MediaRegistryError> {
+    ) -> VerifiedUnownedCommit<T, E> {
         if !(1..=10_000).contains(&limit) {
             return Err(MediaRegistryError::InvalidInput);
         }
