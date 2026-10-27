@@ -348,7 +348,7 @@ fn owner_release_cli_reports_committed_revocation_separately_from_cleanup_failur
 fn owner_release_preview_warns_when_gc_budget_cannot_cover_all_unowned_objects() {
     let (base, root, db) = fixture();
     let store = MediaObjectStore::new(&root);
-    let registry = MediaRegistry::open(&db).unwrap();
+    let mut registry = MediaRegistry::open(&db).unwrap();
     for bytes in [b"first private".as_slice(), b"second private".as_slice()] {
         let digest = store.store_bytes(bytes).unwrap();
         registry.register_verified_bytes(bytes, &notice()).unwrap();
