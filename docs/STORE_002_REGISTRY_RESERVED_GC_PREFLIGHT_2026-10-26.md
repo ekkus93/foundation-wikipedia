@@ -27,3 +27,15 @@ objects. Before deletion, implement a cross-process lease protocol
 covering installations, file readers and GC, crash-safe tombstones/recovery,
 and failure-injection tests. Do not mark STORE-002 complete based on this
 limited reservation.
+
+## Exact-head CI qualification
+
+The first implementation SHA `899c00471f4afe4786b2c6f95af90f266a03499d`
+failed the Rust formatting gate
+([40458185645](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40458185645)).
+The corrected exact code SHA `c6d9378575c473fa020e3311d4d900e357ddb585`
+passed [Rust workspace CI 40458777426](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40458777426),
+[Platform shells CI 40458777114](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40458777114),
+and [Android Rust ABI qualification 40458777011](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40458777011).
+[Android record codec probe 40458777030](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40458777030)
+was not yet terminal when recorded; recheck before treating it as passed.
