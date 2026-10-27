@@ -594,11 +594,16 @@ fn main() {
                 std::process::exit(2);
             }
             let Some(mode) = fields[0].to_str() else {
-                eprintln!("Mode must be --dry-run or --confirm-delete");
+                eprintln!("Media maintenance mode must be UTF-8");
                 std::process::exit(2);
             };
-            if !matches!(mode, "--dry-run" | "--confirm-delete") {
-                eprintln!("Explicit --dry-run or --confirm-delete is required");
+            if !matches!(
+                mode,
+                "--audit-unbound" | "--bind-registry" | "--dry-run" | "--confirm-delete"
+            ) {
+                eprintln!(
+                    "Explicit --audit-unbound, --bind-registry, --dry-run or --confirm-delete required"
+                );
                 std::process::exit(2);
             }
             let Some(limits) = fields[3..5]
