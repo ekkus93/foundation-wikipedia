@@ -102,8 +102,14 @@ mod tests {
     fn inventory_verification_waits_for_exclusive_lease() {
         use std::sync::mpsc;
         use std::time::Duration;
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-inventory-lease-{}-{stamp}", std::process::id()));
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-inventory-lease-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir(&root).unwrap();
         let store = MediaObjectStore::new(&root);
         let entries = [b"first visual".as_slice(), b"second visual".as_slice()]
@@ -113,18 +119,33 @@ mod tests {
                 bytes: bytes.len() as u64,
             })
             .collect::<Vec<_>>();
-        let exclusive = MediaLeaseCoordinator::new(&root).acquire_exclusive().unwrap();
+        let exclusive = MediaLeaseCoordinator::new(&root)
+            .acquire_exclusive()
+            .unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let (finished_tx, finished_rx) = mpsc::channel();
         let worker_root = root.clone();
         let worker = std::thread::spawn(move || {
             started_tx.send(()).unwrap();
-            finished_tx.send(verify_declared_media(&MediaObjectStore::new(worker_root), &entries)).unwrap();
+            finished_tx
+                .send(verify_declared_media(
+                    &MediaObjectStore::new(worker_root),
+                    &entries,
+                ))
+                .unwrap();
         });
         started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
         drop(exclusive);
-        assert_eq!(finished_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(), 25);
+        assert_eq!(
+            finished_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            25
+        );
         worker.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
