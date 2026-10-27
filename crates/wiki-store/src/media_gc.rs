@@ -886,20 +886,15 @@ mod tests {
         let store = MediaObjectStore::new(&root);
         let database = root.with_extension("process-kill.sqlite");
         let mut registry = MediaRegistry::open(&database).unwrap();
-        let _ = collect_unowned_registered_media_with_unlink(
-            &store,
-            &mut registry,
-            10,
-            |digest| {
-                let bytes = store.unlink_verified_unlocked(digest)?;
-                // This is deliberately a process termination, not a returned
-                // error: no Rust destructors or SQLite RAII cleanup run.
-                if std::env::var_os("FW_STORE_002_GC_CHILD_ROOT").is_some() {
-                    std::process::exit(77);
-                }
-                Ok(bytes)
-            },
-        );
+        let _ = collect_unowned_registered_media_with_unlink(&store, &mut registry, 10, |digest| {
+            let bytes = store.unlink_verified_unlocked(digest)?;
+            // This is deliberately a process termination, not a returned
+            // error: no Rust destructors or SQLite RAII cleanup run.
+            if std::env::var_os("FW_STORE_002_GC_CHILD_ROOT").is_some() {
+                std::process::exit(77);
+            }
+            Ok(bytes)
+        });
         panic!("child must terminate at the post-commit unlink killpoint");
     }
 
