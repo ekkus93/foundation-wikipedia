@@ -5,7 +5,7 @@ use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
     audit_media_for_registry_binding, bind_registry_after_complete_media_audit,
-    plan_unowned_media_gc, plan_unregistered_media_gc, run_bounded_media_maintenance,
+    plan_unowned_media_gc, plan_unregistered_media_gc, run_bound_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
@@ -120,7 +120,7 @@ pub fn run(
         println!("No registry rows or media bytes were deleted.");
         return Ok(());
     }
-    let outcome = run_bounded_media_maintenance(&store, &mut registry, max_registered, max_scanned)
+    let outcome = run_bound_media_maintenance(&store, &mut registry, max_registered, max_scanned)
         .map_err(|error| format!("maintenance could not acquire lease: {error:?}"))?;
     match (outcome.registered, outcome.orphans) {
         (Ok(registered), Ok(orphans)) => {

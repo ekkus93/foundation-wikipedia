@@ -280,11 +280,50 @@ pub fn run_bounded_media_maintenance(
     )
 }
 
+/// Production maintenance boundary for a persistently root-bound registry.
+/// Recheck the binding AFTER taking the exclusive media lease and BEFORE
+/// committing any SQLite deletions. The CLI's earlier binding check is only
+/// an advisory preflight; it cannot replace this lock-scoped check.
+/// This still cannot prevent uncooperative direct SQLite/filesystem mutation.
+pub fn run_bound_media_maintenance(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+) -> Result<MediaMaintenanceOutcome, MediaGcPlanError> {
+    run_bounded_media_maintenance_with_unlink_and_binding(
+        store,
+        registry,
+        max_registered_candidates,
+        max_scanned_objects,
+        true,
+        |digest| store.unlink_verified_unlocked(digest),
+    )
+}
+
 fn run_bounded_media_maintenance_with_unlink(
     store: &MediaObjectStore,
     registry: &mut MediaRegistry,
     max_registered_candidates: usize,
     max_scanned_objects: usize,
+    unlink: impl FnMut(&str) -> Result<u64, MediaObjectError>,
+) -> Result<MediaMaintenanceOutcome, MediaGcPlanError> {
+    run_bounded_media_maintenance_with_unlink_and_binding(
+        store,
+        registry,
+        max_registered_candidates,
+        max_scanned_objects,
+        false,
+        unlink,
+    )
+}
+
+fn run_bounded_media_maintenance_with_unlink_and_binding(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_registered_candidates: usize,
+    max_scanned_objects: usize,
+    require_binding: bool,
     mut unlink: impl FnMut(&str) -> Result<u64, MediaObjectError>,
 ) -> Result<MediaMaintenanceOutcome, MediaGcPlanError> {
     if !(1..=10_000).contains(&max_registered_candidates)
@@ -295,6 +334,11 @@ fn run_bounded_media_maintenance_with_unlink(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_exclusive()
         .map_err(MediaGcPlanError::Lease)?;
+    if require_binding {
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(MediaGcPlanError::Registry)?;
+    }
     let registered = collect_unowned_registered_media_under_lease(
         store,
         registry,
@@ -600,6 +644,56 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn bound_maintenance_rechecks_root_identity_before_any_deletion() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"retired image").unwrap();
+        registry
+            .register_verified_bytes(b"retired image", &notice())
+            .unwrap();
+        // A caller bypassing the CLI must not reclaim bytes through the
+        // production entry point with an unbound registry.
+        assert!(matches!(
+            run_bound_media_maintenance(&store, &mut registry, 10, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::UnboundRoot))
+        ));
+        assert_eq!(store.read_verified(&digest).unwrap(), b"retired image");
+        assert_eq!(
+            registry.registered_digest_size(&digest).unwrap(),
+            Some(b"retired image".len() as u64)
+        );
+
+        registry.bind_media_root(&root).unwrap();
+        let other_root = root.with_extension("different-root");
+        fs::create_dir(&other_root).unwrap();
+        let other_store = MediaObjectStore::new(&other_root);
+        let other_digest = other_store.store_bytes(b"unregistered unknown").unwrap();
+        assert!(matches!(
+            run_bound_media_maintenance(&other_store, &mut registry, 10, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::RootMismatch))
+        ));
+        assert_eq!(
+            other_store.read_verified(&other_digest).unwrap(),
+            b"unregistered unknown"
+        );
+        assert_eq!(store.read_verified(&digest).unwrap(), b"retired image");
+
+        let result = run_bound_media_maintenance(&store, &mut registry, 10, 10).unwrap();
+        assert_eq!(result.registered.unwrap().removed_objects, 1);
+        assert_eq!(result.orphans.unwrap().removed_objects, 0);
+        assert!(registry.registered_digest_size(&digest).unwrap().is_none());
+        assert_eq!(
+            run_bound_media_maintenance(&store, &mut registry, 10, 10)
+                .unwrap()
+                .registered
+                .unwrap()
+                .removed_objects,
+            0
+        );
+        fs::remove_dir_all(other_root).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
