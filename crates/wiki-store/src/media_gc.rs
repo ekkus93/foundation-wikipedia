@@ -496,6 +496,47 @@ fn audit_registered_media_integrity_under_lease(
     })
 }
 
+/// Read-only pre-binding diagnostics for an existing ownership registry.
+/// The registered inventory is verified completely and every published
+/// unregistered object is SHA-256 checked. No binding or deletion is performed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaBindingPreflight {
+    pub registered: RegisteredMediaAudit,
+    pub orphans: MediaGcPlan,
+}
+
+/// Allow an operator to reconcile unbound registries with orphan files
+/// without first granting the registry deletion authority. One SHARED lease
+/// covers both audits, excluding cooperating installers and collectors.
+pub fn audit_media_for_registry_binding(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_registered: usize,
+    max_scanned: usize,
+) -> Result<MediaBindingPreflight, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
+    audit_media_for_registry_binding_under_lease(store, registry, max_registered, max_scanned)
+}
+
+fn audit_media_for_registry_binding_under_lease(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_registered: usize,
+    max_scanned: usize,
+) -> Result<MediaBindingPreflight, MediaGcPlanError> {
+    let registered = audit_registered_media_integrity_under_lease(store, registry, max_registered)?;
+    let orphans = plan_unregistered_media_gc_under_lease(store, registry, max_scanned)?;
+    Ok(MediaBindingPreflight {
+        registered,
+        orphans,
+    })
+}
+
 /// Explicitly bind an existing registry only after an entire, bounded
 /// registered-media integrity audit AND an orphan-free published-media scan.
 /// A single EXCLUSIVE lease spans both preflights and the SQLite binding
@@ -519,17 +560,17 @@ pub fn bind_registry_after_complete_media_audit(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_exclusive()
         .map_err(MediaGcPlanError::Lease)?;
-    let audit = audit_registered_media_integrity_under_lease(store, registry, max_registered)?;
-    let orphans = plan_unregistered_media_gc_under_lease(store, registry, max_scanned)?;
-    if !orphans.candidates.is_empty() {
+    let preflight =
+        audit_media_for_registry_binding_under_lease(store, registry, max_registered, max_scanned)?;
+    if !preflight.orphans.candidates.is_empty() {
         return Err(MediaGcPlanError::UnregisteredOrphans {
-            count: orphans.candidates.len(),
+            count: preflight.orphans.candidates.len(),
         });
     }
     registry
         .bind_media_root(store.root())
         .map_err(MediaGcPlanError::Registry)?;
-    Ok(audit)
+    Ok(preflight.registered)
 }
 
 #[cfg(test)]
@@ -559,6 +600,39 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn unbound_registry_audit_lists_verified_orphans_without_mutating_anything() {
+        let (root, store, mut registry) = setup();
+        let owned = store.store_bytes(b"retained map").unwrap();
+        registry
+            .register_verified_bytes(b"retained map", &notice())
+            .unwrap();
+        registry
+            .add_owner(&owned, OwnerKind::Pack, "geography")
+            .unwrap();
+        let orphan = store.store_bytes(b"unknown atlas").unwrap();
+        let preflight = audit_media_for_registry_binding(&store, &registry, 10, 10).unwrap();
+        assert_eq!(preflight.registered.objects, 1);
+        assert_eq!(preflight.registered.verified_bytes, b"retained map".len() as u64);
+        assert_eq!(preflight.orphans.candidates.len(), 1);
+        assert_eq!(preflight.orphans.candidates[0].digest, orphan);
+        assert_eq!(
+            preflight.orphans.reclaimable_bytes,
+            b"unknown atlas".len() as u64
+        );
+        assert!(matches!(
+            registry.require_media_root_binding(&root),
+            Err(MediaRegistryError::UnboundRoot)
+        ));
+        assert!(matches!(
+            audit_media_for_registry_binding(&store, &registry, 10, 0),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert_eq!(store.read_verified(&owned).unwrap(), b"retained map");
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"unknown atlas");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

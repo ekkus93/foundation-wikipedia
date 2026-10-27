@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
-    bind_registry_after_complete_media_audit, plan_unowned_media_gc, plan_unregistered_media_gc,
-    run_bounded_media_maintenance,
+    audit_media_for_registry_binding, bind_registry_after_complete_media_audit,
+    plan_unowned_media_gc, plan_unregistered_media_gc, run_bounded_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::MediaRegistry;
@@ -40,8 +40,11 @@ pub fn run(
     max_registered: usize,
     max_scanned: usize,
 ) -> Result<(), String> {
-    if !matches!(mode, "--dry-run" | "--confirm-delete" | "--bind-registry") {
-        return Err("explicit --bind-registry, --dry-run or --confirm-delete required".into());
+    if !matches!(
+        mode,
+        "--dry-run" | "--confirm-delete" | "--bind-registry" | "--audit-unbound"
+    ) {
+        return Err("explicit --audit-unbound, --bind-registry, --dry-run or --confirm-delete required".into());
     }
     if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
         return Err("media budgets must each be between 1 and 10000".into());
@@ -56,6 +59,30 @@ pub fn run(
     let mut registry = MediaRegistry::open_existing(registry_path)
         .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
     let store = MediaObjectStore::new(root);
+    if mode == "--audit-unbound" {
+        // An unbound registry cannot use --dry-run (which requires a trusted
+        // root binding). This explicit diagnostic has NO deletion authority.
+        let audit = audit_media_for_registry_binding(
+            &store,
+            &registry,
+            max_registered,
+            max_scanned,
+        )
+        .map_err(|error| format!("unbound media audit failed: {error:?}"))?;
+        println!(
+            "READ ONLY: {} registered objects ({} verified bytes); {} unregistered published objects ({} bytes)",
+            audit.registered.objects,
+            audit.registered.verified_bytes,
+            audit.orphans.candidates.len(),
+            audit.orphans.reclaimable_bytes
+        );
+        for orphan in &audit.orphans.candidates {
+            println!("Unregistered media: {} ({} bytes)", orphan.digest, orphan.bytes);
+        }
+        println!("No files deleted; no registry rows or root binding changed.");
+        println!("Reconcile orphan provenance before binding; do not assume they are disposable.");
+        return Ok(());
+    }
     if mode == "--bind-registry" {
         // A wrong but initialized registry could otherwise be bound to a
         // populated media tree. One EXCLUSIVE lease must span both complete
@@ -201,6 +228,8 @@ mod tests {
         drop(registry);
         let store = MediaObjectStore::new(&root);
         let orphan = store.store_bytes(b"unregistered payload").unwrap();
+        run("--audit-unbound", &root, &db, 10, 10).unwrap();
+        assert!(run("--dry-run", &root, &db, 10, 10).is_err());
         assert!(run("--bind-registry", &root, &db, 10, 10).is_err());
         assert!(run("--confirm-delete", &root, &db, 10, 10).is_err());
         assert_eq!(
