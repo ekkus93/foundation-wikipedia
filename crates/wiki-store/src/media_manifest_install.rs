@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::media_install::{
-    install_owned_media_batch, verify_required_owner_media, MediaInstallError,
+    install_bound_owned_media_batch, install_owned_media_batch, verify_bound_required_owner_media,
+    verify_required_owner_media, MediaInstallError,
 };
 use crate::media_inventory::RequiredMedia;
 use crate::media_objects::MediaObjectStore;
@@ -33,6 +34,42 @@ pub fn install_manifest_media_batch(
     required: &[RequiredMedia],
     kind: OwnerKind,
     owner_id: &str,
+) -> Result<Vec<String>, ManifestMediaInstallError> {
+    install_manifest_media_batch_with_binding(
+        store, registry, assets, required, kind, owner_id, false,
+    )
+}
+
+/// Production manifest-aware media installer. Reject an unbound or wrong-root
+/// registry before any bytes are published. The bound batch installer holds
+/// a SHARED media lease across the root check, byte staging and atomic owner
+/// registration; final required-media verification also checks binding under
+/// its own SHARED lease. The manifest must already be authenticated and must
+/// enumerate every visual required by the exact article revisions.
+///
+/// This function registers media ownership, NOT an installed/active pack.
+/// Snapshot activation and upstream signature validation are separate gates.
+pub fn install_bound_manifest_media_batch(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    required: &[RequiredMedia],
+    kind: OwnerKind,
+    owner_id: &str,
+) -> Result<Vec<String>, ManifestMediaInstallError> {
+    install_manifest_media_batch_with_binding(
+        store, registry, assets, required, kind, owner_id, true,
+    )
+}
+
+fn install_manifest_media_batch_with_binding(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    assets: &[(&[u8], &MediaNotice)],
+    required: &[RequiredMedia],
+    kind: OwnerKind,
+    owner_id: &str,
+    require_binding: bool,
 ) -> Result<Vec<String>, ManifestMediaInstallError> {
     if required.is_empty()
         || required.len() > 100_000
@@ -84,12 +121,20 @@ pub fn install_manifest_media_batch(
         return Err(ManifestMediaInstallError::InventoryMismatch);
     }
 
-    let installed = install_owned_media_batch(store, registry, assets, kind, owner_id)
-        .map_err(ManifestMediaInstallError::Install)?;
+    let installed = if require_binding {
+        install_bound_owned_media_batch(store, registry, assets, kind, owner_id)
+    } else {
+        install_owned_media_batch(store, registry, assets, kind, owner_id)
+    }
+    .map_err(ManifestMediaInstallError::Install)?;
     // Never report a successful install without checking both the exact owner
     // inventory and the stored bytes against the caller-authenticated manifest.
-    verify_required_owner_media(store, registry, kind, owner_id, required)
-        .map_err(ManifestMediaInstallError::Install)?;
+    if require_binding {
+        verify_bound_required_owner_media(store, registry, kind, owner_id, required)
+    } else {
+        verify_required_owner_media(store, registry, kind, owner_id, required)
+    }
+    .map_err(ManifestMediaInstallError::Install)?;
     Ok(installed)
 }
 
@@ -114,6 +159,146 @@ mod tests {
             digest: format!("{:x}", Sha256::digest(bytes)),
             bytes: bytes.len() as u64,
         }
+    }
+
+    #[test]
+    fn bound_manifest_install_rejects_wrong_root_and_survives_reopen() {
+        use crate::media_install::verify_bound_required_owner_media;
+        use crate::media_ownership::MediaRegistryError;
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-bound-manifest-{}-{stamp}",
+            std::process::id()
+        ));
+        let wrong_root = root.with_extension("other-media");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&wrong_root).unwrap();
+        let db = root.with_extension("ownership.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let wrong_store = MediaObjectStore::new(&wrong_root);
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let alice = notice("Alice");
+        let bob = notice("Bob");
+        let required = [entry(b"diagram"), entry(b"plot")];
+        let assets: &[(&[u8], &MediaNotice)] =
+            &[(b"diagram", &alice), (b"plot", &alice), (b"diagram", &bob)];
+
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                assets,
+                &required,
+                OwnerKind::Pack,
+                "physics"
+            ),
+            Err(ManifestMediaInstallError::Install(MediaInstallError::Registry(
+                MediaRegistryError::UnboundRoot
+            )))
+        ));
+        for required_object in &required {
+            assert!(!root
+                .join(&required_object.digest[..2])
+                .join(&required_object.digest)
+                .exists());
+        }
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
+
+        registry.bind_media_root(&root).unwrap();
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &wrong_store,
+                &mut registry,
+                assets,
+                &required,
+                OwnerKind::Pack,
+                "physics"
+            ),
+            Err(ManifestMediaInstallError::Install(MediaInstallError::Registry(
+                MediaRegistryError::RootMismatch
+            )))
+        ));
+        for required_object in &required {
+            assert!(!wrong_root
+                .join(&required_object.digest[..2])
+                .join(&required_object.digest)
+                .exists());
+        }
+
+        let installed = install_bound_manifest_media_batch(
+            &store,
+            &mut registry,
+            assets,
+            &required,
+            OwnerKind::Pack,
+            "physics",
+        )
+        .unwrap();
+        assert_eq!(installed[0], installed[2]);
+        assert_eq!(registry.notice_count(&installed[0]).unwrap(), 2);
+        registry
+            .add_owner(&installed[0], OwnerKind::UserPin, "saved")
+            .unwrap();
+        drop(registry);
+
+        let mut registry = MediaRegistry::open_existing(&db).unwrap();
+        assert_eq!(
+            verify_bound_required_owner_media(
+                &store,
+                &registry,
+                OwnerKind::Pack,
+                "physics",
+                &required
+            )
+            .unwrap(),
+            11
+        );
+        assert_eq!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                assets,
+                &required,
+                OwnerKind::Pack,
+                "physics"
+            )
+            .unwrap(),
+            installed
+        );
+        assert_eq!(
+            registry
+                .owned_digest_size(OwnerKind::UserPin, "saved", &installed[0])
+                .unwrap(),
+            Some(7)
+        );
+
+        let replacement = [entry(b"replacement")];
+        let replacement_assets = [(b"replacement".as_slice(), &alice)];
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                &replacement_assets,
+                &replacement,
+                OwnerKind::Pack,
+                "physics"
+            ),
+            Err(ManifestMediaInstallError::InventoryMismatch)
+        ));
+        assert!(!root
+            .join(&replacement[0].digest[..2])
+            .join(&replacement[0].digest)
+            .exists());
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(wrong_root).unwrap();
+        fs::remove_file(db).unwrap();
     }
 
     #[test]
