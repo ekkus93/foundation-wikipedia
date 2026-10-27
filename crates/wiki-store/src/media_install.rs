@@ -295,10 +295,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-bound-install-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-bound-install-{}-{stamp}", std::process::id()));
         let other = std::env::temp_dir().join(format!(
             "wiki-bound-install-other-{}-{stamp}",
             std::process::id()
@@ -327,13 +325,7 @@ mod tests {
             Err(MediaInstallError::Registry(MediaRegistryError::UnboundRoot))
         ));
         assert!(matches!(
-            install_bound_owned_media_batch(
-                &store,
-                &mut registry,
-                assets,
-                OwnerKind::Pack,
-                "math",
-            ),
+            install_bound_owned_media_batch(&store, &mut registry, assets, OwnerKind::Pack, "math",),
             Err(MediaInstallError::Registry(MediaRegistryError::UnboundRoot))
         ));
         assert!(store.published_object_digests(10).unwrap().is_empty());
@@ -354,7 +346,9 @@ mod tests {
                 OwnerKind::Pack,
                 "math",
             ),
-            Err(MediaInstallError::Registry(MediaRegistryError::RootMismatch))
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::RootMismatch
+            ))
         ));
         assert!(matches!(
             install_bound_owned_media_batch(
@@ -364,18 +358,15 @@ mod tests {
                 OwnerKind::Pack,
                 "math",
             ),
-            Err(MediaInstallError::Registry(MediaRegistryError::RootMismatch))
+            Err(MediaInstallError::Registry(
+                MediaRegistryError::RootMismatch
+            ))
         ));
         assert!(wrong_store.published_object_digests(10).unwrap().is_empty());
 
-        let digests = install_bound_owned_media_batch(
-            &store,
-            &mut registry,
-            assets,
-            OwnerKind::Pack,
-            "math",
-        )
-        .unwrap();
+        let digests =
+            install_bound_owned_media_batch(&store, &mut registry, assets, OwnerKind::Pack, "math")
+                .unwrap();
         assert_eq!(digests.len(), 2);
         let duplicate = install_bound_owned_media(
             &store,
@@ -394,10 +385,7 @@ mod tests {
         let registry = MediaRegistry::open_existing(&database).unwrap();
         registry.require_media_root_binding(&root).unwrap();
         assert_eq!(
-            registry
-                .owned_media(OwnerKind::Pack, "math")
-                .unwrap()
-                .len(),
+            registry.owned_media(OwnerKind::Pack, "math").unwrap().len(),
             2
         );
         assert_eq!(
