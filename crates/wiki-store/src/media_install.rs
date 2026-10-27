@@ -6,6 +6,7 @@
 //! content-addressed bytes; it must never make missing bytes look installed.
 
 use crate::media_inventory::{verify_declared_media, MediaInventoryError, RequiredMedia};
+use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{
     valid_owner_id, MediaNotice, MediaRegistry, MediaRegistryError, OwnerKind,
@@ -14,6 +15,7 @@ use crate::media_ownership::{
 #[derive(Debug)]
 pub enum MediaInstallError {
     Store(MediaObjectError),
+    Lease(MediaLeaseError),
     Registry(MediaRegistryError),
     IdentityMismatch,
     Inventory(MediaInventoryError),
@@ -34,6 +36,11 @@ pub fn install_owned_media(
             MediaRegistryError::InvalidInput,
         ));
     }
+    // Hold the shared cross-process lease from byte publication through
+    // the final ownership write, not merely during the filesystem write.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaInstallError::Lease)?;
     let stored_digest = store
         .store_bytes(content)
         .map_err(MediaInstallError::Store)?;
@@ -71,6 +78,10 @@ pub fn install_owned_media_batch(
             MediaRegistryError::InvalidInput,
         ));
     }
+    // The shared lease covers the entire staging/registry transaction gap.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaInstallError::Lease)?;
     let mut staged = Vec::with_capacity(assets.len());
     for &(content, _) in assets {
         staged.push(

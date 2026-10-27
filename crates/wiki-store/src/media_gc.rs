@@ -5,12 +5,14 @@
 //! A future collector must coordinate writers, readers, and registry state
 //! atomically before deleting any bytes or attribution records.
 
+use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{MediaRegistry, MediaRegistryError};
 
 #[derive(Debug)]
 pub enum MediaGcPlanError {
     Registry(MediaRegistryError),
+    Lease(MediaLeaseError),
     Store(MediaObjectError),
     SizeMismatch,
     SizeOverflow,
@@ -56,6 +58,11 @@ pub fn plan_unowned_media_gc_with_registry_reservation(
     registry: &mut MediaRegistry,
     max_candidates: usize,
 ) -> Result<MediaGcPlan, MediaGcPlanError> {
+    // Lock order: exclusive filesystem lease before the registry IMMEDIATE
+    // reservation. Cooperating installers take their shared lease first.
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
     registry
         .with_reserved_unowned_media(max_candidates, |claims| {
             verify_unowned_candidates(store, claims)

@@ -6,7 +6,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
@@ -57,6 +57,10 @@ impl MediaObjectStore {
     /// The root directory must already exist and must not be a symlink.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
     }
 
     fn object_path(&self, digest: &str) -> Result<PathBuf, MediaObjectError> {
