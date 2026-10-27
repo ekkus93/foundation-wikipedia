@@ -25,7 +25,9 @@ pub enum MediaGcPlanError {
     PostCommitSizeMismatch,
     /// An unregistered published object could belong to a different registry.
     /// Never bind while any such file remains unexplained.
-    UnregisteredOrphans { count: usize },
+    UnregisteredOrphans {
+        count: usize,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -593,8 +595,8 @@ mod tests {
                 .removed_objects,
             1
         );
-        let audit = bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10)
-            .unwrap();
+        let audit =
+            bind_registry_after_complete_media_audit(&store, &mut registry, 10, 10).unwrap();
         assert_eq!(audit.objects, 1);
         assert_eq!(audit.verified_bytes, b"owned figure".len() as u64);
         registry.require_media_root_binding(&root).unwrap();
