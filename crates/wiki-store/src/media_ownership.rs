@@ -640,9 +640,10 @@ impl MediaRegistry {
              JOIN media_owners r ON r.digest=o.digest
              WHERE r.kind=?1 AND r.owner_id=?2 ORDER BY o.digest LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![kind.as_str(), owner_id, (limit + 1) as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map(
+            params![kind.as_str(), owner_id, (limit + 1) as i64],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )?;
         let mut entries = Vec::new();
         for row in rows {
             let (digest, size) = row?;
@@ -973,14 +974,19 @@ mod tests {
         let mut registry = MediaRegistry::in_memory().unwrap();
         let mut digests = Vec::new();
         for bytes in [b"first".as_slice(), b"second", b"third"] {
-            let digest = registry.register_verified_bytes(bytes, &notice("A")).unwrap();
+            let digest = registry
+                .register_verified_bytes(bytes, &notice("A"))
+                .unwrap();
             registry
                 .add_owner(&digest, OwnerKind::Pack, "science")
                 .unwrap();
             digests.push(digest);
         }
         assert_eq!(
-            registry.owned_media(OwnerKind::Pack, "science").unwrap().len(),
+            registry
+                .owned_media(OwnerKind::Pack, "science")
+                .unwrap()
+                .len(),
             3
         );
         assert!(matches!(
