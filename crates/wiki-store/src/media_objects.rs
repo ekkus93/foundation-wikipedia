@@ -107,6 +107,21 @@ impl MediaObjectStore {
             let prefix = prefix_name
                 .to_str()
                 .ok_or(MediaObjectError::UnsafeDirectory)?;
+            if prefix == ".media-lease.sqlite" {
+                // The exact private coordination file is not a digest prefix.
+                let metadata = fs::symlink_metadata(prefix_entry.path())?;
+                if !metadata.file_type().is_file() {
+                    return Err(MediaObjectError::UnsafeDirectory);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if metadata.nlink() != 1 {
+                        return Err(MediaObjectError::UnsafeDirectory);
+                    }
+                }
+                continue;
+            }
             if prefix.len() != 2
                 || !prefix
                     .bytes()

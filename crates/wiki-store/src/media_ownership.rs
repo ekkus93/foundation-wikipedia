@@ -266,7 +266,7 @@ pub struct MediaRegistry {
 /// Fail closed on registry aliases before SQLite opens a mutable ownership
 /// database. This is a pathname preflight, not a defense against concurrent
 /// directory replacement by an untrusted process.
-fn prepare_registry_path(path: &Path) -> Result<(), MediaRegistryError> {
+pub(crate) fn prepare_registry_path(path: &Path) -> Result<(), MediaRegistryError> {
     if path
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir))

@@ -12,6 +12,7 @@ pub mod media_objects;
 pub mod media_ownership;
 
 pub mod media_gc;
+pub mod media_lease;
 pub mod media_install;
 pub mod media_inventory;
 pub mod media_manifest_install;
