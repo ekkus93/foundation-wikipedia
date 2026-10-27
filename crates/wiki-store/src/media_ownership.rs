@@ -63,7 +63,7 @@ fn require_notice_capacity(
         params![digest],
         |row| row.get(0),
     )?;
-    if count < 0 || count > MAX_NOTICES {
+    if !(0..=MAX_NOTICES).contains(&count) {
         return Err(MediaRegistryError::TooManyNotices);
     }
     if count == MAX_NOTICES {
