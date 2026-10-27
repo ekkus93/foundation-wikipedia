@@ -352,7 +352,9 @@ fn owner_release_preview_warns_when_gc_budget_cannot_cover_all_unowned_objects()
     for bytes in [b"first private".as_slice(), b"second private".as_slice()] {
         let digest = store.store_bytes(bytes).unwrap();
         registry.register_verified_bytes(bytes, &notice()).unwrap();
-        registry.add_owner(&digest, OwnerKind::Pack, "atlas").unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Pack, "atlas")
+            .unwrap();
     }
     let existing = store.store_bytes(b"previously unowned").unwrap();
     registry
@@ -381,7 +383,10 @@ fn owner_release_preview_warns_when_gc_budget_cannot_cover_all_unowned_objects()
     assert!(output.contains("WARNING:"), "{output}");
     let registry = MediaRegistry::open_existing(&db).unwrap();
     assert_eq!(
-        registry.owned_media(OwnerKind::Pack, "atlas").unwrap().len(),
+        registry
+            .owned_media(OwnerKind::Pack, "atlas")
+            .unwrap()
+            .len(),
         2
     );
     drop(registry);
@@ -394,7 +399,10 @@ fn owner_release_preview_warns_when_gc_budget_cannot_cover_all_unowned_objects()
     let confirmed = invoke_owner_release("--confirm-release", &root, &db, "pack", "atlas", "2");
     assert!(!confirmed.status.success());
     let diagnostic = String::from_utf8_lossy(&confirmed.stderr);
-    assert!(diagnostic.contains("OWNER RELEASE COMMITTED"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("OWNER RELEASE COMMITTED"),
+        "{diagnostic}"
+    );
     assert!(diagnostic.contains("cleanup incomplete"), "{diagnostic}");
     let registry = MediaRegistry::open_existing(&db).unwrap();
     assert!(registry
