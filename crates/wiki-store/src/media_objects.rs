@@ -202,6 +202,19 @@ impl MediaObjectStore {
         if bytes.is_empty() || bytes.len() as u64 > MAX_OBJECT_BYTES {
             return Err(MediaObjectError::ObjectTooLarge);
         }
+        self.object_path(&"0".repeat(64))?;
+        let _lease = MediaLeaseCoordinator::new(&self.root)
+            .acquire_shared()
+            .map_err(MediaObjectError::Lease)?;
+        self.store_bytes_unlocked(bytes)
+    }
+
+    /// The caller must already hold a shared lease across publication and
+    /// the subsequent registry ownership transaction.
+    pub(crate) fn store_bytes_unlocked(&self, bytes: &[u8]) -> Result<String, MediaObjectError> {
+        if bytes.is_empty() || bytes.len() as u64 > MAX_OBJECT_BYTES {
+            return Err(MediaObjectError::ObjectTooLarge);
+        }
         let digest = format!("{:x}", Sha256::digest(bytes));
         let path = self.object_path(&digest)?;
         let parent = path.parent().ok_or(MediaObjectError::UnsafeDirectory)?;

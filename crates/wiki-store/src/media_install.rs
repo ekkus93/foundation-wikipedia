@@ -42,7 +42,7 @@ pub fn install_owned_media(
         .acquire_shared()
         .map_err(MediaInstallError::Lease)?;
     let stored_digest = store
-        .store_bytes(content)
+        .store_bytes_unlocked(content)
         .map_err(MediaInstallError::Store)?;
     let registered_digest = registry
         .register_verified_bytes(content, notice)
@@ -86,7 +86,7 @@ pub fn install_owned_media_batch(
     for &(content, _) in assets {
         staged.push(
             store
-                .store_bytes(content)
+                .store_bytes_unlocked(content)
                 .map_err(MediaInstallError::Store)?,
         );
     }
