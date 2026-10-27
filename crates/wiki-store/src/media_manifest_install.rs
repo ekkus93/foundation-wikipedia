@@ -177,9 +177,7 @@ fn install_manifest_media_batch_with_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media_install::{
-        verify_bound_required_owner_media, verify_required_owner_media,
-    };
+    use crate::media_install::{verify_bound_required_owner_media, verify_required_owner_media};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
