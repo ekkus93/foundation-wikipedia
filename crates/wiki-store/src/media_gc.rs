@@ -615,7 +615,10 @@ mod tests {
         let orphan = store.store_bytes(b"unknown atlas").unwrap();
         let preflight = audit_media_for_registry_binding(&store, &registry, 10, 10).unwrap();
         assert_eq!(preflight.registered.objects, 1);
-        assert_eq!(preflight.registered.verified_bytes, b"retained map".len() as u64);
+        assert_eq!(
+            preflight.registered.verified_bytes,
+            b"retained map".len() as u64
+        );
         assert_eq!(preflight.orphans.candidates.len(), 1);
         assert_eq!(preflight.orphans.candidates[0].digest, orphan);
         assert_eq!(

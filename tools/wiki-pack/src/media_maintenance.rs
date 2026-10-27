@@ -44,7 +44,10 @@ pub fn run(
         mode,
         "--dry-run" | "--confirm-delete" | "--bind-registry" | "--audit-unbound"
     ) {
-        return Err("explicit --audit-unbound, --bind-registry, --dry-run or --confirm-delete required".into());
+        return Err(
+            "explicit --audit-unbound, --bind-registry, --dry-run or --confirm-delete required"
+                .into(),
+        );
     }
     if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
         return Err("media budgets must each be between 1 and 10000".into());
@@ -62,13 +65,9 @@ pub fn run(
     if mode == "--audit-unbound" {
         // An unbound registry cannot use --dry-run (which requires a trusted
         // root binding). This explicit diagnostic has NO deletion authority.
-        let audit = audit_media_for_registry_binding(
-            &store,
-            &registry,
-            max_registered,
-            max_scanned,
-        )
-        .map_err(|error| format!("unbound media audit failed: {error:?}"))?;
+        let audit =
+            audit_media_for_registry_binding(&store, &registry, max_registered, max_scanned)
+                .map_err(|error| format!("unbound media audit failed: {error:?}"))?;
         println!(
             "READ ONLY: {} registered objects ({} verified bytes); {} unregistered published objects ({} bytes)",
             audit.registered.objects,
@@ -77,7 +76,10 @@ pub fn run(
             audit.orphans.reclaimable_bytes
         );
         for orphan in &audit.orphans.candidates {
-            println!("Unregistered media: {} ({} bytes)", orphan.digest, orphan.bytes);
+            println!(
+                "Unregistered media: {} ({} bytes)",
+                orphan.digest, orphan.bytes
+            );
         }
         println!("No files deleted; no registry rows or root binding changed.");
         println!("Reconcile orphan provenance before binding; do not assume they are disposable.");
