@@ -7,7 +7,7 @@
 
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
-use crate::media_ownership::{MediaRegistry, MediaRegistryError};
+use crate::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
 
 #[derive(Debug)]
 pub enum MediaGcPlanError {
@@ -145,6 +145,18 @@ fn collect_unowned_registered_media_with_unlink(
     let _lease = MediaLeaseCoordinator::new(store.root())
         .acquire_exclusive()
         .map_err(MediaGcPlanError::Lease)?;
+    collect_unowned_registered_media_under_lease(store, registry, max_candidates, &mut unlink)
+}
+
+/// Internal collector assumes the caller already owns the EXCLUSIVE lease.
+/// Never call public leasing methods while inside this scope: nested SQLite
+/// lock acquisition could deadlock behind a waiting external GC.
+fn collect_unowned_registered_media_under_lease(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    max_candidates: usize,
+    unlink: &mut impl FnMut(&str) -> Result<u64, MediaObjectError>,
+) -> Result<MediaGcSweep, MediaGcPlanError> {
     let (_, candidates) = registry
         .commit_verified_unowned_media(max_candidates, |claims| {
             verify_unowned_candidates(store, claims, true)
@@ -173,6 +185,55 @@ fn collect_unowned_registered_media_with_unlink(
             .ok_or(MediaGcPlanError::SizeOverflow)?;
     }
     Ok(report)
+}
+
+/// Owner release committed under an exclusive media lease. A cleanup error
+/// is reported separately because it cannot roll back a successful owner
+/// release: callers must not retry an uninstall as though the owner remained.
+#[derive(Debug)]
+pub struct OwnerReleaseGcOutcome {
+    pub released_objects: usize,
+    pub cleanup: Result<MediaGcSweep, MediaGcPlanError>,
+}
+
+/// Coordinate removing a pack, cache entry or user pin with a bounded media
+/// reclamation pass. One EXCLUSIVE lease spans the SQLite owner release and
+/// registered-object GC; shared-lease readers/installers cannot observe an
+/// intervening GC state. The sweep rechecks all owners inside an IMMEDIATE
+/// writer transaction: a shared digest is retained until its final owner
+/// releases it.
+///
+/// The owner release commits before cleanup. The returned outer Err means
+/// nothing was released. After a successful release, the inner cleanup Err
+/// means unowned bytes/metadata may remain and GC can be retried separately.
+/// No stale digest list is ever passed directly to filesystem deletion.
+pub fn release_owner_and_reclaim_media(
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    max_candidates: usize,
+) -> Result<OwnerReleaseGcOutcome, MediaGcPlanError> {
+    // Fail invalid sweep bounds *before* mutating the owner's inventory.
+    if !(1..=10_000).contains(&max_candidates) {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(MediaGcPlanError::Lease)?;
+    let released = registry
+        .remove_all_for_owner(kind, owner_id)
+        .map_err(MediaGcPlanError::Registry)?;
+    let cleanup = collect_unowned_registered_media_under_lease(
+        store,
+        registry,
+        max_candidates,
+        &mut |digest| store.unlink_verified_unlocked(digest),
+    );
+    Ok(OwnerReleaseGcOutcome {
+        released_objects: released.len(),
+        cleanup,
+    })
 }
 
 /// Enumerate canonical published media bytes that have no SQLite registry
@@ -347,6 +408,127 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn releasing_pack_reclaims_only_final_owner_and_preserves_pins_and_other_packs() {
+        let (root, store, mut registry) = setup();
+        let shared = store.store_bytes(b"shared figure").unwrap();
+        registry
+            .register_verified_bytes(b"shared figure", &notice())
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::Pack, "physics")
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::Pack, "mathematics")
+            .unwrap();
+        registry
+            .add_owner(&shared, OwnerKind::UserPin, "saved")
+            .unwrap();
+        let physics_only = store.store_bytes(b"private diagram").unwrap();
+        registry
+            .register_verified_bytes(b"private diagram", &notice())
+            .unwrap();
+        registry
+            .add_owner(&physics_only, OwnerKind::Pack, "physics")
+            .unwrap();
+        let result =
+            release_owner_and_reclaim_media(&store, &mut registry, OwnerKind::Pack, "physics", 10)
+                .unwrap();
+        assert_eq!(result.released_objects, 2);
+        assert_eq!(result.cleanup.unwrap().removed_objects, 1);
+        assert_eq!(store.read_verified(&shared).unwrap(), b"shared figure");
+        assert!(registry.registered_digest_size(&physics_only).unwrap().is_none());
+        assert_eq!(
+            registry
+                .owned_digest_size(OwnerKind::Pack, "mathematics", &shared)
+                .unwrap(),
+            Some(b"shared figure".len() as u64)
+        );
+        let repeat =
+            release_owner_and_reclaim_media(&store, &mut registry, OwnerKind::Pack, "physics", 10)
+                .unwrap();
+        assert_eq!(repeat.released_objects, 0);
+        assert_eq!(repeat.cleanup.unwrap().removed_objects, 0);
+
+        let other = release_owner_and_reclaim_media(
+            &store,
+            &mut registry,
+            OwnerKind::Pack,
+            "mathematics",
+            10,
+        )
+        .unwrap();
+        assert_eq!(other.released_objects, 1);
+        assert_eq!(other.cleanup.unwrap().removed_objects, 0);
+        assert_eq!(store.read_verified(&shared).unwrap(), b"shared figure");
+        let pin = release_owner_and_reclaim_media(
+            &store,
+            &mut registry,
+            OwnerKind::UserPin,
+            "saved",
+            10,
+        )
+        .unwrap();
+        assert_eq!(pin.released_objects, 1);
+        assert_eq!(pin.cleanup.unwrap().removed_objects, 1);
+        assert!(registry.registered_digest_size(&shared).unwrap().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn release_reports_committed_owner_removal_even_if_gc_fails() {
+        let (root, store, mut registry) = setup();
+        let digest = store.store_bytes(b"broken offline figure").unwrap();
+        registry
+            .register_verified_bytes(b"broken offline figure", &notice())
+            .unwrap();
+        registry
+            .add_owner(&digest, OwnerKind::Cache, "offline")
+            .unwrap();
+        assert!(matches!(
+            release_owner_and_reclaim_media(
+                &store,
+                &mut registry,
+                OwnerKind::Cache,
+                "offline",
+                0
+            ),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(registry
+            .owned_digest_size(OwnerKind::Cache, "offline", &digest)
+            .unwrap()
+            .is_some());
+        fs::write(root.join(&digest[..2]).join(&digest), b"tampered offline figure").unwrap();
+        let outcome = release_owner_and_reclaim_media(
+            &store,
+            &mut registry,
+            OwnerKind::Cache,
+            "offline",
+            10,
+        )
+        .unwrap();
+        assert_eq!(outcome.released_objects, 1);
+        assert!(matches!(
+            outcome.cleanup,
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert!(registry
+            .owned_media(OwnerKind::Cache, "offline")
+            .unwrap()
+            .is_empty());
+        assert_eq!(registry.unowned_digests().unwrap(), vec![digest.clone()]);
+        // A later cleanup can be retried without rerunning owner release.
+        fs::write(root.join(&digest[..2]).join(&digest), b"broken offline figure").unwrap();
+        assert_eq!(
+            collect_unowned_registered_media(&store, &mut registry, 10)
+                .unwrap()
+                .removed_objects,
+            1
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
