@@ -351,7 +351,9 @@ pub fn run_bound_media_maintenance(
 /// makes repeated invocations safe and avoids duplicate sweeps.
 #[derive(Debug)]
 pub enum ScheduledMediaMaintenance {
-    NotDue { next_due_epoch_seconds: u64 },
+    NotDue {
+        next_due_epoch_seconds: u64,
+    },
     Ran {
         maintenance: MediaMaintenanceOutcome,
         /// Ok(true) only when both phases succeeded and the durable success
@@ -1309,7 +1311,10 @@ mod tests {
             run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 999).unwrap(),
             ScheduledMediaMaintenance::NotDue { .. }
         ));
-        assert_eq!(store.read_verified(&orphan).unwrap(), b"interrupted download");
+        assert_eq!(
+            store.read_verified(&orphan).unwrap(),
+            b"interrupted download"
+        );
         let due =
             run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1060).unwrap();
         match due {
@@ -1360,7 +1365,10 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(registry.media_maintenance_last_success().unwrap(), Some(1000));
+        assert_eq!(
+            registry.media_maintenance_last_success().unwrap(),
+            Some(1000)
+        );
         assert!(registry.registered_digest_size(&digest).unwrap().is_none());
         assert!(matches!(
             run_bound_media_maintenance_if_due(&store, &mut registry, 0, 10, 60, 1060),
@@ -1401,7 +1409,10 @@ mod tests {
             run_bound_media_maintenance_if_due(&other, &mut registry, 10, 10, 60, 1060),
             Err(MediaGcPlanError::Registry(MediaRegistryError::RootMismatch))
         ));
-        assert_eq!(registry.media_maintenance_last_success().unwrap(), Some(1000));
+        assert_eq!(
+            registry.media_maintenance_last_success().unwrap(),
+            Some(1000)
+        );
         assert!(matches!(
             run_bound_media_maintenance_if_due(&store, &mut registry, 10, 10, 60, 1060).unwrap(),
             ScheduledMediaMaintenance::Ran {

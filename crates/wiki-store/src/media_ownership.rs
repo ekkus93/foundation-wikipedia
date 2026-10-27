@@ -492,9 +492,7 @@ impl MediaRegistry {
     /// Last fully successful, scheduled, bound media maintenance pass.
     /// Missing schedule metadata means no pass has yet succeeded. A malformed
     /// timestamp fails closed instead of permitting accidental early GC.
-    pub(crate) fn media_maintenance_last_success(
-        &self,
-    ) -> Result<Option<u64>, MediaRegistryError> {
+    pub(crate) fn media_maintenance_last_success(&self) -> Result<Option<u64>, MediaRegistryError> {
         let exists: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master
              WHERE type='table' AND name='media_maintenance_schedule')",

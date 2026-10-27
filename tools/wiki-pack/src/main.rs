@@ -601,7 +601,11 @@ fn main() {
             }
             if !matches!(
                 mode,
-                "--audit-unbound" | "--bind-registry" | "--dry-run" | "--confirm-delete" | "--run-if-due"
+                "--audit-unbound"
+                    | "--bind-registry"
+                    | "--dry-run"
+                    | "--confirm-delete"
+                    | "--run-if-due"
             ) {
                 eprintln!("Explicit media maintenance mode required");
                 std::process::exit(2);
