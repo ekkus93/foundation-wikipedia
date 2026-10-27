@@ -5,7 +5,7 @@ use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
     audit_media_for_registry_binding, bind_registry_after_complete_media_audit,
-    plan_unowned_media_gc, plan_unregistered_media_gc, preview_bound_owner_release,
+    preview_bound_media_maintenance, preview_bound_owner_release,
     release_bound_owner_and_reclaim_media, run_bound_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
@@ -118,24 +118,25 @@ pub fn run(
         );
         return Ok(());
     }
-    registry
-        .require_media_root_binding(root)
-        .map_err(|error| format!("media registry root binding required: {error:?}"))?;
     if mode == "--dry-run" {
-        let registered = plan_unowned_media_gc(&store, &registry, max_registered)
-            .map_err(|error| format!("registered preflight: {error:?}"))?;
-        let orphans = plan_unregistered_media_gc(&store, &registry, max_scanned)
-            .map_err(|error| format!("orphan preflight: {error:?}"))?;
+        // The root binding and both inventories are checked under one
+        // SHARED lease. Never splice together two independently leased plans.
+        let preview =
+            preview_bound_media_maintenance(&store, &registry, max_registered, max_scanned)
+                .map_err(|error| format!("bound media preflight: {error:?}"))?;
         println!(
             "DRY RUN: {} unowned registered objects ({} bytes), {} unregistered orphans ({} bytes)",
-            registered.candidates.len(),
-            registered.reclaimable_bytes,
-            orphans.candidates.len(),
-            orphans.reclaimable_bytes
+            preview.registered.candidates.len(),
+            preview.registered.reclaimable_bytes,
+            preview.orphans.candidates.len(),
+            preview.orphans.reclaimable_bytes
         );
         println!("No registry rows or media bytes were deleted.");
         return Ok(());
     }
+    registry
+        .require_media_root_binding(root)
+        .map_err(|error| format!("media registry root binding required: {error:?}"))?;
     let outcome = run_bound_media_maintenance(&store, &mut registry, max_registered, max_scanned)
         .map_err(|error| format!("maintenance could not acquire lease: {error:?}"))?;
     match (outcome.registered, outcome.orphans) {

@@ -65,6 +65,42 @@ pub fn plan_unowned_media_gc(
     verify_unowned_candidates(store, &claims, true)
 }
 
+/// Read-only, root-bound preview of both maintenance phases under ONE
+/// shared cross-process lease. A cooperating exclusive collector cannot
+/// delete between the registered and orphan inventories. The preview is
+/// advisory: an independent confirmation must recheck under EXCLUSIVE lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundMediaMaintenancePreview {
+    pub registered: MediaGcPlan,
+    pub orphans: MediaGcPlan,
+}
+
+pub fn preview_bound_media_maintenance(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    max_registered: usize,
+    max_scanned: usize,
+) -> Result<BoundMediaMaintenancePreview, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_registered) || !(1..=10_000).contains(&max_scanned) {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
+    registry
+        .require_media_root_binding(store.root())
+        .map_err(MediaGcPlanError::Registry)?;
+    registry
+        .audit_unregistered_references()
+        .map_err(MediaGcPlanError::Registry)?;
+    let claims = registry
+        .unowned_media_candidates(max_registered)
+        .map_err(MediaGcPlanError::Registry)?;
+    let registered = verify_unowned_candidates(store, &claims, true)?;
+    let orphans = plan_unregistered_media_gc_under_lease(store, registry, max_scanned)?;
+    Ok(BoundMediaMaintenancePreview { registered, orphans })
+}
+
 /// Revalidate a bounded SQLite snapshot while it remains protected by a
 /// registry writer reservation. The reservation excludes competing SQLite
 /// owner inserts, but this remains advisory until installers and file readers
@@ -853,6 +889,51 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn bound_maintenance_preview_audits_both_phases_without_deleting() {
+        let (root, store, mut registry) = setup();
+        let pinned = store.store_bytes(b"retained visual").unwrap();
+        registry
+            .register_verified_bytes(b"retained visual", &notice())
+            .unwrap();
+        registry
+            .add_owner(&pinned, OwnerKind::UserPin, "saved")
+            .unwrap();
+        let unowned = store.store_bytes(b"obsolete diagram").unwrap();
+        registry
+            .register_verified_bytes(b"obsolete diagram", &notice())
+            .unwrap();
+        let orphan = store.store_bytes(b"interrupted import").unwrap();
+
+        assert!(matches!(
+            preview_bound_media_maintenance(&store, &registry, 10, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::UnboundRoot))
+        ));
+        registry.bind_media_root(&root).unwrap();
+        let preview = preview_bound_media_maintenance(&store, &registry, 10, 10).unwrap();
+        assert_eq!(preview.registered.candidates.len(), 1);
+        assert_eq!(preview.registered.candidates[0].digest, unowned);
+        assert_eq!(preview.orphans.candidates.len(), 1);
+        assert_eq!(preview.orphans.candidates[0].digest, orphan);
+        assert_eq!(preview.registered.reclaimable_bytes, b"obsolete diagram".len() as u64);
+        assert_eq!(preview.orphans.reclaimable_bytes, b"interrupted import".len() as u64);
+        assert_eq!(store.read_verified(&pinned).unwrap(), b"retained visual");
+        assert_eq!(store.read_verified(&unowned).unwrap(), b"obsolete diagram");
+        assert_eq!(store.read_verified(&orphan).unwrap(), b"interrupted import");
+        assert!(matches!(
+            preview_bound_media_maintenance(&store, &registry, 0, 10),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+
+        fs::write(root.join(&orphan[..2]).join(&orphan), b"tampered import").unwrap();
+        assert!(matches!(
+            preview_bound_media_maintenance(&store, &registry, 10, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert_eq!(registry.registered_digest_size(&unowned).unwrap(), Some(16));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
