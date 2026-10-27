@@ -174,10 +174,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-install-lease-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-install-lease-{}-{stamp}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let database = root.join("owners.sqlite");
         let registry = MediaRegistry::open(&database).unwrap();
@@ -205,7 +203,9 @@ mod tests {
                 .unwrap();
         });
         started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert!(finished_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(finished_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
         assert!(registry
             .owned_media(OwnerKind::Pack, "science")
             .unwrap()
