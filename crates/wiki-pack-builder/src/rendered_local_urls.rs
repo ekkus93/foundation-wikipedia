@@ -548,13 +548,16 @@ mod tests {
         ));
         let mut wrong = notice.clone();
         wrong.mime = "image/svg+xml".into();
-        registry.register_verified_bytes(png, &wrong).unwrap();
         assert!(matches!(
-            read_pack_raster_asset(&plan, uri, &registry, "physics", &store),
-            Err(RasterAssetError::Registry(
-                MediaRegistryError::ConflictingMime
-            ))
+            registry.register_verified_bytes(png, &wrong),
+            Err(MediaRegistryError::ConflictingMime)
         ));
+        // A rejected conflicting notice cannot poison a previously readable
+        // pack-owned asset or its attribution inventory.
+        let still_readable =
+            read_pack_raster_asset(&plan, uri, &registry, "physics", &store).unwrap();
+        assert_eq!(still_readable.mime, "image/png");
+        assert_eq!(still_readable.notices.len(), 3);
         fs::remove_dir_all(root).unwrap();
     }
 
