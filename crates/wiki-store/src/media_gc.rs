@@ -1,9 +1,11 @@
-//! Read-only, bounded GC candidate preflight for registered media.
+//! Bounded media audits, advisory GC planning and lease-coordinated reclamation.
 //!
-//! This does NOT authorize deletion. Installers can write unregistered bytes
-//! before committing ownership, and ownership can change after this snapshot.
-//! A future collector must coordinate writers, readers, and registry state
-//! atomically before deleting any bytes or attribution records.
+//! Advisory plans are never deletion authority. Production collectors hold
+//! an EXCLUSIVE media lease and SQLite writer reservation, verify candidates,
+//! commit removal of unowned registry rows before unlinking, and fsync the
+//! containing directories. All readers/installers must cooperate with the
+//! SHARED lease protocol; hostile direct filesystem/SQLite writes are not
+//! protected by this advisory coordination.
 
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
