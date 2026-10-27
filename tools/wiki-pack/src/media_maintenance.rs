@@ -5,8 +5,8 @@ use std::path::{Component, Path};
 
 use wiki_store::media_gc::{
     audit_media_for_registry_binding, bind_registry_after_complete_media_audit,
-    plan_unowned_media_gc, plan_unregistered_media_gc, release_bound_owner_and_reclaim_media,
-    run_bound_media_maintenance,
+    plan_unowned_media_gc, plan_unregistered_media_gc, preview_bound_owner_release,
+    release_bound_owner_and_reclaim_media, run_bound_media_maintenance,
 };
 use wiki_store::media_objects::MediaObjectStore;
 use wiki_store::media_ownership::{MediaRegistry, OwnerKind};
@@ -160,12 +160,16 @@ pub fn run(
 /// coordinate its installed-pack/catalog state. Never infer ownership from
 /// a filename or an untrusted manifest; the operator supplies an exact ID.
 pub fn release_owner(
+    mode: &str,
     root: &Path,
     registry_path: &Path,
     kind: &str,
     owner_id: &str,
     max_candidates: usize,
 ) -> Result<(), String> {
+    if !matches!(mode, "--dry-run" | "--confirm-release") {
+        return Err("owner release requires --dry-run or --confirm-release".into());
+    }
     if !(1..=10_000).contains(&max_candidates) {
         return Err("owner-release candidate limit must be between 1 and 10000".into());
     }
@@ -195,6 +199,32 @@ pub fn release_owner(
     let mut registry = MediaRegistry::open_existing(registry_path)
         .map_err(|error| format!("cannot open existing media registry: {error:?}"))?;
     let store = MediaObjectStore::new(root);
+    if mode == "--dry-run" {
+        let preview = preview_bound_owner_release(
+            &store,
+            &registry,
+            owner_kind,
+            owner_id,
+            max_candidates,
+        )
+        .map_err(|error| format!("owner-release preview rejected: {error:?}"))?;
+        println!(
+            "DRY RUN: {} claims for {kind}/{owner_id}; {} would become unowned ({} verified bytes); {} already unowned ({} verified bytes)",
+            preview.owned_claims,
+            preview.newly_unowned.candidates.len(),
+            preview.newly_unowned.reclaimable_bytes,
+            preview.previously_unowned.candidates.len(),
+            preview.previously_unowned.reclaimable_bytes
+        );
+        if preview.exceeds_gc_budget {
+            println!(
+                "WARNING: predicted unowned candidates exceed the {}-object GC budget; confirmed release can commit while cleanup fails",
+                max_candidates
+            );
+        }
+        println!("ADVISORY ONLY: ownership can change before confirmation; no owner claims or media objects deleted.");
+        return Ok(());
+    }
     let outcome = release_bound_owner_and_reclaim_media(
         &store,
         &mut registry,

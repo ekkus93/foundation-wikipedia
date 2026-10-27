@@ -29,7 +29,7 @@ fn usage() {
     println!("       wiki-pack inspect <file.wpack>");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
-    println!("       wiki-pack media-owner-release --confirm-release <media-root> <existing-registry.sqlite> <pack|cache|pin> <owner-id> <max-candidates>");
+    println!("       wiki-pack media-owner-release <--dry-run|--confirm-release> <media-root> <existing-registry.sqlite> <pack|cache|pin> <owner-id> <max-candidates>");
     println!("       wiki-pack preview-topic [--json] <local-category-graph.json>");
     println!("       wiki-pack list-curated [--json]");
     println!("       wiki-pack inventory-visuals <rendered.html> <document-url>");
@@ -590,8 +590,8 @@ fn main() {
         }
         Some("media-owner-release") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 6 || fields[0] != "--confirm-release" {
-                eprintln!("media-owner-release requires explicit --confirm-release, root, registry, kind, owner-id and candidate limit");
+            if fields.len() != 6 || !matches!(fields[0].to_str(), Some("--dry-run" | "--confirm-release")) {
+                eprintln!("media-owner-release requires explicit --dry-run or --confirm-release, root, registry, kind, owner-id and candidate limit");
                 usage();
                 std::process::exit(2);
             }
@@ -606,6 +606,7 @@ fn main() {
                 std::process::exit(2);
             };
             if let Err(error) = media_maintenance::release_owner(
+                fields[0].to_str().unwrap(),
                 Path::new(&fields[1]),
                 Path::new(&fields[2]),
                 kind,

@@ -251,6 +251,18 @@ fn owner_release_cli_requires_confirmation_and_preserves_other_packs_and_pins() 
     assert_eq!(store.read_verified(&private).unwrap(), b"atlas-only image");
 
     assert!(invoke("--bind-registry", &root, &db).status.success());
+    let preview = invoke_owner_release("--dry-run", &root, &db, "pack", "atlas", "10");
+    assert!(preview.status.success(), "{}", String::from_utf8_lossy(&preview.stderr));
+    let output = String::from_utf8_lossy(&preview.stdout);
+    assert!(output.contains("DRY RUN: 2 claims"), "{output}");
+    assert!(output.contains("1 would become unowned"), "{output}");
+    assert!(output.contains("0 already unowned"), "{output}");
+    assert!(output.contains("ADVISORY ONLY"), "{output}");
+    assert_eq!(store.read_verified(&private).unwrap(), b"atlas-only image");
+    assert_eq!(store.read_verified(&shared).unwrap(), b"shared image");
+    let registry = MediaRegistry::open_existing(&db).unwrap();
+    assert_eq!(registry.owned_media(OwnerKind::Pack, "atlas").unwrap().len(), 2);
+    drop(registry);
     let wrong_root = base.join("wrong-root");
     fs::create_dir(&wrong_root).unwrap();
     assert!(

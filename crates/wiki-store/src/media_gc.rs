@@ -207,6 +207,72 @@ pub struct OwnerReleaseGcOutcome {
     pub cleanup: Result<MediaGcSweep, MediaGcPlanError>,
 }
 
+/// Read-only advisory preview of a root-bound pack/cache/pin owner release.
+/// The SHARED lease covers the binding check, ownership snapshot and bounded
+/// SHA-256 verification. This is NOT deletion authority: another SQLite
+/// writer can change ownership after the preview and before confirmation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnerReleasePreview {
+    pub owned_claims: usize,
+    pub newly_unowned: MediaGcPlan,
+    pub previously_unowned: MediaGcPlan,
+    pub exceeds_gc_budget: bool,
+}
+
+/// Preview the exact registered claims for an owner and the objects that
+/// currently have no other owners. Existing unowned registered objects are
+/// counted separately because the actual collector also sweeps them.
+/// Never use this advisory snapshot to choose files for deletion; the
+/// confirmed path rechecks ownership under an EXCLUSIVE lease and SQLite
+/// IMMEDIATE writer reservation.
+pub fn preview_bound_owner_release(
+    store: &MediaObjectStore,
+    registry: &MediaRegistry,
+    kind: OwnerKind,
+    owner_id: &str,
+    max_candidates: usize,
+) -> Result<OwnerReleasePreview, MediaGcPlanError> {
+    if !(1..=10_000).contains(&max_candidates) {
+        return Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_shared()
+        .map_err(MediaGcPlanError::Lease)?;
+    registry
+        .require_media_root_binding(store.root())
+        .map_err(MediaGcPlanError::Registry)?;
+    registry
+        .audit_unregistered_references()
+        .map_err(MediaGcPlanError::Registry)?;
+    let owned = registry
+        .owned_media(kind, owner_id)
+        .map_err(MediaGcPlanError::Registry)?;
+    let mut final_owner_claims = Vec::new();
+    for (digest, bytes) in &owned {
+        let count = registry
+            .audit_registered_owners(digest, 1024)
+            .map_err(MediaGcPlanError::Registry)?;
+        if count == 1 {
+            final_owner_claims.push((digest.clone(), *bytes));
+        }
+    }
+    let newly_unowned = verify_unowned_candidates(store, &final_owner_claims, true)?;
+    let existing = registry
+        .unowned_media_candidates(max_candidates)
+        .map_err(MediaGcPlanError::Registry)?;
+    let previously_unowned = verify_unowned_candidates(store, &existing, true)?;
+    let exceeds_gc_budget = final_owner_claims
+        .len()
+        .checked_add(existing.len())
+        .is_none_or(|total| total > max_candidates);
+    Ok(OwnerReleasePreview {
+        owned_claims: owned.len(),
+        newly_unowned,
+        previously_unowned,
+        exceeds_gc_budget,
+    })
+}
+
 /// Coordinate removing a pack, cache entry or user pin with a bounded media
 /// reclamation pass. One EXCLUSIVE lease spans the SQLite owner release and
 /// registered-object GC; shared-lease readers/installers cannot observe an
