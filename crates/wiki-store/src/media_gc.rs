@@ -1072,6 +1072,101 @@ mod tests {
     }
 
     #[test]
+    fn inactive_pack_release_preserves_shared_active_and_pinned_media() {
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_inventory::RequiredMedia;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-shared-inactive-pack-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        for id in ["physics", "mathematics"] {
+            let snapshot = root.join("snapshots").join(id);
+            fs::create_dir_all(&snapshot).unwrap();
+            fs::write(snapshot.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshots = ActiveSnapshotStore::new(&root);
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(root.join("media-registry.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+
+        let shared = b"shared mathematics and physics diagram";
+        let unique = b"physics-only plot";
+        let shared_digest = install_bound_owned_media(
+            &store, &mut registry, shared, &notice(), OwnerKind::Pack, "physics",
+        )
+        .unwrap();
+        let second_digest = install_bound_owned_media(
+            &store, &mut registry, shared, &notice(), OwnerKind::Pack, "mathematics",
+        )
+        .unwrap();
+        assert_eq!(shared_digest, second_digest);
+        registry
+            .add_owner(&shared_digest, OwnerKind::UserPin, "saved")
+            .unwrap();
+        let unique_digest = install_bound_owned_media(
+            &store, &mut registry, unique, &notice(), OwnerKind::Pack, "physics",
+        )
+        .unwrap();
+        let physics_required = [
+            RequiredMedia {
+                digest: shared_digest.clone(),
+                bytes: shared.len() as u64,
+            },
+            RequiredMedia {
+                digest: unique_digest.clone(),
+                bytes: unique.len() as u64,
+            },
+        ];
+        let mathematics_required = [RequiredMedia {
+            digest: shared_digest.clone(),
+            bytes: shared.len() as u64,
+        }];
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media(
+                "physics", &store, &registry, &physics_required,
+            )
+            .unwrap();
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media(
+                "mathematics", &store, &registry, &mathematics_required,
+            )
+            .unwrap();
+
+        let outcome = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots, &store, &mut registry, "physics", 10,
+        )
+        .unwrap();
+        assert_eq!(outcome.released_objects, 2);
+        let sweep = outcome.cleanup.unwrap();
+        assert_eq!(sweep.removed_objects, 1);
+        assert_eq!(sweep.reclaimed_bytes, unique.len() as u64);
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "physics")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "mathematics").unwrap().len(),
+            1
+        );
+        assert_eq!(
+            registry.owned_media(OwnerKind::UserPin, "saved").unwrap().len(),
+            1
+        );
+        assert!(!media_root.join(&unique_digest[..2]).join(&unique_digest).exists());
+        assert!(media_root.join(&shared_digest[..2]).join(&shared_digest).exists());
+        assert_eq!(snapshots.current().unwrap(), Some("mathematics".into()));
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn bound_maintenance_preview_audits_both_phases_without_deleting() {
         let (root, store, mut registry) = setup();
         let pinned = store.store_bytes(b"retained visual").unwrap();
