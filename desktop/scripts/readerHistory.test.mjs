@@ -6,8 +6,8 @@ import {
   forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, popReaderHistory,
 } from "../src/readerHistory.ts";
 
-const article = (pageId, revisionId = pageId * 10) => ({
-  pageId, revisionId, title: String(pageId), html: "<p>" + pageId + "</p>",
+const article = (pageId, revisionId = pageId * 10, project = "enwiki") => ({
+  project, pageId, revisionId, title: String(pageId), html: "<p>" + pageId + "</p>",
 });
 
 test("Back and Forward preserve exact revisions without network refetch", () => {
@@ -102,12 +102,29 @@ test("bookmark navigation preserves same-edition Back but isolates another editi
   const first = article(12, 120);
   const latest = article(12, 121);
   const old = openReaderArticle(emptyReaderNavigation(), first);
-  const sameEdition = openBookmarkedReaderArticle(old, "enwiki", "enwiki", latest);
+  const sameEdition = openBookmarkedReaderArticle(old, latest);
   assert.deepEqual(sameEdition.current, latest);
   assert.deepEqual(backReaderArticle(sameEdition).current, first);
-  const otherEdition = openBookmarkedReaderArticle(old, "enwiki", "dewiki", latest);
-  assert.deepEqual(otherEdition.current, latest);
+  const german = article(12, 121, "dewiki");
+  const otherEdition = openBookmarkedReaderArticle(old, german);
+  assert.deepEqual(otherEdition.current, german);
   assert.deepEqual(otherEdition.back, []);
   assert.deepEqual(otherEdition.forward, []);
   assert.equal(backReaderArticle(otherEdition).current, null);
+});
+
+
+test("saved article provenance, not the selected edition, isolates Back history", () => {
+  const english = article(42, 333, "enwiki");
+  const german = article(42, 333, "dewiki");
+  const state = openReaderArticle(emptyReaderNavigation(), english);
+  // Identical numeric page/revision IDs in different editions are not the
+  // same article. A UI edition switch cannot rebind a mounted revision.
+  const switched = openBookmarkedReaderArticle(state, german);
+  assert.deepEqual(switched.current, german);
+  assert.equal(switched.back.length, 0);
+  assert.equal(backReaderArticle(switched).current, null);
+  const reopened = openBookmarkedReaderArticle(state, article(42, 334, "enwiki"));
+  assert.equal(backReaderArticle(reopened).current.project, "enwiki");
+  assert.equal(backReaderArticle(reopened).current.revisionId, 333);
 });

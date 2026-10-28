@@ -21,6 +21,7 @@ export interface ReaderOpenPageRequest {
 }
 
 interface ArticlePreview {
+  project: string;
   frameId: number;
   pageId: number;
   revisionId: number;
@@ -56,17 +57,17 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   useEffect(() => {
     if (!article) return;
     void invoke<boolean>("record_reader_visit", {
-      project, pageId: article.pageId, revisionId: article.revisionId,
+      project: article.project, pageId: article.pageId, revisionId: article.revisionId,
     }).catch(() => {
       // History recording cannot prevent navigation or disturb its provenance.
     });
-  }, [article?.frameId, project]);
+  }, [article?.frameId, article?.project]);
   useEffect(() => {
     onArticleChange?.(
       article?.title ?? null,
-      article ? { project, pageId: article.pageId, revisionId: article.revisionId } : null,
+      article ? { project: article.project, pageId: article.pageId, revisionId: article.revisionId } : null,
     );
-  }, [article?.title, article?.pageId, article?.revisionId, project, onArticleChange]);
+  }, [article?.title, article?.pageId, article?.revisionId, article?.project, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
@@ -95,9 +96,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     }).then((result) => {
       const [pageId, revisionId, title, html] = parseReaderArticle(result, bookmarkRequest.pageId);
       if (!requestEpoch.current.matches(epoch)) return;
-      const next = { frameId: nextFrameId.current++, pageId, revisionId, title, html,
+      const next = { project: bookmarkRequest.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
         links: extractWikiArticleLinks(html, bookmarkRequest.project) };
-      setNavigation((previous) => openBookmarkedReaderArticle(previous, project, bookmarkRequest.project, next));
+      setNavigation((previous) => openBookmarkedReaderArticle(previous, next));
       setProject(bookmarkRequest.project);
       setHits([]);
       setNotice("Opened the latest available online revision. This is not a complete offline article.");
@@ -108,7 +109,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     }).finally(() => {
       if (requestEpoch.current.matches(epoch)) setBusy(false);
     });
-  }, [bookmarkRequest, project, offline, connected]);
+  }, [bookmarkRequest, offline, connected]);
 
   useEffect(() => {
     const disconnected = () => {
@@ -156,7 +157,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     }
   }
 
-  async function openArticle(command: "open_wikipedia_title" | "open_wikipedia_page", args: { title?: string; pageId?: number }) {
+  async function openArticle(command: "open_wikipedia_title" | "open_wikipedia_page", args: { title?: string; pageId?: number }, requestedProject = project) {
     if (busy || offline || !connected || !navigator.onLine) return;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
@@ -165,10 +166,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     try {
       const [pageId, revisionId, canonicalTitle, html] = parseReaderArticle(await invoke<unknown>(
         command,
-        { ...args, project, offline: offline || !connected || !navigator.onLine },
+        { ...args, project: requestedProject, offline: offline || !connected || !navigator.onLine },
       ), args.pageId);
       if (!requestEpoch.current.matches(epoch)) return;
-      setNavigation((state) => openReaderArticle(state, { frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, project) }));
+      setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject) }));
     } catch (error) {
       if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
@@ -185,12 +186,12 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     }
   }
 
-  function openTitle(title: string) {
+  function openTitle(title: string, requestedProject = project) {
     if (!validReaderTitleInput(title)) {
       setNotice("Invalid Wikipedia article title. Enter a mainspace title without control characters.");
       return;
     }
-    return openArticle("open_wikipedia_title", { title });
+    return openArticle("open_wikipedia_title", { title }, requestedProject);
   }
 
   function openPage(pageId: number) {
@@ -269,7 +270,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
           <h2>{article.title}</h2>
           <p>{offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
           {(() => {
-            const url = revisionSourceUrl(project, article.pageId, article.revisionId);
+            const url = revisionSourceUrl(article.project, article.pageId, article.revisionId);
             return url && (
               <div className="revision-source">
                 <label htmlFor={`${uniqueId}-revision-source`}>Exact Wikimedia revision source</label>
@@ -303,7 +304,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
           <ul>
             {article.links.map((link) => (
               <li key={link.title}>
-                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openTitle(link.title)}>
+                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openTitle(link.title, article.project)}>
                   {link.label}
                 </button>
               </li>
