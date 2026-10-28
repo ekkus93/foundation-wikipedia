@@ -719,7 +719,7 @@ mod identity_tests {
 
         index
             .conn
-.execute("DELETE FROM offline_article_fts WHERE title='Mars'", [])
+            .execute("DELETE FROM offline_article_fts WHERE title='Mars'", [])
             .unwrap();
         assert!(matches!(
             index.verify_catalog_membership(&catalog, &root),
