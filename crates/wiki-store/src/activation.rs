@@ -51,6 +51,12 @@ pub(crate) fn safe_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id.bytes().next().is_some_and(|c| c.is_ascii_lowercase())
+        // Portable snapshot-directory names must never alias Windows device
+        // files, even when this validation runs on Linux or Android.
+        && !matches!(id, "con" | "prn" | "aux" | "nul")
+        && !(id.len() == 4
+            && (id.starts_with("com") || id.starts_with("lpt"))
+            && (b'1'..=b'9').contains(&id.as_bytes()[3]))
         && id
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_')
@@ -269,6 +275,25 @@ impl ActiveSnapshotStore {
 mod interruption_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn snapshot_ids_reject_windows_device_names_before_filesystem_access() {
+        // The snapshot ID becomes a directory component. Enforce the same
+        // portable path policy on Linux and Android, not only on Windows.
+        for id in [
+            "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9",
+        ] {
+            assert!(!safe_id(id), "{id}");
+            assert!(matches!(
+                ActiveSnapshotStore::new("nonexistent-snapshot-root").switch_to_prevalidated(id),
+                Err(ActivationError::InvalidSnapshotId)
+            ));
+        }
+        // Avoid rejecting lookalikes that are ordinary, portable filenames.
+        for id in ["com0", "com10", "lpt0", "lpt10", "console", "con-old", "aux_2026"] {
+            assert!(safe_id(id), "{id}");
+        }
+    }
 
     #[test]
     fn bound_pack_activation_refuses_missing_wrong_root_and_corrupt_media() {
@@ -680,6 +705,9 @@ mod interruption_tests {
             "Bad".to_owned(),
             "1bad".to_owned(),
             "_bad".to_owned(),
+            "con".to_owned(),
+            "com1".to_owned(),
+            "lpt9".to_owned(),
             "x".repeat(129),
         ] {
             let bytes = format!("required diagram for {id}");
