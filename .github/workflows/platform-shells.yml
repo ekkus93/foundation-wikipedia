@@ -92,5 +92,7 @@ jobs:
           toolchain: "1.90.0"
       - name: Check native Tauri adapter
         run: cargo +1.90.0 check --manifest-path desktop/src-tauri/Cargo.toml
+      - name: Test native Tauri adapter and shared online preview cache
+        run: cargo +1.90.0 test --manifest-path desktop/src-tauri/Cargo.toml --lib
       - name: Confirm head
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
