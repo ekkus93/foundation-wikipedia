@@ -1093,7 +1093,7 @@ mod tests {
         }
         let snapshots = ActiveSnapshotStore::new(&root);
         let store = MediaObjectStore::new(&media_root);
-        let mut registry = MediaRegistry::open(root.join("media-registry.sqlite")).unwrap();
+        let mut registry = MediaRegistry::open(&root.join("media-registry.sqlite")).unwrap();
         registry.bind_media_root(&media_root).unwrap();
 
         let shared = b"shared mathematics and physics diagram";
