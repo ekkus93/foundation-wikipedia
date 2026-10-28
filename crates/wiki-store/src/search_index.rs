@@ -563,14 +563,11 @@ impl OfflineSearchIndex {
                     .checked_add(expected.len())
                     .filter(|end| *end <= *body_len)
                     .ok_or(SearchError::StaleIndex)?;
-                let start_sql = i64::try_from(*offset + 1)
-                    .map_err(|_| SearchError::StaleIndex)?;
-                let length_sql = i64::try_from(expected.len())
-                    .map_err(|_| SearchError::StaleIndex)?;
-                let actual: Vec<u8> = suffix_stmt.query_row(
-                    params![rowid, start_sql, length_sql],
-                    |row| row.get(0),
-                )?;
+                let start_sql = i64::try_from(*offset + 1).map_err(|_| SearchError::StaleIndex)?;
+                let length_sql =
+                    i64::try_from(expected.len()).map_err(|_| SearchError::StaleIndex)?;
+                let actual: Vec<u8> = suffix_stmt
+                    .query_row(params![rowid, start_sql, length_sql], |row| row.get(0))?;
                 if actual != expected.as_bytes() {
                     return Err(SearchError::StaleIndex);
                 }
@@ -834,7 +831,10 @@ mod identity_tests {
         assert_eq!(index.verify_catalog_membership(&catalog, &root).unwrap(), 3);
         assert_eq!(index.search_project("enwiki", "Blue", 10).unwrap().len(), 1);
         assert_eq!(
-            index.search_project("frwiki", "Ancienne", 10).unwrap().len(),
+            index
+                .search_project("frwiki", "Ancienne", 10)
+                .unwrap()
+                .len(),
             1
         );
 
