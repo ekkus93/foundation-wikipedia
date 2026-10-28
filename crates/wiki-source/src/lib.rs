@@ -10,6 +10,7 @@ pub mod enterprise_verified;
 pub mod join;
 pub mod local_title_index;
 pub mod online_article;
+pub mod online_cache;
 #[cfg(not(target_os = "android"))]
 pub mod online_curl;
 pub mod online_fetch;
