@@ -398,6 +398,7 @@ impl SnapshotCatalog {
         let mut stmt = self.conn.prepare(
             "SELECT normalized_title FROM title_index
              WHERE project=?1 AND normalized_title>=?2
+
              ORDER BY normalized_title",
         )?;
         let rows = stmt.query_map(params![project, normalized], |row| row.get::<_, String>(0))?;
@@ -544,6 +545,10 @@ impl SnapshotCatalog {
             ))
         })?;
         let mut current_shard: Option<String> = None;
+        // A manifest accepted on Linux must not alias two distinct shard
+        // identities to one file on case-insensitive Windows/macOS volumes.
+        // Check the entire catalog, not only adjacent names in SQLite order.
+        let mut portable_shard_names = HashSet::new();
         let mut next_offset = 0u64;
         let mut verified = 0usize;
         for row in rows {
@@ -552,6 +557,9 @@ impl SnapshotCatalog {
                 return Err(CatalogError::UnsafeShardName);
             }
             if current_shard.as_deref() != Some(&shard) {
+                if !portable_shard_names.insert(shard.to_ascii_lowercase()) {
+                    return Err(CatalogError::InvalidCatalogEntry);
+                }
                 if let Some(previous) = &current_shard {
                     verify_shard_length(root, previous, next_offset)?;
                 }
@@ -798,6 +806,7 @@ mod tests {
             std::env::temp_dir().join(format!("wiki-catalog-{}-{stamp}", std::process::id()));
         fs::create_dir(&path).unwrap();
         path
+
     }
 
     fn article(id: u64, title: &str) -> PageRecord {
@@ -1198,6 +1207,7 @@ mod tests {
         // The immutable redirect and article frames remain valid, but a
         // corrupted derived index must not substitute a different identity.
         catalog
+
             .conn
             .execute(
                 "UPDATE title_index SET page_id=43 WHERE project='enwiki' AND normalized_title='Earth'",
@@ -1427,6 +1437,45 @@ mod tests {
         assert!(matches!(
             catalog.verify_shard_coverage(&root),
             Err(CatalogError::Io(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shard_coverage_rejects_case_insensitive_filename_aliases() {
+        let root = temp_root();
+        let mut first = Vec::new();
+        append_record_frame(&mut first, &article(42, "Earth")).unwrap();
+        fs::write(root.join("Articles.shard"), &first).unwrap();
+        let mut second_record = article(43, "Mars");
+        if let PageRecord::Article(ref mut page) = second_record {
+            page.aliases.clear();
+            page.wikidata_id = Some("Q111".into());
+        }
+        let mut second = Vec::new();
+        append_record_frame(&mut second, &second_record).unwrap();
+        fs::write(root.join("articles.shard"), &second).unwrap();
+
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        catalog
+            .insert_verified(&root, "Articles.shard", 0, first.len() as u64)
+            .unwrap();
+        assert_eq!(catalog.verify_shard_coverage(&root).unwrap(), 1);
+        catalog
+            .insert_verified(&root, "articles.shard", 0, second.len() as u64)
+            .unwrap();
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        let manifest_names = BTreeSet::from([
+            "Articles.shard".to_owned(),
+            "articles.shard".to_owned(),
+        ]);
+        assert!(matches!(
+            catalog.verify_expected_shards(&root, &manifest_names),
+            Err(CatalogError::InvalidCatalogEntry)
         ));
         fs::remove_dir_all(root).unwrap();
     }
