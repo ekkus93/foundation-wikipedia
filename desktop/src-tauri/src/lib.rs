@@ -21,6 +21,47 @@ use wiki_source::online_selection::NetworkState;
 #[derive(Clone, Default)]
 struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>, Arc<AtomicU64>);
 
+/// Serialize privacy-sensitive writes with deletion and reject operations
+/// queued before a privacy reset. The generation is captured at IPC entry,
+/// not when a delayed blocking worker finally starts.
+#[derive(Clone, Default)]
+struct DesktopPersonalDataGate {
+    lock: Arc<Mutex<()>>,
+    generation: Arc<AtomicU64>,
+}
+
+impl DesktopPersonalDataGate {
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn write<T>(
+        &self,
+        expected_generation: u64,
+        action: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| "Personal reading data lock unavailable".to_owned())?;
+        if self.generation() != expected_generation {
+            return Err("Personal reading data was cleared; stale write rejected".to_owned());
+        }
+        action()
+    }
+
+    fn reset<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        // Invalidate queued workers before waiting for any active write.
+        // A worker already holding the lock finishes before deletion begins.
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| "Personal reading data lock unavailable".to_owned())?;
+        action()
+    }
+}
+
 /// Avoid serializing independent HTTP operations behind the cache lock. If a
 /// concurrent request owns the lock (or it was poisoned), use the uncached
 /// revision-safe path. An offline command never inspects the online cache.
@@ -249,15 +290,20 @@ fn toggle_saved_bookmark(
 #[tauri::command]
 async fn toggle_reader_bookmark(
     app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
     project: String,
     page_id: u64,
     revision_id: u64,
 ) -> Result<bool, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = open_private_bookmark_store(&app)?;
-        let key = ArticleKey { project, page_id };
-        toggle_saved_bookmark(&state, &key, revision_id)
-            .map_err(|_| "Invalid bookmark identity or storage operation".to_owned())
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            let key = ArticleKey { project, page_id };
+            toggle_saved_bookmark(&state, &key, revision_id)
+                .map_err(|_| "Invalid bookmark identity or storage operation".to_owned())
+        })
     })
     .await
     .map_err(|_| "Bookmark worker stopped".to_owned())?
@@ -288,14 +334,19 @@ async fn list_reader_bookmarks(app: tauri::AppHandle) -> Result<Vec<(String, u64
 #[tauri::command]
 async fn remove_reader_bookmark(
     app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
     project: String,
     page_id: u64,
 ) -> Result<bool, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = open_private_bookmark_store(&app)?;
-        let key = ArticleKey { project, page_id };
-        state.remove_bookmark(&key)
-            .map_err(|_| "Cannot remove bookmark identity".to_owned())
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            let key = ArticleKey { project, page_id };
+            state.remove_bookmark(&key)
+                .map_err(|_| "Cannot remove bookmark identity".to_owned())
+        })
     })
     .await
     .map_err(|_| "Bookmark removal worker stopped".to_owned())?
@@ -308,13 +359,17 @@ async fn remove_reader_bookmark(
 async fn clear_reader_personal_data(
     app: tauri::AppHandle,
     cache: tauri::State<'_, DesktopOnlineCache>,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
 ) -> Result<(), String> {
     let cache = (*cache).clone();
+    let gate = (*gate).clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut state = open_private_bookmark_store(&app)?;
-        state.clear_personal_reading_data()
-            .map_err(|_| "Cannot clear personal reading data".to_owned())?;
-        clear_online_preview_cache(&cache)
+        gate.reset(|| {
+            let mut state = open_private_bookmark_store(&app)?;
+            state.clear_personal_reading_data()
+                .map_err(|_| "Cannot clear personal reading data".to_owned())?;
+            clear_online_preview_cache(&cache)
+        })
     })
     .await
     .map_err(|_| "Personal reading data worker stopped".to_owned())?
@@ -330,15 +385,25 @@ fn reader_history_rows(state: &UserState) -> Result<Vec<(String, u64, u64, i64)>
 /// Visit storage is strictly opt-in and records only an exact verified article
 /// identity following a user-initiated successful navigation. No HTML is stored.
 #[tauri::command]
-async fn record_reader_visit(app: tauri::AppHandle, project: String, page_id: u64, revision_id: u64) -> Result<bool, String> {
+async fn record_reader_visit(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+    project: String,
+    page_id: u64,
+    revision_id: u64,
+) -> Result<bool, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = open_private_bookmark_store(&app)?;
-        let key = ArticleKey { project, page_id };
-        let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|_| "System clock is invalid")?.as_secs();
-        let timestamp = i64::try_from(seconds).map_err(|_| "System clock is invalid")?;
-        state.record_visit(&key, revision_id, timestamp)
-            .map_err(|_| "Cannot record reading history".to_owned())
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            let key = ArticleKey { project, page_id };
+            let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
+                .map_err(|_| "System clock is invalid")?.as_secs();
+            let timestamp = i64::try_from(seconds).map_err(|_| "System clock is invalid")?;
+            state.record_visit(&key, revision_id, timestamp)
+                .map_err(|_| "Cannot record reading history".to_owned())
+        })
     })
     .await
     .map_err(|_| "Reading history worker stopped".to_owned())?
@@ -719,6 +784,62 @@ mod bookmark_tests {
     }
 
     #[test]
+    fn privacy_reset_fences_queued_bookmark_and_visit_writes() {
+        let gate = DesktopPersonalDataGate::default();
+        let queued_generation = gate.generation();
+        let mut state = UserState::in_memory().unwrap();
+        let key = ArticleKey {
+            project: "enwiki".to_owned(),
+            page_id: 42,
+        };
+        state.set_history_enabled(true).unwrap();
+        gate.write(queued_generation, || {
+            state.record_visit(&key, 333, 1_700_000_000)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        gate.write(queued_generation, || {
+            toggle_saved_bookmark(&state, &key, 333)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        gate.reset(|| {
+            state.clear_personal_reading_data()
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        assert!(state.bookmark(&key).unwrap().is_none());
+
+        // Workers queued before reset cannot reintroduce cleared activity.
+        assert!(gate
+            .write(queued_generation, || {
+                state.record_visit(&key, 334, 1_700_000_001)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert!(gate
+            .write(queued_generation, || {
+                toggle_saved_bookmark(&state, &key, 334)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        assert!(state.bookmark(&key).unwrap().is_none());
+
+        // A deliberate post-reset action is still permitted.
+        let current_generation = gate.generation();
+        assert_ne!(queued_generation, current_generation);
+        assert!(gate
+            .write(current_generation, || {
+                toggle_saved_bookmark(&state, &key, 335)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .unwrap());
+        assert_eq!(state.bookmark(&key).unwrap(), Some((335, String::new())));
+    }
+
+    #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
         let state = UserState::in_memory().unwrap();
         let article = ArticleKey {
@@ -739,6 +860,7 @@ mod bookmark_tests {
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopOnlineCache::default())
+        .manage(DesktopPersonalDataGate::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             open_wikipedia_title,
