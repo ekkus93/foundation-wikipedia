@@ -676,7 +676,12 @@ mod interruption_tests {
         // The registry intentionally accepts a broader owner-ID grammar than
         // snapshot activation. A pack owner that cannot name a snapshot must
         // not be released through the snapshot-specific deletion boundary.
-        for id in ["Bad".to_owned(), "1bad".to_owned(), "_bad".to_owned(), "x".repeat(129)] {
+        for id in [
+            "Bad".to_owned(),
+            "1bad".to_owned(),
+            "_bad".to_owned(),
+            "x".repeat(129),
+        ] {
             let bytes = format!("required diagram for {id}");
             let digest = install_bound_owned_media(
                 &store,
