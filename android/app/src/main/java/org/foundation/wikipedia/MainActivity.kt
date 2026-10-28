@@ -3,17 +3,24 @@ package org.foundation.wikipedia
 import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
@@ -28,10 +35,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.contentDescription
@@ -81,68 +91,143 @@ private fun FoundationApp() {
     } else {
         if (isDark) darkColorScheme() else lightColorScheme()
     }
-    var expanded by remember { mutableStateOf(false) }
+    val shellSaver = remember {
+        listSaver<ReaderShellState, Boolean>(
+            save = { listOf(it.offline, it.settingsOpen) },
+            restore = { ReaderShellState.restore(it[0], it[1]) },
+        )
+    }
+    var shell by rememberSaveable(stateSaver = shellSaver) {
+        mutableStateOf(ReaderShellState())
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val chatActionFocus = remember { FocusRequester() }
 
-    // Back dismisses the action menu before leaving the reader.
-    BackHandler(enabled = expanded) { expanded = false }
-    LaunchedEffect(expanded) {
-        if (expanded) chatActionFocus.requestFocus()
+    BackHandler(enabled = shell.actionsOpen || shell.settingsOpen) {
+        shell = shell.back()
+    }
+    LaunchedEffect(shell.actionsOpen) {
+        if (shell.actionsOpen) chatActionFocus.requestFocus()
     }
 
     MaterialTheme(colorScheme = scheme) {
         Scaffold(
-            topBar = { TopAppBar(title = { Text("Wikipedia") }) },
-            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-            floatingActionButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
-                    if (expanded) {
-                        for (label in listOf("Settings", "Offline", "Bookmark", "Chat")) {
-                            OutlinedButton(onClick = {
-                                expanded = false
-                                scope.launch {
-                                    snackbarHostState.showSnackbar(
-                                        "$label is not implemented in this development shell"
-                                    )
-                                }
-                            },
-                                modifier = if (label == "Chat") Modifier.focusRequester(chatActionFocus) else Modifier
-                            ) {
-                                Text(label)
+            topBar = {
+                TopAppBar(
+                    title = { Text(if (shell.settingsOpen) "Settings" else "Wikipedia") },
+                    navigationIcon = {
+                        if (shell.settingsOpen) {
+                            TextButton(onClick = { shell = shell.back() }) {
+                                Text("← Reader")
                             }
                         }
-                    }
-                    FloatingActionButton(
-                        onClick = { expanded = !expanded },
-                        modifier = Modifier.semantics {
-                            contentDescription = if (expanded) "Close reader actions" else "Open reader actions"
+                    },
+                )
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            floatingActionButton = {
+                if (!shell.settingsOpen) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
+                        if (shell.actionsOpen) {
+                            for (label in listOf("Settings", "Offline", "Bookmark", "Chat")) {
+                                OutlinedButton(
+                                    onClick = {
+                                        when (label) {
+                                            "Settings" -> shell = shell.showSettings()
+                                            "Offline" -> shell = shell.withOffline(!shell.offline)
+                                            else -> {
+                                                shell = shell.copy(actionsOpen = false)
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "$label requires a loaded, verified article; this build has none."
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = if (label == "Chat") {
+                                        Modifier.focusRequester(chatActionFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                ) {
+                                    Text(if (label == "Offline" && shell.offline) "Go online" else label)
+                                }
+                            }
                         }
-                    ) {
-                        Text(if (expanded) "Close" else "Actions")
+                        FloatingActionButton(
+                            onClick = { shell = shell.toggleActions() },
+                            modifier = Modifier.semantics {
+                                contentDescription = if (shell.actionsOpen) {
+                                    "Close reader actions"
+                                } else {
+                                    "Open reader actions"
+                                }
+                            },
+                        ) {
+                            Text(if (shell.actionsOpen) "Close" else "Actions")
+                        }
                     }
                 }
-            }
+            },
         ) { padding ->
-            AndroidView(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                factory = { viewContext ->
-                    WebView(viewContext).apply {
-                        settings.javaScriptEnabled = false
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        loadDataWithBaseURL(
-                            "https://foundation.invalid/",
-                            BOOTSTRAP_HTML,
-                            "text/html",
-                            "UTF-8",
-                            null
+            if (shell.settingsOpen) {
+                Column(modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
+                    Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Work offline", modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = shell.offline,
+                            onCheckedChange = { shell = shell.withOffline(it) },
                         )
                     }
+                    Text(
+                        if (shell.offline) "Offline mode selected for this reader session."
+                        else "Offline mode is off. Online article fetching is not implemented yet.",
+                    )
+                    Text(
+                        "No verified Wikipedia pack is installed. This development WebView never " +
+                            "requests network resources, even when Work offline is off.",
+                    )
+                    Text(
+                        "The offline choice survives screen rotation. It does not download " +
+                            "articles, enable bookmarks, or certify missing images and attribution.",
+                    )
                 }
-            )
+            } else {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    factory = { viewContext ->
+                        WebView(viewContext).apply {
+                            settings.javaScriptEnabled = false
+                            settings.javaScriptCanOpenWindowsAutomatically = false
+                            settings.domStorageEnabled = false
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+                            settings.blockNetworkLoads = true
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                ): Boolean = true
+                            }
+                            loadDataWithBaseURL(
+                                "https://foundation.invalid/",
+                                BOOTSTRAP_HTML,
+                                "text/html",
+                                "UTF-8",
+                                null,
+                            )
+                        }
+                    },
+                )
+            }
         }
     }
 }
