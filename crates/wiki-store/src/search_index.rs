@@ -567,7 +567,7 @@ impl OfflineSearchIndex {
                 let length_sql =
                     i64::try_from(expected.len()).map_err(|_| SearchError::StaleIndex)?;
                 let actual: Vec<u8> = suffix_stmt
-                    .query_row(params![rowid, start_sql, length_sql], |row| row.get(0))?;
+                    .query_row(params![*rowid, start_sql, length_sql], |row| row.get(0))?;
                 if actual != expected.as_bytes() {
                     return Err(SearchError::StaleIndex);
                 }
