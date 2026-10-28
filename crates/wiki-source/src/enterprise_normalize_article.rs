@@ -4,7 +4,9 @@ use super::enterprise_normalize_blocks::convert;
 use super::enterprise_normalize_html::sanitize_rendered_html;
 use super::enterprise_normalize_links::{collect_links, title_key};
 use super::enterprise_normalize_references::references;
-use crate::enterprise::{JoinedEnterpriseArticle, StructuredTable};
+use crate::enterprise::{
+    valid_membership_label, JoinedEnterpriseArticle, StructuredTable, MAX_ENTERPRISE_RECORD_BYTES,
+};
 use crate::enterprise_integrity::validate_joined_evidence;
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{
@@ -59,22 +61,28 @@ impl EnterpriseLinkIndex {
         let mut by_page = BTreeMap::new();
 
         for identity in identities {
+            // Public EnterpriseLinkIdentity DTOs can bypass the JSON parser and
+            // revision-scoped Structured/Regular join. Enforce the same source
+            // identity contract before building a potentially authoritative
+            // cross-chunk redirect/title lookup.
+            if !crate::valid_wiki_project(&identity.project) {
+                return Err(NormalizeError::Model(wiki_model::ModelError::InvalidIdentity));
+            }
             if identity.project != project {
                 return Err(NormalizeError::ProjectMismatch);
             }
             if identity.generation_id != generation_id {
                 return Err(NormalizeError::GenerationMismatch);
             }
-            if identity.generation_id.trim().is_empty()
-                || identity.generation_id != identity.generation_id.trim()
-            {
+            if !crate::enterprise_ndjson::valid_generation_id(&identity.generation_id) {
                 return Err(NormalizeError::Missing("link index generation"));
             }
-            if identity.revision_id == 0 {
+            if !(1..=i64::MAX as u64).contains(&identity.revision_id) {
                 return Err(NormalizeError::Missing("link index revision"));
             }
             if identity.date_modified.trim().is_empty()
                 || identity.date_modified != identity.date_modified.trim()
+                || identity.date_modified.len() > MAX_ENTERPRISE_RECORD_BYTES
             {
                 return Err(NormalizeError::Missing("link index revision timestamp"));
             }
@@ -96,7 +104,7 @@ impl EnterpriseLinkIndex {
                 ),
             );
             for title in std::iter::once(&identity.title).chain(identity.redirects.iter()) {
-                if title.trim().is_empty() || title != title.trim() {
+                if !valid_membership_label(title) {
                     return Err(NormalizeError::Missing("link index title"));
                 }
                 let index_key = (key.project.clone(), title_key(title));
@@ -538,6 +546,66 @@ mod tests {
             EnterpriseLinkIndex::build(&[invalid]),
             Err(NormalizeError::Missing("link index title"))
         );
+    }
+
+    #[test]
+    fn link_index_revalidates_public_typed_source_identity_and_aliases() {
+        let base = EnterpriseLinkIdentity::from_joined(&joined("enwiki", 42));
+
+        for project in ["123wiki", "_enwiki", "enwiki_", "Enwiki"] {
+            let mut invalid = base.clone();
+            invalid.project = project.into();
+            assert_eq!(
+                EnterpriseLinkIndex::build(&[invalid]),
+                Err(NormalizeError::Model(
+                    wiki_model::ModelError::InvalidIdentity
+                )),
+                "{project}"
+            );
+        }
+        for generation in ["../wrong", ".hidden", "trailing.", "bad/generation"] {
+            let mut invalid = base.clone();
+            invalid.generation_id = generation.into();
+            assert_eq!(
+                EnterpriseLinkIndex::build(&[invalid]),
+                Err(NormalizeError::Missing("link index generation")),
+                "{generation}"
+            );
+        }
+        let mut invalid = base.clone();
+        invalid.revision_id = i64::MAX as u64 + 1;
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index revision"))
+        );
+
+        let mut invalid = base.clone();
+        invalid.date_modified = "x".repeat(MAX_ENTERPRISE_RECORD_BYTES + 1);
+        assert_eq!(
+            EnterpriseLinkIndex::build(&[invalid]),
+            Err(NormalizeError::Missing("link index revision timestamp"))
+        );
+        for title in ["bad\u{202e}title", "bad\u{200b}title", "bad\u{2029}title"] {
+            let mut invalid = base.clone();
+            invalid.title = title.into();
+            assert_eq!(
+                EnterpriseLinkIndex::build(&[invalid]),
+                Err(NormalizeError::Missing("link index title")),
+                "{title}"
+            );
+            let mut invalid_alias = base.clone();
+            invalid_alias.redirects.push(title.into());
+            assert_eq!(
+                EnterpriseLinkIndex::build(&[invalid_alias]),
+                Err(NormalizeError::Missing("link index title")),
+                "{title}"
+            );
+        }
+
+        let mut valid = base;
+        valid.title = "می‌روم क्‍ष".into();
+        valid.redirects = vec!["فيزياء".into()];
+        assert!(EnterpriseLinkIndex::build(&[valid]).is_ok());
     }
 
     #[test]
