@@ -280,9 +280,7 @@ mod interruption_tests {
     fn snapshot_ids_reject_windows_device_names_before_filesystem_access() {
         // The snapshot ID becomes a directory component. Enforce the same
         // portable path policy on Linux and Android, not only on Windows.
-        for id in [
-            "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9",
-        ] {
+        for id in ["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"] {
             assert!(!safe_id(id), "{id}");
             assert!(matches!(
                 ActiveSnapshotStore::new("nonexistent-snapshot-root").switch_to_prevalidated(id),
@@ -290,7 +288,9 @@ mod interruption_tests {
             ));
         }
         // Avoid rejecting lookalikes that are ordinary, portable filenames.
-        for id in ["com0", "com10", "lpt0", "lpt10", "console", "con-old", "aux_2026"] {
+        for id in [
+            "com0", "com10", "lpt0", "lpt10", "console", "con-old", "aux_2026",
+        ] {
             assert!(safe_id(id), "{id}");
         }
     }
