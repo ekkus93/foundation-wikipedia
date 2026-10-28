@@ -238,10 +238,68 @@ impl OfflineSearchIndex {
         Ok(Self { conn })
     }
 
+    /// Verify a published FTS5 index without ever opening its original bytes
+    /// for writing. SQLite creates a transactionally consistent snapshot
+    /// (including committed WAL data) in a private same-directory scratch DB.
+    /// Its native FTS integrity-check then inspects the copied shadow tables.
+    ///
+    /// This may require approximately one additional index-sized file of free
+    /// disk space. The caller must own the private directory and exclude
+    /// concurrent index replacement throughout the verified open.
+    fn verify_published_native_fts_integrity(path: &Path) -> Result<(), SearchError> {
+        validate_index_path(path)?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let (scratch, file) = (0..32)
+            .find_map(|_| {
+                let candidate = parent.join(format!(
+                    ".offline-fts-audit.{}.{}.sqlite",
+                    std::process::id(),
+                    NEXT_REBUILD_TEMP.fetch_add(1, Ordering::Relaxed)
+                ));
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                match options.open(&candidate) {
+                    Ok(file) => Some(Ok((candidate, file))),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                    Err(error) => Some(Err(SearchError::Io(error))),
+                }
+            })
+            .ok_or(SearchError::UnsafePath)??;
+        drop(file);
+
+        let verification = (|| -> Result<(), SearchError> {
+            // A separate READ_ONLY connection is needed: the published
+            // reader has PRAGMA query_only=ON, which prohibits VACUUM INTO
+            // even though it does not modify the source database.
+            let source =
+                Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            source.execute(
+                "VACUUM main INTO ?1",
+                params![scratch.to_str().ok_or(SearchError::UnsafePath)?],
+            )?;
+            drop(source);
+            let copy = Self::open(&scratch)?;
+            copy.verify_native_fts_integrity()
+        })();
+        // Close both SQLite connections before removal (also on Windows).
+        let cleanup = fs::remove_file(&scratch);
+        verification?;
+        cleanup?;
+        Ok(())
+    }
+
     /// Open an existing derived index only after checking complete article
     /// identity membership against every digest-verified catalog record.
     /// This does not authenticate the source publication, validate required
-    /// media, or prove that FTS token postings match canonical body text.
+    /// media. The private writable clone audits persisted FTS5 postings.
     /// The caller must keep the snapshot immutable for the reader's lifetime.
     pub fn open_verified_read_only(
         path: &Path,
@@ -250,6 +308,7 @@ impl OfflineSearchIndex {
     ) -> Result<Self, SearchError> {
         let index = Self::open_read_only(path)?;
         index.verify_catalog_membership(catalog, root)?;
+        Self::verify_published_native_fts_integrity(path)?;
         Ok(index)
     }
 
@@ -1073,6 +1132,46 @@ mod identity_tests {
         assert_eq!(articles.len(), 1);
         assert_eq!(articles[0].key.page_id, 42);
         drop(reader);
+
+        // A successful verified open must not rewrite published bytes or
+        // leave any temporary writable FTS copy behind.
+        let published_bytes = fs::read(&path).unwrap();
+        let reader = OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root).unwrap();
+        drop(reader);
+        assert_eq!(fs::read(&path).unwrap(), published_bytes);
+
+        // Corrupt FTS5's internal shadow data without touching the canonical
+        // article body. Basic search and catalog-membership checks still pass,
+        // but a fresh published verified open must reject the damaged index.
+        {
+            let writer = OfflineSearchIndex::open(&path).unwrap();
+            assert_eq!(
+                writer
+                    .conn
+                    .execute(
+                        "UPDATE offline_article_fts_docsize SET sz=x'0000000000' WHERE id=1",
+                        [],
+                    )
+                    .unwrap(),
+                1
+            );
+        }
+        let unverified = OfflineSearchIndex::open_read_only(&path).unwrap();
+        assert_eq!(unverified.verify_catalog_membership(&catalog, &root).unwrap(), 1);
+        assert_eq!(unverified.search_project("enwiki", "Earth", 10).unwrap().len(), 1);
+        drop(unverified);
+        assert!(matches!(
+            OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root),
+            Err(SearchError::Sql(_))
+        ));
+        let audit_leftovers = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts-audit."))
+            .count();
+        assert_eq!(audit_leftovers, 0);
+        OfflineSearchIndex::replace_persisted_from_catalog(&path, &catalog, &root).unwrap();
+        assert!(OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root).is_ok());
 
         // A plausible, still-queryable FTS schema is not proof that every
         // installed article has a corresponding indexed row.
