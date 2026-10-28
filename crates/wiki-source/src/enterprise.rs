@@ -705,18 +705,20 @@ fn validate_typed_join_fields(
     }) {
         return Err(EnterpriseError::InvalidField("main_entity.identifier"));
     }
-    if structured.description.as_deref().is_some_and(|description| {
-        description.trim().is_empty() || description.len() > MAX_ENTERPRISE_RECORD_BYTES
-    }) {
+    if structured
+        .description
+        .as_deref()
+        .is_some_and(|description| {
+            description.trim().is_empty() || description.len() > MAX_ENTERPRISE_RECORD_BYTES
+        })
+    {
         return Err(EnterpriseError::InvalidField("description"));
     }
     Ok(())
 }
 
 fn valid_required_source_text(value: &str) -> bool {
-    !value.trim().is_empty()
-        && value.trim() == value
-        && value.len() <= MAX_ENTERPRISE_RECORD_BYTES
+    !value.trim().is_empty() && value.trim() == value && value.len() <= MAX_ENTERPRISE_RECORD_BYTES
 }
 
 /// Join beta Structured Contents with the regular article payload only when all
@@ -1312,7 +1314,9 @@ mod tests {
         assert!(join_enterprise_article(structured.clone(), regular.clone()).is_ok());
 
         for invalid in ["", " Gravity", "Gravity ", "Gravity\\n", "Gravity\\u{202e}"] {
-            let invalid = invalid.replace("\\n", "\n").replace("\\u{202e}", "\u{202e}");
+            let invalid = invalid
+                .replace("\\n", "\n")
+                .replace("\\u{202e}", "\u{202e}");
             let mut source = structured.clone();
             source.name = invalid.clone();
             let mut companion = regular.clone();
@@ -1367,10 +1371,8 @@ mod tests {
         );
 
         // JSON and typed DTOs must agree on the title anti-spoofing rule.
-        let forged_json = structured_json().replace(
-            "\"name\":\"Gravity\"",
-            "\"name\":\"Gravity\\u202e\"",
-        );
+        let forged_json =
+            structured_json().replace("\"name\":\"Gravity\"", "\"name\":\"Gravity\\u202e\"");
         assert_eq!(
             parse_structured_article(&forged_json, "2026-10-01"),
             Err(EnterpriseError::InvalidField("name"))
