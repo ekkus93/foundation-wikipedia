@@ -12,4 +12,6 @@ The previous desktop fix applied cross-edition isolation specifically when reope
 
 `desktop/scripts/readerHistory.test.mjs` now tests same-edition Back and a cross-edition ordinary open with identical numeric page/revision IDs, including clearing both history stacks. Existing bookmark and retained offline-preview tests remain.
 
+Source commit: `dce7cf76696dc419bdb73f08c341991386e8d924`. Exact-source CI passed: [Rust workspace 40666889203](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40666889203), [Platform shells 40666889062](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40666889062), and [Desktop launch smoke 40666889009](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40666889009). Documentation-fix head `d743f8491c1074fbb9ee3f6dc12bce2d4c3f82c2` passed [Rust workspace 40667113624](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40667113624) and [Platform shells 40667113710](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40667113710).
+
 This is a local navigation correctness change, not a claim that the online preview has complete offline media or that physical desktop/Android acceptance has passed. Iframe scroll restoration across layout changes, verified installed-pack navigation and real-device testing remain outstanding.
