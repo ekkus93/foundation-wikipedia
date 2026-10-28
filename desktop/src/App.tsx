@@ -358,7 +358,7 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader textSize={textSize} readingWidth={readingWidth} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
+              <OnlineReader textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));

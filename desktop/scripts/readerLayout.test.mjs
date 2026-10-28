@@ -38,3 +38,24 @@ test("isolated preview changes size and width but never interpolates untrusted C
   assert.equal(safe.includes(attack), false);
   assert.equal(safe.includes("https://example.com"), false);
 });
+
+
+test("sandboxed preview honors explicit and system themes without CSS injection", () => {
+  const html = "<p>Physics</p>";
+  const light = isolatedReaderDocument(html, "standard", "standard", "light");
+  const dark = isolatedReaderDocument(html, "standard", "standard", "dark");
+  const system = isolatedReaderDocument(html, "standard", "standard", "system");
+  assert.match(light, /html\{background:#ffffff\}/);
+  assert.match(light, /color:#202122/);
+  assert.match(dark, /html\{background:#202122\}/);
+  assert.match(dark, /color:#eaecf0/);
+  assert.match(system, /prefers-color-scheme: dark/);
+  assert.match(system, /color:#eaecf0/);
+  assert.doesNotMatch(light, /prefers-color-scheme/);
+  assert.doesNotMatch(dark, /prefers-color-scheme/);
+  const injection = "dark; background:url(https://example.com)";
+  const safe = isolatedReaderDocument(html, "standard", "standard", injection);
+  assert.equal(safe, light);
+  assert.doesNotMatch(safe, /example.com/);
+  assert.match(safe, /default-src 'none'/);
+});

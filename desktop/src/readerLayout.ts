@@ -22,20 +22,26 @@ export function parseReaderLayout(value: unknown): [ReaderTextSize, ReaderWidth]
 const FONT_PX: Record<ReaderTextSize, number> = { small: 15, standard: 17, large: 20 };
 const WIDTH_CH: Record<ReaderWidth, number> = { narrow: 58, standard: 74, wide: 96 };
 
-/** Preview HTML remains sandboxed; preferences adjust only fixed CSS literals.
- * Article HTML is already sanitized by the revision-verified Rust adapter.
+/** Preview HTML remains sandboxed; presentation choices select only fixed CSS
+ * literals. Article HTML is sanitized by the revision-verified Rust adapter.
  * Changing srcDoc may reset in-frame scrolling; no same-origin privileges.
  */
 export function isolatedReaderDocument(
-  html: string, textSize: unknown, readingWidth: unknown,
+  html: string, textSize: unknown, readingWidth: unknown, theme: unknown = "light",
 ): string {
   const fontSize = FONT_PX[isReaderTextSize(textSize) ? textSize : "standard"];
   const lineWidth = WIDTH_CH[isReaderWidth(readingWidth) ? readingWidth : "standard"];
+  const dark = theme === "dark";
+  const foreground = dark ? "#eaecf0" : "#202122";
+  const background = dark ? "#202122" : "#ffffff";
+  const systemDark = theme === "system"
+    ? "@media (prefers-color-scheme: dark){html{background:#202122}body{color:#eaecf0}}"
+    : "";
   return [
     "<!doctype html><html><head>",
     "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'none'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; style-src 'unsafe-inline'\">",
     "<meta name=\"referrer\" content=\"no-referrer\">",
-    `<style>body{box-sizing:border-box;font:${fontSize}px/1.6 Georgia,serif;padding:1rem;margin:0 auto;max-width:${lineWidth}ch;color:#202122}table{max-width:100%;overflow-wrap:anywhere}img,video,audio{display:none}a{pointer-events:none}pre{white-space:pre-wrap}*{max-width:100%}</style>`,
+    `<style>html{background:${background}}body{box-sizing:border-box;font:${fontSize}px/1.6 Georgia,serif;padding:1rem;margin:0 auto;max-width:${lineWidth}ch;color:${foreground}}table{max-width:100%;overflow-wrap:anywhere}img,video,audio{display:none}a{pointer-events:none}pre{white-space:pre-wrap}*{max-width:100%}${systemDark}</style>`,
     "</head><body>", html, "</body></html>",
   ].join("");
 }

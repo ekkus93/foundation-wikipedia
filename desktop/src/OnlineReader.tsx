@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isolatedReaderDocument, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
@@ -31,11 +32,12 @@ interface ArticlePreview {
 }
 
 // Isolated preview HTML is built using whitelisted, app-controlled layout choices.
-export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth }: {
+export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth, theme }: {
   onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void;
   bookmarkRequest?: ReaderOpenPageRequest | null;
   textSize: ReaderTextSize;
   readingWidth: ReaderWidth;
+  theme: Theme;
 }) {
   const uniqueId = useId();
   const projectFieldId = `${uniqueId}-project`;
@@ -300,7 +302,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             sandbox=""
             referrerPolicy="no-referrer"
             className="article-preview-frame"
-            srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth)}
+            srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme)}
           />
         ))}
       </div>
