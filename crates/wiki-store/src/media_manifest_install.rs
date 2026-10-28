@@ -2,7 +2,7 @@
 //! ownership batch. Authentication and visual discovery are caller obligations:
 //! this module cannot declare an entire pack offline-ready.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
@@ -125,11 +125,32 @@ fn install_manifest_media_batch_with_binding(
     }
 
     let mut actual = BTreeMap::new();
+    // Reject inconsistent or excessive attribution before publishing content-
+    // addressed objects. The SQLite transaction enforces the same constraints,
+    // but a late rejection would leave recoverable, unnecessary orphan bytes.
+    // A repeated identical notice is idempotent, not another attribution row.
+    let mut notices_by_digest = BTreeMap::new();
     for &(bytes, notice) in assets {
         if bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 || !notice.validate() {
             return Err(ManifestMediaInstallError::InvalidManifest);
         }
         let digest = format!("{:x}", Sha256::digest(bytes));
+        let (mime, notices): &mut (&str, BTreeSet<(&str, &str, &str, &str)>) =
+            notices_by_digest
+                .entry(digest.clone())
+                .or_insert_with(|| (notice.mime.as_str(), BTreeSet::new()));
+        if *mime != notice.mime.as_str() {
+            return Err(ManifestMediaInstallError::InvalidManifest);
+        }
+        notices.insert((
+            notice.mime.as_str(),
+            notice.source_url.as_str(),
+            notice.creator.as_str(),
+            notice.license.as_str(),
+        ));
+        if notices.len() > 1024 {
+            return Err(ManifestMediaInstallError::InvalidManifest);
+        }
         actual.insert(digest, bytes.len() as u64);
     }
     if actual != expected {
@@ -205,6 +226,96 @@ mod tests {
             digest: format!("{:x}", Sha256::digest(bytes)),
             bytes: bytes.len() as u64,
         }
+    }
+
+    #[test]
+    fn conflicting_mime_and_excessive_notices_fail_before_media_publication() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-notice-preflight-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let db = root.with_extension("registry.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        registry.bind_media_root(&root).unwrap();
+
+        let bytes = b"new illustrated article";
+        let required = [entry(bytes)];
+        let published = root
+            .join(&required[0].digest[..2])
+            .join(&required[0].digest);
+        let first = notice("Creator A");
+        let mut conflict = notice("Creator B");
+        conflict.mime = "image/png".into();
+        let contradictory = [
+            (bytes.as_slice(), &first),
+            (bytes.as_slice(), &conflict),
+        ];
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                &contradictory,
+                &required,
+                OwnerKind::Pack,
+                "illustrated",
+            ),
+            Err(ManifestMediaInstallError::InvalidManifest)
+        ));
+        assert!(!published.exists());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "illustrated")
+            .unwrap()
+            .is_empty());
+
+        let notices = (0..1025)
+            .map(|i| notice(&format!("Creator {i}")))
+            .collect::<Vec<_>>();
+        let oversized = notices
+            .iter()
+            .map(|item| (bytes.as_slice(), item))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            install_bound_manifest_media_batch(
+                &store,
+                &mut registry,
+                &oversized,
+                &required,
+                OwnerKind::Pack,
+                "illustrated",
+            ),
+            Err(ManifestMediaInstallError::InvalidManifest)
+        ));
+        assert!(!published.exists());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "illustrated")
+            .unwrap()
+            .is_empty());
+
+        // Duplicate identical notices do not consume additional notice slots.
+        let idempotent = [
+            (bytes.as_slice(), &first),
+            (bytes.as_slice(), &first),
+        ];
+        install_bound_manifest_media_batch(
+            &store,
+            &mut registry,
+            &idempotent,
+            &required,
+            OwnerKind::Pack,
+            "illustrated",
+        )
+        .unwrap();
+        assert_eq!(registry.notice_count(&required[0].digest).unwrap(), 1);
+        assert!(published.exists());
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(db).unwrap();
     }
 
     #[test]
