@@ -336,9 +336,8 @@ done
         // Only one exact, three-ASCII-digit status marker can authorize a
         // response. Even a later valid 200 cannot override an earlier marker.
         for code in ["+200", "0200", "200x", "2O0", "200 ", ""] {
-            let (mut client, path) = fake_curl(&format!(
-                "printf 'ok'\nprintf 'FW_HTTP_CODE:{code}\\n' >&2"
-            ));
+            let (mut client, path) =
+                fake_curl(&format!("printf 'ok'\nprintf 'FW_HTTP_CODE:{code}\\n' >&2"));
             assert_eq!(
                 client.get(&url, 128),
                 Err(CurlTransportError::ProcessFailed),
