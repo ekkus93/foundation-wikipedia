@@ -1031,7 +1031,10 @@ mod tests {
             ),
             Err(InactivePackReleaseError::MissingActiveSnapshot)
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         assert_eq!(store.read_verified(&old_digest).unwrap(), old_bytes);
         assert_eq!(snapshots.current().unwrap(), None);
 
@@ -1070,7 +1073,10 @@ mod tests {
             ),
             Err(InactivePackReleaseError::MissingActiveSnapshot)
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         assert_eq!(store.read_verified(&old_digest).unwrap(), old_bytes);
         snapshots
             .switch_to_prevalidated_with_bound_pack_media("old", &store, &registry, &old_required)
