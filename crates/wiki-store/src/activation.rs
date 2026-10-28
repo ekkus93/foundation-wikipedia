@@ -9,6 +9,12 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::media_install::{verify_required_owner_media_unlocked, MediaInstallError};
+use crate::media_inventory::RequiredMedia;
+use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
+use crate::media_objects::MediaObjectStore;
+use crate::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
+
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
@@ -24,6 +30,16 @@ impl From<io::Error> for ActivationError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
+}
+
+/// An opt-in composition gate for already-authenticated, prevalidated packs.
+/// This cannot authenticate a manifest or substitute for catalog verification.
+#[derive(Debug)]
+pub enum PackMediaActivationError {
+    Activation(ActivationError),
+    Lease(MediaLeaseError),
+    Registry(MediaRegistryError),
+    Media(MediaInstallError),
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +167,57 @@ impl ActiveSnapshotStore {
         self.switch_with_precommit_gate(id, || Ok(()))
     }
 
+    /// Activate a PREVALIDATED snapshot only if its pack owner has exactly
+    /// the caller-authenticated required-media inventory, all object bytes
+    /// rehash correctly, and the registry is bound to the supplied media root.
+    ///
+    /// The snapshot ID is also the pack owner ID: this prevents accidentally
+    /// authorizing a different snapshot with another pack's owner claims.
+    /// One SHARED media lease covers root binding, owner/inventory verification,
+    /// and the durable pointer switch. A cooperating exclusive collector cannot
+    /// reclaim the verified media between the check and activation.
+    ///
+    /// This is NOT an authenticated pack installer: callers must independently
+    /// authenticate the manifest and validate article/catalog/shard provenance
+    /// before calling; active media owners must be retained until deactivation.
+    pub fn switch_to_prevalidated_with_bound_pack_media(
+        &self,
+        id: &str,
+        store: &MediaObjectStore,
+        registry: &MediaRegistry,
+        required: &[RequiredMedia],
+    ) -> Result<u64, PackMediaActivationError> {
+        self.switch_with_bound_pack_media_and_gate(id, store, registry, required, || {})
+    }
+
+    fn switch_with_bound_pack_media_and_gate(
+        &self,
+        id: &str,
+        store: &MediaObjectStore,
+        registry: &MediaRegistry,
+        required: &[RequiredMedia],
+        after_verification: impl FnOnce(),
+    ) -> Result<u64, PackMediaActivationError> {
+        if !safe_id(id) {
+            return Err(PackMediaActivationError::Activation(
+                ActivationError::InvalidSnapshotId,
+            ));
+        }
+        let _lease = MediaLeaseCoordinator::new(store.root())
+            .acquire_shared()
+            .map_err(PackMediaActivationError::Lease)?;
+        registry
+            .require_media_root_binding(store.root())
+            .map_err(PackMediaActivationError::Registry)?;
+        let verified_bytes =
+            verify_required_owner_media_unlocked(store, registry, OwnerKind::Pack, id, required)
+                .map_err(PackMediaActivationError::Media)?;
+        after_verification();
+        self.switch_to_prevalidated(id)
+            .map_err(PackMediaActivationError::Activation)?;
+        Ok(verified_bytes)
+    }
+
     fn switch_with_precommit_gate(
         &self,
         id: &str,
@@ -202,6 +269,179 @@ impl ActiveSnapshotStore {
 mod interruption_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn bound_pack_activation_refuses_missing_wrong_root_and_corrupt_media() {
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+        use sha2::{Digest, Sha256};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-activation-bound-media-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        let other_root = root.join("wrong-media");
+        fs::create_dir_all(&media_root).unwrap();
+        fs::create_dir_all(&other_root).unwrap();
+        for id in ["old", "new"] {
+            let snapshot = root.join("snapshots").join(id);
+            fs::create_dir_all(&snapshot).unwrap();
+            fs::write(snapshot.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshot_store = ActiveSnapshotStore::new(&root);
+        snapshot_store.switch_to_prevalidated("old").unwrap();
+        let store = MediaObjectStore::new(&media_root);
+        let wrong_store = MediaObjectStore::new(&other_root);
+        let db = root.join("ownership.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        let bytes = b"required image for new snapshot";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let required = [RequiredMedia {
+            digest: digest.clone(),
+            bytes: bytes.len() as u64,
+        }];
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Photo.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+
+        // Unbound and wrong-root registries cannot authorize a pointer switch.
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "new", &store, &registry, &required
+            ),
+            Err(PackMediaActivationError::Registry(_))
+        ));
+        registry.bind_media_root(&media_root).unwrap();
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "new", &wrong_store, &registry, &required
+            ),
+            Err(PackMediaActivationError::Registry(_))
+        ));
+        // A valid registry binding is not enough without exact owner claims.
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "new", &store, &registry, &required
+            ),
+            Err(PackMediaActivationError::Media(_))
+        ));
+        assert_eq!(snapshot_store.current().unwrap(), Some("old".into()));
+
+        install_bound_owned_media(
+            &store, &mut registry, bytes, &notice, OwnerKind::Pack, "new"
+        )
+        .unwrap();
+        let incorrect = [RequiredMedia {
+            digest: digest.clone(),
+            bytes: (bytes.len() + 1) as u64,
+        }];
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "new", &store, &registry, &incorrect
+            ),
+            Err(PackMediaActivationError::Media(_))
+        ));
+        let object = media_root.join(&digest[..2]).join(&digest);
+        fs::write(&object, b"corrupted image").unwrap();
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "new", &store, &registry, &required
+            ),
+            Err(PackMediaActivationError::Media(_))
+        ));
+        assert_eq!(snapshot_store.current().unwrap(), Some("old".into()));
+        fs::write(&object, bytes).unwrap();
+
+        assert_eq!(
+            snapshot_store
+                .switch_to_prevalidated_with_bound_pack_media(
+                    "new", &store, &registry, &required
+                )
+                .unwrap(),
+            bytes.len() as u64
+        );
+        assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
+        // A different snapshot cannot borrow this pack's registered media.
+        assert!(matches!(
+            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+                "old", &store, &registry, &required
+            ),
+            Err(PackMediaActivationError::Media(_))
+        ));
+        assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pack_media_lease_covers_verification_and_pointer_switch() {
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+        use rusqlite::Connection;
+        use sha2::{Digest, Sha256};
+        use std::time::Duration;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-activation-media-lease-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        let candidate = root.join("snapshots/new");
+        fs::create_dir_all(&media_root).unwrap();
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        let snapshot_store = ActiveSnapshotStore::new(&root);
+        let store = MediaObjectStore::new(&media_root);
+        let db = root.join("ownership.sqlite");
+        let mut registry = MediaRegistry::open(&db).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let bytes = b"protected visual";
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Protected.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        let digest = install_bound_owned_media(
+            &store, &mut registry, bytes, &notice, OwnerKind::Pack, "new"
+        )
+        .unwrap();
+        let required = [RequiredMedia {
+            digest: digest.clone(),
+            bytes: bytes.len() as u64,
+        }];
+        assert_eq!(digest, format!("{:x}", Sha256::digest(bytes)));
+        snapshot_store
+            .switch_with_bound_pack_media_and_gate(
+                "new", &store, &registry, &required, || {
+                    let contender =
+                        Connection::open(media_root.join(".media-lease.sqlite")).unwrap();
+                    contender.busy_timeout(Duration::from_millis(0)).unwrap();
+                    assert!(contender.execute_batch("BEGIN EXCLUSIVE;").is_err());
+                },
+            )
+            .unwrap();
+        let contender = Connection::open(media_root.join(".media-lease.sqlite")).unwrap();
+        contender.busy_timeout(Duration::from_millis(0)).unwrap();
+        contender
+            .execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
+            .unwrap();
+        assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]
