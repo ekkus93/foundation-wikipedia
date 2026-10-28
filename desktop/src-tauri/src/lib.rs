@@ -1,14 +1,63 @@
 //! Thin desktop Tauri adapter around the shared revision-safe Rust source API.
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use wiki_model::ArticleKey;
 use wiki_store::user_state::{UserState, UserStateError};
+use wiki_source::online_cache::OnlineRevisionCache;
 use wiki_source::online_curl::CurlTransport;
-use wiki_source::online_fetch::{fetch_page_id, fetch_title, FetchOutcome};
+use wiki_source::online_fetch::{
+    fetch_page_id, fetch_page_id_with_cache, fetch_title, fetch_title_with_cache, FetchFailure,
+    FetchOutcome, MediaWikiTransport,
+};
 use wiki_source::online_search::{fetch_search, SearchOutcome};
 use wiki_source::online_selection::NetworkState;
+
+/// Shared across desktop commands for this application process only. A cached
+/// sanitized HTML preview is never an installed/offline-complete article.
+#[derive(Clone, Default)]
+struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>);
+
+/// Avoid serializing independent HTTP operations behind the cache lock. If a
+/// concurrent request owns the lock (or it was poisoned), use the uncached
+/// revision-safe path. An offline command never inspects the online cache.
+fn fetch_title_preview<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    title: &str,
+    network: NetworkState,
+    cache: &Mutex<OnlineRevisionCache>,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    if network == NetworkState::Offline {
+        return fetch_title(client, project, title, network);
+    }
+    match cache.try_lock() {
+        Ok(mut locked) => {
+            fetch_title_with_cache(client, project, title, network, &[], &mut locked)
+        }
+        Err(_) => fetch_title(client, project, title, network),
+    }
+}
+
+fn fetch_page_preview<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    page_id: u64,
+    network: NetworkState,
+    cache: &Mutex<OnlineRevisionCache>,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    if network == NetworkState::Offline {
+        return fetch_page_id(client, project, page_id, network);
+    }
+    match cache.try_lock() {
+        Ok(mut locked) => {
+            fetch_page_id_with_cache(client, project, page_id, network, &[], &mut locked)
+        }
+        Err(_) => fetch_page_id(client, project, page_id, network),
+    }
+}
 
 /// Search results are navigation identities only, never AI evidence.
 #[tauri::command]
@@ -40,11 +89,17 @@ async fn search_wikipedia(query: String, project: String, offline: bool) -> Resu
 /// Return sanitized HTML tied to the exact Wikimedia page and revision.
 /// This is an online-only, text-preview bridge, not an offline-ready article.
 #[tauri::command]
-async fn open_wikipedia_title(title: String, project: String, offline: bool) -> Result<(u64, u64, String, String), String> {
+async fn open_wikipedia_title(
+    title: String,
+    project: String,
+    offline: bool,
+    cache: tauri::State<'_, DesktopOnlineCache>,
+) -> Result<(u64, u64, String, String), String> {
+    let cache = Arc::clone(&cache.0);
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
         let network = if offline { NetworkState::Offline } else { NetworkState::Online };
-        let outcome = fetch_title(&mut client, &project, &title, network)
+        let outcome = fetch_title_preview(&mut client, &project, &title, network, &cache)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
         preview_response(outcome)
     })
@@ -69,11 +124,17 @@ fn preview_response(outcome: FetchOutcome) -> Result<(u64, u64, String, String),
 /// Search hits carry page IDs. Re-resolving their mutable titles can select
 /// a different article between search and click, so open the stable ID instead.
 #[tauri::command]
-async fn open_wikipedia_page(page_id: u64, project: String, offline: bool) -> Result<(u64, u64, String, String), String> {
+async fn open_wikipedia_page(
+    page_id: u64,
+    project: String,
+    offline: bool,
+    cache: tauri::State<'_, DesktopOnlineCache>,
+) -> Result<(u64, u64, String, String), String> {
+    let cache = Arc::clone(&cache.0);
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
         let network = if offline { NetworkState::Offline } else { NetworkState::Online };
-        let outcome = fetch_page_id(&mut client, &project, page_id, network)
+        let outcome = fetch_page_preview(&mut client, &project, page_id, network, &cache)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
         preview_response(outcome)
     })
@@ -382,6 +443,117 @@ async fn set_reader_width(app: tauri::AppHandle, reading_width: String) -> Resul
 }
 
 #[cfg(test)]
+mod online_preview_cache_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    const METADATA: &str = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics","revisions":[{"revid":333,"timestamp":"2026-10-13T10:45:00Z"}]}]}}"#;
+    const RENDERED: &str =
+        r#"{"parse":{"pageid":42,"revid":333,"title":"Physics","text":"<p>Physics</p>"}}"#;
+    const TITLE: &str =
+        r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+
+    #[derive(Default)]
+    struct FakeTransport {
+        responses: VecDeque<Vec<u8>>,
+        calls: usize,
+    }
+
+    impl MediaWikiTransport for FakeTransport {
+        type Error = &'static str;
+
+        fn get(&mut self, _url: &str, _max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
+            self.calls += 1;
+            self.responses.pop_front().ok_or("unexpected HTTP request")
+        }
+    }
+
+    #[test]
+    fn desktop_page_and_title_share_revision_pinned_html_but_not_metadata() {
+        let cache = DesktopOnlineCache::default();
+        let another_command = cache.clone();
+        let mut transport = FakeTransport::default();
+        transport.responses.extend([
+            METADATA.as_bytes().to_vec(),
+            RENDERED.as_bytes().to_vec(),
+        ]);
+        let first = fetch_page_preview(
+            &mut transport,
+            "enwiki",
+            42,
+            NetworkState::Online,
+            &cache.0,
+        )
+        .unwrap();
+        assert_eq!(transport.calls, 2);
+
+        // A different Tauri command shares the in-process cache but still
+        // resolves the title and current revision from the network.
+        transport.responses.extend([
+            TITLE.as_bytes().to_vec(),
+            METADATA.as_bytes().to_vec(),
+        ]);
+        let second = fetch_title_preview(
+            &mut transport,
+            "enwiki",
+            "Physics",
+            NetworkState::Online,
+            &another_command.0,
+        )
+        .unwrap();
+        assert_eq!(second, first);
+        assert_eq!(transport.calls, 4);
+        assert_eq!(cache.0.lock().unwrap().len(), 1);
+
+        // An offline request must not consume cached online HTML or call HTTP.
+        assert_eq!(
+            fetch_page_preview(
+                &mut transport,
+                "enwiki",
+                42,
+                NetworkState::Offline,
+                &cache.0,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(
+            fetch_title_preview(
+                &mut transport,
+                "enwiki",
+                "Physics",
+                NetworkState::Offline,
+                &cache.0,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(transport.calls, 4);
+    }
+
+    #[test]
+    fn concurrent_cache_ownership_falls_back_without_waiting_or_reusing_html() {
+        let cache = DesktopOnlineCache::default();
+        let held = cache.0.lock().unwrap();
+        let mut transport = FakeTransport::default();
+        transport.responses.extend([
+            METADATA.as_bytes().to_vec(),
+            RENDERED.as_bytes().to_vec(),
+        ]);
+        assert!(matches!(
+            fetch_page_preview(
+                &mut transport,
+                "enwiki",
+                42,
+                NetworkState::Online,
+                &cache.0,
+            ),
+            Ok(FetchOutcome::Rendered(_))
+        ));
+        assert_eq!(transport.calls, 2);
+        assert!(held.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod bookmark_tests {
     use super::*;
 
@@ -495,6 +667,7 @@ mod bookmark_tests {
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(DesktopOnlineCache::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             open_wikipedia_title,
