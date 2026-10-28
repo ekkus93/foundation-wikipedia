@@ -232,6 +232,17 @@ pub fn fetch_page_id_with_local_index_and_cache<T: MediaWikiTransport>(
         fallback: None,
         cause: FetchCause::Flow(cause),
     };
+    // The offline fast path must enforce the same stable identity bounds as
+    // begin_open, even when no verified catalog is installed.
+    let requested = ArticleKey {
+        project: project.to_owned(),
+        page_id,
+    };
+    if requested.validate().is_err() || page_id > i64::MAX as u64 {
+        return Err(failure(OnlineFlowError::Selection(
+            crate::online_selection::SelectionError::InvalidIdentity,
+        )));
+    }
     let local = match index {
         Some(index) => {
             if index.project() != project {
@@ -581,6 +592,26 @@ mod tests {
             ),
             Ok(FetchOutcome::Local(local()))
         );
+        assert_eq!(client.requests.len(), 4);
+
+        for (project, page_id) in [("enwiki", 0), ("enwiki", u64::MAX), ("ENWIKI", 42)] {
+            let error = fetch_page_id_with_local_index_and_cache(
+                &mut client,
+                project,
+                page_id,
+                NetworkState::Offline,
+                Some(&index),
+                &mut cache,
+            )
+            .unwrap_err();
+            assert_eq!(error.stage, FetchStage::Selection);
+            assert_eq!(
+                error.cause,
+                FetchCause::Flow(OnlineFlowError::Selection(
+                    crate::online_selection::SelectionError::InvalidIdentity
+                ))
+            );
+        }
         assert_eq!(client.requests.len(), 4);
 
         let foreign = LocalTitleIndex::new("dewiki", Vec::<LocalTitleEntry>::new()).unwrap();
