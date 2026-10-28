@@ -1099,11 +1099,21 @@ mod tests {
         let shared = b"shared mathematics and physics diagram";
         let unique = b"physics-only plot";
         let shared_digest = install_bound_owned_media(
-            &store, &mut registry, shared, &notice(), OwnerKind::Pack, "physics",
+            &store,
+            &mut registry,
+            shared,
+            &notice(),
+            OwnerKind::Pack,
+            "physics",
         )
         .unwrap();
         let second_digest = install_bound_owned_media(
-            &store, &mut registry, shared, &notice(), OwnerKind::Pack, "mathematics",
+            &store,
+            &mut registry,
+            shared,
+            &notice(),
+            OwnerKind::Pack,
+            "mathematics",
         )
         .unwrap();
         assert_eq!(shared_digest, second_digest);
@@ -1111,7 +1121,12 @@ mod tests {
             .add_owner(&shared_digest, OwnerKind::UserPin, "saved")
             .unwrap();
         let unique_digest = install_bound_owned_media(
-            &store, &mut registry, unique, &notice(), OwnerKind::Pack, "physics",
+            &store,
+            &mut registry,
+            unique,
+            &notice(),
+            OwnerKind::Pack,
+            "physics",
         )
         .unwrap();
         let physics_required = [
@@ -1130,17 +1145,27 @@ mod tests {
         }];
         snapshots
             .switch_to_prevalidated_with_bound_pack_media(
-                "physics", &store, &registry, &physics_required,
+                "physics",
+                &store,
+                &registry,
+                &physics_required,
             )
             .unwrap();
         snapshots
             .switch_to_prevalidated_with_bound_pack_media(
-                "mathematics", &store, &registry, &mathematics_required,
+                "mathematics",
+                &store,
+                &registry,
+                &mathematics_required,
             )
             .unwrap();
 
         let outcome = release_inactive_snapshot_pack_and_reclaim_media(
-            &snapshots, &store, &mut registry, "physics", 10,
+            &snapshots,
+            &store,
+            &mut registry,
+            "physics",
+            10,
         )
         .unwrap();
         assert_eq!(outcome.released_objects, 2);
@@ -1152,15 +1177,27 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(
-            registry.owned_media(OwnerKind::Pack, "mathematics").unwrap().len(),
+            registry
+                .owned_media(OwnerKind::Pack, "mathematics")
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            registry.owned_media(OwnerKind::UserPin, "saved").unwrap().len(),
+            registry
+                .owned_media(OwnerKind::UserPin, "saved")
+                .unwrap()
+                .len(),
             1
         );
-        assert!(!media_root.join(&unique_digest[..2]).join(&unique_digest).exists());
-        assert!(media_root.join(&shared_digest[..2]).join(&shared_digest).exists());
+        assert!(!media_root
+            .join(&unique_digest[..2])
+            .join(&unique_digest)
+            .exists());
+        assert!(media_root
+            .join(&shared_digest[..2])
+            .join(&shared_digest)
+            .exists());
         assert_eq!(snapshots.current().unwrap(), Some("mathematics".into()));
         drop(registry);
         fs::remove_dir_all(root).unwrap();
