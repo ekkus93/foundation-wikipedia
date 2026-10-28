@@ -215,6 +215,44 @@ pub fn fetch_page_id_with_cache<T: MediaWikiTransport>(
     fetch_article_with_cache(client, &key, network, versions, cache)
 }
 
+/// Open a stable page ID with an independently verified offline catalog.
+/// Online lookups still require fresh current-revision metadata and may reuse
+/// only exact sanitized HTML; verified local revisions remain noncurrent
+/// fallbacks on upstream failure. Offline lookups never touch HTTP or cache.
+pub fn fetch_page_id_with_local_index_and_cache<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    page_id: u64,
+    network: NetworkState,
+    index: Option<&LocalTitleIndex>,
+    cache: &mut OnlineRevisionCache,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    let failure = |cause| FetchFailure {
+        stage: FetchStage::Selection,
+        fallback: None,
+        cause: FetchCause::Flow(cause),
+    };
+    let local = match index {
+        Some(index) => {
+            if index.project() != project {
+                return Err(failure(OnlineFlowError::LocalIndex(
+                    LocalTitleIndexError::ForeignProject,
+                )));
+            }
+            index.resolve_page_id(page_id).map(|hit| hit.version)
+        }
+        None => None,
+    };
+    if network == NetworkState::Offline {
+        return Ok(match local {
+            Some(version) => FetchOutcome::Local(version),
+            None => FetchOutcome::MissingOffline,
+        });
+    }
+    let versions: Vec<_> = local.into_iter().collect();
+    fetch_page_id_with_cache(client, project, page_id, network, &versions, cache)
+}
+
 /// Resolve an explicitly online title through canonical redirect metadata,
 /// then read the current page revision and its pinned HTML. Offline title
 /// navigation requires the separate local index and must never invoke HTTP.
@@ -450,6 +488,79 @@ mod tests {
             location: ArticleLocation::ExplicitOfflineSave,
             local_complete: true,
         }
+    }
+
+    #[test]
+    fn indexed_page_id_cache_never_promotes_online_html_to_offline_article() {
+        use crate::local_title_index::LocalTitleEntry;
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: local(),
+            }],
+        )
+        .unwrap();
+        let mut client = FakeTransport::default();
+        let mut cache = OnlineRevisionCache::default();
+        assert_eq!(
+            fetch_page_id_with_local_index_and_cache(
+                &mut client, "enwiki", 42, NetworkState::Offline,
+                Some(&index), &mut cache,
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
+        assert_eq!(
+            fetch_page_id_with_local_index_and_cache(
+                &mut client, "enwiki", 43, NetworkState::Offline,
+                Some(&index), &mut cache,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert!(client.requests.is_empty());
+        assert!(cache.is_empty());
+
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let first = fetch_page_id_with_local_index_and_cache(
+            &mut client, "enwiki", 42, NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap();
+        assert!(matches!(first, FetchOutcome::Rendered(_)));
+        assert_eq!(client.requests.len(), 2);
+        assert_eq!(cache.len(), 1);
+
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        assert_eq!(fetch_page_id_with_local_index_and_cache(
+            &mut client, "enwiki", 42, NetworkState::Online,
+            Some(&index), &mut cache,
+        ), Ok(first));
+        assert_eq!(client.requests.len(), 3);
+
+        client.answers.push_back(Err("upstream unavailable"));
+        let error = fetch_page_id_with_local_index_and_cache(
+            &mut client, "enwiki", 42, NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(client.requests.len(), 4);
+        assert_eq!(fetch_page_id_with_local_index_and_cache(
+            &mut client, "enwiki", 42, NetworkState::Offline,
+            Some(&index), &mut cache,
+        ), Ok(FetchOutcome::Local(local())));
+        assert_eq!(client.requests.len(), 4);
+
+        let foreign = LocalTitleIndex::new(
+            "dewiki",
+            Vec::<LocalTitleEntry>::new(),
+        ).unwrap();
+        let error = fetch_page_id_with_local_index_and_cache(
+            &mut client, "enwiki", 42, NetworkState::Offline,
+            Some(&foreign), &mut cache,
+        ).unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(client.requests.len(), 4);
     }
 
     #[test]

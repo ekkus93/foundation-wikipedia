@@ -65,6 +65,7 @@ pub enum LocalTitleIndexError {
 pub struct LocalTitleIndex {
     project: String,
     titles: BTreeMap<String, LocalSearchHit>,
+    pages: BTreeMap<u64, String>,
     redirects: BTreeMap<String, String>,
 }
 
@@ -83,7 +84,7 @@ impl LocalTitleIndex {
     ) -> Result<Self, LocalTitleIndexError> {
         WikipediaRequests::new(project).map_err(|_| LocalTitleIndexError::InvalidProject)?;
         let mut titles = BTreeMap::new();
-        let mut pages = HashSet::new();
+        let mut pages = BTreeMap::new();
         for entry in entries {
             if titles.len() >= MAX_ENTRIES {
                 return Err(LocalTitleIndexError::TooManyEntries);
@@ -108,7 +109,10 @@ impl LocalTitleIndex {
             if !entry.version.local_complete {
                 return Err(LocalTitleIndexError::NotOfflineComplete);
             }
-            if !pages.insert(entry.version.key.page_id) {
+            if pages
+                .insert(entry.version.key.page_id, wikipedia_title_key(&entry.title))
+                .is_some()
+            {
                 return Err(LocalTitleIndexError::DuplicatePage);
             }
             let key = wikipedia_title_key(&entry.title);
@@ -131,6 +135,7 @@ impl LocalTitleIndex {
         Ok(Self {
             project: project.to_owned(),
             titles,
+            pages,
             redirects: BTreeMap::new(),
         })
     }
@@ -200,6 +205,16 @@ impl LocalTitleIndex {
         let key = wikipedia_title_key(title);
         let canonical = self.redirects.get(&key).unwrap_or(&key);
         Ok(self.titles.get(canonical).cloned())
+    }
+
+    /// Stable page-ID navigation over the same independently verified offline
+    /// records as exact title and redirect lookup. Never resolves an alias to
+    /// a different page or treats an online HTML preview as installed media.
+    pub fn resolve_page_id(&self, page_id: u64) -> Option<LocalSearchHit> {
+        self.pages
+            .get(&page_id)
+            .and_then(|title| self.titles.get(title))
+            .cloned()
     }
 
     /// Deterministic prefix lookup over canonical titles and verified direct
@@ -325,6 +340,34 @@ mod tests {
         assert_eq!(index.search_prefix("رياض", 5).unwrap().len(), 1);
         assert_eq!(index.search_prefix("none", 5).unwrap(), vec![]);
         assert_eq!(index.search_prefix("phys", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn verified_page_id_lookup_matches_title_identity_and_never_follows_aliases() {
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [
+                entry(1, "Physics", ArticleLocation::InstalledPack),
+                entry(2, "رياضيات", ArticleLocation::ExplicitOfflineSave),
+            ],
+        )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Physical science".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 1,
+        }])
+        .unwrap();
+        for (page_id, title) in [(1, "Physics"), (2, "رياضيات")] {
+            let by_id = index.resolve_page_id(page_id).unwrap();
+            assert_eq!(by_id.hit.title, title);
+            assert_eq!(by_id.hit.key.page_id, page_id);
+            assert_eq!(by_id, index.resolve_title(title).unwrap().unwrap());
+        }
+        assert_eq!(index.resolve_page_id(0), None);
+        assert_eq!(index.resolve_page_id(3), None);
+        assert_eq!(index.resolve_page_id(i64::MAX as u64 + 1), None);
+        assert_eq!(index.resolve_page_id(1).unwrap().hit.title, "Physics");
     }
 
     #[test]
