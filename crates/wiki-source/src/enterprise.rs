@@ -254,6 +254,9 @@ fn identity(
         .ok_or(EnterpriseError::InvalidField("in_language.identifier"))?
         .to_owned();
     let name = required_string(map, "name")?;
+    if !valid_membership_label(&name) {
+        return Err(EnterpriseError::InvalidField("name"));
+    }
     Ok((
         PageKey { project, page_id },
         revision_id,
@@ -670,6 +673,52 @@ pub fn parse_regular_companion_complete(
     parse_regular_companion_inner(input, generation_id, true)
 }
 
+/// Validate public typed records as well as JSON-decoded ones. Without this
+/// gate, callers could bypass required source fields and the canonical title
+/// policy by constructing DTOs directly and then obtaining a successful join.
+fn validate_typed_join_fields(
+    structured: &StructuredArticle,
+    regular: &RegularArticleCompanion,
+) -> Result<(), EnterpriseError> {
+    if !valid_membership_label(&structured.name) || !valid_membership_label(&regular.name) {
+        return Err(EnterpriseError::InvalidField("name"));
+    }
+    if !valid_required_source_text(&structured.date_modified)
+        || !valid_required_source_text(&regular.date_modified)
+    {
+        return Err(EnterpriseError::InvalidField("date_modified"));
+    }
+    if structured.language.trim().is_empty()
+        || regular.language.trim().is_empty()
+        || structured.language.len() > MAX_ENTERPRISE_RECORD_BYTES
+        || regular.language.len() > MAX_ENTERPRISE_RECORD_BYTES
+    {
+        return Err(EnterpriseError::InvalidField("in_language.identifier"));
+    }
+    if !valid_required_source_text(&regular.rendered_html) {
+        return Err(EnterpriseError::InvalidField("html"));
+    }
+    if structured.wikidata_id.as_deref().is_some_and(|id| {
+        !id.strip_prefix('Q').is_some_and(|digits| {
+            !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
+        })
+    }) {
+        return Err(EnterpriseError::InvalidField("main_entity.identifier"));
+    }
+    if structured.description.as_deref().is_some_and(|description| {
+        description.trim().is_empty() || description.len() > MAX_ENTERPRISE_RECORD_BYTES
+    }) {
+        return Err(EnterpriseError::InvalidField("description"));
+    }
+    Ok(())
+}
+
+fn valid_required_source_text(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.trim() == value
+        && value.len() <= MAX_ENTERPRISE_RECORD_BYTES
+}
+
 /// Join beta Structured Contents with the regular article payload only when all
 /// identity/provenance fields match exactly.
 pub fn join_enterprise_article(
@@ -690,6 +739,7 @@ pub fn join_enterprise_article(
     {
         return Err(EnterpriseError::InvalidGeneration);
     }
+    validate_typed_join_fields(&structured, &regular)?;
     validate_membership_list(&regular.categories, "categories")?;
     validate_membership_list(&regular.redirects, "redirects")?;
     if structured.page != regular.page || structured.name != regular.name {
@@ -1253,6 +1303,79 @@ mod tests {
                 structured_42.page.clone()
             ))
         );
+    }
+
+    #[test]
+    fn typed_join_rejects_missing_or_spoofed_source_fields_before_publication() {
+        let structured = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let regular = parse_regular_companion_complete(&regular_json(), "2026-10-01").unwrap();
+        assert!(join_enterprise_article(structured.clone(), regular.clone()).is_ok());
+
+        for invalid in ["", " Gravity", "Gravity ", "Gravity\\n", "Gravity\\u{202e}"] {
+            let invalid = invalid.replace("\\n", "\n").replace("\\u{202e}", "\u{202e}");
+            let mut source = structured.clone();
+            source.name = invalid.clone();
+            let mut companion = regular.clone();
+            companion.name = invalid;
+            assert_eq!(
+                join_enterprise_article(source.clone(), companion.clone()),
+                Err(EnterpriseError::InvalidField("name"))
+            );
+            assert_eq!(
+                join_enterprise_batch(vec![source], vec![companion], vec![]),
+                Err(EnterpriseError::InvalidField("name"))
+            );
+        }
+        for field in ["structured", "regular"] {
+            let mut source = structured.clone();
+            let mut companion = regular.clone();
+            if field == "structured" {
+                source.date_modified = " ".into();
+            } else {
+                companion.date_modified = " ".into();
+            }
+            assert_eq!(
+                join_enterprise_article(source, companion),
+                Err(EnterpriseError::InvalidField("date_modified"))
+            );
+        }
+        let mut source = structured.clone();
+        source.language = "".into();
+        assert_eq!(
+            join_enterprise_article(source, regular.clone()),
+            Err(EnterpriseError::InvalidField("in_language.identifier"))
+        );
+        let mut companion = regular.clone();
+        companion.rendered_html = "  ".into();
+        assert_eq!(
+            join_enterprise_article(structured.clone(), companion),
+            Err(EnterpriseError::InvalidField("html"))
+        );
+        for invalid in ["", "Q", "q123", "Q-1", "Q123x"] {
+            let mut source = structured.clone();
+            source.wikidata_id = Some(invalid.into());
+            assert_eq!(
+                join_enterprise_article(source, regular.clone()),
+                Err(EnterpriseError::InvalidField("main_entity.identifier"))
+            );
+        }
+        let mut source = structured.clone();
+        source.description = Some("  ".into());
+        assert_eq!(
+            join_enterprise_article(source, regular.clone()),
+            Err(EnterpriseError::InvalidField("description"))
+        );
+
+        // JSON and typed DTOs must agree on the title anti-spoofing rule.
+        let forged_json = structured_json().replace(
+            "\"name\":\"Gravity\"",
+            "\"name\":\"Gravity\\u202e\"",
+        );
+        assert_eq!(
+            parse_structured_article(&forged_json, "2026-10-01"),
+            Err(EnterpriseError::InvalidField("name"))
+        );
+        assert!(join_enterprise_batch(vec![structured], vec![regular], vec![]).is_ok());
     }
 
     #[test]
