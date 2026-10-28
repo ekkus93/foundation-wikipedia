@@ -66,7 +66,9 @@ impl EnterpriseLinkIndex {
             // identity contract before building a potentially authoritative
             // cross-chunk redirect/title lookup.
             if !crate::valid_wiki_project(&identity.project) {
-                return Err(NormalizeError::Model(wiki_model::ModelError::InvalidIdentity));
+                return Err(NormalizeError::Model(
+                    wiki_model::ModelError::InvalidIdentity,
+                ));
             }
             if identity.project != project {
                 return Err(NormalizeError::ProjectMismatch);
