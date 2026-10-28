@@ -947,8 +947,7 @@ mod tests {
 
     #[test]
     fn title_and_page_navigation_cache_only_exact_online_revision() {
-        let title_json =
-            r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        let title_json = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
         let mut cache = OnlineRevisionCache::default();
         let mut client = FakeTransport::default();
         client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
