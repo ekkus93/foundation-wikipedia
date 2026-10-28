@@ -8,6 +8,7 @@ import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
 import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import { ReaderOfflineMode } from "./readerOfflineMode";
+import { ReaderPersonalDataSession } from "./readerPersonalDataSession";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
@@ -44,6 +45,7 @@ export default function App() {
   const tabScrollRef = useRef(new Map<number, number>());
   const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
   const bookmarkInFlightRef = useRef(false);
+  const personalDataSessionRef = useRef(new ReaderPersonalDataSession());
   const nextBookmarkOpenId = useRef(1);
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
@@ -242,6 +244,7 @@ export default function App() {
   }
 
   function openSavedBookmark(project: string, pageId: number) {
+    if (!personalDataSessionRef.current.canWrite()) return;
     // The bookmark list has already been validated at the native IPC boundary.
     // Route the request to the current tab and let its reader enforce offline mode.
     setBookmarkOpen({ id: nextBookmarkOpenId.current++, tabId: readerTabs.activeId, project, pageId });
@@ -251,7 +254,7 @@ export default function App() {
   }
 
   async function clearPersonalReadingData() {
-    if (!confirmClearReading || savedBusy) return;
+    if (!confirmClearReading || savedBusy || !personalDataSessionRef.current.beginReset()) return;
     setSavedBusy(true);
     setSavedError(null);
     setSavedResult(null);
@@ -271,6 +274,7 @@ export default function App() {
     } catch {
       setSavedError("Unable to delete personal reading data. No successful deletion was confirmed.");
     } finally {
+      personalDataSessionRef.current.finishReset();
       setSavedBusy(false);
     }
   }
@@ -316,16 +320,24 @@ export default function App() {
       setDestination("settings");
       setMessage(null);
     } else if (action === "Bookmark") {
+      const session = personalDataSessionRef.current;
       const current = tabArticleRef.current.get(readerTabs.activeId);
-      if (!current) {
+      if (!session.canWrite()) {
+        setMessage("Personal reading data is being cleared. Try bookmarking afterward.");
+      } else if (!current) {
         setMessage("Open a Wikipedia article before bookmarking it.");
       } else if (!bookmarkInFlightRef.current) {
+        const revision = session.snapshot();
         bookmarkInFlightRef.current = true;
         void invoke<boolean>("toggle_reader_bookmark", { project: current.project, pageId: current.pageId, revisionId: current.revisionId })
-          .then((saved) => setMessage(saved
-            ? "Page bookmark saved. Article text and images were not downloaded for offline use."
-            : "Page bookmark removed."))
-          .catch(() => setMessage("Bookmark storage unavailable; no offline content was changed."))
+          .then((saved) => {
+            if (session.accepts(revision)) setMessage(saved
+              ? "Page bookmark saved. Article text and images were not downloaded for offline use."
+              : "Page bookmark removed.");
+          })
+          .catch(() => {
+            if (session.accepts(revision)) setMessage("Bookmark storage unavailable; no offline content was changed.");
+          })
           .finally(() => { bookmarkInFlightRef.current = false; });
       }
     } else {
