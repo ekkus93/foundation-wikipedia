@@ -47,7 +47,7 @@ pub struct ActiveSnapshotStore {
     root: PathBuf,
 }
 
-fn safe_id(id: &str) -> bool {
+pub(crate) fn safe_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id.bytes().next().is_some_and(|c| c.is_ascii_lowercase())
@@ -637,6 +637,78 @@ mod interruption_tests {
             .count();
         assert_eq!(leftovers, 0);
         assert!(root.join("snapshots/new/manifest.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inactive_pack_release_rejects_non_snapshot_owner_ids_without_revocation() {
+        use crate::media_gc::{
+            release_inactive_snapshot_pack_and_reclaim_media, InactivePackReleaseError,
+        };
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-invalid-snapshot-release-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        let candidate = root.join("snapshots/active");
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        let snapshots = ActiveSnapshotStore::new(&root);
+        snapshots.switch_to_prevalidated("active").unwrap();
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(&root.join("ownership.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Diagram.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+
+        // The registry intentionally accepts a broader owner-ID grammar than
+        // snapshot activation. A pack owner that cannot name a snapshot must
+        // not be released through the snapshot-specific deletion boundary.
+        for id in ["Bad".to_owned(), "1bad".to_owned(), "_bad".to_owned(), "x".repeat(129)] {
+            let bytes = format!("required diagram for {id}");
+            let digest = install_bound_owned_media(
+                &store,
+                &mut registry,
+                bytes.as_bytes(),
+                &notice,
+                OwnerKind::Pack,
+                &id,
+            )
+            .unwrap();
+            assert!(matches!(
+                release_inactive_snapshot_pack_and_reclaim_media(
+                    &snapshots,
+                    &store,
+                    &mut registry,
+                    &id,
+                    10,
+                ),
+                Err(InactivePackReleaseError::Activation(
+                    ActivationError::InvalidSnapshotId
+                ))
+            ));
+            assert_eq!(
+                registry
+                    .owned_digest_size(OwnerKind::Pack, &id, &digest)
+                    .unwrap(),
+                Some(bytes.len() as u64)
+            );
+            assert_eq!(store.read_verified(&digest).unwrap(), bytes.as_bytes());
+        }
+        assert_eq!(snapshots.current().unwrap(), Some("active".into()));
+        drop(registry);
         fs::remove_dir_all(root).unwrap();
     }
 

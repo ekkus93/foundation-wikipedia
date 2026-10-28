@@ -7,7 +7,7 @@
 //! SHARED lease protocol; hostile direct filesystem/SQLite writes are not
 //! protected by this advisory coordination.
 
-use crate::activation::{ActivationError, ActiveSnapshotStore};
+use crate::activation::{safe_id, ActivationError, ActiveSnapshotStore};
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
@@ -388,6 +388,14 @@ pub fn release_inactive_snapshot_pack_and_reclaim_media(
     snapshot_id: &str,
     max_candidates: usize,
 ) -> Result<OwnerReleaseGcOutcome, InactivePackReleaseError> {
+    // The registry accepts a wider owner-ID grammar for caches/pins and
+    // historical callers. Snapshot deletion must use exactly the same
+    // identity contract as snapshot activation, not that broader grammar.
+    if !safe_id(snapshot_id) {
+        return Err(InactivePackReleaseError::Activation(
+            ActivationError::InvalidSnapshotId,
+        ));
+    }
     if !(1..=10_000).contains(&max_candidates) {
         return Err(InactivePackReleaseError::Media(MediaGcPlanError::Registry(
             MediaRegistryError::InvalidInput,
