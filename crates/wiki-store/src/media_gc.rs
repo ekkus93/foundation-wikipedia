@@ -1015,7 +1015,10 @@ mod tests {
             "old",
             10,
         );
-        assert!(matches!(blocked, Err(InactivePackReleaseError::ActiveSnapshot)));
+        assert!(matches!(
+            blocked,
+            Err(InactivePackReleaseError::ActiveSnapshot)
+        ));
         assert_eq!(
             registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
             1
