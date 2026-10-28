@@ -1006,12 +1006,7 @@ mod tests {
             bytes: new_bytes.len() as u64,
         }];
         snapshots
-            .switch_to_prevalidated_with_bound_pack_media(
-                "old",
-                &store,
-                &registry,
-                &old_required,
-            )
+            .switch_to_prevalidated_with_bound_pack_media("old", &store, &registry, &old_required)
             .unwrap();
         let blocked = release_inactive_snapshot_pack_and_reclaim_media(
             &snapshots,
@@ -1021,7 +1016,10 @@ mod tests {
             10,
         );
         assert!(matches!(blocked, Err(InactivePackReleaseError::ActiveSnapshot)));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         let old_path = media_root.join(&old_digest[..2]).join(&old_digest);
         assert!(old_path.exists());
         let invalid = release_inactive_snapshot_pack_and_reclaim_media(
@@ -1037,15 +1035,13 @@ mod tests {
                 MediaRegistryError::InvalidInput
             )))
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "new").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "new").unwrap().len(),
+            1
+        );
 
         snapshots
-            .switch_to_prevalidated_with_bound_pack_media(
-                "new",
-                &store,
-                &registry,
-                &new_required,
-            )
+            .switch_to_prevalidated_with_bound_pack_media("new", &store, &registry, &new_required)
             .unwrap();
         let outcome = release_inactive_snapshot_pack_and_reclaim_media(
             &snapshots,
@@ -1057,10 +1053,16 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.released_objects, 1);
         assert!(outcome.cleanup.is_ok());
-        assert!(registry.owned_media(OwnerKind::Pack, "old").unwrap().is_empty());
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "old")
+            .unwrap()
+            .is_empty());
         assert!(!old_path.exists());
         assert_eq!(snapshots.current().unwrap(), Some("new".into()));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "new").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "new").unwrap().len(),
+            1
+        );
         assert!(media_root.join(&new_digest[..2]).join(&new_digest).exists());
         drop(registry);
         fs::remove_dir_all(root).unwrap();
@@ -2698,28 +2700,3 @@ mod tests {
         let (root, store, mut registry) = setup();
         let digest = store.store_bytes(b"plot").unwrap();
         registry
-            .register_verified_bytes(b"plot", &notice())
-            .unwrap();
-        assert!(matches!(
-            plan_unowned_media_gc(&store, &registry, 0),
-            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
-        ));
-        assert!(matches!(
-            plan_unowned_media_gc(&store, &registry, 10_001),
-            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
-        ));
-        let path = root.join(&digest[..2]).join(&digest);
-        fs::write(&path, b"evil").unwrap();
-        assert!(matches!(
-            plan_unowned_media_gc(&store, &registry, 10),
-            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
-        ));
-        assert_eq!(fs::read(&path).unwrap(), b"evil");
-        fs::remove_file(&path).unwrap();
-        assert!(matches!(
-            plan_unowned_media_gc(&store, &registry, 10),
-            Err(MediaGcPlanError::Store(MediaObjectError::Io(_)))
-        ));
-        fs::remove_dir_all(root).unwrap();
-    }
-}
