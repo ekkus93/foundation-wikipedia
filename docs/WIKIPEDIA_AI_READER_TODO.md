@@ -261,6 +261,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Keep mutable user SQLite separate; search/embeddings derived rebuildable.
   - **Accept:** forced failure before activation leaves prior content and bookmarks intact.
 - [ ] **STORE-004** Provide offline full-text/lexical index and rebuild path. **Depends:** STORE-001, MOD-002.  
+  - **Progress (2026-10-28, partial — canonical FTS5 schema identity):** Published read-only and writable/rebuild FTS opening now require exact canonical SQLite virtual-table DDL, rather than accepting any table containing `USING fts5(`. This rejects incompatible tokenizers, swapped title/body columns, indexed identity columns and contentless indexes. Synthetic disk-backed regression covers four schema-valid lookalikes. [Scoped qualification](STORE_004_CANONICAL_FTS_SCHEMA_IDENTITY_2026-10-28.md). This is not independent inverted-posting verification, source authentication, mandatory media or production device acceptance. **STORE-004 remains unchecked.**
   - [ ] Benchmark Tantivy or equivalent; implement current-article retrieval block index and pack search.
   - [ ] Rebuild indexes after corruption without re-downloading media/content.
   - **Accept:** search across installed topic pack works with network disabled.

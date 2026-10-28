@@ -12,6 +12,12 @@ use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, PageRecor
 
 static NEXT_REBUILD_TEMP: AtomicU64 = AtomicU64::new(0);
 
+// SQLite normalizes CREATE VIRTUAL TABLE IF NOT EXISTS to this stored DDL.
+// Exact schema identity is required for canonical FTS5 search semantics.
+const CANONICAL_FTS_DDL: &str = "CREATE VIRTUAL TABLE offline_article_fts USING fts5(
+                project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
+                title, body, tokenize='unicode61')";
+
 const MAX_ARTICLES: usize = 100_000;
 const MAX_REDIRECTS: usize = 500_000;
 const MAX_TEXT_BYTES: usize = 4 * 1024 * 1024;
@@ -226,9 +232,7 @@ impl OfflineSearchIndex {
                 |row| row.get(0),
             )
             .optional()?;
-        if !schema.is_some_and(|ddl| {
-            ddl.starts_with("CREATE VIRTUAL TABLE") && ddl.contains(" USING fts5(")
-        }) {
+        if schema.as_deref() != Some(CANONICAL_FTS_DDL) {
             return Err(SearchError::StaleIndex);
         }
         Ok(Self { conn })
@@ -361,6 +365,18 @@ impl OfflineSearchIndex {
                 project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
                 title, body, tokenize='unicode61');",
         )?;
+        // IF NOT EXISTS is not proof that a pre-existing FTS5 table
+        // has the tokenizer, column order and indexed fields we require.
+        let actual: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='offline_article_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if actual.as_deref() != Some(CANONICAL_FTS_DDL) {
+            return Err(SearchError::StaleIndex);
+        }
         Ok(Self { conn })
     }
 
@@ -1024,6 +1040,59 @@ mod identity_tests {
             Err(SearchError::Catalog(CatalogError::DigestMismatch))
         ));
         drop(catalog);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lookalike_fts_schema_is_rejected_before_read_or_rebuild() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-fts-schema-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        for (number, ddl) in [
+            // Stemming changes matching behavior.
+            "CREATE VIRTUAL TABLE offline_article_fts USING fts5(
+                project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
+                title, body, tokenize='porter')",
+            // BM25 column weights would apply to the wrong fields.
+            "CREATE VIRTUAL TABLE offline_article_fts USING fts5(
+                project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
+                body, title, tokenize='unicode61')",
+            // Indexing identity columns changes posting and privacy semantics.
+            "CREATE VIRTUAL TABLE offline_article_fts USING fts5(
+                project, page_id, revision_id,
+                title, body, tokenize='unicode61')",
+            // Contentless indexes cannot pass the canonical body audit.
+            "CREATE VIRTUAL TABLE offline_article_fts USING fts5(
+                project UNINDEXED, page_id UNINDEXED, revision_id UNINDEXED,
+                title, body, tokenize='unicode61', content='')",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let path = root.join(format!("lookalike-{number}.sqlite"));
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(ddl).unwrap();
+            drop(conn);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            assert!(matches!(
+                OfflineSearchIndex::open_read_only(&path),
+                Err(SearchError::StaleIndex)
+            ));
+            assert!(matches!(
+                OfflineSearchIndex::open(&path),
+                Err(SearchError::StaleIndex)
+            ));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
