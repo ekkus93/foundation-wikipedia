@@ -59,6 +59,14 @@ fn fetch_page_preview<T: MediaWikiTransport>(
     }
 }
 
+/// Clearing personal reader data must also erase the ephemeral in-memory
+/// page cache, since its keys otherwise reveal recently opened page IDs.
+fn clear_online_preview_cache(cache: &Mutex<OnlineRevisionCache>) -> Result<(), String> {
+    let mut locked = cache.lock().map_err(|_| "Cannot clear online preview cache")?;
+    *locked = OnlineRevisionCache::default();
+    Ok(())
+}
+
 /// Search results are navigation identities only, never AI evidence.
 #[tauri::command]
 async fn search_wikipedia(query: String, project: String, offline: bool) -> Result<Vec<(u64, String)>, String> {
@@ -283,11 +291,16 @@ async fn remove_reader_bookmark(
 /// pack ownership, builder jobs or ordinary settings. The UI requires an explicit
 /// second confirmation before invoking this destructive operation.
 #[tauri::command]
-async fn clear_reader_personal_data(app: tauri::AppHandle) -> Result<(), String> {
+async fn clear_reader_personal_data(
+    app: tauri::AppHandle,
+    cache: tauri::State<'_, DesktopOnlineCache>,
+) -> Result<(), String> {
+    let cache = Arc::clone(&cache.0);
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = open_private_bookmark_store(&app)?;
         state.clear_personal_reading_data()
-            .map_err(|_| "Cannot clear personal reading data".to_owned())
+            .map_err(|_| "Cannot clear personal reading data".to_owned())?;
+        clear_online_preview_cache(&cache)
     })
     .await
     .map_err(|_| "Personal reading data worker stopped".to_owned())?
@@ -527,6 +540,25 @@ mod online_preview_cache_tests {
             Ok(FetchOutcome::MissingOffline)
         );
         assert_eq!(transport.calls, 4);
+
+        // Privacy reset drops recently opened page identities from RAM too.
+        clear_online_preview_cache(&cache.0).unwrap();
+        assert!(another_command.0.lock().unwrap().is_empty());
+        transport.responses.extend([
+            METADATA.as_bytes().to_vec(),
+            RENDERED.as_bytes().to_vec(),
+        ]);
+        assert_eq!(
+            fetch_page_preview(
+                &mut transport,
+                "enwiki",
+                42,
+                NetworkState::Online,
+                &cache.0,
+            ),
+            Ok(first)
+        );
+        assert_eq!(transport.calls, 6);
     }
 
     #[test]
