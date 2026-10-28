@@ -227,6 +227,21 @@ impl OfflineSearchIndex {
         Ok(Self { conn })
     }
 
+    /// Open an existing derived index only after checking complete article
+    /// identity membership against every digest-verified catalog record.
+    /// This does not authenticate the source publication, validate required
+    /// media, or prove that FTS token postings match canonical body text.
+    /// The caller must keep the snapshot immutable for the reader's lifetime.
+    pub fn open_verified_read_only(
+        path: &Path,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+    ) -> Result<Self, SearchError> {
+        let index = Self::open_read_only(path)?;
+        index.verify_catalog_membership(catalog, root)?;
+        Ok(index)
+    }
+
     pub fn open(path: &std::path::Path) -> Result<Self, SearchError> {
         validate_index_path(path)?;
         #[cfg(unix)]
@@ -293,6 +308,9 @@ impl OfflineSearchIndex {
             {
                 let mut index = Self::open(&staged)?;
                 index.rebuild_from_catalog(catalog, root)?;
+                // Audit the staged index before it can replace a previously
+                // usable file; publication must not rely on query-hit checks.
+                index.verify_catalog_membership(catalog, root)?;
             }
             File::open(&staged)?.sync_all()?;
             #[cfg(unix)]
@@ -774,6 +792,90 @@ mod identity_tests {
             Err(SearchError::Catalog(CatalogError::DigestMismatch))
         ));
         drop(index);
+        drop(catalog);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+
+    #[test]
+    fn published_index_verified_open_rejects_omitted_rows_and_corrupt_frames() {
+        use crate::record_codec::append_record_frame;
+        use wiki_model::{Revision, ARTICLE_SCHEMA_VERSION};
+
+        let root = std::env::temp_dir().join(format!(
+            "wiki-fts-verified-open-{}-{}",
+            std::process::id(),
+            NEXT_REBUILD_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let record = PageRecord::Article(Box::new(Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
+            revision: Revision {
+                revision_id: 1042,
+                timestamp: "2026-10-28T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Earth".into(),
+            display_title: "Earth".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article>Earth</article>".into(),
+            is_disambiguation: false,
+        }));
+        let mut bytes = Vec::new();
+        append_record_frame(&mut bytes, &record).unwrap();
+        fs::write(root.join("verified.shard"), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::open(&root.join("catalog.sqlite")).unwrap();
+        catalog
+            .insert_verified(&root, "verified.shard", 0, bytes.len() as u64)
+            .unwrap();
+        let path = root.join("derived.sqlite");
+        OfflineSearchIndex::replace_persisted_from_catalog(&path, &catalog, &root).unwrap();
+
+        let reader = OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root).unwrap();
+        let articles = reader
+            .search_verified_project(&catalog, &root, "enwiki", "Earth", 10)
+            .unwrap();
+        assert_eq!(articles.len(), 1);
+        assert_eq!(articles[0].key.page_id, 42);
+        drop(reader);
+
+        // A plausible, still-queryable FTS schema is not proof that every
+        // installed article has a corresponding indexed row.
+        {
+            let writer = OfflineSearchIndex::open(&path).unwrap();
+            writer
+                .conn
+                .execute("DELETE FROM offline_article_fts", [])
+                .unwrap();
+        }
+        assert!(matches!(
+            OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+
+        // Rebuilding the derived index from immutable bytes recovers without
+        // re-downloading source articles or their media.
+        OfflineSearchIndex::replace_persisted_from_catalog(&path, &catalog, &root).unwrap();
+        assert!(OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root).is_ok());
+
+        bytes[12] ^= 1;
+        fs::write(root.join("verified.shard"), &bytes).unwrap();
+        assert!(matches!(
+            OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root),
+            Err(SearchError::Catalog(CatalogError::DigestMismatch))
+        ));
         drop(catalog);
         fs::remove_dir_all(root).unwrap();
     }
