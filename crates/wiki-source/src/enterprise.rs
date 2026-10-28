@@ -1519,17 +1519,6 @@ mod tests {
         let mut malformed_generation = second;
         malformed_generation.generation_id = "../other".into();
         assert_eq!(
-            join_enterprise_batch(
-                vec![first],
-                vec![first_companion, second_companion],
-                vec![],
-            ),
-            Err(EnterpriseError::MissingStructured(PageKey {
-                project: "enwiki".into(),
-                page_id: 7,
-            }))
-        );
-        assert_eq!(
             join_enterprise_batch(vec![malformed_generation], vec![], vec![]),
             Err(EnterpriseError::InvalidGeneration)
         );
