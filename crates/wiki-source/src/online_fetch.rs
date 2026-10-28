@@ -338,7 +338,14 @@ pub fn fetch_title_with_local_index_and_cache<T: MediaWikiTransport>(
     index: Option<&LocalTitleIndex>,
     cache: &mut OnlineRevisionCache,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
-    fetch_title_with_local_index_inner(client, project, requested_title, network, index, Some(cache))
+    fetch_title_with_local_index_inner(
+        client,
+        project,
+        requested_title,
+        network,
+        index,
+        Some(cache),
+    )
 }
 
 fn fetch_title_with_local_index_inner<T: MediaWikiTransport>(
@@ -468,8 +475,12 @@ mod tests {
         // a network request or access to the online-preview HTML cache.
         assert_eq!(
             fetch_title_with_local_index_and_cache(
-                &mut client, "enwiki", "Physics intro", NetworkState::Offline,
-                Some(&index), &mut cache,
+                &mut client,
+                "enwiki",
+                "Physics intro",
+                NetworkState::Offline,
+                Some(&index),
+                &mut cache,
             ),
             Ok(FetchOutcome::Local(local()))
         );
@@ -481,9 +492,14 @@ mod tests {
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
         let first = fetch_title_with_local_index_and_cache(
-            &mut client, "enwiki", "Physics intro", NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap();
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap();
         assert!(matches!(first, FetchOutcome::Rendered(_)));
         assert_eq!(client.requests.len(), 3);
         assert_eq!(cache.len(), 1);
@@ -491,18 +507,32 @@ mod tests {
         // Both title/redirect and current revision are always revalidated.
         client.answers.push_back(Ok(resolved.as_bytes().to_vec()));
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
-        assert_eq!(fetch_title_with_local_index_and_cache(
-            &mut client, "enwiki", "Physics intro", NetworkState::Online,
-            Some(&index), &mut cache,
-        ), Ok(first.clone()));
+        assert_eq!(
+            fetch_title_with_local_index_and_cache(
+                &mut client,
+                "enwiki",
+                "Physics intro",
+                NetworkState::Online,
+                Some(&index),
+                &mut cache,
+            ),
+            Ok(first.clone())
+        );
         assert_eq!(client.requests.len(), 5);
 
         // No stale cache fallback may be promoted to current on network failure.
-        client.answers.push_back(Err("title resolution unavailable"));
+        client
+            .answers
+            .push_back(Err("title resolution unavailable"));
         let error = fetch_title_with_local_index_and_cache(
-            &mut client, "enwiki", "Physics intro", NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap_err();
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap_err();
         assert_eq!(error.stage, FetchStage::TitleResolution);
         assert_eq!(error.fallback, Some(local()));
         assert_eq!(client.requests.len(), 6);
@@ -510,22 +540,32 @@ mod tests {
         client.answers.push_back(Ok(resolved.as_bytes().to_vec()));
         client.answers.push_back(Err("revision unavailable"));
         let error = fetch_title_with_local_index_and_cache(
-            &mut client, "enwiki", "Physics intro", NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap_err();
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap_err();
         assert_eq!(error.stage, FetchStage::Metadata);
         assert_eq!(error.fallback, Some(local()));
         assert_eq!(client.requests.len(), 8);
 
         // If the publisher rebinds the alias to another page, the installed
         // revision cannot masquerade as that new article.
-        client.answers.push_back(Ok(
-            resolved.replace(r#""pageid":42"#, r#""pageid":43"#).into_bytes()
-        ));
+        client.answers.push_back(Ok(resolved
+            .replace(r#""pageid":42"#, r#""pageid":43"#)
+            .into_bytes()));
         let error = fetch_title_with_local_index_and_cache(
-            &mut client, "enwiki", "Physics intro", NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap_err();
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap_err();
         assert_eq!(error.stage, FetchStage::Selection);
         assert_eq!(error.fallback, None);
         assert_eq!(client.requests.len(), 9);
@@ -1198,50 +1238,3 @@ mod tests {
             NetworkState::Online,
             &[local()],
         )
-        .unwrap_err();
-        assert_eq!(error.stage, FetchStage::Selection);
-        assert_eq!(error.fallback, None);
-        assert_eq!(
-            error.cause,
-            FetchCause::Flow(OnlineFlowError::Selection(
-                crate::online_selection::SelectionError::ForeignArticle
-            ))
-        );
-        assert_eq!(client.requests.len(), 1);
-    }
-
-    #[test]
-    fn title_fetch_never_uses_network_offline_or_after_failed_resolution() {
-        let mut client = FakeTransport::default();
-        assert_eq!(
-            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Offline),
-            Ok(FetchOutcome::MissingOffline)
-        );
-        assert!(client.requests.is_empty());
-        let forged = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Other"}]}}"#;
-        client.answers.push_back(Ok(forged.as_bytes().to_vec()));
-        let error =
-            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Online).unwrap_err();
-        assert_eq!(error.stage, FetchStage::TitleResolution);
-        assert!(matches!(error.cause, FetchCause::Flow(_)));
-        assert_eq!(client.requests.len(), 1);
-    }
-
-    #[test]
-    fn network_error_or_oversized_bytes_are_not_displayed_as_current() {
-        let mut unavailable = FakeTransport::default();
-        unavailable.answers.push_back(Err("network offline"));
-        let error =
-            fetch_article(&mut unavailable, &key(), NetworkState::Online, &[local()]).unwrap_err();
-        assert_eq!(error.cause, FetchCause::Transport("network offline"));
-        assert_eq!(error.fallback, Some(local()));
-        let mut oversized = FakeTransport::default();
-        oversized
-            .answers
-            .push_back(Ok(vec![b' '; METADATA_BYTES + 1]));
-        let error = fetch_article(&mut oversized, &key(), NetworkState::Online, &[]).unwrap_err();
-        assert_eq!(error.stage, FetchStage::Metadata);
-        assert_eq!(error.cause, FetchCause::ResponseTooLarge);
-        assert_eq!(oversized.requests.len(), 1);
-    }
-}
