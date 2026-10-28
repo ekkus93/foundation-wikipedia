@@ -796,7 +796,6 @@ mod identity_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-
     #[test]
     fn published_index_verified_open_rejects_omitted_rows_and_corrupt_frames() {
         use crate::record_codec::append_record_frame;
