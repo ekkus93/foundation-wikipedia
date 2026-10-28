@@ -1,9 +1,10 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isolatedReaderDocument, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
+import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
 import { normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
@@ -32,19 +33,20 @@ interface ArticlePreview {
 }
 
 // Isolated preview HTML is built using whitelisted, app-controlled layout choices.
-export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth, theme }: {
+export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth, theme, offlineMode }: {
   onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void;
   bookmarkRequest?: ReaderOpenPageRequest | null;
   textSize: ReaderTextSize;
   readingWidth: ReaderWidth;
   theme: Theme;
+  offlineMode: ReaderOfflineMode;
 }) {
   const uniqueId = useId();
   const projectFieldId = `${uniqueId}-project`;
   const queryFieldId = `${uniqueId}-query`;
   const [query, setQuery] = useState("");
   const [project, setProject] = useState("enwiki");
-  const [offline, setOffline] = useState(false);
+  const offline = useSyncExternalStore(offlineMode.subscribe, offlineMode.getSnapshot, offlineMode.getSnapshot);
   const [connected, setConnected] = useState(() => navigator.onLine);
   const requestEpoch = useRef(new RequestEpoch());
   const nextFrameId = useRef(1);
@@ -74,12 +76,25 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   const [notice, setNotice] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
+  // Apply the shared offline transition to hidden tabs too. Late responses
+  // are ignored; existing in-memory text-only previews remain readable.
+  useEffect(() => offlineMode.subscribe(() => {
+    if (offlineMode.getSnapshot()) {
+      requestEpoch.current.invalidate();
+      setBusy(false);
+      setHits([]);
+      setNotice("Offline mode enabled across all tabs. Previously loaded online text previews remain readable, but no complete offline article is installed.");
+    } else {
+      setNotice("Offline mode disabled across all tabs. New online actions are available when connected.");
+    }
+  }), [offlineMode]);
+
   // Bookmark reopening is explicit user navigation. Never bypass offline mode,
   // and do not discard the active revision/history on a failed fetch.
   useEffect(() => {
     if (!bookmarkRequest || bookmarkRequest.id <= lastBookmarkRequestId.current) return;
     lastBookmarkRequestId.current = bookmarkRequest.id;
-    if (offline || !connected || !navigator.onLine) {
+    if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
       setNotice("Cannot open this saved page without a connection. The current article is unchanged.");
       return;
     }
@@ -97,7 +112,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       offline: false,
     }).then((result) => {
       const [pageId, revisionId, title, html] = parseReaderArticle(result, bookmarkRequest.pageId);
-      if (!requestEpoch.current.matches(epoch)) return;
+      if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       const next = { project: bookmarkRequest.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
         links: extractWikiArticleLinks(html, bookmarkRequest.project) };
       setNavigation((previous) => openBookmarkedReaderArticle(previous, next));
@@ -105,13 +120,13 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       setHits([]);
       setNotice("Opened the latest available online revision. This is not a complete offline article.");
     }).catch(() => {
-      if (requestEpoch.current.matches(epoch)) {
+      if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) {
         setNotice("Saved page could not be reopened. The previous article was preserved.");
       }
     }).finally(() => {
       if (requestEpoch.current.matches(epoch)) setBusy(false);
     });
-  }, [bookmarkRequest, offline, connected]);
+  }, [bookmarkRequest, offline, connected, offlineMode]);
 
   useEffect(() => {
     const disconnected = () => {
@@ -137,7 +152,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || offline || !connected || !navigator.onLine) return;
+    if (busy || offlineMode.getSnapshot() || !connected || !navigator.onLine) return;
     const requestedQuery = normalizedReaderSearchQuery(query);
     if (!requestedQuery) {
       setNotice("Invalid search: use a nonempty query of at most 512 UTF-8 bytes without control or invisible formatting characters.");
@@ -149,12 +164,12 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     // A failed search must not destroy the currently displayed revision/history.
     try {
       const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: requestedQuery, project, offline: offline || !connected || !navigator.onLine }));
-      if (!requestEpoch.current.matches(epoch)) return;
+      if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       setHits(result);
       setNavigation(emptyReaderNavigation());
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
-      if (requestEpoch.current.matches(epoch)) {
+      if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) {
         setNotice(`Search unavailable: ${String(error)}`);
       }
     } finally {
@@ -163,7 +178,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   }
 
   async function openArticle(command: "open_wikipedia_title" | "open_wikipedia_page", args: { title?: string; pageId?: number }, requestedProject = project) {
-    if (busy || offline || !connected || !navigator.onLine) return;
+    if (busy || offlineMode.getSnapshot() || !connected || !navigator.onLine) return;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
@@ -173,10 +188,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
         command,
         { ...args, project: requestedProject, offline: offline || !connected || !navigator.onLine },
       ), args.pageId);
-      if (!requestEpoch.current.matches(epoch)) return;
+      if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject) }));
     } catch (error) {
-      if (requestEpoch.current.matches(epoch)) setNotice(`Article unavailable: ${String(error)}`);
+      if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
       if (requestEpoch.current.matches(epoch)) setBusy(false);
     }
@@ -242,21 +257,8 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
         <p role="status">Search and exact-title input must fit in 512 UTF-8 bytes and contain no control or invisible formatting characters.</p>
       )}
       <label><input type="checkbox" checked={offline} onChange={(event) => {
-        const nowOffline = event.target.checked;
-        setOffline(nowOffline);
-        if (nowOffline) {
-          // This control must remain available while a fetch is pending:
-          // immediately invalidate its result and release the busy UI.
-          // Retain only already loaded in-memory revision snapshots; they are
-          // never media-complete installed offline articles.
-          requestEpoch.current.invalidate();
-          setBusy(false);
-          setHits([]);
-          setNotice("Offline mode enabled. Previously loaded online text previews remain readable, but no complete offline article is installed.");
-        } else {
-          setNotice(null);
-        }
-      }} /> Work offline (no network requests)</label>
+        offlineMode.setOffline(event.target.checked);
+      }} /> Work offline across all tabs (no new network requests)</label>
       <p className="preview-warning">
         {offline || !connected ? "Network disabled: only previously loaded in-memory text previews can be read; complete offline articles require an installed pack. " : ""}
         Online text preview only. Images, equations, and other required media are not saved;

@@ -7,10 +7,13 @@ import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
 import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { ReaderOfflineMode } from "./readerOfflineMode";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
+  // A single offline switch is shared by every existing and future tab.
+  const [offlineMode] = useState(() => new ReaderOfflineMode());
   const [message, setMessage] = useState<string | null>(null);
   const [savedBookmarks, setSavedBookmarks] = useState<ReaderBookmark[]>([]);
   const [recentVisits, setRecentVisits] = useState<ReaderVisit[]>([]);
@@ -358,7 +361,7 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={tab.id} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
+              <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));
