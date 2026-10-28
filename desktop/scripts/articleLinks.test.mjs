@@ -117,6 +117,9 @@ test("sanitizes spoofed display labels without splitting supplementary Unicode",
     ["./Persian", "می\u200cروم"],
     ["./Indic", "क्\u200dष"],
     ["./Empty", "\u200b\ufeff"],
+    ["./Spacing", "  Physics   \t\n and \u00a0  mathematics  "],
+    ["./LineBreak", "A\u2028\u2029B"],
+    ["./Literal", "C\\\\s+D"],
   ];
   globalThis.document = {
     createElement: () => ({
@@ -137,6 +140,9 @@ test("sanitizes spoofed display labels without splitting supplementary Unicode",
       { title: "Persian", label: "می\u200cروم" },
       { title: "Indic", label: "क्\u200dष" },
       { title: "Empty", label: "Empty" },
+      { title: "Spacing", label: "Physics and mathematics" },
+      { title: "LineBreak", label: "A B" },
+      { title: "Literal", label: "C\\\\s+D" },
     ]);
   } finally {
     if (originalDocument === undefined) delete globalThis.document;

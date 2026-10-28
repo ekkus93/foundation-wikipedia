@@ -77,7 +77,7 @@ export function extractWikiArticleLinks(html: string, project: string): WikiArti
           cp === 0x2028 || cp === 0x2029) return " ";
       if ((cp >= 0xd800 && cp <= 0xdfff) || unsafeNavigationUnicode(scalar)) return "";
       return scalar;
-    }).join("").trim().replace(/\\s+/gu, " ");
+    }).join("").trim().replace(/\s+/gu, " ");
     const label = Array.from(cleanLabel).slice(0, 160).join("") || title;
     links.push({ title, label });
     if (links.length >= MAX_LINKS) break;
