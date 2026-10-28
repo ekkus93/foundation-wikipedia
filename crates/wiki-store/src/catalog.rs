@@ -399,6 +399,7 @@ impl SnapshotCatalog {
             "SELECT normalized_title FROM title_index
              WHERE project=?1 AND normalized_title>=?2
 
+
              ORDER BY normalized_title",
         )?;
         let rows = stmt.query_map(params![project, normalized], |row| row.get::<_, String>(0))?;
@@ -798,6 +799,7 @@ mod tests {
     use wiki_model::{Article, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
 
     fn temp_root() -> std::path::PathBuf {
+
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -806,7 +808,6 @@ mod tests {
             std::env::temp_dir().join(format!("wiki-catalog-{}-{stamp}", std::process::id()));
         fs::create_dir(&path).unwrap();
         path
-
     }
 
     fn article(id: u64, title: &str) -> PageRecord {
@@ -1198,6 +1199,7 @@ mod tests {
         assert!(matches!(
             catalog.search_title_prefix(&root, "enwiki", "Earth", 0),
             Err(CatalogError::InvalidCatalogEntry)
+
         ));
         assert!(matches!(
             catalog.search_title_prefix(&root, "enwiki", "Earth", 101),
@@ -1469,10 +1471,8 @@ mod tests {
             catalog.verify_shard_coverage(&root),
             Err(CatalogError::InvalidCatalogEntry)
         ));
-        let manifest_names = BTreeSet::from([
-            "Articles.shard".to_owned(),
-            "articles.shard".to_owned(),
-        ]);
+        let manifest_names =
+            BTreeSet::from(["Articles.shard".to_owned(), "articles.shard".to_owned()]);
         assert!(matches!(
             catalog.verify_expected_shards(&root, &manifest_names),
             Err(CatalogError::InvalidCatalogEntry)
