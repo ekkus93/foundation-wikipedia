@@ -446,6 +446,53 @@ impl OfflineSearchIndex {
         Ok(())
     }
 
+    /// Audit every derived FTS row against the complete immutable catalog,
+    /// including editions not represented by a particular search query.
+    ///
+    /// A matching search result alone cannot detect missing indexed articles.
+    /// Stream both inventories in stable project/page-ID order so an omitted,
+    /// duplicated, foreign, or stale row fails closed without materializing
+    /// the corpus. Every catalog frame (including redirects) is reverified.
+    /// This checks identity coverage, not FTS token postings, source
+    /// authenticity, or required offline media completeness.
+    pub fn verify_catalog_membership(
+        &self,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+    ) -> Result<usize, SearchError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT project,page_id,revision_id,title FROM offline_article_fts
+             ORDER BY project, CAST(page_id AS INTEGER), rowid",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut count = 0usize;
+        catalog.visit_records(root, |record| {
+            if let PageRecord::Article(article) = record {
+                if count >= MAX_ARTICLES {
+                    return Err(SearchError::TooManyArticles);
+                }
+                let row = rows.next()?.ok_or(SearchError::StaleIndex)?;
+                let project: String = row.get(0)?;
+                let page_id: i64 = row.get(1)?;
+                let revision_id: i64 = row.get(2)?;
+                let title: String = row.get(3)?;
+                if project != article.key.project
+                    || i64::try_from(article.key.page_id).ok() != Some(page_id)
+                    || i64::try_from(article.revision.revision_id).ok() != Some(revision_id)
+                    || title != article.title
+                {
+                    return Err(SearchError::StaleIndex);
+                }
+                count += 1;
+            }
+            Ok::<(), SearchError>(())
+        })?;
+        if rows.next()?.is_some() {
+            return Err(SearchError::StaleIndex);
+        }
+        Ok(count)
+    }
+
     /// Resolve a search hit against the immutable catalog, refusing to open
     /// a different revision (or a redirect) from the one actually indexed.
     /// A stale hit requires a derived-index rebuild, never a silent fallback.
@@ -606,6 +653,133 @@ impl OfflineSearchIndex {
 mod identity_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn complete_catalog_membership_audit_rejects_missing_forged_and_stale_fts_rows() {
+        use crate::record_codec::append_record_frame;
+        use wiki_model::{Revision, ARTICLE_SCHEMA_VERSION};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-fts-membership-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let mut bytes = Vec::new();
+        let mut frames = Vec::new();
+        // Shard insertion order differs from the SQLite catalog key order.
+        // Numeric page-ID ordering must not be confused with FTS text order.
+        for (project, page_id, title) in [
+            ("enwiki", 10, "Mars"),
+            ("frwiki", 1, "Terre"),
+            ("enwiki", 2, "Earth"),
+        ] {
+            let record = PageRecord::Article(Box::new(Article {
+                schema_version: ARTICLE_SCHEMA_VERSION,
+                key: ArticleKey {
+                    project: project.into(),
+                    page_id,
+                },
+                revision: Revision {
+                    revision_id: 1000 + page_id,
+                    timestamp: "2026-10-28T00:00:00Z".into(),
+                    content_sha256: "a".repeat(64),
+                },
+                title: title.into(),
+                display_title: title.into(),
+                language: "en".into(),
+                namespace: 0,
+                aliases: vec![],
+                wikidata_id: None,
+                lead: vec![],
+                sections: vec![],
+                references: vec![],
+                links: vec![],
+                media: vec![],
+                rendered_html: format!("<article>{title}</article>"),
+                is_disambiguation: false,
+            }));
+            let start = bytes.len() as u64;
+            append_record_frame(&mut bytes, &record).unwrap();
+            frames.push((start, bytes.len() as u64 - start));
+        }
+        fs::write(root.join("audit.shard"), &bytes).unwrap();
+        let mut catalog = SnapshotCatalog::open(&root.join("catalog.sqlite")).unwrap();
+        for (offset, length) in frames {
+            catalog
+                .insert_verified(&root, "audit.shard", offset, length)
+                .unwrap();
+        }
+        let mut index = OfflineSearchIndex::in_memory().unwrap();
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+        assert_eq!(index.verify_catalog_membership(&catalog, &root).unwrap(), 3);
+
+        index
+            .conn
+            .execute(
+                "DELETE FROM offline_article_fts WHERE title='Mars'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+
+        index
+            .conn
+            .execute(
+                "UPDATE offline_article_fts SET revision_id=999 WHERE title='Terre'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+
+        index
+            .conn
+            .execute(
+                "UPDATE offline_article_fts SET title='Wrong' WHERE title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+
+        index
+            .conn
+            .execute(
+                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                 VALUES ('enwiki',2,1002,'Earth','earth')",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+
+        bytes[12] ^= 1;
+        fs::write(root.join("audit.shard"), &bytes).unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::Catalog(CatalogError::DigestMismatch))
+        ));
+        drop(index);
+        drop(catalog);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn published_index_is_read_only_and_missing_schema_fails_closed() {
