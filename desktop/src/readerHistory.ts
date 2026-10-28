@@ -29,10 +29,15 @@ export function popReaderHistory<T>(stack: readonly T[]): { previous: T | undefi
   return { previous: stack[stack.length - 1], rest: stack.slice(0, -1) };
 }
 
-export function openReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>, article: T): ReaderNavigation<T> {
+/** Keep Back/Forward scoped to the actual immutable article edition, even
+ * when a stale UI selector or asynchronous request tries to open another wiki.
+ * Numeric page and revision IDs are not globally unique across editions. */
+export function openReaderArticle<T extends { html: string; project: string }>(state: ReaderNavigation<T>, article: T): ReaderNavigation<T> {
+  const sameEdition = !state.current || state.current.project === article.project;
+  const previous = sameEdition ? state : emptyReaderNavigation<T>();
   return {
     current: article,
-    back: state.current ? appendReaderHistory(state.back, state.current) : state.back,
+    back: previous.current ? appendReaderHistory(previous.back, previous.current) : previous.back,
     forward: [], // A new article creates a new branch in the navigation history.
   };
 }
@@ -43,9 +48,9 @@ export function openReaderArticle<T extends { html: string }>(state: ReaderNavig
 export function openBookmarkedReaderArticle<T extends { html: string; project: string }>(
   state: ReaderNavigation<T>, article: T,
 ): ReaderNavigation<T> {
-  // Compare the provenance of the actual mounted revision, not the mutable
-  // edition selector. A stale selector must never mix Back history across wikis.
-  return openReaderArticle(state.current?.project === article.project ? state : emptyReaderNavigation<T>(), article);
+  // Both ordinary link navigation and bookmark reopening use the same
+  // edition boundary, independent of the mutable UI selector.
+  return openReaderArticle(state, article);
 }
 
 export function backReaderArticle<T extends { html: string }>(state: ReaderNavigation<T>): ReaderNavigation<T> {

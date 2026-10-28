@@ -128,3 +128,24 @@ test("saved article provenance, not the selected edition, isolates Back history"
   assert.equal(backReaderArticle(reopened).current.project, "enwiki");
   assert.equal(backReaderArticle(reopened).current.revisionId, 333);
 });
+
+test("ordinary navigation cannot carry Back history into another edition", () => {
+  const english = article(42, 333, "enwiki");
+  const german = article(42, 333, "dewiki");
+  const englishNext = article(43, 334, "enwiki");
+  let state = openReaderArticle(emptyReaderNavigation(), english);
+  state = openReaderArticle(state, englishNext);
+  assert.deepEqual(backReaderArticle(state).current, english);
+
+  // An asynchronous title/link response may carry an edition different from
+  // the current snapshot; identical numeric IDs must not merge histories.
+  state = openReaderArticle(state, german);
+  assert.deepEqual(state.current, german);
+  assert.deepEqual(state.back, []);
+  assert.deepEqual(state.forward, []);
+  assert.equal(backReaderArticle(state).current, null);
+
+  const germanNext = article(43, 334, "dewiki");
+  const sameEdition = openReaderArticle(state, germanNext);
+  assert.deepEqual(backReaderArticle(sameEdition).current, german);
+});
