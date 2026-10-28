@@ -28,11 +28,16 @@ struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>, Arc<AtomicU64>);
 struct DesktopPersonalDataGate {
     lock: Arc<Mutex<()>>,
     generation: Arc<AtomicU64>,
+    visit_generation: Arc<AtomicU64>,
 }
 
 impl DesktopPersonalDataGate {
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    fn visit_generation(&self) -> u64 {
+        self.visit_generation.load(Ordering::Acquire)
     }
 
     fn write<T>(
@@ -50,10 +55,36 @@ impl DesktopPersonalDataGate {
         action()
     }
 
+    fn write_visit<T>(
+        &self,
+        expected_generation: u64,
+        expected_visit_generation: u64,
+        action: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.write(expected_generation, || {
+            if self.visit_generation() != expected_visit_generation {
+                return Err("Reading history was cleared; stale visit rejected".to_owned());
+            }
+            action()
+        })
+    }
+
+    fn clear_visits<T>(
+        &self,
+        expected_generation: u64,
+        action: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        // Invalidate already queued visit writers before acquiring the lock.
+        // Bookmark writes remain independent of a history-only deletion.
+        self.visit_generation.fetch_add(1, Ordering::AcqRel);
+        self.write(expected_generation, action)
+    }
+
     fn reset<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         // Invalidate queued workers before waiting for any active write.
         // A worker already holding the lock finishes before deletion begins.
         self.generation.fetch_add(1, Ordering::AcqRel);
+        self.visit_generation.fetch_add(1, Ordering::AcqRel);
         let _guard = self
             .lock
             .lock()
@@ -320,11 +351,18 @@ fn saved_bookmark_rows(state: &UserState) -> Result<Vec<(String, u64, u64)>, Use
 
 /// Retrieve bounded saved identities only; no article HTML or offline media.
 #[tauri::command]
-async fn list_reader_bookmarks(app: tauri::AppHandle) -> Result<Vec<(String, u64, u64)>, String> {
+async fn list_reader_bookmarks(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+) -> Result<Vec<(String, u64, u64)>, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = open_private_bookmark_store(&app)?;
-        saved_bookmark_rows(&state)
-            .map_err(|_| "Cannot read saved page identities".to_owned())
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            saved_bookmark_rows(&state)
+                .map_err(|_| "Cannot read saved page identities".to_owned())
+        })
     })
     .await
     .map_err(|_| "Bookmark reader stopped".to_owned())?
@@ -394,8 +432,9 @@ async fn record_reader_visit(
 ) -> Result<bool, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let visit_generation = gate.visit_generation();
     tauri::async_runtime::spawn_blocking(move || {
-        gate.write(generation, || {
+        gate.write_visit(generation, visit_generation, || {
             let state = open_private_bookmark_store(&app)?;
             let key = ArticleKey { project, page_id };
             let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
@@ -410,10 +449,17 @@ async fn record_reader_visit(
 }
 
 #[tauri::command]
-async fn reader_history_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+async fn reader_history_enabled(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+) -> Result<bool, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        open_private_bookmark_store(&app)?.history_enabled()
-            .map_err(|_| "Cannot read history preference".to_owned())
+        gate.write(generation, || {
+            open_private_bookmark_store(&app)?.history_enabled()
+                .map_err(|_| "Cannot read history preference".to_owned())
+        })
     })
     .await
     .map_err(|_| "History preference worker stopped".to_owned())?
@@ -430,20 +476,34 @@ async fn set_reader_history_enabled(app: tauri::AppHandle, enabled: bool) -> Res
 }
 
 #[tauri::command]
-async fn list_reader_history(app: tauri::AppHandle) -> Result<Vec<(String, u64, u64, i64)>, String> {
+async fn list_reader_history(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+) -> Result<Vec<(String, u64, u64, i64)>, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        let state = open_private_bookmark_store(&app)?;
-        reader_history_rows(&state).map_err(|_| "Cannot load reading history".to_owned())
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            reader_history_rows(&state).map_err(|_| "Cannot load reading history".to_owned())
+        })
     })
     .await
     .map_err(|_| "Reading history worker stopped".to_owned())?
 }
 
 #[tauri::command]
-async fn clear_reader_history(app: tauri::AppHandle) -> Result<usize, String> {
+async fn clear_reader_history(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+) -> Result<usize, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        open_private_bookmark_store(&app)?.clear_history()
-            .map_err(|_| "Cannot clear reading history".to_owned())
+        gate.clear_visits(generation, || {
+            open_private_bookmark_store(&app)?.clear_history()
+                .map_err(|_| "Cannot clear reading history".to_owned())
+        })
     })
     .await
     .map_err(|_| "Reading history worker stopped".to_owned())?
@@ -498,6 +558,7 @@ fn validated_reader_layout(state: &UserState) -> Result<(String, String), UserSt
 /// These preferences only affect app-controlled presentation, never untrusted
 /// article HTML, and contain no provider credentials or personal article data.
 #[tauri::command]
+
 async fn read_reader_layout(app: tauri::AppHandle) -> Result<(String, String), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = open_private_bookmark_store(&app)?;
@@ -787,13 +848,14 @@ mod bookmark_tests {
     fn privacy_reset_fences_queued_bookmark_and_visit_writes() {
         let gate = DesktopPersonalDataGate::default();
         let queued_generation = gate.generation();
+        let queued_visit_generation = gate.visit_generation();
         let mut state = UserState::in_memory().unwrap();
         let key = ArticleKey {
             project: "enwiki".to_owned(),
             page_id: 42,
         };
         state.set_history_enabled(true).unwrap();
-        gate.write(queued_generation, || {
+        gate.write_visit(queued_generation, queued_visit_generation, || {
             state.record_visit(&key, 333, 1_700_000_000)
                 .map_err(|error| format!("{error:?}"))
         })
@@ -813,7 +875,7 @@ mod bookmark_tests {
 
         // Workers queued before reset cannot reintroduce cleared activity.
         assert!(gate
-            .write(queued_generation, || {
+            .write_visit(queued_generation, queued_visit_generation, || {
                 state.record_visit(&key, 334, 1_700_000_001)
                     .map_err(|error| format!("{error:?}"))
             })
@@ -837,6 +899,68 @@ mod bookmark_tests {
             })
             .unwrap());
         assert_eq!(state.bookmark(&key).unwrap(), Some((335, String::new())));
+    }
+
+    #[test]
+    fn clearing_history_fences_queued_visits_without_affecting_bookmarks() {
+        let gate = DesktopPersonalDataGate::default();
+        let mut state = UserState::in_memory().unwrap();
+        let key = ArticleKey {
+            project: "enwiki".to_owned(),
+            page_id: 42,
+        };
+        state.set_history_enabled(true).unwrap();
+        let generation = gate.generation();
+        let old_visit_generation = gate.visit_generation();
+        gate.write_visit(generation, old_visit_generation, || {
+            state.record_visit(&key, 333, 1_700_000_000)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        gate.write(generation, || {
+            toggle_saved_bookmark(&state, &key, 333)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        gate.clear_visits(generation, || {
+            state.clear_history().map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        assert_eq!(state.bookmark(&key).unwrap(), Some((333, String::new())));
+
+        assert!(gate
+            .write_visit(generation, old_visit_generation, || {
+                state.record_visit(&key, 334, 1_700_000_001)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        // A fresh visit is allowed; history-only deletion must not invalidate
+        // independently queued bookmark operations.
+        gate.write_visit(generation, gate.visit_generation(), || {
+            state.record_visit(&key, 335, 1_700_000_002)
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert_eq!(reader_history_rows(&state).unwrap().len(), 1);
+        assert!(gate.write(generation, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn stale_personal_data_reads_are_rejected_after_reset() {
+        let gate = DesktopPersonalDataGate::default();
+        let generation = gate.generation();
+        let mut state = UserState::in_memory().unwrap();
+        gate.reset(|| {
+            state.clear_personal_reading_data()
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(gate.write(generation, || reader_history_rows(&state)
+            .map_err(|error| format!("{error:?}"))).is_err());
+        assert!(gate.write(generation, || saved_bookmark_rows(&state)
+            .map_err(|error| format!("{error:?}"))).is_err());
     }
 
     #[test]
