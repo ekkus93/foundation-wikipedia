@@ -157,15 +157,15 @@ fn install_owned_media_with_binding(
     let stored_digest = store
         .store_bytes_unlocked(content)
         .map_err(MediaInstallError::Store)?;
+    // Keep object identity, attribution and ownership in one SQLite commit.
+    // Published bytes may remain orphaned after failure, but registry metadata
+    // must not be partially committed.
     let registered_digest = registry
-        .register_verified_bytes(content, notice)
+        .register_verified_owned_single(content, notice, kind, owner_id)
         .map_err(MediaInstallError::Registry)?;
     if stored_digest != registered_digest {
         return Err(MediaInstallError::IdentityMismatch);
     }
-    registry
-        .add_owner(&stored_digest, kind, owner_id)
-        .map_err(MediaInstallError::Registry)?;
     Ok(stored_digest)
 }
 
@@ -395,6 +395,102 @@ mod tests {
             creator: creator.into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn bound_single_install_rolls_back_metadata_when_owner_insert_fails() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-atomic-single-media-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let database = root.with_extension("registry.sqlite");
+        let store = MediaObjectStore::new(&root);
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        registry.bind_media_root(&root).unwrap();
+        let attribution = notice("Creator A");
+
+        // Incremental installs must still allow several objects for one owner.
+        for bytes in [b"first diagram".as_slice(), b"second diagram".as_slice()] {
+            install_bound_owned_media(
+                &store,
+                &mut registry,
+                bytes,
+                &attribution,
+                OwnerKind::Pack,
+                "incremental-pack",
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            registry
+                .owned_media(OwnerKind::Pack, "incremental-pack")
+                .unwrap()
+                .len(),
+            2
+        );
+        let raw = rusqlite::Connection::open(&database).unwrap();
+        let count = |table: &str| -> i64 {
+            raw.query_row(
+                &format!("SELECT COUNT(*) FROM {table}"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        let objects_before = count("media_objects");
+        let notices_before = count("media_notices");
+        let owners_before = count("media_owners");
+
+        // Force SQLite to fail after object/notice insertion, before commit.
+        raw.execute_batch(
+            "CREATE TRIGGER deny_single_owner BEFORE INSERT ON media_owners
+             WHEN NEW.owner_id='denied-pack'
+             BEGIN SELECT RAISE(ABORT, 'simulated owner insert failure'); END;",
+        )
+        .unwrap();
+        assert!(matches!(
+            install_bound_owned_media(
+                &store,
+                &mut registry,
+                b"third diagram",
+                &notice("Creator B"),
+                OwnerKind::Pack,
+                "denied-pack",
+            ),
+            Err(MediaInstallError::Registry(MediaRegistryError::Sql(_)))
+        ));
+        assert_eq!(count("media_objects"), objects_before);
+        assert_eq!(count("media_notices"), notices_before);
+        assert_eq!(count("media_owners"), owners_before);
+        assert!(registry
+            .owned_media(OwnerKind::Pack, "denied-pack")
+            .unwrap()
+            .is_empty());
+        // File publication precedes SQLite; the orphan remains recoverable.
+        assert_eq!(store.published_object_digests(10).unwrap().len(), 3);
+
+        raw.execute_batch("DROP TRIGGER deny_single_owner;").unwrap();
+        install_bound_owned_media(
+            &store,
+            &mut registry,
+            b"third diagram",
+            &notice("Creator B"),
+            OwnerKind::Pack,
+            "denied-pack",
+        )
+        .unwrap();
+        assert_eq!(count("media_objects"), objects_before + 1);
+        assert_eq!(count("media_notices"), notices_before + 1);
+        assert_eq!(count("media_owners"), owners_before + 1);
+        drop(raw);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(database).unwrap();
     }
 
     #[test]

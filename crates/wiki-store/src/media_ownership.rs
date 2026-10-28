@@ -588,6 +588,63 @@ impl MediaRegistry {
         tx.commit()?;
         Ok(digest)
     }
+    /// Atomically register a verified object's identity, attribution and
+    /// ownership under one SQLite IMMEDIATE transaction. A failed owner insert
+    /// must not leave newly registered, unowned metadata behind.
+    /// Unlike immutable batch registration, single installs are incremental.
+    pub fn register_verified_owned_single(
+        &mut self,
+        content: &[u8],
+        notice: &MediaNotice,
+        kind: OwnerKind,
+        owner_id: &str,
+    ) -> Result<String, MediaRegistryError> {
+        if !valid_owner_id(owner_id)
+            || content.is_empty()
+            || content.len() > 64 * 1024 * 1024
+            || !notice.validate()
+        {
+            return Err(MediaRegistryError::InvalidInput);
+        }
+        let bytes = i64::try_from(content.len()).map_err(|_| MediaRegistryError::InvalidInput)?;
+        let digest = format!("{:x}", Sha256::digest(content));
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO media_objects(digest,bytes) VALUES (?1,?2)",
+            params![digest, bytes],
+        )?;
+        let actual: i64 = tx.query_row(
+            "SELECT bytes FROM media_objects WHERE digest=?1",
+            params![digest],
+            |row| row.get(0),
+        )?;
+        if actual != bytes {
+            return Err(MediaRegistryError::ConflictingSize);
+        }
+        require_consistent_mime(&tx, &digest, &notice.mime)?;
+        require_notice_capacity(&tx, &digest, notice)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO media_notices(digest,mime,source_url,creator,license)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![
+                digest,
+                notice.mime,
+                notice.source_url,
+                notice.creator,
+                notice.license
+            ],
+        )?;
+        require_owner_capacity(&tx, &digest, kind, owner_id)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO media_owners(digest,kind,owner_id) VALUES (?1,?2,?3)",
+            params![digest, kind.as_str(), owner_id],
+        )?;
+        tx.commit()?;
+        Ok(digest)
+    }
+
     /// Register staged media with an exact, immutable inventory for this owner.
     /// Reinstalling the same inventory is idempotent; a different inventory
     /// must be rejected, never silently appended. An IMMEDIATE transaction
