@@ -2700,3 +2700,28 @@ mod tests {
         let (root, store, mut registry) = setup();
         let digest = store.store_bytes(b"plot").unwrap();
         registry
+            .register_verified_bytes(b"plot", &notice())
+            .unwrap();
+        assert!(matches!(
+            plan_unowned_media_gc(&store, &registry, 0),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        assert!(matches!(
+            plan_unowned_media_gc(&store, &registry, 10_001),
+            Err(MediaGcPlanError::Registry(MediaRegistryError::InvalidInput))
+        ));
+        let path = root.join(&digest[..2]).join(&digest);
+        fs::write(&path, b"evil").unwrap();
+        assert!(matches!(
+            plan_unowned_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::DigestMismatch))
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"evil");
+        fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            plan_unowned_media_gc(&store, &registry, 10),
+            Err(MediaGcPlanError::Store(MediaObjectError::Io(_)))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
