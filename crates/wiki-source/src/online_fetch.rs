@@ -199,6 +199,22 @@ pub fn fetch_page_id_with_versions<T: MediaWikiTransport>(
     fetch_article(client, &key, network, versions)
 }
 
+/// Stable page-ID navigation with opt-in exact-revision HTML reuse.
+pub fn fetch_page_id_with_cache<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    page_id: u64,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    cache: &mut OnlineRevisionCache,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    let key = ArticleKey {
+        project: project.to_owned(),
+        page_id,
+    };
+    fetch_article_with_cache(client, &key, network, versions, cache)
+}
+
 /// Resolve an explicitly online title through canonical redirect metadata,
 /// then read the current page revision and its pinned HTML. Offline title
 /// navigation requires the separate local index and must never invoke HTTP.
@@ -222,6 +238,37 @@ pub fn fetch_title_with_versions<T: MediaWikiTransport>(
     requested_title: &str,
     network: NetworkState,
     versions: &[ArticleVersion],
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_title_inner(client, project, requested_title, network, versions, None)
+}
+
+/// Resolve title and redirects over HTTPS on every online navigation, then
+/// reuse only the exact revision HTML matching freshly verified page metadata.
+pub fn fetch_title_with_cache<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    cache: &mut OnlineRevisionCache,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_title_inner(
+        client,
+        project,
+        requested_title,
+        network,
+        versions,
+        Some(cache),
+    )
+}
+
+fn fetch_title_inner<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    cache: Option<&mut OnlineRevisionCache>,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     let route =
         begin_title_open(project, requested_title, network).map_err(|cause| FetchFailure {
@@ -250,7 +297,12 @@ pub fn fetch_title_with_versions<T: MediaWikiTransport>(
             }
         })?;
 
-    fetch_article(client, &resolved.key, NetworkState::Online, versions)
+    match cache {
+        Some(cache) => {
+            fetch_article_with_cache(client, &resolved.key, NetworkState::Online, versions, cache)
+        }
+        None => fetch_article(client, &resolved.key, NetworkState::Online, versions),
+    }
 }
 
 /// Open by title using a caller-verified local title index when available.
@@ -891,6 +943,68 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.fallback, None);
+    }
+
+    #[test]
+    fn title_and_page_navigation_cache_only_exact_online_revision() {
+        let title_json =
+            r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        let mut cache = OnlineRevisionCache::default();
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let first = fetch_title_with_cache(
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(client.requests.len(), 3);
+
+        // Both the redirect resolution and current revision remain online.
+        client.answers.push_back(Ok(title_json.as_bytes().to_vec()));
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        let second = fetch_title_with_cache(
+            &mut client,
+            "enwiki",
+            "Physics intro",
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(second, first);
+        assert_eq!(client.requests.len(), 5);
+
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        assert_eq!(
+            fetch_page_id_with_cache(
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Online,
+                &[],
+                &mut cache,
+            ),
+            Ok(first)
+        );
+        assert_eq!(client.requests.len(), 6);
+        assert_eq!(
+            fetch_title_with_cache(
+                &mut client,
+                "enwiki",
+                "Physics intro",
+                NetworkState::Offline,
+                &[],
+                &mut cache,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(client.requests.len(), 6);
     }
 
     #[test]
