@@ -147,6 +147,17 @@ pub enum EnterpriseError {
     LanguageMismatch,
 }
 
+/// Match canonical Article validation and the verified catalog lookup: Q0,
+/// leading-zero Q-IDs and values longer than the indexed 64-byte limit are
+/// not valid canonical Wikidata item identities.
+fn valid_enterprise_wikidata_id(id: &str) -> bool {
+    let digits = id.strip_prefix('Q').unwrap_or("");
+    id.len() <= 64
+        && !digits.is_empty()
+        && !digits.starts_with('0')
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 fn parse_json(input: &str) -> Result<Value, EnterpriseError> {
     if input.len() > MAX_ENTERPRISE_RECORD_BYTES {
         return Err(EnterpriseError::RecordTooLarge);
@@ -511,10 +522,7 @@ pub fn parse_structured_article(
         Some(value) => {
             let entity = object(value, "main_entity")?;
             let id = required_string(entity, "identifier")?;
-            if !id.starts_with('Q')
-                || id[1..].is_empty()
-                || !id[1..].bytes().all(|b| b.is_ascii_digit())
-            {
+            if !valid_enterprise_wikidata_id(&id) {
                 return Err(EnterpriseError::InvalidField("main_entity.identifier"));
             }
             Some(id)
@@ -699,11 +707,11 @@ fn validate_typed_join_fields(
     if !valid_required_source_text(&regular.rendered_html) {
         return Err(EnterpriseError::InvalidField("html"));
     }
-    if structured.wikidata_id.as_deref().is_some_and(|id| {
-        !id.strip_prefix('Q').is_some_and(|digits| {
-            !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
-        })
-    }) {
+    if structured
+        .wikidata_id
+        .as_deref()
+        .is_some_and(|id| !valid_enterprise_wikidata_id(id))
+    {
         return Err(EnterpriseError::InvalidField("main_entity.identifier"));
     }
     if structured
@@ -1034,6 +1042,35 @@ mod tests {
         assert_eq!(
             parse_structured_article(&structured_json(), "../another-generation"),
             Err(EnterpriseError::InvalidGeneration)
+        );
+    }
+
+    #[test]
+    fn parsed_wikidata_ids_obey_canonical_catalog_lookup_bounds() {
+        for invalid in [
+            "Q0".to_owned(),
+            "Q01".to_owned(),
+            format!("Q{}", "1".repeat(64)),
+        ] {
+            let input = structured_json().replace(
+                "\"identifier\":\"Q1140\"",
+                &format!("\"identifier\":\"{invalid}\""),
+            );
+            assert_eq!(
+                parse_structured_article(&input, "2026-10-01"),
+                Err(EnterpriseError::InvalidField("main_entity.identifier"))
+            );
+        }
+        let valid = format!("Q{}", "1".repeat(63));
+        let input = structured_json().replace(
+            "\"identifier\":\"Q1140\"",
+            &format!("\"identifier\":\"{valid}\""),
+        );
+        assert_eq!(
+            parse_structured_article(&input, "2026-10-01")
+                .unwrap()
+                .wikidata_id,
+            Some(valid)
         );
     }
 
@@ -1401,7 +1438,7 @@ mod tests {
             join_enterprise_article(structured.clone(), companion),
             Err(EnterpriseError::InvalidField("html"))
         );
-        for invalid in ["", "Q", "q123", "Q-1", "Q123x"] {
+        for invalid in ["", "Q", "Q0", "Q01", "q123", "Q-1", "Q123x"] {
             let mut source = structured.clone();
             source.wikidata_id = Some(invalid.into());
             assert_eq!(
@@ -1409,6 +1446,16 @@ mod tests {
                 Err(EnterpriseError::InvalidField("main_entity.identifier"))
             );
         }
+        let mut source = structured.clone();
+        source.wikidata_id = Some(format!("Q{}", "1".repeat(64)));
+        assert_eq!(
+            join_enterprise_article(source.clone(), regular.clone()),
+            Err(EnterpriseError::InvalidField("main_entity.identifier"))
+        );
+        assert_eq!(
+            join_enterprise_batch(vec![source], vec![regular.clone()], vec![]),
+            Err(EnterpriseError::InvalidField("main_entity.identifier"))
+        );
         let mut source = structured.clone();
         source.description = Some("  ".into());
         assert_eq!(
