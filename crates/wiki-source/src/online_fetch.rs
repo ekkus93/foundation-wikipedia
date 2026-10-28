@@ -1238,3 +1238,50 @@ mod tests {
             NetworkState::Online,
             &[local()],
         )
+        .unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(error.fallback, None);
+        assert_eq!(
+            error.cause,
+            FetchCause::Flow(OnlineFlowError::Selection(
+                crate::online_selection::SelectionError::ForeignArticle
+            ))
+        );
+        assert_eq!(client.requests.len(), 1);
+    }
+
+    #[test]
+    fn title_fetch_never_uses_network_offline_or_after_failed_resolution() {
+        let mut client = FakeTransport::default();
+        assert_eq!(
+            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Offline),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert!(client.requests.is_empty());
+        let forged = r#"{"query":{"pages":[{"pageid":42,"ns":0,"title":"Other"}]}}"#;
+        client.answers.push_back(Ok(forged.as_bytes().to_vec()));
+        let error =
+            fetch_title(&mut client, "enwiki", "Physics", NetworkState::Online).unwrap_err();
+        assert_eq!(error.stage, FetchStage::TitleResolution);
+        assert!(matches!(error.cause, FetchCause::Flow(_)));
+        assert_eq!(client.requests.len(), 1);
+    }
+
+    #[test]
+    fn network_error_or_oversized_bytes_are_not_displayed_as_current() {
+        let mut unavailable = FakeTransport::default();
+        unavailable.answers.push_back(Err("network offline"));
+        let error =
+            fetch_article(&mut unavailable, &key(), NetworkState::Online, &[local()]).unwrap_err();
+        assert_eq!(error.cause, FetchCause::Transport("network offline"));
+        assert_eq!(error.fallback, Some(local()));
+        let mut oversized = FakeTransport::default();
+        oversized
+            .answers
+            .push_back(Ok(vec![b' '; METADATA_BYTES + 1]));
+        let error = fetch_article(&mut oversized, &key(), NetworkState::Online, &[]).unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.cause, FetchCause::ResponseTooLarge);
+        assert_eq!(oversized.requests.len(), 1);
+    }
+}
