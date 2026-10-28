@@ -424,14 +424,11 @@ mod interruption_tests {
         }];
         assert_eq!(digest, format!("{:x}", Sha256::digest(bytes)));
         snapshot_store
-            .switch_with_bound_pack_media_and_gate(
-                "new", &store, &registry, &required, || {
-                    let contender =
-                        Connection::open(media_root.join(".media-lease.sqlite")).unwrap();
-                    contender.busy_timeout(Duration::from_millis(0)).unwrap();
-                    assert!(contender.execute_batch("BEGIN EXCLUSIVE;").is_err());
-                },
-            )
+            .switch_with_bound_pack_media_and_gate("new", &store, &registry, &required, || {
+                let contender = Connection::open(media_root.join(".media-lease.sqlite")).unwrap();
+                contender.busy_timeout(Duration::from_millis(0)).unwrap();
+                assert!(contender.execute_batch("BEGIN EXCLUSIVE;").is_err());
+            })
             .unwrap();
         let contender = Connection::open(media_root.join(".media-lease.sqlite")).unwrap();
         contender.busy_timeout(Duration::from_millis(0)).unwrap();
