@@ -121,7 +121,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       // They remain incomplete online previews, never installed offline articles.
       setNotice("Connection lost. Previously loaded online text previews remain readable, but no complete offline article is installed.");
     };
-    const reconnected = () => setConnected(true);
+    const reconnected = () => {
+      setConnected(true);
+      setNotice("Connection restored. Online actions are available when Work offline is unchecked.");
+    };
     window.addEventListener("offline", disconnected);
     window.addEventListener("online", reconnected);
     return () => {
@@ -236,13 +239,16 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       {query.trim() && !normalizedReaderSearchQuery(query) && (
         <p role="status">Search and exact-title input must fit in 512 UTF-8 bytes and contain no control or invisible formatting characters.</p>
       )}
-      <label><input type="checkbox" checked={offline} disabled={busy} onChange={(event) => {
+      <label><input type="checkbox" checked={offline} onChange={(event) => {
         const nowOffline = event.target.checked;
         setOffline(nowOffline);
         if (nowOffline) {
-          // Invalidate pending online results, but retain isolated in-memory
-          // revision snapshots for Back/Forward. Never label them offline-ready.
+          // This control must remain available while a fetch is pending:
+          // immediately invalidate its result and release the busy UI.
+          // Retain only already loaded in-memory revision snapshots; they are
+          // never media-complete installed offline articles.
           requestEpoch.current.invalidate();
+          setBusy(false);
           setHits([]);
           setNotice("Offline mode enabled. Previously loaded online text previews remain readable, but no complete offline article is installed.");
         } else {
