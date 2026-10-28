@@ -322,6 +322,33 @@ pub fn fetch_title_with_local_index<T: MediaWikiTransport>(
     network: NetworkState,
     index: Option<&LocalTitleIndex>,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_title_with_local_index_inner(client, project, requested_title, network, index, None)
+}
+
+/// Reuse only sanitized revision-pinned online HTML while preserving the
+/// independently verified local title/redirect mapping and explicit fallback.
+/// Fresh online title resolution AND current-revision metadata are mandatory
+/// even on a cache hit. Offline opens use only the verified local index and
+/// never touch the transport or online HTML cache.
+pub fn fetch_title_with_local_index_and_cache<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    index: Option<&LocalTitleIndex>,
+    cache: &mut OnlineRevisionCache,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_title_with_local_index_inner(client, project, requested_title, network, index, Some(cache))
+}
+
+fn fetch_title_with_local_index_inner<T: MediaWikiTransport>(
+    client: &mut T,
+    project: &str,
+    requested_title: &str,
+    network: NetworkState,
+    index: Option<&LocalTitleIndex>,
+    cache: Option<&mut OnlineRevisionCache>,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     let failure = |cause| FetchFailure {
         stage: FetchStage::Selection,
         fallback: None,
@@ -352,7 +379,7 @@ pub fn fetch_title_with_local_index<T: MediaWikiTransport>(
     };
     let verified_fallback = candidate.clone();
     let versions: Vec<_> = candidate.into_iter().collect();
-    fetch_title_with_versions(client, project, requested_title, network, &versions).map_err(
+    fetch_title_inner(client, project, requested_title, network, &versions, cache).map_err(
         |mut failure| {
             // An unavailable title-resolution transport cannot disprove the
             // independently verified local title mapping. Preserve its exact
@@ -416,6 +443,93 @@ mod tests {
             location: ArticleLocation::ExplicitOfflineSave,
             local_complete: true,
         }
+    }
+
+    #[test]
+    fn indexed_title_cache_preserves_verified_local_fallback_and_rechecks_official_identity() {
+        use crate::local_title_index::{LocalTitleEntry, LocalTitleRedirect};
+        let index = LocalTitleIndex::new(
+            "enwiki",
+            [LocalTitleEntry {
+                title: "Physics".into(),
+                version: local(),
+            }],
+        )
+        .unwrap()
+        .with_redirects([LocalTitleRedirect {
+            alias: "Physics intro".into(),
+            canonical_title: "Physics".into(),
+            target_page_id: 42,
+        }])
+        .unwrap();
+        let mut cache = OnlineRevisionCache::new(2, 1024).unwrap();
+        let mut client = FakeTransport::default();
+        // Offline must resolve the independently verified alias without either
+        // a network request or access to the online-preview HTML cache.
+        assert_eq!(
+            fetch_title_with_local_index_and_cache(
+                &mut client, "enwiki", "Physics intro", NetworkState::Offline,
+                Some(&index), &mut cache,
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
+        assert!(client.requests.is_empty());
+        assert!(cache.is_empty());
+
+        let resolved = r#"{"query":{"redirects":[{"from":"Physics intro","to":"Physics"}],"pages":[{"pageid":42,"ns":0,"title":"Physics"}]}}"#;
+        client.answers.push_back(Ok(resolved.as_bytes().to_vec()));
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let first = fetch_title_with_local_index_and_cache(
+            &mut client, "enwiki", "Physics intro", NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap();
+        assert!(matches!(first, FetchOutcome::Rendered(_)));
+        assert_eq!(client.requests.len(), 3);
+        assert_eq!(cache.len(), 1);
+
+        // Both title/redirect and current revision are always revalidated.
+        client.answers.push_back(Ok(resolved.as_bytes().to_vec()));
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        assert_eq!(fetch_title_with_local_index_and_cache(
+            &mut client, "enwiki", "Physics intro", NetworkState::Online,
+            Some(&index), &mut cache,
+        ), Ok(first.clone()));
+        assert_eq!(client.requests.len(), 5);
+
+        // No stale cache fallback may be promoted to current on network failure.
+        client.answers.push_back(Err("title resolution unavailable"));
+        let error = fetch_title_with_local_index_and_cache(
+            &mut client, "enwiki", "Physics intro", NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap_err();
+        assert_eq!(error.stage, FetchStage::TitleResolution);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(client.requests.len(), 6);
+
+        client.answers.push_back(Ok(resolved.as_bytes().to_vec()));
+        client.answers.push_back(Err("revision unavailable"));
+        let error = fetch_title_with_local_index_and_cache(
+            &mut client, "enwiki", "Physics intro", NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap_err();
+        assert_eq!(error.stage, FetchStage::Metadata);
+        assert_eq!(error.fallback, Some(local()));
+        assert_eq!(client.requests.len(), 8);
+
+        // If the publisher rebinds the alias to another page, the installed
+        // revision cannot masquerade as that new article.
+        client.answers.push_back(Ok(
+            resolved.replace(r#""pageid":42"#, r#""pageid":43"#).into_bytes()
+        ));
+        let error = fetch_title_with_local_index_and_cache(
+            &mut client, "enwiki", "Physics intro", NetworkState::Online,
+            Some(&index), &mut cache,
+        ).unwrap_err();
+        assert_eq!(error.stage, FetchStage::Selection);
+        assert_eq!(error.fallback, None);
+        assert_eq!(client.requests.len(), 9);
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]
