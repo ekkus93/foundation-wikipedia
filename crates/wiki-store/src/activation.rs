@@ -639,4 +639,111 @@ mod interruption_tests {
         assert!(root.join("snapshots/new/manifest.json").exists());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn inactive_pack_release_fails_closed_for_corrupt_active_pointer_or_manifest() {
+        use crate::media_gc::{
+            release_inactive_snapshot_pack_and_reclaim_media, InactivePackReleaseError,
+        };
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-corrupt-active-release-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshots = ActiveSnapshotStore::new(&root);
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(root.join("media-registry.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let bytes = b"active snapshot required diagram";
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Diagram.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        let digest = install_bound_owned_media(
+            &store,
+            &mut registry,
+            bytes,
+            &notice,
+            OwnerKind::Pack,
+            "old",
+        )
+        .unwrap();
+        let required = [RequiredMedia {
+            digest: digest.clone(),
+            bytes: bytes.len() as u64,
+        }];
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media("old", &store, &registry, &required)
+            .unwrap();
+
+        // An unreadable active pointer must never be interpreted as "no
+        // active snapshot" and used to revoke the only copy of its media.
+        fs::write(root.join("current"), b"invalid active pointer\n").unwrap();
+        let result = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots,
+            &store,
+            &mut registry,
+            "old",
+            10,
+        );
+        assert!(matches!(
+            result,
+            Err(InactivePackReleaseError::Activation(
+                ActivationError::CorruptCurrentPointer
+            ))
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(store.read_verified(&digest).unwrap(), bytes);
+
+        // A well-formed pointer to a snapshot with missing manifest is
+        // equally unsafe: it must not become an implicit deletion permit.
+        fs::write(root.join("current"), b"old\n").unwrap();
+        fs::remove_file(root.join("snapshots/old/manifest.json")).unwrap();
+        let result = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots,
+            &store,
+            &mut registry,
+            "old",
+            10,
+        );
+        assert!(matches!(
+            result,
+            Err(InactivePackReleaseError::Activation(
+                ActivationError::CorruptCurrentPointer
+            ))
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(store.read_verified(&digest).unwrap(), bytes);
+
+        fs::write(root.join("snapshots/old/manifest.json"), b"{}").unwrap();
+        assert_eq!(snapshots.current().unwrap(), Some("old".into()));
+        assert!(matches!(
+            release_inactive_snapshot_pack_and_reclaim_media(
+                &snapshots,
+                &store,
+                &mut registry,
+                "old",
+                10
+            ),
+            Err(InactivePackReleaseError::ActiveSnapshot)
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
