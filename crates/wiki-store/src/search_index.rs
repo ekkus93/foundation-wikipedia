@@ -129,19 +129,9 @@ fn query_expression(query: &str) -> Option<String> {
     )
 }
 
-fn index_article(
-    tx: &Transaction<'_>,
-    seen: &mut BTreeSet<(String, u64)>,
-    position: usize,
-    article: Article,
-) -> Result<(), SearchError> {
-    if position >= MAX_ARTICLES {
-        return Err(SearchError::TooManyArticles);
-    }
-    article.validate().map_err(SearchError::Model)?;
-    if !seen.insert((article.key.project.clone(), article.key.page_id)) {
-        return Err(SearchError::Duplicate(article.key.clone()));
-    }
+// Keep the audited body prefix byte-identical to the canonical text used
+// when indexing. Redirect titles, if present, are appended after this prefix.
+fn canonical_search_text(article: &Article) -> Result<String, SearchError> {
     let mut text = String::new();
     append_blocks(&article.lead, &mut text);
     append_sections(&article.sections, &mut text);
@@ -156,6 +146,23 @@ fn index_article(
     if text.len().saturating_add(article.title.len()) > MAX_TEXT_BYTES {
         return Err(SearchError::TooMuchText(article.key.clone()));
     }
+    Ok(text)
+}
+
+fn index_article(
+    tx: &Transaction<'_>,
+    seen: &mut BTreeSet<(String, u64)>,
+    position: usize,
+    article: Article,
+) -> Result<(), SearchError> {
+    if position >= MAX_ARTICLES {
+        return Err(SearchError::TooManyArticles);
+    }
+    article.validate().map_err(SearchError::Model)?;
+    if !seen.insert((article.key.project.clone(), article.key.page_id)) {
+        return Err(SearchError::Duplicate(article.key.clone()));
+    }
+    let text = canonical_search_text(&article)?;
     let page = i64::try_from(article.key.page_id).map_err(|_| SearchError::InvalidIdentity)?;
     let revision =
         i64::try_from(article.revision.revision_id).map_err(|_| SearchError::InvalidIdentity)?;
@@ -471,15 +478,16 @@ impl OfflineSearchIndex {
     /// Stream both inventories in stable project/page-ID order so an omitted,
     /// duplicated, foreign, or stale row fails closed without materializing
     /// the corpus. Every catalog frame (including redirects) is reverified.
-    /// This checks identity coverage, not FTS token postings, source
-    /// authenticity, or required offline media completeness.
+    /// This checks identity coverage and the canonical body prefix, but not
+    /// redirect-suffix provenance, FTS token postings, source authenticity,
+    /// or required offline media completeness.
     pub fn verify_catalog_membership(
         &self,
         catalog: &SnapshotCatalog,
         root: &Path,
     ) -> Result<usize, SearchError> {
         let mut stmt = self.conn.prepare(
-            "SELECT project,page_id,revision_id,title FROM offline_article_fts
+            "SELECT project,page_id,revision_id,title,body FROM offline_article_fts
              ORDER BY project, CAST(page_id AS INTEGER), rowid",
         )?;
         let mut rows = stmt.query([])?;
@@ -494,10 +502,19 @@ impl OfflineSearchIndex {
                 let page_id: i64 = row.get(1)?;
                 let revision_id: i64 = row.get(2)?;
                 let title: String = row.get(3)?;
+                let body: String = row.get(4)?;
+                let expected_prefix = canonical_search_text(&article)?;
+                // FTS5 stores its original body alongside token postings. A
+                // forged or truncated stored body must not pass merely because
+                // its project, page ID, revision and title still match.
+                // Redirect aliases are appended as space-prefixed suffixes.
+                let suffix = body.strip_prefix(&expected_prefix);
                 if project != article.key.project
                     || i64::try_from(article.key.page_id).ok() != Some(page_id)
                     || i64::try_from(article.revision.revision_id).ok() != Some(revision_id)
                     || title != article.title
+                    || body.len().saturating_add(title.len()) > MAX_TEXT_BYTES
+                    || !suffix.is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
                 {
                     return Err(SearchError::StaleIndex);
                 }
@@ -734,6 +751,21 @@ mod identity_tests {
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
         assert_eq!(index.verify_catalog_membership(&catalog, &root).unwrap(), 3);
+
+        // Identity-only audits previously accepted this still-schema-valid
+        // row even though its searchable body no longer matched the article.
+        index
+            .conn
+            .execute(
+                "UPDATE offline_article_fts SET body='forged text' WHERE title='Mars'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
 
         index
             .conn
