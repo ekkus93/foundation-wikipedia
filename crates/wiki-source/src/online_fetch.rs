@@ -372,27 +372,17 @@ mod tests {
         let mut client = FakeTransport::default();
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
-        let first = fetch_article_with_cache(
-            &mut client,
-            &key(),
-            NetworkState::Online,
-            &[],
-            &mut cache,
-        )
-        .unwrap();
+        let first =
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
+                .unwrap();
         assert_eq!(client.requests.len(), 2);
         assert_eq!(cache.len(), 1);
 
         // Reuse the oldid HTML only after an independent fresh metadata read.
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
-        let second = fetch_article_with_cache(
-            &mut client,
-            &key(),
-            NetworkState::Online,
-            &[],
-            &mut cache,
-        )
-        .unwrap();
+        let second =
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
+                .unwrap();
         assert_eq!(second, first);
         assert_eq!(client.requests.len(), 3);
 
@@ -403,14 +393,9 @@ mod tests {
         client
             .answers
             .push_back(Ok(RENDERED.replace("Physics", "Renamed").into_bytes()));
-        let renamed = fetch_article_with_cache(
-            &mut client,
-            &key(),
-            NetworkState::Online,
-            &[],
-            &mut cache,
-        )
-        .unwrap();
+        let renamed =
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
+                .unwrap();
         assert_ne!(renamed, first);
         assert_eq!(client.requests.len(), 5);
 
@@ -421,14 +406,9 @@ mod tests {
         client
             .answers
             .push_back(Ok(RENDERED.replace("333", "334").into_bytes()));
-        let updated = fetch_article_with_cache(
-            &mut client,
-            &key(),
-            NetworkState::Online,
-            &[],
-            &mut cache,
-        )
-        .unwrap();
+        let updated =
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
+                .unwrap();
         let FetchOutcome::Rendered(updated) = updated else {
             panic!("expected newly pinned render");
         };
@@ -442,22 +422,10 @@ mod tests {
         let mut client = FakeTransport::default();
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
-        fetch_article_with_cache(
-            &mut client,
-            &key(),
-            NetworkState::Online,
-            &[],
-            &mut cache,
-        )
-        .unwrap();
+        fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
+            .unwrap();
         assert_eq!(
-            fetch_article_with_cache(
-                &mut client,
-                &key(),
-                NetworkState::Offline,
-                &[],
-                &mut cache,
-            ),
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Offline, &[], &mut cache,),
             Ok(FetchOutcome::MissingOffline)
         );
         assert_eq!(client.requests.len(), 2);
@@ -498,13 +466,7 @@ mod tests {
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
         assert!(matches!(
-            fetch_article_with_cache(
-                &mut client,
-                &key(),
-                NetworkState::Online,
-                &[],
-                &mut cache,
-            ),
+            fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache,),
             Ok(FetchOutcome::Rendered(_))
         ));
         assert_eq!(client.requests.len(), 4);
