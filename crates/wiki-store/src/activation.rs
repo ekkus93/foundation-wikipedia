@@ -313,69 +313,59 @@ mod interruption_tests {
         };
 
         // Unbound and wrong-root registries cannot authorize a pointer switch.
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "new", &store, &registry, &required
-            ),
-            Err(PackMediaActivationError::Registry(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &store, &registry, &required,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Registry(_))));
         registry.bind_media_root(&media_root).unwrap();
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "new", &wrong_store, &registry, &required
-            ),
-            Err(PackMediaActivationError::Registry(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &wrong_store, &registry, &required,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Registry(_))));
         // A valid registry binding is not enough without exact owner claims.
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "new", &store, &registry, &required
-            ),
-            Err(PackMediaActivationError::Media(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &store, &registry, &required,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Media(_))));
         assert_eq!(snapshot_store.current().unwrap(), Some("old".into()));
 
         install_bound_owned_media(
-            &store, &mut registry, bytes, &notice, OwnerKind::Pack, "new"
+            &store,
+            &mut registry,
+            bytes,
+            &notice,
+            OwnerKind::Pack,
+            "new",
         )
         .unwrap();
         let incorrect = [RequiredMedia {
             digest: digest.clone(),
             bytes: (bytes.len() + 1) as u64,
         }];
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "new", &store, &registry, &incorrect
-            ),
-            Err(PackMediaActivationError::Media(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &store, &registry, &incorrect,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Media(_))));
         let object = media_root.join(&digest[..2]).join(&digest);
         fs::write(&object, b"corrupted image").unwrap();
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "new", &store, &registry, &required
-            ),
-            Err(PackMediaActivationError::Media(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &store, &registry, &required,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Media(_))));
         assert_eq!(snapshot_store.current().unwrap(), Some("old".into()));
         fs::write(&object, bytes).unwrap();
 
-        assert_eq!(
-            snapshot_store
-                .switch_to_prevalidated_with_bound_pack_media(
-                    "new", &store, &registry, &required
-                )
-                .unwrap(),
-            bytes.len() as u64
-        );
+        let activated_bytes = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "new", &store, &registry, &required,
+        )
+        .unwrap();
+        assert_eq!(activated_bytes, bytes.len() as u64);
         assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
         // A different snapshot cannot borrow this pack's registered media.
-        assert!(matches!(
-            snapshot_store.switch_to_prevalidated_with_bound_pack_media(
-                "old", &store, &registry, &required
-            ),
-            Err(PackMediaActivationError::Media(_))
-        ));
+        let attempt = snapshot_store.switch_to_prevalidated_with_bound_pack_media(
+            "old", &store, &registry, &required,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Media(_))));
         assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
         drop(registry);
         fs::remove_dir_all(root).unwrap();
@@ -415,7 +405,12 @@ mod interruption_tests {
             license: "CC BY-SA 4.0".into(),
         };
         let digest = install_bound_owned_media(
-            &store, &mut registry, bytes, &notice, OwnerKind::Pack, "new"
+            &store,
+            &mut registry,
+            bytes,
+            &notice,
+            OwnerKind::Pack,
+            "new",
         )
         .unwrap();
         let required = [RequiredMedia {
