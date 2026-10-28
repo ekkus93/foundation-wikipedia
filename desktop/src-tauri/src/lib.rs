@@ -1,6 +1,7 @@
 //! Thin desktop Tauri adapter around the shared revision-safe Rust source API.
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
@@ -18,7 +19,7 @@ use wiki_source::online_selection::NetworkState;
 /// Shared across desktop commands for this application process only. A cached
 /// sanitized HTML preview is never an installed/offline-complete article.
 #[derive(Clone, Default)]
-struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>);
+struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>, Arc<AtomicU64>);
 
 /// Avoid serializing independent HTTP operations behind the cache lock. If a
 /// concurrent request owns the lock (or it was poisoned), use the uncached
@@ -28,16 +29,22 @@ fn fetch_title_preview<T: MediaWikiTransport>(
     project: &str,
     title: &str,
     network: NetworkState,
-    cache: &Mutex<OnlineRevisionCache>,
+    cache: &DesktopOnlineCache,
+    expected_generation: u64,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     if network == NetworkState::Offline {
         return fetch_title(client, project, title, network);
     }
-    match cache.try_lock() {
-        Ok(mut locked) => {
+    // Requests queued before a privacy reset may start afterward. Never let
+    // an older generation refill the cleared in-memory HTML cache.
+    if cache.1.load(Ordering::Acquire) != expected_generation {
+        return fetch_title(client, project, title, network);
+    }
+    match cache.0.try_lock() {
+        Ok(mut locked) if cache.1.load(Ordering::Acquire) == expected_generation => {
             fetch_title_with_cache(client, project, title, network, &[], &mut locked)
         }
-        Err(_) => fetch_title(client, project, title, network),
+        _ => fetch_title(client, project, title, network),
     }
 }
 
@@ -46,23 +53,28 @@ fn fetch_page_preview<T: MediaWikiTransport>(
     project: &str,
     page_id: u64,
     network: NetworkState,
-    cache: &Mutex<OnlineRevisionCache>,
+    cache: &DesktopOnlineCache,
+    expected_generation: u64,
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     if network == NetworkState::Offline {
         return fetch_page_id(client, project, page_id, network);
     }
-    match cache.try_lock() {
-        Ok(mut locked) => {
+    if cache.1.load(Ordering::Acquire) != expected_generation {
+        return fetch_page_id(client, project, page_id, network);
+    }
+    match cache.0.try_lock() {
+        Ok(mut locked) if cache.1.load(Ordering::Acquire) == expected_generation => {
             fetch_page_id_with_cache(client, project, page_id, network, &[], &mut locked)
         }
-        Err(_) => fetch_page_id(client, project, page_id, network),
+        _ => fetch_page_id(client, project, page_id, network),
     }
 }
 
-/// Clearing personal reader data must also erase the ephemeral in-memory
-/// page cache, since its keys otherwise reveal recently opened page IDs.
-fn clear_online_preview_cache(cache: &Mutex<OnlineRevisionCache>) -> Result<(), String> {
-    let mut locked = cache.lock().map_err(|_| "Cannot clear online preview cache")?;
+/// Increment generation before locking: an old queued request cannot refill
+/// the erased cache even if its worker begins after the reset completes.
+fn clear_online_preview_cache(cache: &DesktopOnlineCache) -> Result<(), String> {
+    cache.1.fetch_add(1, Ordering::AcqRel);
+    let mut locked = cache.0.lock().map_err(|_| "Cannot clear online preview cache")?;
     *locked = OnlineRevisionCache::default();
     Ok(())
 }
@@ -103,11 +115,12 @@ async fn open_wikipedia_title(
     offline: bool,
     cache: tauri::State<'_, DesktopOnlineCache>,
 ) -> Result<(u64, u64, String, String), String> {
-    let cache = Arc::clone(&cache.0);
+    let generation = cache.1.load(Ordering::Acquire);
+    let cache = (*cache).clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
         let network = if offline { NetworkState::Offline } else { NetworkState::Online };
-        let outcome = fetch_title_preview(&mut client, &project, &title, network, &cache)
+        let outcome = fetch_title_preview(&mut client, &project, &title, network, &cache, generation)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
         preview_response(outcome)
     })
@@ -138,11 +151,12 @@ async fn open_wikipedia_page(
     offline: bool,
     cache: tauri::State<'_, DesktopOnlineCache>,
 ) -> Result<(u64, u64, String, String), String> {
-    let cache = Arc::clone(&cache.0);
+    let generation = cache.1.load(Ordering::Acquire);
+    let cache = (*cache).clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut client = CurlTransport::new();
         let network = if offline { NetworkState::Offline } else { NetworkState::Online };
-        let outcome = fetch_page_preview(&mut client, &project, page_id, network, &cache)
+        let outcome = fetch_page_preview(&mut client, &project, page_id, network, &cache, generation)
             .map_err(|error| format!("Wikipedia article fetch failed: {error:?}"))?;
         preview_response(outcome)
     })
@@ -295,7 +309,7 @@ async fn clear_reader_personal_data(
     app: tauri::AppHandle,
     cache: tauri::State<'_, DesktopOnlineCache>,
 ) -> Result<(), String> {
-    let cache = Arc::clone(&cache.0);
+    let cache = (*cache).clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut state = open_private_bookmark_store(&app)?;
         state.clear_personal_reading_data()
@@ -495,7 +509,8 @@ mod online_preview_cache_tests {
             "enwiki",
             42,
             NetworkState::Online,
-            &cache.0,
+            &cache,
+            cache.1.load(Ordering::Acquire),
         )
         .unwrap();
         assert_eq!(transport.calls, 2);
@@ -511,7 +526,8 @@ mod online_preview_cache_tests {
             "enwiki",
             "Physics",
             NetworkState::Online,
-            &another_command.0,
+            &another_command,
+            another_command.1.load(Ordering::Acquire),
         )
         .unwrap();
         assert_eq!(second, first);
@@ -525,7 +541,8 @@ mod online_preview_cache_tests {
                 "enwiki",
                 42,
                 NetworkState::Offline,
-                &cache.0,
+                &cache,
+                cache.1.load(Ordering::Acquire),
             ),
             Ok(FetchOutcome::MissingOffline)
         );
@@ -535,15 +552,35 @@ mod online_preview_cache_tests {
                 "enwiki",
                 "Physics",
                 NetworkState::Offline,
-                &cache.0,
+                &cache,
+                cache.1.load(Ordering::Acquire),
             ),
             Ok(FetchOutcome::MissingOffline)
         );
         assert_eq!(transport.calls, 4);
 
         // Privacy reset drops recently opened page identities from RAM too.
-        clear_online_preview_cache(&cache.0).unwrap();
+        clear_online_preview_cache(&cache).unwrap();
         assert!(another_command.0.lock().unwrap().is_empty());
+        // A queued old request can return an online preview but cannot
+        // repopulate RAM after the explicit privacy reset.
+        let stale_generation = cache.1.load(Ordering::Acquire).saturating_sub(1);
+        transport.responses.extend([
+            METADATA.as_bytes().to_vec(),
+            RENDERED.as_bytes().to_vec(),
+        ]);
+        assert!(matches!(
+            fetch_page_preview(
+                &mut transport,
+                "enwiki",
+                42,
+                NetworkState::Online,
+                &cache,
+                stale_generation,
+            ),
+            Ok(FetchOutcome::Rendered(_))
+        ));
+        assert!(cache.0.lock().unwrap().is_empty());
         transport.responses.extend([
             METADATA.as_bytes().to_vec(),
             RENDERED.as_bytes().to_vec(),
@@ -554,11 +591,12 @@ mod online_preview_cache_tests {
                 "enwiki",
                 42,
                 NetworkState::Online,
-                &cache.0,
+                &cache,
+                cache.1.load(Ordering::Acquire),
             ),
             Ok(first)
         );
-        assert_eq!(transport.calls, 6);
+        assert_eq!(transport.calls, 8);
     }
 
     #[test]
@@ -576,7 +614,8 @@ mod online_preview_cache_tests {
                 "enwiki",
                 42,
                 NetworkState::Online,
-                &cache.0,
+                &cache,
+                cache.1.load(Ordering::Acquire),
             ),
             Ok(FetchOutcome::Rendered(_))
         ));

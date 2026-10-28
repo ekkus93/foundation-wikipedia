@@ -12,6 +12,7 @@ import { ReaderOfflineMode } from "./readerOfflineMode";
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
+  const [readerSessionId, setReaderSessionId] = useState(0);
   // A single offline switch is shared by every existing and future tab.
   const [offlineMode] = useState(() => new ReaderOfflineMode());
   const [message, setMessage] = useState<string | null>(null);
@@ -258,7 +259,14 @@ export default function App() {
       await invoke<void>("clear_reader_personal_data");
       setSavedBookmarks([]);
       setRecentVisits([]);
-      setSavedResult("Saved bookmarks, reading positions, visit history and article chats were deleted. Installed packs and settings remain unchanged.");
+      // Purge mounted article previews and Back/Forward state, not only SQLite.
+      tabScrollRef.current.clear();
+      tabArticleRef.current.clear();
+      setBookmarkOpen(null);
+      setReaderTabs(initialReaderTabs());
+      setReaderSessionId((id) => id + 1);
+      setMessage(null);
+      setSavedResult("Saved reading data and in-session article previews were cleared. Installed packs and settings remain unchanged.");
       setConfirmClearReading(false);
     } catch {
       setSavedError("Unable to delete personal reading data. No successful deletion was confirmed.");
@@ -359,7 +367,7 @@ export default function App() {
               onClick={addTab}>+ New tab</button>
           </nav>
           {readerTabs.tabs.map((tab) => (
-            <section key={tab.id} aria-label={`Article tab ${tab.id}`}
+            <section key={`${readerSessionId}:${tab.id}`} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
               <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 if (context) tabArticleRef.current.set(tab.id, context);
