@@ -10,6 +10,7 @@ use wiki_model::ArticleKey;
 use crate::local_title_index::{LocalTitleIndex, LocalTitleIndexError};
 
 use crate::online_article::OnlineRenderedRevision;
+use crate::online_cache::OnlineRevisionCache;
 use crate::online_flow::{
     begin_offline_title_open, begin_open, begin_title_open, finish_render, finish_title_resolution,
     plan_render, OnlineFlowError, OpenArticle, OpenTitle,
@@ -95,6 +96,29 @@ pub fn fetch_article<T: MediaWikiTransport>(
     network: NetworkState,
     versions: &[ArticleVersion],
 ) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_article_inner(client, requested, network, versions, None)
+}
+
+/// Opt-in reuse of bounded, already-sanitized HTML. A fresh metadata request
+/// MUST still establish the exact current page revision before a cache hit.
+/// Offline state never reads this cache: media completeness is unverified.
+pub fn fetch_article_with_cache<T: MediaWikiTransport>(
+    client: &mut T,
+    requested: &ArticleKey,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    cache: &mut OnlineRevisionCache,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
+    fetch_article_inner(client, requested, network, versions, Some(cache))
+}
+
+fn fetch_article_inner<T: MediaWikiTransport>(
+    client: &mut T,
+    requested: &ArticleKey,
+    network: NetworkState,
+    versions: &[ArticleVersion],
+    mut cache: Option<&mut OnlineRevisionCache>,
+) -> Result<FetchOutcome, FetchFailure<T::Error>> {
     let route = begin_open(requested, network, versions).map_err(|cause| FetchFailure {
         stage: FetchStage::Selection,
         fallback: None,
@@ -121,6 +145,12 @@ pub fn fetch_article<T: MediaWikiTransport>(
         fallback: fallback.clone(),
         cause: FetchCause::Flow(cause),
     })?;
+    // Cache hits cannot replace the authoritative current-revision query.
+    if let Some(cache) = cache.as_deref_mut() {
+        if let Some(article) = cache.get(&render.pinned) {
+            return Ok(FetchOutcome::Rendered(article));
+        }
+    }
     let html = read_response(
         client,
         &render.rendered_url,
@@ -133,6 +163,9 @@ pub fn fetch_article<T: MediaWikiTransport>(
         fallback,
         cause: FetchCause::Flow(cause),
     })?;
+    if let Some(cache) = cache {
+        cache.insert_verified(article.clone());
+    }
     Ok(FetchOutcome::Rendered(article))
 }
 
@@ -331,6 +364,151 @@ mod tests {
             location: ArticleLocation::ExplicitOfflineSave,
             local_complete: true,
         }
+    }
+
+    #[test]
+    fn revision_cache_requires_fresh_current_metadata_and_exact_identity() {
+        let mut cache = OnlineRevisionCache::new(2, 1024).unwrap();
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        let first = fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(client.requests.len(), 2);
+        assert_eq!(cache.len(), 1);
+
+        // Reuse the oldid HTML only after an independent fresh metadata read.
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        let second = fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(second, first);
+        assert_eq!(client.requests.len(), 3);
+
+        // Even an unchanged oldid cannot reuse a different title identity.
+        client
+            .answers
+            .push_back(Ok(METADATA.replace("Physics", "Renamed").into_bytes()));
+        client
+            .answers
+            .push_back(Ok(RENDERED.replace("Physics", "Renamed").into_bytes()));
+        let renamed = fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_ne!(renamed, first);
+        assert_eq!(client.requests.len(), 5);
+
+        // A new oldid is never served from the previous revision cache.
+        client
+            .answers
+            .push_back(Ok(METADATA.replace("333", "334").into_bytes()));
+        client
+            .answers
+            .push_back(Ok(RENDERED.replace("333", "334").into_bytes()));
+        let updated = fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        let FetchOutcome::Rendered(updated) = updated else {
+            panic!("expected newly pinned render");
+        };
+        assert_eq!(updated.revision.revision_id, 334);
+        assert_eq!(client.requests.len(), 7);
+    }
+
+    #[test]
+    fn cached_online_html_is_not_offline_complete_or_failure_fallback() {
+        let mut cache = OnlineRevisionCache::default();
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .unwrap();
+        assert_eq!(
+            fetch_article_with_cache(
+                &mut client,
+                &key(),
+                NetworkState::Offline,
+                &[],
+                &mut cache,
+            ),
+            Ok(FetchOutcome::MissingOffline)
+        );
+        assert_eq!(client.requests.len(), 2);
+
+        client.answers.push_back(Err("upstream unavailable"));
+        let failure = fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[local()],
+            &mut cache,
+        )
+        .unwrap_err();
+        assert_eq!(failure.stage, FetchStage::Metadata);
+        assert_eq!(failure.cause, FetchCause::Transport("upstream unavailable"));
+        assert_eq!(failure.fallback, Some(local()));
+        assert_eq!(client.requests.len(), 3);
+    }
+
+    #[test]
+    fn invalid_render_cannot_poison_revision_cache() {
+        let mut cache = OnlineRevisionCache::default();
+        let mut client = FakeTransport::default();
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client
+            .answers
+            .push_back(Ok(RENDERED.replace("333", "999").into_bytes()));
+        assert!(fetch_article_with_cache(
+            &mut client,
+            &key(),
+            NetworkState::Online,
+            &[],
+            &mut cache,
+        )
+        .is_err());
+        assert!(cache.is_empty());
+
+        client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
+        client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
+        assert!(matches!(
+            fetch_article_with_cache(
+                &mut client,
+                &key(),
+                NetworkState::Online,
+                &[],
+                &mut cache,
+            ),
+            Ok(FetchOutcome::Rendered(_))
+        ));
+        assert_eq!(client.requests.len(), 4);
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]
