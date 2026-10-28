@@ -15,3 +15,12 @@ The Unix regression `shard_coverage_rejects_case_insensitive_filename_aliases` w
 ## Remaining
 
 The source publication, full manifest trust chain, required offline media, pack installation, desktop/Android navigation and real filesystem/device acceptance remain separate. **STORE-001 is not complete.**
+
+## Exact-head CI evidence
+
+- Corrected code SHA: `dd5081bd7c660d913e31d913c3d58f41e3990da9`.
+- [Rust workspace — 40727332468](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40727332468): passed (format, strict Clippy, tests).
+- [Platform shells — 40727332495](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40727332495): passed.
+- [Android Rust ABI — 40727332689](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40727332689): passed.
+- [Android record codec probe — 40727332570](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40727332570): running at this qualification; check terminal status before claiming complete.
+- Initial and formatting-repair heads `fb3cae342f91d98a9361c4350c9a5eb149ab99cf` and `63863cbe9b49b8b744997119ce439d8d57ac5c45` failed Rust formatting; the corrected code passed.
