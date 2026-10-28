@@ -707,7 +707,10 @@ mod interruption_tests {
                 ActivationError::CorruptCurrentPointer
             ))
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         assert_eq!(store.read_verified(&digest).unwrap(), bytes);
 
         // A well-formed pointer to a snapshot with missing manifest is
@@ -727,7 +730,10 @@ mod interruption_tests {
                 ActivationError::CorruptCurrentPointer
             ))
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         assert_eq!(store.read_verified(&digest).unwrap(), bytes);
 
         fs::write(root.join("snapshots/old/manifest.json"), b"{}").unwrap();
@@ -742,7 +748,10 @@ mod interruption_tests {
             ),
             Err(InactivePackReleaseError::ActiveSnapshot)
         ));
-        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
         drop(registry);
         fs::remove_dir_all(root).unwrap();
     }
