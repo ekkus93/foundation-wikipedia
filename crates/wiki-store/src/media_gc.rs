@@ -368,8 +368,11 @@ pub fn release_bound_owner_and_reclaim_media(
 /// The EXCLUSIVE media lease is acquired before reading the active snapshot
 /// pointer and remains held through SQLite ownership release and bounded GC.
 /// It therefore excludes the cooperating media-gated activation API's SHARED
-/// lease while checking which snapshot is active. Deleting an inactive pack is
-/// an explicit decision: callers must separately retain rollback snapshots.
+/// lease while checking which snapshot is active. A missing active pointer
+/// is NOT authority to revoke any pack ownership: require a known active
+/// snapshot to preserve at least the currently selected working pack.
+/// Deleting an inactive pack remains an explicit decision: callers must
+/// separately retain any desired rollback snapshots.
 ///
 /// This is an opt-in production lifecycle boundary. Legacy owner-release
 /// entry points and the low-level unleased snapshot switch remain available
@@ -377,6 +380,7 @@ pub fn release_bound_owner_and_reclaim_media(
 #[derive(Debug)]
 pub enum InactivePackReleaseError {
     ActiveSnapshot,
+    MissingActiveSnapshot,
     Activation(ActivationError),
     Media(MediaGcPlanError),
 }
@@ -409,8 +413,9 @@ pub fn release_inactive_snapshot_pack_and_reclaim_media(
         .map_err(|error| InactivePackReleaseError::Media(MediaGcPlanError::Registry(error)))?;
     let active = snapshots
         .current()
-        .map_err(InactivePackReleaseError::Activation)?;
-    if active.as_deref() == Some(snapshot_id) {
+        .map_err(InactivePackReleaseError::Activation)?
+        .ok_or(InactivePackReleaseError::MissingActiveSnapshot)?;
+    if active == snapshot_id {
         return Err(InactivePackReleaseError::ActiveSnapshot);
     }
     let released = registry
@@ -1013,6 +1018,23 @@ mod tests {
             digest: new_digest.clone(),
             bytes: new_bytes.len() as u64,
         }];
+        // A missing active pointer cannot authorize deleting the only
+        // prepared pack's media. Restore the pointer only after the failed
+        // release has preserved the durable SQLite claim and verified bytes.
+        assert!(matches!(
+            release_inactive_snapshot_pack_and_reclaim_media(
+                &snapshots,
+                &store,
+                &mut registry,
+                "old",
+                10,
+            ),
+            Err(InactivePackReleaseError::MissingActiveSnapshot)
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(store.read_verified(&old_digest).unwrap(), old_bytes);
+        assert_eq!(snapshots.current().unwrap(), None);
+
         snapshots
             .switch_to_prevalidated_with_bound_pack_media("old", &store, &registry, &old_required)
             .unwrap();
@@ -1033,6 +1055,27 @@ mod tests {
         );
         let old_path = media_root.join(&old_digest[..2]).join(&old_digest);
         assert!(old_path.exists());
+
+        // A lost active pointer (for example after damaged external state)
+        // must also fail closed. Do not silently downgrade it to an
+        // uninitialized store and revoke the previously active owner.
+        fs::remove_file(root.join("current")).unwrap();
+        assert!(matches!(
+            release_inactive_snapshot_pack_and_reclaim_media(
+                &snapshots,
+                &store,
+                &mut registry,
+                "old",
+                10,
+            ),
+            Err(InactivePackReleaseError::MissingActiveSnapshot)
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        assert_eq!(store.read_verified(&old_digest).unwrap(), old_bytes);
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media("old", &store, &registry, &old_required)
+            .unwrap();
+
         let invalid = release_inactive_snapshot_pack_and_reclaim_media(
             &snapshots,
             &store,
