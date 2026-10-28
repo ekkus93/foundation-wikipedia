@@ -252,10 +252,7 @@ mod tests {
         let first = notice("Creator A");
         let mut conflict = notice("Creator B");
         conflict.mime = "image/png".into();
-        let contradictory = [
-            (bytes.as_slice(), &first),
-            (bytes.as_slice(), &conflict),
-        ];
+        let contradictory = [(bytes.as_slice(), &first), (bytes.as_slice(), &conflict)];
         assert!(matches!(
             install_bound_manifest_media_batch(
                 &store,
@@ -298,10 +295,7 @@ mod tests {
             .is_empty());
 
         // Duplicate identical notices do not consume additional notice slots.
-        let idempotent = [
-            (bytes.as_slice(), &first),
-            (bytes.as_slice(), &first),
-        ];
+        let idempotent = [(bytes.as_slice(), &first), (bytes.as_slice(), &first)];
         install_bound_manifest_media_batch(
             &store,
             &mut registry,
