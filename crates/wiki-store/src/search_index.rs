@@ -1003,12 +1003,17 @@ mod identity_tests {
         );
         let body: String = index
             .conn
-            .query_row("SELECT body FROM offline_article_fts WHERE rowid=1", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT body FROM offline_article_fts WHERE rowid=1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(body, "hello world");
-        assert_eq!(index.search_project("enwiki", "hello", 10).unwrap().len(), 1);
+        assert_eq!(
+            index.search_project("enwiki", "hello", 10).unwrap().len(),
+            1
+        );
         assert!(matches!(
             index.verify_native_fts_integrity(),
             Err(SearchError::Sql(_))
