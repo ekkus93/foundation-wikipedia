@@ -61,15 +61,23 @@ there are no versioned DTOs, coroutine adapters, cancellation bridge or
 device-tested Rust calls. MOB-001 owns that production boundary. An APK or
 generated Kotlin file alone is not proof of a native bridge.
 
-The Android development shell's reader FAB exposes four labeled, touchable
-action buttons (nearest FAB: Chat, Bookmark, Offline, Settings) and responds
-with an explicit placeholder snackbar when selected. Android Back collapses the
-expanded menu; opening the menu transfers keyboard focus to Chat, and the main
-button has an accessible open/close description. Real-device accessibility
-qualification remains pending. None of the actions,
-article fetches, offline saves or settings screens is implemented yet;
-instrumented interaction and screen-reader qualification remain outstanding.
+The Android development shell now has a native Compose **Settings** screen with
+a session-only **Work offline** toggle. The FAB exposes Settings, Offline,
+Bookmark and Chat actions. Settings and the offline choice survive rotation
+through a `rememberSaveable` state saver; an expanded action menu does not.
+Android Back closes the action menu before leaving the reader or Settings.
+Pure Kotlin/JUnit tests cover these transitions. Bookmark and Chat still
+report that no verified article is available.
 
-No third-party content is allowed to call privileged native APIs directly.
-The bootstrap WebView has JavaScript disabled; future source content needs
-explicit sanitization and tightly scoped URI/selection bridges.
+**Important:** The offline switch is a presentation preference only in this
+bootstrap. The WebView always blocks network loads, JavaScript, DOM storage,
+file/content access, mixed content and top-level URL navigation, even when
+the switch is off. The manifest grants no Internet permission. The only
+rendered content remains bundled bootstrap HTML, not Wikipedia content.
+Do not treat this as an installed pack, a qualified media origin, a usable
+offline reader, or evidence of production navigation. Native Rust bindings,
+real article rendering, content/media authentication, Settings persistence,
+bookmark/history integration, process-death restoration and physical-device
+interaction/accessibility tests remain outstanding.
+
+See [scoped Android shell qualification](../docs/MOB_002_004_ANDROID_OFFLINE_SETTINGS_SHELL_2026-10-28.md).
