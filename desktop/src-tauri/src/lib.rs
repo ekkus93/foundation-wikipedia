@@ -1012,7 +1012,7 @@ mod bookmark_tests {
     #[test]
     fn stale_history_clear_cannot_invalidate_new_privacy_epoch() {
         let gate = DesktopPersonalDataGate::default();
-        let state = UserState::in_memory().unwrap();
+        let mut state = UserState::in_memory().unwrap();
         let stale_generation = gate.generation();
         gate.reset(|| {
             state.clear_personal_reading_data()
