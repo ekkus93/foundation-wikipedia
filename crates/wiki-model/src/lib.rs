@@ -416,9 +416,7 @@ impl Article {
         }
         let mut aliases = HashSet::new();
         for alias in &self.aliases {
-            if !valid_navigation_title(alias)
-                || !aliases.insert(wikipedia_title_key(alias))
-            {
+            if !valid_navigation_title(alias) || !aliases.insert(wikipedia_title_key(alias)) {
                 return Err(ModelError::InvalidAlias);
             }
         }
@@ -1242,17 +1240,24 @@ mod tests {
     fn typed_article_navigation_titles_reject_spoofing_and_oversize() {
         let mut a = article();
         for title in [
-            " Bad", "Bad ", "Bad\\nName", "Bad\\u{200e}Name",
-            "Bad\\u{202e}Name", "Bad\\u{206a}Name", "Bad\\u{feff}Name",
+            " Bad",
+            "Bad ",
+            "Bad\\nName",
+            "Bad\\u{200e}Name",
+            "Bad\\u{202e}Name",
+            "Bad\\u{206a}Name",
+            "Bad\\u{feff}Name",
         ] {
-            a.title = title.replace("\\n", "\n")
+            a.title = title
+                .replace("\\n", "\n")
                 .replace("\\u{200e}", "\u{200e}")
                 .replace("\\u{202e}", "\u{202e}")
                 .replace("\\u{206a}", "\u{206a}")
                 .replace("\\u{feff}", "\u{feff}");
             assert_eq!(a.validate(), Err(ModelError::InvalidTitle));
             a.title = "Earth".into();
-            a.aliases = vec![title.replace("\\n", "\n")
+            a.aliases = vec![title
+                .replace("\\n", "\n")
                 .replace("\\u{200e}", "\u{200e}")
                 .replace("\\u{202e}", "\u{202e}")
                 .replace("\\u{206a}", "\u{206a}")
