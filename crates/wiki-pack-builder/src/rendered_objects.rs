@@ -106,9 +106,12 @@ pub fn audit_rendered_objects(
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::rendered_dependencies::inventory_rendered_dependencies;
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     const DOC: &str = "https://en.wikipedia.org/wiki/Physics";
     const IMAGE: &str = "https://en.wikipedia.org/image.png";
@@ -118,11 +121,20 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-rendered-audit-{}-{stamp}",
-            std::process::id()
-        ));
-        fs::create_dir(&root).unwrap();
+        // Parallel test threads can observe the same clock tick. Reserve a
+        // unique path with an atomic sequence and create_new-style retry.
+        let root = loop {
+            let candidate = std::env::temp_dir().join(format!(
+                "wiki-rendered-audit-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create rendered audit fixture: {error}"),
+            }
+        };
         let store = MediaObjectStore::new(&root);
         let digest = store.store_bytes(b"diagram").unwrap();
         (root, store, RequiredMedia { digest, bytes: 7 })
@@ -130,6 +142,28 @@ mod tests {
 
     fn graph(markup: &str) -> RenderDependencyGraph {
         inventory_rendered_dependencies(markup, DOC, &BTreeMap::new(), 100).unwrap()
+    }
+
+    #[test]
+    fn parallel_fixtures_have_independent_media_roots() {
+        let workers = (0..32)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let (root, store, media) = fixture();
+                    assert_eq!(store.read_verified(&media.digest).unwrap(), b"diagram");
+                    root
+                })
+            })
+            .collect::<Vec<_>>();
+        let roots = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        let distinct = roots.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(distinct.len(), roots.len());
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
