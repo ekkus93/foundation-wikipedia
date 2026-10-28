@@ -505,15 +505,23 @@ mod tests {
         let mut cache = OnlineRevisionCache::default();
         assert_eq!(
             fetch_page_id_with_local_index_and_cache(
-                &mut client, "enwiki", 42, NetworkState::Offline,
-                Some(&index), &mut cache,
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Offline,
+                Some(&index),
+                &mut cache,
             ),
             Ok(FetchOutcome::Local(local()))
         );
         assert_eq!(
             fetch_page_id_with_local_index_and_cache(
-                &mut client, "enwiki", 43, NetworkState::Offline,
-                Some(&index), &mut cache,
+                &mut client,
+                "enwiki",
+                43,
+                NetworkState::Offline,
+                Some(&index),
+                &mut cache,
             ),
             Ok(FetchOutcome::MissingOffline)
         );
@@ -523,42 +531,68 @@ mod tests {
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
         client.answers.push_back(Ok(RENDERED.as_bytes().to_vec()));
         let first = fetch_page_id_with_local_index_and_cache(
-            &mut client, "enwiki", 42, NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap();
+            &mut client,
+            "enwiki",
+            42,
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap();
         assert!(matches!(first, FetchOutcome::Rendered(_)));
         assert_eq!(client.requests.len(), 2);
         assert_eq!(cache.len(), 1);
 
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
-        assert_eq!(fetch_page_id_with_local_index_and_cache(
-            &mut client, "enwiki", 42, NetworkState::Online,
-            Some(&index), &mut cache,
-        ), Ok(first));
+        assert_eq!(
+            fetch_page_id_with_local_index_and_cache(
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Online,
+                Some(&index),
+                &mut cache,
+            ),
+            Ok(first)
+        );
         assert_eq!(client.requests.len(), 3);
 
         client.answers.push_back(Err("upstream unavailable"));
         let error = fetch_page_id_with_local_index_and_cache(
-            &mut client, "enwiki", 42, NetworkState::Online,
-            Some(&index), &mut cache,
-        ).unwrap_err();
+            &mut client,
+            "enwiki",
+            42,
+            NetworkState::Online,
+            Some(&index),
+            &mut cache,
+        )
+        .unwrap_err();
         assert_eq!(error.stage, FetchStage::Metadata);
         assert_eq!(error.fallback, Some(local()));
         assert_eq!(client.requests.len(), 4);
-        assert_eq!(fetch_page_id_with_local_index_and_cache(
-            &mut client, "enwiki", 42, NetworkState::Offline,
-            Some(&index), &mut cache,
-        ), Ok(FetchOutcome::Local(local())));
+        assert_eq!(
+            fetch_page_id_with_local_index_and_cache(
+                &mut client,
+                "enwiki",
+                42,
+                NetworkState::Offline,
+                Some(&index),
+                &mut cache,
+            ),
+            Ok(FetchOutcome::Local(local()))
+        );
         assert_eq!(client.requests.len(), 4);
 
-        let foreign = LocalTitleIndex::new(
-            "dewiki",
-            Vec::<LocalTitleEntry>::new(),
-        ).unwrap();
+        let foreign = LocalTitleIndex::new("dewiki", Vec::<LocalTitleEntry>::new()).unwrap();
         let error = fetch_page_id_with_local_index_and_cache(
-            &mut client, "enwiki", 42, NetworkState::Offline,
-            Some(&foreign), &mut cache,
-        ).unwrap_err();
+            &mut client,
+            "enwiki",
+            42,
+            NetworkState::Offline,
+            Some(&foreign),
+            &mut cache,
+        )
+        .unwrap_err();
         assert_eq!(error.stage, FetchStage::Selection);
         assert_eq!(client.requests.len(), 4);
     }
