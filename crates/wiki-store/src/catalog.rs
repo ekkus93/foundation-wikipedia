@@ -398,8 +398,6 @@ impl SnapshotCatalog {
         let mut stmt = self.conn.prepare(
             "SELECT normalized_title FROM title_index
              WHERE project=?1 AND normalized_title>=?2
-
-
              ORDER BY normalized_title",
         )?;
         let rows = stmt.query_map(params![project, normalized], |row| row.get::<_, String>(0))?;
@@ -799,7 +797,6 @@ mod tests {
     use wiki_model::{Article, Redirect, Revision, ARTICLE_SCHEMA_VERSION};
 
     fn temp_root() -> std::path::PathBuf {
-
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1199,7 +1196,6 @@ mod tests {
         assert!(matches!(
             catalog.search_title_prefix(&root, "enwiki", "Earth", 0),
             Err(CatalogError::InvalidCatalogEntry)
-
         ));
         assert!(matches!(
             catalog.search_title_prefix(&root, "enwiki", "Earth", 101),
@@ -1209,7 +1205,6 @@ mod tests {
         // The immutable redirect and article frames remain valid, but a
         // corrupted derived index must not substitute a different identity.
         catalog
-
             .conn
             .execute(
                 "UPDATE title_index SET page_id=43 WHERE project='enwiki' AND normalized_title='Earth'",
