@@ -152,6 +152,7 @@ pub enum ModelError {
     InvalidLinkLabel,
     InvalidWikidataId,
     InvalidAlias,
+    InvalidTitle,
     DuplicateOrdinal,
     InvalidMediaIndex(usize),
     InvalidMediaMetadata(usize),
@@ -317,13 +318,37 @@ impl ArticleKey {
     }
 }
 
+// Canonical navigation identities must be safe even when a caller constructs
+// typed Article/Redirect records without using the upstream source decoder.
+// Keep Persian/Indic ZWNJ/ZWJ: they are meaningful in legitimate titles.
+const MAX_NAVIGATION_TITLE_BYTES: usize = 4096;
+
+fn valid_navigation_title(title: &str) -> bool {
+    !title.is_empty()
+        && title.len() <= MAX_NAVIGATION_TITLE_BYTES
+        && title == title.trim()
+        && !title.chars().any(|ch| {
+            ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200b}'
+                        | '\u{200e}'..='\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'
+                        | '\u{2066}'..='\u{206f}'
+                        | '\u{feff}'
+                )
+        })
+}
+
 impl Redirect {
     /// Redirects must preserve distinct, valid page identities and a title.
     pub fn validate(&self) -> Result<(), ModelError> {
         self.from.validate()?;
         self.to.validate()?;
         // Cross-project navigation is an interwiki link, not a redirect record.
-        if self.title.trim().is_empty()
+        if !valid_navigation_title(&self.title)
             || self.from == self.to
             || self.from.project != self.to.project
         {
@@ -383,13 +408,15 @@ impl Article {
         {
             return Err(ModelError::MissingTitle);
         }
+        if !valid_navigation_title(&self.title) {
+            return Err(ModelError::InvalidTitle);
+        }
         if self.rendered_html.trim().is_empty() {
             return Err(ModelError::MissingRenderedHtml);
         }
         let mut aliases = HashSet::new();
         for alias in &self.aliases {
-            if alias.trim().is_empty()
-                || alias != alias.trim()
+            if !valid_navigation_title(alias)
                 || !aliases.insert(wikipedia_title_key(alias))
             {
                 return Err(ModelError::InvalidAlias);
@@ -1212,6 +1239,35 @@ mod tests {
     }
 
     #[test]
+    fn typed_article_navigation_titles_reject_spoofing_and_oversize() {
+        let mut a = article();
+        for title in [
+            " Bad", "Bad ", "Bad\\nName", "Bad\\u{200e}Name",
+            "Bad\\u{202e}Name", "Bad\\u{206a}Name", "Bad\\u{feff}Name",
+        ] {
+            a.title = title.replace("\\n", "\n")
+                .replace("\\u{200e}", "\u{200e}")
+                .replace("\\u{202e}", "\u{202e}")
+                .replace("\\u{206a}", "\u{206a}")
+                .replace("\\u{feff}", "\u{feff}");
+            assert_eq!(a.validate(), Err(ModelError::InvalidTitle));
+            a.title = "Earth".into();
+            a.aliases = vec![title.replace("\\n", "\n")
+                .replace("\\u{200e}", "\u{200e}")
+                .replace("\\u{202e}", "\u{202e}")
+                .replace("\\u{206a}", "\u{206a}")
+                .replace("\\u{feff}", "\u{feff}")];
+            assert_eq!(a.validate(), Err(ModelError::InvalidAlias));
+            a.aliases.clear();
+        }
+        a.title = "x".repeat(MAX_NAVIGATION_TITLE_BYTES + 1);
+        assert_eq!(a.validate(), Err(ModelError::InvalidTitle));
+        a.title = "زمین".into();
+        a.aliases = vec!["می\\u{200c}روم".replace("\\u{200c}", "\u{200c}")];
+        assert_eq!(a.validate(), Ok(()));
+    }
+
+    #[test]
     fn article_identity_must_be_unambiguous() {
         let mut a = article();
         a.key.project = "en:wiki".into();
@@ -1261,6 +1317,26 @@ mod record_contract_tests {
         redirect.to = key(11);
         redirect.title = " ".into();
         assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
+    }
+
+    #[test]
+    fn redirect_title_uses_the_same_navigation_identity_boundary() {
+        let mut redirect = Redirect {
+            from: key(10),
+            title: "Valid".into(),
+            to: key(11),
+        };
+        for title in [" A", "A\\u{061c}B", "A\\u{200b}B", "A\\u{2029}B"] {
+            redirect.title = title
+                .replace("\\u{061c}", "\u{061c}")
+                .replace("\\u{200b}", "\u{200b}")
+                .replace("\\u{2029}", "\u{2029}");
+            assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
+        }
+        redirect.title = "x".repeat(MAX_NAVIGATION_TITLE_BYTES + 1);
+        assert_eq!(redirect.validate(), Err(ModelError::InvalidRedirect));
+        redirect.title = "فارسی".into();
+        assert_eq!(redirect.validate(), Ok(()));
     }
 
     #[test]
