@@ -322,6 +322,9 @@ impl OfflineSearchIndex {
                 // Audit the staged index before it can replace a previously
                 // usable file; publication must not rely on query-hit checks.
                 index.verify_catalog_membership(catalog, root)?;
+                // FTS5 shadow tables and token postings must be internally
+                // consistent before a rebuilt index becomes publishable.
+                index.verify_native_fts_integrity()?;
             }
             File::open(&staged)?.sync_all()?;
             #[cfg(unix)]
@@ -354,6 +357,18 @@ impl OfflineSearchIndex {
         validate_index_path(path)?;
         catalog.verify_manifest_shard_hashes(root, expected_shards)?;
         Self::replace_persisted_from_catalog(path, catalog, root)
+    }
+
+    /// Ask SQLite FTS5 to validate its internal posting and shadow-table
+    /// structures. This requires a writable derived index, so it runs on the
+    /// staged database before publication rather than on read-only readers.
+    /// It complements, but does not replace, catalog/body provenance checks.
+    pub fn verify_native_fts_integrity(&self) -> Result<(), SearchError> {
+        self.conn.execute(
+            "INSERT INTO offline_article_fts(offline_article_fts) VALUES('integrity-check')",
+            [],
+        )?;
+        Ok(())
     }
 
     pub fn in_memory() -> Result<Self, SearchError> {
@@ -958,6 +973,46 @@ mod identity_tests {
         drop(index);
         drop(catalog);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_fts_integrity_rejects_corrupt_shadow_data_with_intact_article_text() {
+        let index = OfflineSearchIndex::in_memory().unwrap();
+        index
+            .conn
+            .execute(
+                "INSERT INTO offline_article_fts(project,page_id,revision_id,title,body)
+                 VALUES ('enwiki',1,2,'Earth','hello world')",
+                [],
+            )
+            .unwrap();
+        index.verify_native_fts_integrity().unwrap();
+
+        // Bypass FTS5's normal update machinery to simulate a damaged
+        // posting-size shadow record. Stored article text and ordinary search
+        // still appear valid, so catalog membership alone cannot detect it.
+        assert_eq!(
+            index
+                .conn
+                .execute(
+                    "UPDATE offline_article_fts_docsize SET sz=x'0000000000' WHERE id=1",
+                    [],
+                )
+                .unwrap(),
+            1
+        );
+        let body: String = index
+            .conn
+            .query_row("SELECT body FROM offline_article_fts WHERE rowid=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(body, "hello world");
+        assert_eq!(index.search_project("enwiki", "hello", 10).unwrap().len(), 1);
+        assert!(matches!(
+            index.verify_native_fts_integrity(),
+            Err(SearchError::Sql(_))
+        ));
     }
 
     #[test]
