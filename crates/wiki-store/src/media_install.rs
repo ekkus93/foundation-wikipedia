@@ -435,11 +435,9 @@ mod tests {
         );
         let raw = rusqlite::Connection::open(&database).unwrap();
         let count = |table: &str| -> i64 {
-            raw.query_row(
-                &format!("SELECT COUNT(*) FROM {table}"),
-                [],
-                |row| row.get(0),
-            )
+            raw.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
             .unwrap()
         };
         let objects_before = count("media_objects");
@@ -474,7 +472,8 @@ mod tests {
         // File publication precedes SQLite; the orphan remains recoverable.
         assert_eq!(store.published_object_digests(10).unwrap().len(), 3);
 
-        raw.execute_batch("DROP TRIGGER deny_single_owner;").unwrap();
+        raw.execute_batch("DROP TRIGGER deny_single_owner;")
+            .unwrap();
         install_bound_owned_media(
             &store,
             &mut registry,
