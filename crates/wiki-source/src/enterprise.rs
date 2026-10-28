@@ -124,6 +124,7 @@ pub enum EnterpriseError {
     InvalidField(&'static str),
     InvalidIdentity,
     InvalidGeneration,
+    MixedProject(PageKey),
     UnknownPartType(String),
     PartDepthExceeded,
     PartCountExceeded,
@@ -776,6 +777,44 @@ fn valid_page_key(page: &PageKey) -> bool {
     (1..=i64::MAX as u64).contains(&page.page_id) && crate::valid_wiki_project(&page.project)
 }
 
+/// A bulk source join must describe one Wikimedia project and one source
+/// generation. Even individually matching page pairs are not sufficient when
+/// they were drawn from different publications.
+fn check_batch_project(
+    project: &mut Option<String>,
+    page: &PageKey,
+) -> Result<(), EnterpriseError> {
+    if project
+        .as_deref()
+        .is_some_and(|expected| expected != page.project)
+    {
+        return Err(EnterpriseError::MixedProject(page.clone()));
+    }
+    if project.is_none() {
+        *project = Some(page.project.clone());
+    }
+    Ok(())
+}
+
+fn check_batch_generation(
+    generation: &mut Option<String>,
+    candidate: &str,
+) -> Result<(), EnterpriseError> {
+    if !crate::enterprise_ndjson::valid_generation_id(candidate) {
+        return Err(EnterpriseError::InvalidGeneration);
+    }
+    if generation
+        .as_deref()
+        .is_some_and(|expected| expected != candidate)
+    {
+        return Err(EnterpriseError::GenerationMismatch);
+    }
+    if generation.is_none() {
+        *generation = Some(candidate.to_owned());
+    }
+    Ok(())
+}
+
 /// Join complete Structured Contents and regular-article collections in stable
 /// project/page-ID order. Duplicate, missing, or deleted live records fail
 /// closed instead of silently selecting one source record.
@@ -785,10 +824,13 @@ pub fn join_enterprise_batch(
     deleted: Vec<PageKey>,
 ) -> Result<Vec<JoinedEnterpriseArticle>, EnterpriseError> {
     let mut tombstones = BTreeSet::new();
+    let mut batch_project = None;
+    let mut batch_generation = None;
     for page in deleted {
         if !valid_page_key(&page) {
             return Err(EnterpriseError::InvalidIdentity);
         }
+        check_batch_project(&mut batch_project, &page)?;
         if !tombstones.insert(page.clone()) {
             return Err(EnterpriseError::DuplicateTombstone(page));
         }
@@ -799,6 +841,8 @@ pub fn join_enterprise_batch(
         if !valid_page_key(&article.page) {
             return Err(EnterpriseError::InvalidIdentity);
         }
+        check_batch_project(&mut batch_project, &article.page)?;
+        check_batch_generation(&mut batch_generation, &article.generation_id)?;
         if tombstones.contains(&article.page) {
             return Err(EnterpriseError::DeletedPageConflict(article.page));
         }
@@ -813,6 +857,8 @@ pub fn join_enterprise_batch(
         if !valid_page_key(&article.page) {
             return Err(EnterpriseError::InvalidIdentity);
         }
+        check_batch_project(&mut batch_project, &article.page)?;
+        check_batch_generation(&mut batch_generation, &article.generation_id)?;
         if tombstones.contains(&article.page) {
             return Err(EnterpriseError::DeletedPageConflict(article.page));
         }
@@ -1378,6 +1424,115 @@ mod tests {
             Err(EnterpriseError::InvalidField("name"))
         );
         assert!(join_enterprise_batch(vec![structured], vec![regular], vec![]).is_ok());
+    }
+
+    #[test]
+    fn enterprise_batch_rejects_mixed_projects_generations_and_tombstone_sources() {
+        let first = parse_structured_article(&structured_json(), "2026-10-01").unwrap();
+        let first_companion =
+            parse_regular_companion_complete(&regular_json(), "2026-10-01").unwrap();
+        let mut second = first.clone();
+        second.page.page_id = 7;
+        second.revision_id = 100;
+        second.name = "Other article".into();
+        let mut second_companion = first_companion.clone();
+        second_companion.page.page_id = 7;
+        second_companion.revision_id = 100;
+        second_companion.name = "Other article".into();
+
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first.clone(), second.clone()],
+                vec![first_companion.clone(), second_companion.clone()],
+                vec![],
+            )
+            .unwrap()
+            .len(),
+            2
+        );
+
+        let mut other_project = second.clone();
+        other_project.page.project = "frwiki".into();
+        let mut other_project_companion = second_companion.clone();
+        other_project_companion.page.project = "frwiki".into();
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first.clone(), other_project],
+                vec![first_companion.clone(), other_project_companion],
+                vec![],
+            ),
+            Err(EnterpriseError::MixedProject(PageKey {
+                project: "frwiki".into(),
+                page_id: 7,
+            }))
+        );
+
+        let mut other_generation = second.clone();
+        other_generation.generation_id = "2026-10-02".into();
+        let mut other_generation_companion = second_companion.clone();
+        other_generation_companion.generation_id = "2026-10-02".into();
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first.clone(), other_generation],
+                vec![first_companion.clone(), other_generation_companion],
+                vec![],
+            ),
+            Err(EnterpriseError::GenerationMismatch)
+        );
+        let mut mismatched_regular = second_companion.clone();
+        mismatched_regular.generation_id = "2026-10-02".into();
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first.clone(), second.clone()],
+                vec![first_companion.clone(), mismatched_regular],
+                vec![],
+            ),
+            Err(EnterpriseError::GenerationMismatch)
+        );
+
+        let foreign_tombstone = PageKey {
+            project: "frwiki".into(),
+            page_id: 99,
+        };
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first.clone()],
+                vec![first_companion.clone()],
+                vec![foreign_tombstone.clone()],
+            ),
+            Err(EnterpriseError::MixedProject(first.page.clone()))
+        );
+        assert_eq!(
+            join_enterprise_batch(
+                vec![],
+                vec![],
+                vec![
+                    PageKey {
+                        project: "enwiki".into(),
+                        page_id: 98,
+                    },
+                    foreign_tombstone.clone(),
+                ],
+            ),
+            Err(EnterpriseError::MixedProject(foreign_tombstone))
+        );
+        let mut malformed_generation = second;
+        malformed_generation.generation_id = "../other".into();
+        assert_eq!(
+            join_enterprise_batch(
+                vec![first],
+                vec![first_companion, second_companion],
+                vec![],
+            ),
+            Err(EnterpriseError::MissingStructured(PageKey {
+                project: "enwiki".into(),
+                page_id: 7,
+            }))
+        );
+        assert_eq!(
+            join_enterprise_batch(vec![malformed_generation], vec![], vec![]),
+            Err(EnterpriseError::InvalidGeneration)
+        );
     }
 
     #[test]
