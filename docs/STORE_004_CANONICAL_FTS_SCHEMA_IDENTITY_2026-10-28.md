@@ -15,3 +15,12 @@ The offline search opener previously accepted any SQLite virtual table whose DDL
 ## Limitations
 
 This validates schema identity, not internal FTS token-posting correctness or shadow-table integrity. Publisher-authenticated source completeness, required offline media, installed-pack integration and physical-device acceptance remain outstanding. **STORE-004 remains unchecked.**
+
+## Exact-head verification
+
+The initial implementation `6773d056c23af319b79df5fae23091a351c04484` failed the Rust formatting gate ([40773963080](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40773963080)). The one-line rustfmt correction `e0cfa74fd615458d54f035c383a1f65eb043379d` passed:
+
+- [Rust workspace 40774064572](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40774064572) — formatting, strict Clippy, workspace tests.
+- [Platform shells 40774064635](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40774064635) — passed.
+- [Android Rust ABI 40774064776](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40774064776) — passed.
+- [Android record codec probe 40774064543](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40774064543) — still running at last observation, not counted as passed.
