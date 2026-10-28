@@ -7,6 +7,7 @@
 //! SHARED lease protocol; hostile direct filesystem/SQLite writes are not
 //! protected by this advisory coordination.
 
+use crate::activation::{ActivationError, ActiveSnapshotStore};
 use crate::media_lease::{MediaLeaseCoordinator, MediaLeaseError};
 use crate::media_objects::{MediaObjectError, MediaObjectStore};
 use crate::media_ownership::{MediaRegistry, MediaRegistryError, OwnerKind};
@@ -360,6 +361,63 @@ pub fn release_bound_owner_and_reclaim_media(
         max_candidates,
         true,
     )
+}
+
+/// Reject removal of the currently active pack before revoking ownership.
+///
+/// The EXCLUSIVE media lease is acquired before reading the active snapshot
+/// pointer and remains held through SQLite ownership release and bounded GC.
+/// It therefore excludes the cooperating media-gated activation API's SHARED
+/// lease while checking which snapshot is active. Deleting an inactive pack is
+/// an explicit decision: callers must separately retain rollback snapshots.
+///
+/// This is an opt-in production lifecycle boundary. Legacy owner-release
+/// entry points and the low-level unleased snapshot switch remain available
+/// for controlled migrations/tests and MUST NOT bypass this gate in production.
+#[derive(Debug)]
+pub enum InactivePackReleaseError {
+    ActiveSnapshot,
+    Activation(ActivationError),
+    Media(MediaGcPlanError),
+}
+
+pub fn release_inactive_snapshot_pack_and_reclaim_media(
+    snapshots: &ActiveSnapshotStore,
+    store: &MediaObjectStore,
+    registry: &mut MediaRegistry,
+    snapshot_id: &str,
+    max_candidates: usize,
+) -> Result<OwnerReleaseGcOutcome, InactivePackReleaseError> {
+    if !(1..=10_000).contains(&max_candidates) {
+        return Err(InactivePackReleaseError::Media(MediaGcPlanError::Registry(
+            MediaRegistryError::InvalidInput,
+        )));
+    }
+    let _lease = MediaLeaseCoordinator::new(store.root())
+        .acquire_exclusive()
+        .map_err(|error| InactivePackReleaseError::Media(MediaGcPlanError::Lease(error)))?;
+    registry
+        .require_media_root_binding(store.root())
+        .map_err(|error| InactivePackReleaseError::Media(MediaGcPlanError::Registry(error)))?;
+    let active = snapshots
+        .current()
+        .map_err(InactivePackReleaseError::Activation)?;
+    if active.as_deref() == Some(snapshot_id) {
+        return Err(InactivePackReleaseError::ActiveSnapshot);
+    }
+    let released = registry
+        .remove_all_for_owner(OwnerKind::Pack, snapshot_id)
+        .map_err(|error| InactivePackReleaseError::Media(MediaGcPlanError::Registry(error)))?;
+    let cleanup = collect_unowned_registered_media_under_lease(
+        store,
+        registry,
+        max_candidates,
+        &mut |digest| store.unlink_verified_unlocked(digest),
+    );
+    Ok(OwnerReleaseGcOutcome {
+        released_objects: released.len(),
+        cleanup,
+    })
 }
 
 fn release_owner_and_reclaim_media_with_binding(
@@ -892,6 +950,120 @@ mod tests {
             creator: "Example creator".into(),
             license: "CC BY-SA 4.0".into(),
         }
+    }
+
+    #[test]
+    fn inactive_pack_release_refuses_active_and_preserves_new_active_media() {
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_inventory::RequiredMedia;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-inactive-pack-release-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        for id in ["old", "new"] {
+            let snapshot = root.join("snapshots").join(id);
+            fs::create_dir_all(&snapshot).unwrap();
+            fs::write(snapshot.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshots = ActiveSnapshotStore::new(&root);
+        let store = MediaObjectStore::new(&media_root);
+        let database = root.join("media-registry.sqlite");
+        let mut registry = MediaRegistry::open(&database).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let old_bytes = b"old required figure";
+        let new_bytes = b"new required figure";
+        let old_digest = install_bound_owned_media(
+            &store,
+            &mut registry,
+            old_bytes,
+            &notice(),
+            OwnerKind::Pack,
+            "old",
+        )
+        .unwrap();
+        let new_digest = install_bound_owned_media(
+            &store,
+            &mut registry,
+            new_bytes,
+            &notice(),
+            OwnerKind::Pack,
+            "new",
+        )
+        .unwrap();
+        let old_required = [RequiredMedia {
+            digest: old_digest.clone(),
+            bytes: old_bytes.len() as u64,
+        }];
+        let new_required = [RequiredMedia {
+            digest: new_digest.clone(),
+            bytes: new_bytes.len() as u64,
+        }];
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media(
+                "old",
+                &store,
+                &registry,
+                &old_required,
+            )
+            .unwrap();
+        let blocked = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots,
+            &store,
+            &mut registry,
+            "old",
+            10,
+        );
+        assert!(matches!(blocked, Err(InactivePackReleaseError::ActiveSnapshot)));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "old").unwrap().len(), 1);
+        let old_path = media_root.join(&old_digest[..2]).join(&old_digest);
+        assert!(old_path.exists());
+        let invalid = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots,
+            &store,
+            &mut registry,
+            "new",
+            0,
+        );
+        assert!(matches!(
+            invalid,
+            Err(InactivePackReleaseError::Media(MediaGcPlanError::Registry(
+                MediaRegistryError::InvalidInput
+            )))
+        ));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "new").unwrap().len(), 1);
+
+        snapshots
+            .switch_to_prevalidated_with_bound_pack_media(
+                "new",
+                &store,
+                &registry,
+                &new_required,
+            )
+            .unwrap();
+        let outcome = release_inactive_snapshot_pack_and_reclaim_media(
+            &snapshots,
+            &store,
+            &mut registry,
+            "old",
+            10,
+        )
+        .unwrap();
+        assert_eq!(outcome.released_objects, 1);
+        assert!(outcome.cleanup.is_ok());
+        assert!(registry.owned_media(OwnerKind::Pack, "old").unwrap().is_empty());
+        assert!(!old_path.exists());
+        assert_eq!(snapshots.current().unwrap(), Some("new".into()));
+        assert_eq!(registry.owned_media(OwnerKind::Pack, "new").unwrap().len(), 1);
+        assert!(media_root.join(&new_digest[..2]).join(&new_digest).exists());
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
