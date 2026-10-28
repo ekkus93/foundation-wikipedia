@@ -5,7 +5,6 @@
 //! Android needs its own platform HTTP transport. A successful response
 //! authenticates the TLS peer, NOT offline media completeness or pack trust.
 
-use std::collections::VecDeque;
 use std::io::Read;
 use std::process::{Command, Stdio};
 
@@ -39,6 +38,7 @@ pub enum CurlTransportError {
     SpawnFailed,
     IoFailure,
     ResponseTooLarge,
+    DiagnosticTooLarge,
     HttpStatus(u16),
     ProcessFailed,
 }
@@ -76,6 +76,25 @@ impl CurlTransport {
         }
         Ok(())
     }
+}
+
+/// curl's write-out marker must be unique and canonical. A truncated or
+/// ambiguous diagnostic stream cannot authenticate an HTTP 200 response.
+fn parse_http_status(diagnostics: &[u8]) -> Result<u16, CurlTransportError> {
+    let mut status = None;
+    for line in diagnostics.split(|byte| *byte == b'\n') {
+        if let Some(raw) = line.strip_prefix(b"FW_HTTP_CODE:") {
+            if status.is_some() || raw.len() != 3 || !raw.iter().all(u8::is_ascii_digit) {
+                return Err(CurlTransportError::ProcessFailed);
+            }
+            status = Some(
+                u16::from(raw[0] - b'0') * 100
+                    + u16::from(raw[1] - b'0') * 10
+                    + u16::from(raw[2] - b'0'),
+            );
+        }
+    }
+    status.ok_or(CurlTransportError::ProcessFailed)
 }
 
 impl MediaWikiTransport for CurlTransport {
@@ -133,22 +152,28 @@ impl MediaWikiTransport for CurlTransport {
             CurlTransportError::SpawnFailed
         })?;
 
-        // Read both subprocess pipes concurrently to avoid stderr pipe deadlock.
-        // Keep only the last 64 KiB, including the final HTTP status marker.
+        // Drain both subprocess pipes concurrently without deadlocking. An
+        // oversized diagnostic stream is rejected rather than retaining its
+        // tail: otherwise an earlier conflicting HTTP marker could disappear.
         let mut stderr = child.stderr.take().ok_or(CurlTransportError::IoFailure)?;
-        let stderr_reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-            let mut tail = VecDeque::with_capacity(MAX_DIAGNOSTIC_BYTES);
+        let stderr_reader = std::thread::spawn(move || -> std::io::Result<(Vec<u8>, bool)> {
+            let mut diagnostics = Vec::new();
+            let mut oversized = false;
             let mut buffer = [0u8; 8192];
             loop {
                 let count = stderr.read(&mut buffer)?;
                 if count == 0 {
                     break;
                 }
-                tail.extend(&buffer[..count]);
-                let excess = tail.len().saturating_sub(MAX_DIAGNOSTIC_BYTES);
-                tail.drain(..excess);
+                if !oversized {
+                    if count > MAX_DIAGNOSTIC_BYTES.saturating_sub(diagnostics.len()) {
+                        oversized = true;
+                    } else {
+                        diagnostics.extend_from_slice(&buffer[..count]);
+                    }
+                }
             }
-            Ok(tail.into_iter().collect())
+            Ok((diagnostics, oversized))
         });
 
         let mut stdout = child.stdout.take().ok_or(CurlTransportError::IoFailure)?;
@@ -178,22 +203,18 @@ impl MediaWikiTransport for CurlTransport {
         drop(stdout);
 
         let status = child.wait().map_err(|_| CurlTransportError::IoFailure)?;
-        let stderr_bytes = stderr_reader
+        let (stderr_bytes, oversized) = stderr_reader
             .join()
             .map_err(|_| CurlTransportError::IoFailure)?
             .map_err(|_| CurlTransportError::IoFailure)?;
-        let diagnostics = String::from_utf8_lossy(&stderr_bytes);
-        let http_status = diagnostics
-            .lines()
-            .filter_map(|line| line.strip_prefix("FW_HTTP_CODE:"))
-            .last()
-            .and_then(|code| code.parse::<u16>().ok());
-        if let Some(code) = http_status {
-            if code != 200 && code != 0 {
-                return Err(CurlTransportError::HttpStatus(code));
-            }
+        if oversized {
+            return Err(CurlTransportError::DiagnosticTooLarge);
         }
-        if !status.success() || http_status != Some(200) {
+        let http_status = parse_http_status(&stderr_bytes)?;
+        if http_status != 200 && http_status != 0 {
+            return Err(CurlTransportError::HttpStatus(http_status));
+        }
+        if !status.success() || http_status != 200 {
             return Err(CurlTransportError::ProcessFailed);
         }
         Ok(body)
@@ -268,16 +289,41 @@ mod tests {
     }
 
     #[test]
-    fn drains_large_stderr_and_preserves_final_http_status() {
+    fn rejects_oversized_diagnostics_even_with_final_http_status() {
         let url = WikipediaRequests::new("enwiki")
             .unwrap()
             .current_revision(42)
             .unwrap();
-        // More than any normal OS stderr pipe and our retained 64-KiB tail.
-        // Only shell built-ins are used, so this is deterministic on Unix CI.
+        // Drain more than an OS pipe without deadlock, but do not trust the
+        // tail: an earlier status marker could have been discarded.
         let noise = r#"i=0
 while [ "$i" -lt 3000 ]; do
     printf 'verbose diagnostic filler 0123456789abcdefghijklmnopqrstuvwxyz\n' >&2
+    i=$((i + 1))
+done
+"#;
+        for code in ["200", "503"] {
+            let (mut client, path) = fake_curl(&format!(
+                "{noise}\nprintf 'FW_HTTP_CODE:{code}\\n' >&2\nprintf 'ok'"
+            ));
+            assert_eq!(
+                client.get(&url, 128),
+                Err(CurlTransportError::DiagnosticTooLarge),
+                "{code}"
+            );
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn accepts_bounded_diagnostics_but_refuses_ambiguous_http_markers() {
+        let url = WikipediaRequests::new("enwiki")
+            .unwrap()
+            .current_revision(42)
+            .unwrap();
+        let noise = r#"i=0
+while [ "$i" -lt 100 ]; do
+    printf 'ordinary curl diagnostics\n' >&2
     i=$((i + 1))
 done
 "#;
@@ -287,12 +333,34 @@ done
         assert_eq!(client.get(&url, 128).unwrap(), b"ok");
         fs::remove_file(path).unwrap();
 
-        let (mut client, path) = fake_curl(&format!(
-            "{noise}\nprintf 'FW_HTTP_CODE:503\\n' >&2\nprintf 'unavailable'"
-        ));
+        // Only one exact, three-ASCII-digit status marker can authorize a
+        // response. Even a later valid 200 cannot override an earlier marker.
+        for code in ["+200", "0200", "200x", "2O0", "200 ", ""] {
+            let (mut client, path) = fake_curl(&format!(
+                "printf 'ok'\nprintf 'FW_HTTP_CODE:{code}\\n' >&2"
+            ));
+            assert_eq!(
+                client.get(&url, 128),
+                Err(CurlTransportError::ProcessFailed),
+                "{code:?}"
+            );
+            fs::remove_file(path).unwrap();
+        }
+        for earlier in ["200", "503"] {
+            let (mut client, path) = fake_curl(&format!(
+                "printf 'ok'\nprintf 'FW_HTTP_CODE:{earlier}\\nFW_HTTP_CODE:200\\n' >&2"
+            ));
+            assert_eq!(
+                client.get(&url, 128),
+                Err(CurlTransportError::ProcessFailed),
+                "{earlier}"
+            );
+            fs::remove_file(path).unwrap();
+        }
+        let (mut client, path) = fake_curl("printf 'ok'");
         assert_eq!(
             client.get(&url, 128),
-            Err(CurlTransportError::HttpStatus(503))
+            Err(CurlTransportError::ProcessFailed)
         );
         fs::remove_file(path).unwrap();
     }
