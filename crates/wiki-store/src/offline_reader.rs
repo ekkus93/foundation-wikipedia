@@ -54,6 +54,19 @@ impl<'a> OfflineReader<'a> {
         }
     }
 
+    /// Construct a reader only after auditing every installed article
+    /// against the derived FTS identity inventory, including other editions.
+    /// Callers must separately authenticate the immutable snapshot, verify
+    /// mandatory media, and keep the catalog and shards immutable.
+    pub fn new_verified(
+        catalog: &'a SnapshotCatalog,
+        index: &'a OfflineSearchIndex,
+        root: &'a Path,
+    ) -> Result<Self, ReaderError> {
+        index.verify_catalog_membership(catalog, root)?;
+        Ok(Self::new(catalog, index, root))
+    }
+
     /// Open an installed page by stable project/page ID, including redirects.
     /// Only a genuinely absent key reports `None`.
     pub fn open_page(&self, key: &ArticleKey) -> Result<Option<Article>, ReaderError> {
@@ -281,7 +294,12 @@ mod tests {
             .unwrap();
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
-        let reader = OfflineReader::new(&catalog, &index, &root);
+        let reader = OfflineReader::new_verified(&catalog, &index, &root).unwrap();
+        let empty_index = OfflineSearchIndex::in_memory().unwrap();
+        assert!(matches!(
+            OfflineReader::new_verified(&catalog, &empty_index, &root),
+            Err(ReaderError::Search(SearchError::StaleIndex))
+        ));
         let scoped = reader
             .search_project_articles("enwiki", "Earth", 10)
             .unwrap();
@@ -416,6 +434,12 @@ mod tests {
 
         bytes[12] ^= 1;
         fs::write(root.join("reader.shard"), &bytes).unwrap();
+        assert!(matches!(
+            OfflineReader::new_verified(&catalog, &index, &root),
+            Err(ReaderError::Search(SearchError::Catalog(
+                CatalogError::DigestMismatch
+            )))
+        ));
         assert!(matches!(
             reader.search_title_prefix("enwiki", "Earth", 10),
             Err(ReaderError::Catalog(CatalogError::DigestMismatch))
