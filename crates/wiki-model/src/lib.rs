@@ -397,7 +397,8 @@ impl Article {
         }
         if let Some(id) = &self.wikidata_id {
             let digits = id.strip_prefix('Q').unwrap_or("");
-            if digits.is_empty()
+            if id.len() > 64
+                || digits.is_empty()
                 || digits.starts_with('0')
                 || !digits.bytes().all(|byte| byte.is_ascii_digit())
             {
@@ -1200,6 +1201,12 @@ mod tests {
             a.wikidata_id = Some(id.into());
             assert_eq!(a.validate(), Err(ModelError::InvalidWikidataId));
         }
+        // Verified catalog Q-ID lookups are bounded at 64 bytes. The
+        // canonical record must not accept an unqueryable longer identity.
+        a.wikidata_id = Some(format!("Q{}", "1".repeat(64)));
+        assert_eq!(a.validate(), Err(ModelError::InvalidWikidataId));
+        a.wikidata_id = Some(format!("Q{}", "1".repeat(63)));
+        assert_eq!(a.validate(), Ok(()));
         a.wikidata_id = Some("Q42".into());
         assert_eq!(a.validate(), Ok(()));
     }
