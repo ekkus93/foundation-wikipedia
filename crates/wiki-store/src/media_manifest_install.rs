@@ -135,10 +135,9 @@ fn install_manifest_media_batch_with_binding(
             return Err(ManifestMediaInstallError::InvalidManifest);
         }
         let digest = format!("{:x}", Sha256::digest(bytes));
-        let (mime, notices): &mut (&str, BTreeSet<(&str, &str, &str, &str)>) =
-            notices_by_digest
-                .entry(digest.clone())
-                .or_insert_with(|| (notice.mime.as_str(), BTreeSet::new()));
+        let (mime, notices): &mut (&str, BTreeSet<(&str, &str, &str, &str)>) = notices_by_digest
+            .entry(digest.clone())
+            .or_insert_with(|| (notice.mime.as_str(), BTreeSet::new()));
         if *mime != notice.mime.as_str() {
             return Err(ManifestMediaInstallError::InvalidManifest);
         }
