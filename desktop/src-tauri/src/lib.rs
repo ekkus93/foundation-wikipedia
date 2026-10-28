@@ -69,15 +69,24 @@ impl DesktopPersonalDataGate {
         })
     }
 
-    fn clear_visits<T>(
+    fn revoke_queued_visits<T>(
         &self,
         expected_generation: u64,
         action: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        // Invalidate already queued visit writers before acquiring the lock.
-        // Bookmark writes remain independent of a history-only deletion.
+        // Check the personal-data epoch under the visit-writer lock. Stale
+        // clear/disable requests must not revoke post-reset visits.
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| "Personal reading data lock unavailable".to_owned())?;
+        if self.generation() != expected_generation {
+            return Err("Personal reading data was cleared; stale write rejected".to_owned());
+        }
+        // Older visits either finished before this operation or will observe
+        // the new epoch afterward. Bookmarks are unaffected.
         self.visit_generation.fetch_add(1, Ordering::AcqRel);
-        self.write(expected_generation, action)
+        action()
     }
 
     fn reset<T>(&self, action: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
@@ -466,10 +475,24 @@ async fn reader_history_enabled(
 }
 
 #[tauri::command]
-async fn set_reader_history_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+async fn set_reader_history_enabled(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+    enabled: bool,
+) -> Result<(), String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        open_private_bookmark_store(&app)?.set_history_enabled(enabled)
-            .map_err(|_| "Cannot save history preference".to_owned())
+        let update = || {
+            open_private_bookmark_store(&app)?.set_history_enabled(enabled)
+                .map_err(|_| "Cannot save history preference".to_owned())
+        };
+        if enabled {
+            gate.write(generation, update)
+        } else {
+            // Revoking consent also fences visits queued while it was enabled.
+            gate.revoke_queued_visits(generation, update)
+        }
     })
     .await
     .map_err(|_| "History preference worker stopped".to_owned())?
@@ -500,7 +523,7 @@ async fn clear_reader_history(
     let gate = (*gate).clone();
     let generation = gate.generation();
     tauri::async_runtime::spawn_blocking(move || {
-        gate.clear_visits(generation, || {
+        gate.revoke_queued_visits(generation, || {
             open_private_bookmark_store(&app)?.clear_history()
                 .map_err(|_| "Cannot clear reading history".to_owned())
         })
@@ -922,7 +945,7 @@ mod bookmark_tests {
                 .map_err(|error| format!("{error:?}"))
         })
         .unwrap();
-        gate.clear_visits(generation, || {
+        gate.revoke_queued_visits(generation, || {
             state.clear_history().map_err(|error| format!("{error:?}"))
         })
         .unwrap();
@@ -945,6 +968,73 @@ mod bookmark_tests {
         .unwrap();
         assert_eq!(reader_history_rows(&state).unwrap().len(), 1);
         assert!(gate.write(generation, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn disabling_history_fences_queued_visits_even_after_reenable() {
+        let gate = DesktopPersonalDataGate::default();
+        let state = UserState::in_memory().unwrap();
+        let key = ArticleKey {
+            project: "enwiki".to_owned(),
+            page_id: 42,
+        };
+        let generation = gate.generation();
+        gate.write(generation, || {
+            state.set_history_enabled(true).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        let stale_visit_generation = gate.visit_generation();
+        gate.revoke_queued_visits(generation, || {
+            state.set_history_enabled(false).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(!state.history_enabled().unwrap());
+        // Re-enabling consent must not resurrect visits queued before opt-out.
+        gate.write(generation, || {
+            state.set_history_enabled(true).map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        assert!(gate
+            .write_visit(generation, stale_visit_generation, || {
+                state.record_visit(&key, 333, 1_700_000_000)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert!(reader_history_rows(&state).unwrap().is_empty());
+        assert!(gate
+            .write_visit(generation, gate.visit_generation(), || {
+                state.record_visit(&key, 334, 1_700_000_001)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .unwrap());
+    }
+
+    #[test]
+    fn stale_history_clear_cannot_invalidate_new_privacy_epoch() {
+        let gate = DesktopPersonalDataGate::default();
+        let state = UserState::in_memory().unwrap();
+        let stale_generation = gate.generation();
+        gate.reset(|| {
+            state.clear_personal_reading_data()
+                .map_err(|error| format!("{error:?}"))
+        })
+        .unwrap();
+        let new_generation = gate.generation();
+        let new_visit_generation = gate.visit_generation();
+        assert!(gate
+            .revoke_queued_visits(stale_generation, || {
+                state.clear_history().map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert_eq!(gate.visit_generation(), new_visit_generation);
+        assert!(gate
+            .revoke_queued_visits(stale_generation, || {
+                state.set_history_enabled(false)
+                    .map_err(|error| format!("{error:?}"))
+            })
+            .is_err());
+        assert_eq!(gate.visit_generation(), new_visit_generation);
+        assert!(gate.write(new_generation, || Ok(())).is_ok());
     }
 
     #[test]
