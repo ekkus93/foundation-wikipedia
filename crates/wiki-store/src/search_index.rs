@@ -478,31 +478,35 @@ impl OfflineSearchIndex {
     /// Stream both inventories in stable project/page-ID order so an omitted,
     /// duplicated, foreign, or stale row fails closed without materializing
     /// the corpus. Every catalog frame (including redirects) is reverified.
-    /// This checks identity coverage and the canonical body prefix, but not
-    /// redirect-suffix provenance, FTS token postings, source authenticity,
-    /// or required offline media completeness.
+    /// This checks identity coverage, canonical body bytes and the ordered
+    /// redirect-title suffix against digest-verified catalog records. It does
+    /// not prove FTS token postings, source authenticity or required media.
     pub fn verify_catalog_membership(
         &self,
         catalog: &SnapshotCatalog,
         root: &Path,
     ) -> Result<usize, SearchError> {
         let mut stmt = self.conn.prepare(
-            "SELECT project,page_id,revision_id,title,body FROM offline_article_fts
+            "SELECT rowid,project,page_id,revision_id,title,body FROM offline_article_fts
              ORDER BY project, CAST(page_id AS INTEGER), rowid",
         )?;
         let mut rows = stmt.query([])?;
         let mut count = 0usize;
+        // Keep only row identities and byte offsets, not complete article
+        // bodies or redirect titles. This bounds memory by article count.
+        let mut suffix_positions = BTreeMap::new();
         catalog.visit_records(root, |record| {
             if let PageRecord::Article(article) = record {
                 if count >= MAX_ARTICLES {
                     return Err(SearchError::TooManyArticles);
                 }
                 let row = rows.next()?.ok_or(SearchError::StaleIndex)?;
-                let project: String = row.get(0)?;
-                let page_id: i64 = row.get(1)?;
-                let revision_id: i64 = row.get(2)?;
-                let title: String = row.get(3)?;
-                let body: String = row.get(4)?;
+                let rowid: i64 = row.get(0)?;
+                let project: String = row.get(1)?;
+                let page_id: i64 = row.get(2)?;
+                let revision_id: i64 = row.get(3)?;
+                let title: String = row.get(4)?;
+                let body: String = row.get(5)?;
                 let expected_prefix = canonical_search_text(&article)?;
                 // FTS5 stores its original body alongside token postings. A
                 // forged or truncated stored body must not pass merely because
@@ -518,11 +522,66 @@ impl OfflineSearchIndex {
                 {
                     return Err(SearchError::StaleIndex);
                 }
+                suffix_positions.insert(
+                    (article.key.project.clone(), article.key.page_id),
+                    (rowid, expected_prefix.len(), body.len()),
+                );
                 count += 1;
             }
             Ok::<(), SearchError>(())
         })?;
         if rows.next()?.is_some() {
+            return Err(SearchError::StaleIndex);
+        }
+        drop(rows);
+        drop(stmt);
+
+        // Replay the exact same stable catalog traversal as the index builder.
+        // Check each redirect against its resolved canonical target and compare
+        // only its next UTF-8 byte span, so no redirect corpus is materialized.
+        let mut suffix_stmt = self.conn.prepare(
+            "SELECT substr(CAST(body AS BLOB), ?2, ?3)
+             FROM offline_article_fts WHERE rowid=?1",
+        )?;
+        let mut redirect_count = 0usize;
+        catalog.visit_records(root, |record| {
+            if let PageRecord::Redirect(redirect) = record {
+                if redirect_count >= MAX_REDIRECTS {
+                    return Err(SearchError::TooManyRedirects);
+                }
+                redirect_count += 1;
+                let Some((target, PageRecord::Article(_))) =
+                    catalog.resolve_title(root, &redirect.from.project, &redirect.title)?
+                else {
+                    return Err(SearchError::StaleIndex);
+                };
+                let (rowid, offset, body_len) = suffix_positions
+                    .get_mut(&(target.project, target.page_id))
+                    .ok_or(SearchError::StaleIndex)?;
+                let expected = format!(" {}", redirect.title);
+                let end = offset
+                    .checked_add(expected.len())
+                    .filter(|end| *end <= *body_len)
+                    .ok_or(SearchError::StaleIndex)?;
+                let start_sql = i64::try_from(*offset + 1)
+                    .map_err(|_| SearchError::StaleIndex)?;
+                let length_sql = i64::try_from(expected.len())
+                    .map_err(|_| SearchError::StaleIndex)?;
+                let actual: Vec<u8> = suffix_stmt.query_row(
+                    params![rowid, start_sql, length_sql],
+                    |row| row.get(0),
+                )?;
+                if actual != expected.as_bytes() {
+                    return Err(SearchError::StaleIndex);
+                }
+                *offset = end;
+            }
+            Ok::<(), SearchError>(())
+        })?;
+        if suffix_positions
+            .values()
+            .any(|(_, consumed, body_len)| consumed != body_len)
+        {
             return Err(SearchError::StaleIndex);
         }
         Ok(count)
@@ -741,6 +800,28 @@ mod identity_tests {
             append_record_frame(&mut bytes, &record).unwrap();
             frames.push((start, bytes.len() as u64 - start));
         }
+        // Redirects are appended to the same verified shard but visited in
+        // catalog key order, which is also the builder's suffix order.
+        for (project, page_id, title, target) in [
+            ("enwiki", 20, "Blue 🌍", 2),
+            ("enwiki", 21, "Old Earth", 2),
+            ("frwiki", 22, "Ancienne Terre", 1),
+        ] {
+            let record = PageRecord::Redirect(wiki_model::Redirect {
+                from: ArticleKey {
+                    project: project.into(),
+                    page_id,
+                },
+                title: title.into(),
+                to: ArticleKey {
+                    project: project.into(),
+                    page_id: target,
+                },
+            });
+            let start = bytes.len() as u64;
+            append_record_frame(&mut bytes, &record).unwrap();
+            frames.push((start, bytes.len() as u64 - start));
+        }
         fs::write(root.join("audit.shard"), &bytes).unwrap();
         let mut catalog = SnapshotCatalog::open(&root.join("catalog.sqlite")).unwrap();
         for (offset, length) in frames {
@@ -751,6 +832,41 @@ mod identity_tests {
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
         assert_eq!(index.verify_catalog_membership(&catalog, &root).unwrap(), 3);
+        assert_eq!(index.search_project("enwiki", "Blue", 10).unwrap().len(), 1);
+        assert_eq!(
+            index.search_project("frwiki", "Ancienne", 10).unwrap().len(),
+            1
+        );
+
+        // A valid canonical prefix is insufficient: the redirect suffix
+        // must match the exact ordered, verified redirect records.
+        index
+            .conn
+            .execute(
+                "UPDATE offline_article_fts SET body=replace(body, 'Blue 🌍', 'Fake 🌍')
+                 WHERE title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
+
+        index
+            .conn
+            .execute(
+                "UPDATE offline_article_fts SET body=body || ' Forged Redirect'
+                 WHERE title='Earth'",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.verify_catalog_membership(&catalog, &root),
+            Err(SearchError::StaleIndex)
+        ));
+        index.rebuild_from_catalog(&catalog, &root).unwrap();
 
         // Identity-only audits previously accepted this still-schema-valid
         // row even though its searchable body no longer matched the article.
