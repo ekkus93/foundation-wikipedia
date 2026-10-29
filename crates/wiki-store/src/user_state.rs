@@ -2141,9 +2141,7 @@ mod tests {
         let mut owner = UserState::open(&database).unwrap();
         let mut other = UserState::open(&database).unwrap();
         let old = other.personal_generation().unwrap();
-        assert!(owner
-            .set_history_enabled_for_generation(old, true)
-            .unwrap());
+        assert!(owner.set_history_enabled_for_generation(old, true).unwrap());
         assert!(other
             .record_visit_for_generation(old, &key(), 123, 100)
             .unwrap());
@@ -2156,9 +2154,7 @@ mod tests {
         assert!(!other
             .record_visit_for_generation(old, &key(), 123, 101)
             .unwrap());
-        assert!(!other
-            .set_history_enabled_for_generation(old, true)
-            .unwrap());
+        assert!(!other.set_history_enabled_for_generation(old, true).unwrap());
         assert!(!other.history_enabled().unwrap());
         assert!(other
             .set_history_enabled_for_generation(fresh, true)
