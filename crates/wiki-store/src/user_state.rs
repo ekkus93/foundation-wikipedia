@@ -791,6 +791,33 @@ impl UserState {
 
     /// Returns the saved revision and scroll offset; the caller must verify the
     /// revision before applying an exact position to newly updated content.
+    /// Apply a scroll-position update only if no cross-process privacy reset
+    /// has occurred since the request captured its generation.
+    pub fn set_reading_position_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        scroll_offset: u64,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        let offset = i64::try_from(scroll_offset).map_err(|_| UserStateError::InvalidValue)?;
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let changed = self.conn.execute(
+            "INSERT INTO reading_positions(project,page_id,revision_id,scroll_offset)
+             SELECT ?1,?2,?3,?4
+             WHERE COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?5
+             ON CONFLICT(project,page_id) DO UPDATE SET
+                 revision_id=excluded.revision_id,scroll_offset=excluded.scroll_offset",
+            params![key.project, page, revision, offset, generation.to_string()],
+        )?;
+        Ok(changed != 0)
+    }
+
     pub fn reading_position(&self, key: &ArticleKey) -> Result<Option<(u64, u64)>, UserStateError> {
         let (page, _) = Self::ids(key, 1)?;
         let found: Option<(i64, i64)> = self
@@ -1046,6 +1073,29 @@ impl UserState {
             params![key.project, page, revision],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// A queued chat-thread creation must not resurrect personal activity
+    /// after another process has cleared reading data.
+    pub fn create_chat_thread_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+    ) -> Result<Option<i64>, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let changed = self.conn.execute(
+            "INSERT INTO chat_threads(project,page_id,revision_id)
+             SELECT ?1,?2,?3
+             WHERE COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?4",
+            params![key.project, page, revision, generation.to_string()],
+        )?;
+        Ok((changed != 0).then(|| self.conn.last_insert_rowid()))
     }
 
     /// Find saved threads for exactly one page and revision after restart.
@@ -1693,7 +1743,18 @@ mod tests {
         assert!(!other
             .record_visit_for_generation(old, &key(), 123, 101)
             .unwrap());
+        assert!(!other
+            .set_reading_position_for_generation(old, &key(), 123, 700)
+            .unwrap());
+        assert_eq!(
+            other
+                .create_chat_thread_for_generation(old, &key(), 123)
+                .unwrap(),
+            None
+        );
         assert!(other.bookmark(&key()).unwrap().is_none());
+        assert!(other.reading_position(&key()).unwrap().is_none());
+        assert!(other.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
         assert!(other.recent_history(10).unwrap().is_empty());
 
         let current = other.personal_generation().unwrap();
@@ -1704,7 +1765,17 @@ mod tests {
         assert!(other
             .record_visit_for_generation(current, &key(), 124, 102)
             .unwrap());
+        assert!(other
+            .set_reading_position_for_generation(current, &key(), 124, 800)
+            .unwrap());
+        let thread = other
+            .create_chat_thread_for_generation(current, &key(), 124)
+            .unwrap()
+            .expect("fresh generation creates a chat");
+        assert!(thread > 0);
         assert_eq!(other.bookmark(&key()).unwrap(), Some((124, "fresh".into())));
+        assert_eq!(other.reading_position(&key()).unwrap(), Some((124, 800)));
+        assert_eq!(other.list_chat_threads(&key(), 124, 10).unwrap(), vec![thread]);
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
