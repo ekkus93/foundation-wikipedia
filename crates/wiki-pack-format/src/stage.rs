@@ -436,10 +436,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "wiki-stage-sync-{}-{stamp}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stage-sync-{}-{stamp}", std::process::id()));
         create_private_dir(&parent).unwrap();
         let root = parent.join("new-stage");
         create_private_dir(&root).unwrap();
