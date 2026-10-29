@@ -1581,6 +1581,92 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+
+    #[test]
+    fn restore_of_v1_backup_migrates_after_open_without_losing_records() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-restore-v1-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let old_path = root.join("v1.sqlite");
+        let backup = root.join("backup.sqlite");
+        let restored_path = root.join("restored.sqlite");
+        let old = UserState::open(&old_path).unwrap();
+        old.set_bookmark(&key(), 321, "old schema").unwrap();
+        old.add_pack_owner("physics", &"b".repeat(64)).unwrap();
+        old.conn
+            .execute_batch(
+                "DROP INDEX history_recent_idx;
+                 DROP INDEX chat_threads_article_idx;
+                 DROP INDEX chat_messages_thread_idx;
+                 DROP INDEX pack_owners_digest_idx;
+                 PRAGMA user_version=1;",
+            )
+            .unwrap();
+        old.backup_to_path(&backup).unwrap();
+        UserState::restore_backup_to_new_path(&backup, &restored_path).unwrap();
+        let restored = UserState::open(&restored_path).unwrap();
+        assert_eq!(
+            restored.bookmark(&key()).unwrap(),
+            Some((321, "old schema".into()))
+        );
+        assert_eq!(restored.object_owner_count(&"b".repeat(64)).unwrap(), 1);
+        let version: i64 = restored
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let index_count: i64 = restored
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='pack_owners_digest_idx'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 1);
+        drop(restored);
+        drop(old);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_rejects_orphaned_chat_foreign_keys() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-restore-fk-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let backup = root.join("orphan.sqlite");
+        let target = root.join("restored.sqlite");
+        let source = UserState::open(&backup).unwrap();
+        source.conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        source
+            .conn
+            .execute(
+                "INSERT INTO chat_messages (thread_id,role,content)
+                 VALUES (987654,'user','orphaned')",
+                [],
+            )
+            .unwrap();
+        drop(source);
+        assert!(matches!(
+            UserState::restore_backup_to_new_path(&backup, &target),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(!target.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn rejects_unsupported_future_schema() {
         let connection = Connection::open_in_memory().unwrap();
