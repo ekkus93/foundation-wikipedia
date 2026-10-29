@@ -1775,7 +1775,10 @@ mod tests {
         assert!(thread > 0);
         assert_eq!(other.bookmark(&key()).unwrap(), Some((124, "fresh".into())));
         assert_eq!(other.reading_position(&key()).unwrap(), Some((124, 800)));
-        assert_eq!(other.list_chat_threads(&key(), 124, 10).unwrap(), vec![thread]);
+        assert_eq!(
+            other.list_chat_threads(&key(), 124, 10).unwrap(),
+            vec![thread]
+        );
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
