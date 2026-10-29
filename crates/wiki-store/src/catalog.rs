@@ -110,6 +110,25 @@ fn title_key(title: &str) -> Result<String, CatalogError> {
     Ok(wikipedia_title_key(trimmed))
 }
 
+/// Apply the same canonical edition/Q-ID contract to indexed key lookups
+/// and digest-verified article lookups. Malformed requests are never "missing".
+fn validate_wikidata_query(project: &str, item: &str) -> Result<(), CatalogError> {
+    ArticleKey {
+        project: project.to_owned(),
+        page_id: 1,
+    }
+    .validate()?;
+    let digits = item.strip_prefix('Q').unwrap_or("");
+    if item.len() > 64
+        || digits.is_empty()
+        || digits.starts_with('0')
+        || !digits.bytes().all(|digit| digit.is_ascii_digit())
+    {
+        return Err(CatalogError::InvalidCatalogEntry);
+    }
+    Ok(())
+}
+
 fn as_i64(value: u64) -> Result<i64, CatalogError> {
     i64::try_from(value).map_err(|_| CatalogError::InvalidCatalogEntry)
 }
@@ -441,6 +460,7 @@ impl SnapshotCatalog {
         project: &str,
         item: &str,
     ) -> Result<Vec<ArticleKey>, CatalogError> {
+        validate_wikidata_query(project, item)?;
         let mut stmt = self.conn.prepare(
             "SELECT page_id FROM records WHERE project=?1 AND wikidata_id=?2 ORDER BY page_id",
         )?;
@@ -463,18 +483,8 @@ impl SnapshotCatalog {
         item: &str,
         limit: usize,
     ) -> Result<Vec<Article>, CatalogError> {
-        ArticleKey {
-            project: project.to_owned(),
-            page_id: 1,
-        }
-        .validate()?;
-        let digits = item.strip_prefix('Q').unwrap_or("");
-        if !(1..=100).contains(&limit)
-            || item.len() > 64
-            || digits.is_empty()
-            || digits.starts_with('0')
-            || !digits.bytes().all(|digit| digit.is_ascii_digit())
-        {
+        validate_wikidata_query(project, item)?;
+        if !(1..=100).contains(&limit) {
             return Err(CatalogError::InvalidCatalogEntry);
         }
         let mut stmt = self.conn.prepare(
@@ -899,6 +909,14 @@ mod tests {
         catalog
             .insert_verified(&root, "wikidata.shard", 0, frame.len() as u64)
             .unwrap();
+        assert_eq!(
+            catalog.lookup_wikidata("enwiki", "Q2").unwrap(),
+            vec![ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            }]
+        );
+        assert!(catalog.lookup_wikidata("frwiki", "Q2").unwrap().is_empty());
         let hits = catalog
             .lookup_wikidata_verified(&root, "enwiki", "Q2", 10)
             .unwrap();
@@ -910,8 +928,33 @@ mod tests {
             .is_empty());
         for invalid in ["", "Q", "Q0", "Q01", "q2", "Q-1", "Q2x"] {
             assert!(matches!(
+                catalog.lookup_wikidata("enwiki", invalid),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+            assert!(matches!(
                 catalog.lookup_wikidata_verified(&root, "enwiki", invalid, 10),
                 Err(CatalogError::InvalidCatalogEntry)
+            ));
+        }
+        let overlong_qid = format!("Q{}", "1".repeat(64));
+        assert!(matches!(
+            catalog.lookup_wikidata("enwiki", &overlong_qid),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            catalog.lookup_wikidata_verified(&root, "enwiki", &overlong_qid, 10),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        let maximal_qid = format!("Q{}", "1".repeat(63));
+        assert!(catalog.lookup_wikidata("enwiki", &maximal_qid).unwrap().is_empty());
+        for invalid_project in ["", "ENwiki", "enwiki/other"] {
+            assert!(matches!(
+                catalog.lookup_wikidata(invalid_project, "Q2"),
+                Err(CatalogError::Model(ModelError::InvalidIdentity))
+            ));
+            assert!(matches!(
+                catalog.lookup_wikidata_verified(&root, invalid_project, "Q2", 10),
+                Err(CatalogError::Model(ModelError::InvalidIdentity))
             ));
         }
         assert!(matches!(
