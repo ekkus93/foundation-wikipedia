@@ -21,7 +21,7 @@ use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, wri
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::Origin;
-use wiki_pack_builder::wiki_pack_format::stage::stage_container;
+use wiki_pack_builder::wiki_pack_format::stage::{stage_container, stage_container_stream_with_budget};
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
@@ -47,6 +47,7 @@ fn usage() {
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
+    println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -185,6 +186,28 @@ fn stage_unsigned(source: PathBuf, parent: PathBuf, name: &str) -> Result<(), St
     let input = File::open(&source).map_err(|error| format!("cannot open input: {error}"))?;
     let (manifest, staged) = stage_container(&mut BufReader::new(input), &parent, name)
         .map_err(|error| format!("unsigned staging rejected: {error:?}"))?;
+    println!("Envelope verified and staged: {}", staged.display());
+    println!("Pack ID: {}", manifest.pack_id);
+    match manifest.origin {
+        Origin::Official { publisher } => {
+            println!("Claimed official publisher: {publisher}; claim NOT authenticated");
+        }
+        Origin::Custom { definition_id } => {
+            println!("Claimed custom definition: {definition_id}");
+        }
+    }
+    println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
+    println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+    Ok(())
+}
+
+/// Stage an unseekable stdin archive with an explicit spool quota. This is
+/// useful for document-provider-like pipes and never activates an installation.
+fn stage_unsigned_stdin(parent: PathBuf, name: &str, max_bytes: u64) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let (manifest, staged) =
+        stage_container_stream_with_budget(&mut stdin.lock(), &parent, name, max_bytes)
+            .map_err(|error| format!("unsigned stdin staging rejected: {error:?}"))?;
     println!("Envelope verified and staged: {}", staged.display());
     println!("Pack ID: {}", manifest.pack_id);
     match manifest.origin {
@@ -674,6 +697,31 @@ fn main() {
                 )
             };
             if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("stage-unsigned-stdin") => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 3 {
+                eprintln!("stage-unsigned-stdin requires exactly three arguments");
+                usage();
+                std::process::exit(2);
+            }
+            let Some(name) = fields[1].to_str() else {
+                eprintln!("Staging directory name must be UTF-8");
+                std::process::exit(2);
+            };
+            let Some(max_bytes) = fields[2]
+                .to_str()
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                eprintln!("Spool budget must be a decimal byte count");
+                std::process::exit(2);
+            };
+            if let Err(error) =
+                stage_unsigned_stdin(PathBuf::from(&fields[0]), name, max_bytes)
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
