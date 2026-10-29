@@ -5,7 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::container::{canonical_objects, verify_container, ContainerError};
+use crate::container::{canonical_objects, verify_container, verify_container_with_budget, ContainerError};
 use crate::manifest::Manifest;
 use crate::objects::verify_manifest_directory;
 
@@ -227,7 +227,9 @@ pub fn stage_container_stream_with_budget<R: Read>(
                 remaining: max_spool_bytes,
                 exceeded: false,
             };
-            let verification = verify_container(&mut tee);
+            // Bound transcript allocation by the caller's spool quota before
+            // the general envelope verifier can reserve manifest memory.
+            let verification = verify_container_with_budget(&mut tee, max_spool_bytes);
             if tee.exceeded {
                 return Err(ContainerError::ResourceBudget);
             }
@@ -407,6 +409,39 @@ mod tests {
         ));
         assert!(!parent.join("overflow").exists());
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn nonseekable_spool_preflights_manifest_allocation_against_quota() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stream-header-{}-{stamp}", std::process::id()));
+        create_private_dir(&parent).unwrap();
+        let mut header = b"FWPACK01".to_vec();
+        header.extend_from_slice(&(crate::container::MAX_MANIFEST_BYTES as u32).to_be_bytes());
+
+        // A forged large transcript with a tiny spool quota must be rejected
+        // after the fixed header, before reading or allocating its body.
+        let mut input = ReadOnly(io::Cursor::new(header.clone()));
+        assert!(matches!(
+            stage_container_stream_with_budget(&mut input, &parent, "oversized", 32),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(input.0.position(), 12);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+
+        // A quota smaller than the fixed header must not read the source.
+        let mut input = ReadOnly(io::Cursor::new(header));
+        assert!(matches!(
+            stage_container_stream_with_budget(&mut input, &parent, "short", 11),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(input.0.position(), 0);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
         fs::remove_dir_all(parent).unwrap();
     }
 
