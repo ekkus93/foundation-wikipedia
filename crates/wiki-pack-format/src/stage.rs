@@ -575,7 +575,8 @@ mod tests {
         let absent_parent = Path::new("missing-private-stage-parent");
         for name in [
             "CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "COM9.txt", "LPT1", "lpt9.bin",
-            "CONIN$", "CONOUT$",
+            "CONIN$", "CONOUT$", "CON .txt", "NUL  .bin", "COM1 .svg",
+            "LPT9 .log", "CONOUT$ .txt",
         ] {
             let mut empty = io::Cursor::new(Vec::<u8>::new());
             assert!(matches!(

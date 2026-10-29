@@ -102,7 +102,10 @@ pub(crate) fn unsafe_component(component: &str) -> bool {
         return true;
     }
     let upper = component.to_ascii_uppercase();
-    let base = upper.split('.').next().unwrap_or("");
+    // Win32 ignores trailing ASCII spaces in a DOS device-name stem even
+    // when an extension follows it (for example, "CON .txt"). Validate the
+    // normalized stem rather than only the literal bytes before the dot.
+    let base = upper.split('.').next().unwrap_or("").trim_end_matches(' ');
     // Win32 reserves superscript 1/2/3 spellings as COM/LPT port names too.
     let port = ["COM", "LPT"].iter().any(|prefix| {
         base.strip_prefix(prefix).is_some_and(|suffix| {
@@ -426,6 +429,14 @@ mod transcript_tests {
             "LPT³",
             "CONIN$",
             "CONOUT$.txt",
+            "CON .txt",
+            "con  .svg",
+            "NUL .json",
+            "COM1 .bin",
+            "com9  .log",
+            "LPT² .png",
+            "CONIN$ .txt",
+            "CONOUT$  .dat",
         ] {
             let mut invalid = sample();
             invalid.objects[0].path = format!("media/{reserved}");
@@ -455,6 +466,10 @@ mod transcript_tests {
         let mut valid = sample();
         valid.objects[0].path = "media/compact-figures.svg".into();
         valid.pack_id = "scientific-figures".into();
+        assert_eq!(valid.validate(), Ok(()));
+        // Device-name prefixes that are not reserved must remain valid.
+        valid.objects[0].path = "media/CONtent .svg".into();
+        valid.pack_id = "COM10 .txt".into();
         assert_eq!(valid.validate(), Ok(()));
     }
 
