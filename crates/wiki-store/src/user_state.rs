@@ -1827,6 +1827,20 @@ mod tests {
             other.list_chat_threads(&key(), 124, 10).unwrap(),
             vec![thread]
         );
+        // An old-generation message must be rejected even when the new
+        // generation created an otherwise valid matching chat thread.
+        assert_eq!(
+            other
+                .append_chat_message_for_generation(old, &key(), 124, thread, "user", "stale")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            other
+                .append_chat_message_for_generation(current, &key(), 123, thread, "user", "wrong")
+                .unwrap(),
+            None
+        );
         assert!(other
             .append_chat_message_for_generation(current, &key(), 124, thread, "user", "fresh")
             .unwrap()
