@@ -267,7 +267,7 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
             let actual_keys = statement
                 .query_map(params![index], |row| {
                     Ok((
-                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, i64>(3)?,
@@ -280,7 +280,7 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
                         (name, descending, collation, column_id),
                         &(expected_name, expected_desc),
                     )| {
-                        name == expected_name
+                        name.as_deref() == Some(expected_name)
                             && *descending == expected_desc
                             && collation == "BINARY"
                             && *column_id >= 0
