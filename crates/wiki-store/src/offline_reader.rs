@@ -139,6 +139,7 @@ impl<'a> OfflineReader<'a> {
         key: &ArticleKey,
         expected: u64,
     ) -> Result<Option<Article>, ReaderError> {
+        Self::validate_expected_revision(expected)?;
         self.open_page(key)?
             .map(|article| Self::check_revision(article, expected))
             .transpose()
@@ -157,6 +158,7 @@ impl<'a> OfflineReader<'a> {
         if expected_target_page_id == 0 || expected_target_page_id > i64::MAX as u64 {
             return Err(CatalogError::InvalidCatalogEntry.into());
         }
+        Self::validate_expected_revision(expected_revision)?;
         self.open_page(source)?
             .map(|article| {
                 if article.key.project != source.project {
@@ -185,6 +187,7 @@ impl<'a> OfflineReader<'a> {
         title: &str,
         expected: u64,
     ) -> Result<Option<Article>, ReaderError> {
+        Self::validate_expected_revision(expected)?;
         self.open_title(project, title)?
             .map(|article| Self::check_revision(article, expected))
             .transpose()
@@ -204,6 +207,7 @@ impl<'a> OfflineReader<'a> {
         if expected_page_id == 0 || expected_page_id > i64::MAX as u64 {
             return Err(CatalogError::InvalidCatalogEntry.into());
         }
+        Self::validate_expected_revision(expected_revision)?;
         self.open_title(project, title)?
             .map(|article| {
                 Self::check_page_and_revision(article, expected_page_id, expected_revision)
@@ -223,6 +227,13 @@ impl<'a> OfflineReader<'a> {
             });
         }
         Self::check_revision(article, expected_revision)
+    }
+
+    fn validate_expected_revision(expected: u64) -> Result<(), ReaderError> {
+        if expected == 0 || expected > i64::MAX as u64 {
+            return Err(CatalogError::InvalidCatalogEntry.into());
+        }
+        Ok(())
     }
 
     fn check_revision(article: Article, expected: u64) -> Result<Article, ReaderError> {
@@ -543,6 +554,46 @@ mod tests {
                 actual: 1042
             })
         ));
+
+        // Persisted hard citations must carry a positive SQLite-safe revision
+        // even when their page/title is not installed. Invalid identities are
+        // rejected before any lookup rather than reported as absent or stale.
+        for invalid_revision in [0, u64::MAX] {
+            assert!(matches!(
+                reader.open_exact_revision(
+                    &ArticleKey {
+                        project: "enwiki".into(),
+                        page_id: 999,
+                    },
+                    invalid_revision,
+                ),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+            assert!(matches!(
+                reader.open_exact_page_target_revision(
+                    &ArticleKey {
+                        project: "enwiki".into(),
+                        page_id: 999,
+                    },
+                    42,
+                    invalid_revision,
+                ),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+            assert!(matches!(
+                reader.open_exact_title_revision("enwiki", "Not installed", invalid_revision),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+            assert!(matches!(
+                reader.open_exact_title_page_revision(
+                    "enwiki",
+                    "Not installed",
+                    42,
+                    invalid_revision,
+                ),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+        }
 
         // A page-ID redirect must not require a title-index entry. Removing
         // that secondary row models a stale derived index independently of
