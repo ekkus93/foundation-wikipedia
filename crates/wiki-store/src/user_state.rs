@@ -294,6 +294,23 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
     Ok(())
 }
 
+
+// SQLite integrity_check/quick_check do not consistently report violated
+// CHECK constraints across supported SQLite builds. Inspect the persisted
+// values explicitly before trusting a database or publishing a restored copy.
+fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
+    for query in [
+        "SELECT 1 FROM bookmarks WHERE page_id <= 0 OR revision_id <= 0 LIMIT 1",
+        "SELECT 1 FROM reading_positions WHERE page_id <= 0 OR revision_id <= 0 OR scroll_offset < 0 LIMIT 1",
+    ] {
+        let invalid: Option<i64> = conn.query_row(query, [], |row| row.get(0)).optional()?;
+        if invalid.is_some() {
+            return Err(UserStateError::InvalidValue);
+        }
+    }
+    Ok(())
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -384,6 +401,7 @@ impl UserState {
             return Err(UserStateError::InvalidValue);
         }
         validate_schema_shape(&source, schema)?;
+        validate_persisted_checks(&source)?;
 
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -494,6 +512,7 @@ impl UserState {
         }
         if version == 1 {
             validate_schema_shape(&conn, version)?;
+            validate_persisted_checks(&conn)?;
         }
         if version < 2 {
             // Indexes live in mutable user state, never in immutable article
@@ -512,6 +531,7 @@ impl UserState {
         }
         // Validate even a claimed-current schema before exposing user state.
         validate_schema_shape(&conn, SCHEMA_VERSION)?;
+        validate_persisted_checks(&conn)?;
         Ok(Self { conn })
     }
 
@@ -2065,6 +2085,27 @@ mod tests {
                  INSERT INTO reading_positions
                    (project,page_id,revision_id,scroll_offset)
                    VALUES ('enwiki',1,1,-10);
+                 PRAGMA ignore_check_constraints=OFF;",
+            ),
+            (
+                "invalid-bookmark-page",
+                "PRAGMA ignore_check_constraints=ON;
+                 INSERT INTO bookmarks (project,page_id,revision_id,anchor)
+                   VALUES ('enwiki',0,1,'anchor');
+                 PRAGMA ignore_check_constraints=OFF;",
+            ),
+            (
+                "invalid-bookmark-revision",
+                "PRAGMA ignore_check_constraints=ON;
+                 INSERT INTO bookmarks (project,page_id,revision_id,anchor)
+                   VALUES ('enwiki',1,-1,'anchor');
+                 PRAGMA ignore_check_constraints=OFF;",
+            ),
+            (
+                "invalid-position-revision",
+                "PRAGMA ignore_check_constraints=ON;
+                 INSERT INTO reading_positions (project,page_id,revision_id,scroll_offset)
+                   VALUES ('enwiki',1,0,10);
                  PRAGMA ignore_check_constraints=OFF;",
             ),
             (
