@@ -575,8 +575,7 @@ impl UserState {
         // Hold the shared writer lock across version discovery, validation and
         // migrations so concurrent processes cannot act on a stale schema.
         let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let version: i64 =
-            transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if !(0..=SCHEMA_VERSION).contains(&version) {
             return Err(UserStateError::UnsupportedSchema(version));
         }
@@ -1732,7 +1731,10 @@ mod tests {
         assert!(result_rx.recv_timeout(Duration::from_millis(100)).is_err());
         migrator.execute_batch("COMMIT").unwrap();
         assert_eq!(
-            result_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(),
+            result_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
             Some((123, "retained".into()))
         );
         worker.join().unwrap();
