@@ -1942,3 +1942,9 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** Verified opening now copies the published read-only SQLite FTS index to a private writable consistent snapshot via SQLite `VACUUM INTO`, then checks native FTS5 token/shadow integrity without altering the published database; errors fail closed and scratch cleanup is exercised.
 - **Regression:** Digest-verified article membership and ordinary search continue to pass after direct `docsize` shadow corruption, while verified opening rejects it; restoration from canonical frames succeeds. Source bytes unchanged on healthy open. See [scope and limitations](STORE_004_PUBLISHED_NATIVE_FTS_AUDIT_2026-10-28.md).
 - **Remaining:** Full source authenticity, required offline media, real production installed-pack path and device acceptance are outstanding. **STORE-004 remains unchecked.**
+
+### 2026-10-28 — STORE-004 / DUI-001 owned verified offline catalog reader (partial)
+
+- **Implementation:** `VerifiedOfflineCatalogReader::open` atomically requires the existing catalog's read-only path and the published index's full catalog/body/redirect/native FTS5 verification before exposing a borrowing `OfflineReader`. It is a shared Rust integration primitive, not a production installed-pack constructor; see [qualification scope](STORE_004_OWNED_OFFLINE_READER_2026-10-28.md).
+- **Regression:** Disk-backed edition-scoped search and redirect navigation succeed; direct FTS5 shadow-table corruption rejects construction; derived-index rebuild restores it.
+- **Remaining:** Publisher authenticity, mandatory media/attribution, installed-pack activation and actual Tauri/Android wiring are not implemented here. STORE-004 and DUI-001 remain unchecked.

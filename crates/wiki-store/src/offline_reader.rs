@@ -5,7 +5,7 @@
 //! Source-publisher authentication and pack activation are caller obligations.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wiki_model::{Article, ArticleKey, PageRecord};
 
@@ -29,6 +29,44 @@ impl From<CatalogError> for ReaderError {
 impl From<SearchError> for ReaderError {
     fn from(error: SearchError) -> Self {
         Self::Search(error)
+    }
+}
+
+/// A disk-backed catalog/FTS pair with both databases opened read-only and
+/// independently checked against the same digest-verified immutable snapshot.
+///
+/// This is an integration primitive, NOT an authenticated installed pack:
+/// callers must validate upstream publication, required offline media, active
+/// pack ownership, and protect the snapshot directory against replacement.
+pub struct VerifiedOfflineCatalogReader {
+    catalog: SnapshotCatalog,
+    index: OfflineSearchIndex,
+    root: PathBuf,
+}
+
+impl VerifiedOfflineCatalogReader {
+    /// Fail closed on missing/unsafe databases, corrupt canonical frames,
+    /// incomplete FTS membership, or inconsistent FTS5 shadow/posting data.
+    pub fn open(
+        catalog_path: &Path,
+        index_path: &Path,
+        snapshot_root: &Path,
+    ) -> Result<Self, ReaderError> {
+        let catalog = SnapshotCatalog::open_read_only(catalog_path)?;
+        let index =
+            OfflineSearchIndex::open_verified_read_only(index_path, &catalog, snapshot_root)?;
+        Ok(Self {
+            catalog,
+            index,
+            root: snapshot_root.to_path_buf(),
+        })
+    }
+
+    /// Borrow a local-only reader without repeating the activation-time scan.
+    /// The underlying catalog, FTS index and snapshot must remain immutable
+    /// for the lifetime of this verified handle.
+    pub fn reader(&self) -> OfflineReader<'_> {
+        OfflineReader::new(&self.catalog, &self.index, &self.root)
     }
 }
 
@@ -295,6 +333,50 @@ mod tests {
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
         let reader = OfflineReader::new_verified(&catalog, &index, &root).unwrap();
+
+        // Product adapters can now open both on-disk databases through one
+        // owned verified read-only entry point. This alone does not qualify
+        // an installed pack or mandatory media.
+        let published = root.join("published-fts.sqlite");
+        OfflineSearchIndex::replace_persisted_from_catalog(&published, &catalog, &root).unwrap();
+        let owned = VerifiedOfflineCatalogReader::open(&database, &published, &root).unwrap();
+        let from_disk = owned
+            .reader()
+            .open_title("enwiki", "Planet Earth")
+            .unwrap()
+            .unwrap();
+        assert_eq!(from_disk.key.page_id, 42);
+        assert_eq!(from_disk.revision.revision_id, 1042);
+        assert_eq!(
+            owned
+                .reader()
+                .search_project_articles("enwiki", "Earth", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(owned);
+
+        // Bypassing FTS5 mutation machinery leaves normal text queries
+        // intact, but verified disk-backed construction must refuse it.
+        {
+            let conn = rusqlite::Connection::open(&published).unwrap();
+            assert_eq!(
+                conn.execute(
+                    "UPDATE offline_article_fts_docsize SET sz=x'0000000000' WHERE id=1",
+                    [],
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open(&database, &published, &root),
+            Err(ReaderError::Search(SearchError::Sql(_)))
+        ));
+        OfflineSearchIndex::replace_persisted_from_catalog(&published, &catalog, &root).unwrap();
+        assert!(VerifiedOfflineCatalogReader::open(&database, &published, &root).is_ok());
+
         let empty_index = OfflineSearchIndex::in_memory().unwrap();
         assert!(matches!(
             OfflineReader::new_verified(&catalog, &empty_index, &root),
