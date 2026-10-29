@@ -448,6 +448,7 @@ fn main() {
             }
         }
         Some("verify-public-members") => {
+
             let supplied: Vec<OsString> = args.collect();
             let json = supplied.first().is_some_and(|value| value == "--json");
             let fields = if json { &supplied[1..] } else { &supplied[..] };
@@ -722,7 +723,10 @@ fn main() {
         }
         Some(command @ ("verify-stdin" | "inspect-stdin")) => {
             let fields: Vec<OsString> = args.collect();
-            let Some(max_bytes) = fields.as_slice().first().filter(|_| fields.len() == 1)
+            let Some(max_bytes) = fields
+                .as_slice()
+                .first()
+                .filter(|_| fields.len() == 1)
                 .and_then(|value| value.to_str())
                 .and_then(|value| value.parse::<u64>().ok())
             else {
