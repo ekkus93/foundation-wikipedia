@@ -301,10 +301,78 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
     for query in [
         "SELECT 1 FROM bookmarks WHERE page_id <= 0 OR revision_id <= 0 LIMIT 1",
         "SELECT 1 FROM reading_positions WHERE page_id <= 0 OR revision_id <= 0 OR scroll_offset < 0 LIMIT 1",
+        "SELECT 1 FROM history WHERE id <= 0 OR page_id <= 0 OR revision_id <= 0 OR visited_at <= 0 LIMIT 1",
+        "SELECT 1 FROM chat_threads WHERE id <= 0 OR page_id <= 0 OR revision_id <= 0 LIMIT 1",
+        "SELECT 1 FROM chat_messages WHERE id <= 0 OR thread_id <= 0
+           OR role NOT IN ('user', 'assistant')
+           OR length(CAST(content AS BLOB)) NOT BETWEEN 1 AND 65536
+           OR instr(content, char(0)) > 0 LIMIT 1",
+        "SELECT 1 FROM bookmarks WHERE length(CAST(anchor AS BLOB)) > 4096
+           OR instr(anchor, char(0)) > 0 LIMIT 1",
     ] {
         let invalid: Option<i64> = conn.query_row(query, [], |row| row.get(0)).optional()?;
         if invalid.is_some() {
             return Err(UserStateError::InvalidValue);
+        }
+    }
+    // Check the same canonical identity rules on existing rows that write
+    // APIs enforce. A limited list query can otherwise miss a poisoned row.
+    for table in ["bookmarks", "reading_positions", "history", "chat_threads"] {
+        let query = format!("SELECT project,page_id,revision_id FROM {table}");
+        let mut statement = conn.prepare(&query)?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (project, page_id, revision_id) = row?;
+            let page_id = u64::try_from(page_id).map_err(|_| UserStateError::InvalidValue)?;
+            let key = ArticleKey { project, page_id };
+            if key.validate().is_err() || revision_id <= 0 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+    }
+
+    for table in ["pack_owners", "builder_jobs", "settings"] {
+        let query = match table {
+            "pack_owners" => "SELECT pack_id,digest FROM pack_owners",
+            "builder_jobs" => "SELECT job_id,status FROM builder_jobs",
+            _ => "SELECT key,value FROM settings",
+        };
+        let mut statement = conn.prepare(query)?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (name, value) = row?;
+            let valid = match table {
+                "pack_owners" => valid_pack_id(&name) && valid_object_digest(&value),
+                "builder_jobs" => {
+                    valid_job_id(&name)
+                        && matches!(
+                            value.as_str(),
+                            "queued" | "running" | "succeeded" | "failed" | "cancelled"
+                        )
+                }
+                _ => {
+                    !name.is_empty()
+                        && name.len() <= 128
+                        && name.bytes().all(|b| {
+                            b.is_ascii_lowercase()
+                                || b.is_ascii_digit()
+                                || matches!(b, b'.' | b'_' | b'-')
+                        })
+                        && value.len() <= 4096
+                        && !value.contains('\0')
+                }
+            };
+            if !valid {
+                return Err(UserStateError::InvalidValue);
+            }
         }
     }
     Ok(())
@@ -2130,6 +2198,83 @@ mod tests {
                 "accepted corrupt user rows on restore: {name}"
             );
             assert!(!restored.exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_state_and_restore_reject_invalid_rows_outside_sqlite_checks() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-semantic-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for (name, tamper) in [
+            (
+                "history-timestamp",
+                "INSERT INTO history (project,page_id,revision_id,visited_at)
+                 VALUES ('enwiki',1,1,0);",
+            ),
+            (
+                "history-project",
+                "INSERT INTO history (project,page_id,revision_id,visited_at)
+                 VALUES ('ENWIKI',1,1,100);",
+            ),
+            (
+                "chat-revision",
+                "INSERT INTO chat_threads (project,page_id,revision_id)
+                 VALUES ('enwiki',1,0);",
+            ),
+            (
+                "chat-role",
+                "INSERT INTO chat_threads (project,page_id,revision_id)
+                 VALUES ('enwiki',1,1);
+                 INSERT INTO chat_messages (thread_id,role,content)
+                 VALUES (1,'system','untrusted');",
+            ),
+            (
+                "chat-content",
+                "INSERT INTO chat_threads (project,page_id,revision_id)
+                 VALUES ('enwiki',1,1);
+                 INSERT INTO chat_messages (thread_id,role,content)
+                 VALUES (1,'user','');",
+            ),
+            (
+                "pack-digest",
+                "INSERT INTO pack_owners (pack_id,digest) VALUES ('valid-pack','bad');",
+            ),
+            (
+                "job-status",
+                "INSERT INTO builder_jobs (job_id,status) VALUES ('job-1','unknown');",
+            ),
+            (
+                "setting-key",
+                "INSERT INTO settings (key,value) VALUES ('Bad Key','value');",
+            ),
+            (
+                "bookmark-anchor",
+                "INSERT INTO bookmarks (project,page_id,revision_id,anchor)
+                 VALUES ('enwiki',1,1,replace(hex(zeroblob(2049)),'0','x'));",
+            ),
+        ] {
+            let source = root.join(format!("{name}.sqlite"));
+            let destination = root.join(format!("{name}-restored.sqlite"));
+            let state = UserState::open(&source).unwrap();
+            state.conn.execute_batch(tamper).unwrap();
+            drop(state);
+            assert!(
+                matches!(UserState::open(&source), Err(UserStateError::InvalidValue)),
+                "accepted invalid existing row: {name}"
+            );
+            assert!(
+                UserState::restore_backup_to_new_path(&source, &destination).is_err(),
+                "accepted invalid backup row: {name}"
+            );
+            assert!(!destination.exists(), "published invalid backup: {name}");
         }
         fs::remove_dir_all(root).unwrap();
     }
