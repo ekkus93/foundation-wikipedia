@@ -315,9 +315,33 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
             return Err(UserStateError::InvalidValue);
         }
     }
+    // SQLite can report BLOB lengths without materializing arbitrarily large
+    // forged TEXT values into Rust Strings. Bound them before row decoding.
+    for query in [
+        "SELECT 1 FROM pack_owners WHERE length(CAST(pack_id AS BLOB)) > 128
+           OR length(CAST(digest AS BLOB)) > 64 LIMIT 1",
+        "SELECT 1 FROM builder_jobs WHERE length(CAST(job_id AS BLOB)) > 128
+           OR length(CAST(status AS BLOB)) > 16 LIMIT 1",
+        "SELECT 1 FROM settings WHERE length(CAST(key AS BLOB)) > 128
+           OR length(CAST(value AS BLOB)) > 4096 LIMIT 1",
+    ] {
+        let invalid: Option<i64> = conn.query_row(query, [], |row| row.get(0)).optional()?;
+        if invalid.is_some() {
+            return Err(UserStateError::InvalidValue);
+        }
+    }
     // Check the same canonical identity rules on existing rows that write
     // APIs enforce. A limited list query can otherwise miss a poisoned row.
     for table in ["bookmarks", "reading_positions", "history", "chat_threads"] {
+        let size_query = format!(
+            "SELECT 1 FROM {table} WHERE length(CAST(project AS BLOB)) > 255 LIMIT 1"
+        );
+        let oversized: Option<i64> = conn
+            .query_row(&size_query, [], |row| row.get(0))
+            .optional()?;
+        if oversized.is_some() {
+            return Err(UserStateError::InvalidValue);
+        }
         let query = format!("SELECT project,page_id,revision_id FROM {table}");
         let mut statement = conn.prepare(&query)?;
         let rows = statement.query_map([], |row| {
@@ -2259,6 +2283,22 @@ mod tests {
                 "bookmark-anchor",
                 "INSERT INTO bookmarks (project,page_id,revision_id,anchor)
                  VALUES ('enwiki',1,1,replace(hex(zeroblob(2049)),'0','x'));",
+            ),
+            (
+                "oversized-project",
+                "INSERT INTO history (project,page_id,revision_id,visited_at)
+                 VALUES (replace(hex(zeroblob(200)),'0','x'),1,1,100);",
+            ),
+            (
+                "oversized-pack-id",
+                "INSERT INTO pack_owners (pack_id,digest)
+                 VALUES (replace(hex(zeroblob(100)),'0','x'),
+                         'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');",
+            ),
+            (
+                "oversized-setting",
+                "INSERT INTO settings (key,value)
+                 VALUES ('large',replace(hex(zeroblob(2049)),'0','x'));",
             ),
         ] {
             let source = root.join(format!("{name}.sqlite"));
