@@ -297,6 +297,43 @@ impl UserState {
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
         }
+        // A database claiming the current schema must actually provide its
+        // required tables and indexes. Otherwise startup must fail before any
+        // UI command mistakes corruption for an empty bookmark/history list.
+        for table in [
+            "bookmarks",
+            "reading_positions",
+            "history",
+            "chat_threads",
+            "chat_messages",
+            "settings",
+            "pack_owners",
+            "builder_jobs",
+        ] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |row| row.get(0),
+            )?;
+            if count != 1 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+        for index in [
+            "history_recent_idx",
+            "chat_threads_article_idx",
+            "chat_messages_thread_idx",
+            "pack_owners_digest_idx",
+        ] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                params![index],
+                |row| row.get(0),
+            )?;
+            if count != 1 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
         Ok(Self { conn })
     }
 
@@ -1666,6 +1703,40 @@ mod tests {
             Err(UserStateError::InvalidValue)
         ));
         assert!(!target.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reopen_rejects_current_schema_missing_required_table_or_index() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-schema-audit-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let missing_table = root.join("missing-table.sqlite");
+        let state = UserState::open(&missing_table).unwrap();
+        state.conn.execute_batch("DROP TABLE builder_jobs;").unwrap();
+        drop(state);
+        assert!(matches!(
+            UserState::open(&missing_table),
+            Err(UserStateError::InvalidValue)
+        ));
+
+        let missing_index = root.join("missing-index.sqlite");
+        let state = UserState::open(&missing_index).unwrap();
+        state.conn.execute_batch("DROP INDEX history_recent_idx;").unwrap();
+        drop(state);
+        assert!(matches!(
+            UserState::open(&missing_index),
+            Err(UserStateError::InvalidValue)
+        ));
+        let healthy = UserState::open(&root.join("healthy.sqlite")).unwrap();
+        assert_eq!(healthy.setting("history.enabled").unwrap(), None);
+        drop(healthy);
         fs::remove_dir_all(root).unwrap();
     }
 
