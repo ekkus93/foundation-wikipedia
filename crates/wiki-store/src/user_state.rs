@@ -1831,7 +1831,10 @@ mod tests {
             .append_chat_message_for_generation(current, &key(), 124, thread, "user", "fresh")
             .unwrap()
             .is_some());
-        assert_eq!(other.chat_messages(&key(), 124, thread, 10).unwrap().len(), 1);
+        assert_eq!(
+            other.chat_messages(&key(), 124, thread, 10).unwrap().len(),
+            1
+        );
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
