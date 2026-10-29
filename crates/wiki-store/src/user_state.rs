@@ -2368,19 +2368,15 @@ mod tests {
 
         // A separate SQLite writer commits after the source's successful
         // semantic preflight, but before VACUUM INTO copies the source.
-        let result = UserState::restore_backup_with_preflight_hook(
-            &backup,
-            &destination,
-            || {
-                let writer = Connection::open(&backup).unwrap();
-                writer
-                    .execute(
-                        "INSERT INTO builder_jobs (job_id,status) VALUES (?1,?2)",
-                        params!["forged", "invalid"],
-                    )
-                    .unwrap();
-            },
-        );
+        let result = UserState::restore_backup_with_preflight_hook(&backup, &destination, || {
+            let writer = Connection::open(&backup).unwrap();
+            writer
+                .execute(
+                    "INSERT INTO builder_jobs (job_id,status) VALUES (?1,?2)",
+                    params!["forged", "invalid"],
+                )
+                .unwrap();
+        });
         assert!(matches!(result, Err(UserStateError::InvalidValue)));
         assert!(!destination.exists(), "published a tampered backup");
 
