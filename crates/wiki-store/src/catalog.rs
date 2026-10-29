@@ -689,7 +689,7 @@ impl SnapshotCatalog {
             if read_bytes != *bytes || file.metadata()?.len() != *bytes {
                 return Err(CatalogError::InvalidFrame);
             }
-            if format!("{:x}", hasher.finalize()) != *sha256 {
+            if !format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(sha256) {
                 return Err(CatalogError::DigestMismatch);
             }
         }
@@ -1535,6 +1535,15 @@ mod tests {
             "manifest.shard".to_owned(),
             (bytes.len() as u64, digest.clone()),
         )]);
+        assert_eq!(
+            catalog
+                .verify_manifest_shard_hashes(&root, &manifest)
+                .unwrap(),
+            1
+        );
+        // SHA-256 is a hexadecimal byte digest: uppercase manifest spelling
+        // must not be rejected when the authenticated bytes are identical.
+        manifest.get_mut("manifest.shard").unwrap().1 = digest.to_uppercase();
         assert_eq!(
             catalog
                 .verify_manifest_shard_hashes(&root, &manifest)
