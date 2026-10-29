@@ -53,6 +53,10 @@ impl VerifiedOfflineCatalogReader {
         snapshot_root: &Path,
     ) -> Result<Self, ReaderError> {
         let catalog = SnapshotCatalog::open_read_only(catalog_path)?;
+        // FTS membership audits only indexed records. Before publishing a
+        // reader, also reject unindexed shard tails, gaps, missing canonical
+        // title/alias rows and orphaned title mappings.
+        catalog.verify_shard_coverage(snapshot_root)?;
         let index =
             OfflineSearchIndex::open_verified_read_only(index_path, &catalog, snapshot_root)?;
         Ok(Self {
@@ -387,6 +391,50 @@ mod tests {
             1
         );
         drop(owned);
+
+        // FTS membership can still match every article when an unreferenced
+        // canonical alias has been deleted from the derived title index.
+        {
+            let conn = rusqlite::Connection::open(&database).unwrap();
+            assert_eq!(
+                conn.execute(
+                    "DELETE FROM title_index WHERE project='enwiki' AND normalized_title='The blue planet'",
+                    [],
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert!(OfflineSearchIndex::open_verified_read_only(&published, &catalog, &root).is_ok());
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open(&database, &published, &root),
+            Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
+        {
+            let conn = rusqlite::Connection::open(&database).unwrap();
+            assert_eq!(
+                conn.execute(
+                    "INSERT INTO title_index (project, normalized_title, page_id) VALUES ('enwiki', 'The blue planet', 42)",
+                    [],
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert!(VerifiedOfflineCatalogReader::open(&database, &published, &root).is_ok());
+
+        // A trailing byte outside every indexed frame is also invisible to
+        // per-record digest and FTS checks, but is not a complete snapshot.
+        let mut with_tail = bytes.clone();
+        with_tail.push(0x42);
+        fs::write(root.join("reader.shard"), &with_tail).unwrap();
+        assert!(OfflineSearchIndex::open_verified_read_only(&published, &catalog, &root).is_ok());
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open(&database, &published, &root),
+            Err(ReaderError::Catalog(CatalogError::InvalidFrame))
+        ));
+        fs::write(root.join("reader.shard"), &bytes).unwrap();
+        assert!(VerifiedOfflineCatalogReader::open(&database, &published, &root).is_ok());
 
         // Bypassing FTS5 mutation machinery leaves normal text queries
         // intact, but verified disk-backed construction must refuse it.
