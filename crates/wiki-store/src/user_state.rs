@@ -1719,7 +1719,10 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let missing_table = root.join("missing-table.sqlite");
         let state = UserState::open(&missing_table).unwrap();
-        state.conn.execute_batch("DROP TABLE builder_jobs;").unwrap();
+        state
+            .conn
+            .execute_batch("DROP TABLE builder_jobs;")
+            .unwrap();
         drop(state);
         assert!(matches!(
             UserState::open(&missing_table),
@@ -1728,7 +1731,10 @@ mod tests {
 
         let missing_index = root.join("missing-index.sqlite");
         let state = UserState::open(&missing_index).unwrap();
-        state.conn.execute_batch("DROP INDEX history_recent_idx;").unwrap();
+        state
+            .conn
+            .execute_batch("DROP INDEX history_recent_idx;")
+            .unwrap();
         drop(state);
         assert!(matches!(
             UserState::open(&missing_index),
