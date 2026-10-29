@@ -294,7 +294,6 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
     Ok(())
 }
 
-
 // SQLite integrity_check/quick_check do not consistently report violated
 // CHECK constraints across supported SQLite builds. Inspect the persisted
 // values explicitly before trusting a database or publishing a restored copy.
