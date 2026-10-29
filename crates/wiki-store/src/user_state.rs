@@ -2047,7 +2047,10 @@ mod tests {
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
         assert_eq!(owner.bookmark(&key()).unwrap(), Some((123, "keep".into())));
         assert_eq!(owner.object_owner_count(&"b".repeat(64)).unwrap(), 1);
-        assert_eq!(other.clear_history_for_generation(current).unwrap(), Some(1));
+        assert_eq!(
+            other.clear_history_for_generation(current).unwrap(),
+            Some(1)
+        );
         assert!(other.recent_history(10).unwrap().is_empty());
         assert_eq!(other.personal_generation().unwrap(), current + 1);
         drop(owner);
