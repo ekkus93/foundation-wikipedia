@@ -35,6 +35,7 @@ pub fn stage_container<R: Read + Seek>(
         || !name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+        || crate::manifest::unsafe_component(name)
     {
         return Err(ContainerError::UnsafeStagingPath);
     }
@@ -142,6 +143,22 @@ mod tests {
     use crate::manifest::{Object, Origin, FORMAT_VERSION};
     use crate::trust::TrustStatus;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn rejects_windows_device_names_before_touching_staging_parent() {
+        // Invalid names fail before parent metadata or input I/O is accessed.
+        let absent_parent = Path::new("missing-private-stage-parent");
+        for name in [
+            "CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "COM9.txt",
+            "LPT1", "lpt9.bin", "CONIN$", "CONOUT$",
+        ] {
+            let mut empty = io::Cursor::new(Vec::<u8>::new());
+            assert!(matches!(
+                stage_container(&mut empty, absent_parent, name),
+                Err(ContainerError::UnsafeStagingPath)
+            ));
+        }
+    }
 
     #[test]
     fn staged_custom_integrity_does_not_imply_official_publisher_trust() {

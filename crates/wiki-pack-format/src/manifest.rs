@@ -88,7 +88,7 @@ fn valid_wiki_project(value: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
-fn unsafe_component(component: &str) -> bool {
+pub(crate) fn unsafe_component(component: &str) -> bool {
     if component.is_empty()
         || component == "."
         || component == ".."
