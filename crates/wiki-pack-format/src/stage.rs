@@ -314,7 +314,10 @@ mod tests {
         impl Read for FailingStream {
             fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
                 if self.remaining == 0 {
-                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "provider disconnected"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "provider disconnected",
+                    ));
                 }
                 let limit = buffer.len().min(self.remaining);
                 let n = self.bytes.read(&mut buffer[..limit])?;
