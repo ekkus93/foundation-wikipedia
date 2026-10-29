@@ -1330,8 +1330,14 @@ mod tests {
         state.backup_to_path(&destination).unwrap();
 
         let backed_up = UserState::open(&destination).unwrap();
-        assert_eq!(backed_up.bookmark(&key()).unwrap(), Some((123, "saved".into())));
-        assert_eq!(backed_up.reading_position(&key()).unwrap(), Some((123, 8192)));
+        assert_eq!(
+            backed_up.bookmark(&key()).unwrap(),
+            Some((123, "saved".into()))
+        );
+        assert_eq!(
+            backed_up.reading_position(&key()).unwrap(),
+            Some((123, 8192))
+        );
         assert_eq!(backed_up.recent_history(10).unwrap().len(), 1);
         assert_eq!(backed_up.object_owner_count(&"a".repeat(64)).unwrap(), 1);
         drop(backed_up);
