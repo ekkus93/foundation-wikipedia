@@ -241,7 +241,6 @@ struct SpoolingReader<'a, R> {
 
 impl<R: Read> Read for SpoolingReader<'_, R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-
         let count = self.source.read(buffer)?;
         self.destination.write_all(&buffer[..count])?;
         Ok(count)
