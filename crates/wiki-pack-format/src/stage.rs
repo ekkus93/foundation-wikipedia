@@ -198,8 +198,14 @@ pub fn stage_container_stream<R: Read>(
         Ok((staged, root))
     })();
     drop(spool_file);
-    // The temporary archive is never retained, even when verification fails.
-    fs::remove_file(spool_path)?;
+    // If spool cleanup fails after successful staging, remove the new tree
+    // rather than reporting an error while leaving an apparently usable pack.
+    if let Err(error) = fs::remove_file(spool_path) {
+        if let Ok((_, root)) = &result {
+            fs::remove_dir_all(root)?;
+        }
+        return Err(ContainerError::Io(error));
+    }
     result
 }
 
@@ -296,6 +302,42 @@ mod tests {
             assert!(!parent.join(name).exists());
             assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
         }
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn nonseekable_import_cleans_spool_after_midstream_io_error() {
+        struct FailingStream {
+            bytes: io::Cursor<Vec<u8>>,
+            remaining: usize,
+        }
+        impl Read for FailingStream {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.remaining == 0 {
+                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "provider disconnected"));
+                }
+                let n = self.bytes.read(&mut buffer[..buffer.len().min(self.remaining)])?;
+                self.remaining -= n;
+                Ok(n)
+            }
+        }
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stream-error-{}-{stamp}", std::process::id()));
+        create_private_dir(&parent).unwrap();
+        let mut stream = FailingStream {
+            bytes: io::Cursor::new(vec![b'x'; 1024]),
+            remaining: 17,
+        };
+        assert!(matches!(
+            stage_container_stream(&mut stream, &parent, "interrupted"),
+            Err(ContainerError::Io(_))
+        ));
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
         fs::remove_dir_all(parent).unwrap();
     }
 
