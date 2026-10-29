@@ -422,6 +422,26 @@ impl UserState {
         if !(0..=SCHEMA_VERSION).contains(&version) {
             return Err(UserStateError::UnsupportedSchema(version));
         }
+        if version > 0 {
+            // Audit persisted rows before any v1 migration or user-state read.
+            // SQLite quick_check also detects violated CHECK constraints; it
+            // does not detect orphaned foreign keys, so check those separately.
+            let integrity: String =
+                conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+            if integrity != "ok" {
+                return Err(UserStateError::InvalidValue);
+            }
+            let orphan: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if orphan.is_some() {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
         if version == 0 {
             let transaction = conn.transaction()?;
             transaction.execute_batch(
@@ -2024,6 +2044,54 @@ mod tests {
         let healthy = UserState::open(&root.join("healthy.sqlite")).unwrap();
         assert_eq!(healthy.setting("history.enabled").unwrap(), None);
         drop(healthy);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reopen_rejects_existing_check_and_foreign_key_corruption() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-corrupt-rows-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for (name, tamper) in [
+            (
+                "violated-check",
+                "PRAGMA ignore_check_constraints=ON;
+                 INSERT INTO reading_positions
+                   (project,page_id,revision_id,scroll_offset)
+                   VALUES ('enwiki',1,1,-10);
+                 PRAGMA ignore_check_constraints=OFF;",
+            ),
+            (
+                "orphaned-chat",
+                "PRAGMA foreign_keys=OFF;
+                 INSERT INTO chat_messages (thread_id,role,content)
+                   VALUES (987654,'user','orphaned');",
+            ),
+        ] {
+            let source = root.join(format!("{name}.sqlite"));
+            let restored = root.join(format!("{name}-restored.sqlite"));
+            let state = UserState::open(&source).unwrap();
+            state.conn.execute_batch(tamper).unwrap();
+            drop(state);
+            assert!(
+                matches!(UserState::open(&source), Err(UserStateError::InvalidValue)),
+                "accepted corrupt user rows on reopen: {name}"
+            );
+            assert!(
+                matches!(
+                    UserState::restore_backup_to_new_path(&source, &restored),
+                    Err(UserStateError::InvalidValue)
+                ),
+                "accepted corrupt user rows on restore: {name}"
+            );
+            assert!(!restored.exists());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
