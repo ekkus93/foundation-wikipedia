@@ -106,7 +106,10 @@ fn unsafe_component(component: &str) -> bool {
     // Win32 reserves superscript 1/2/3 spellings as COM/LPT port names too.
     let port = ["COM", "LPT"].iter().any(|prefix| {
         base.strip_prefix(prefix).is_some_and(|suffix| {
-            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
         })
     });
     ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base) || port
@@ -235,7 +238,6 @@ impl Manifest {
                     return Err(ManifestError::DuplicateObject);
                 }
                 ancestor = parent;
-
             }
         }
         Ok(())
@@ -404,14 +406,31 @@ mod transcript_tests {
     #[test]
     fn rejects_windows_reserved_names_and_invalid_filename_characters() {
         for reserved in [
-            "CON", "con.txt", "PRN", "AUX.svg", "NUL", "COM1", "com9.log",
-            "LPT1", "LPT9.txt", "COM¹", "COM².txt", "COM³", "LPT¹",
-            "LPT².png", "LPT³", "CONIN$", "CONOUT$.txt",
+            "CON",
+            "con.txt",
+            "PRN",
+            "AUX.svg",
+            "NUL",
+            "COM1",
+            "com9.log",
+            "LPT1",
+            "LPT9.txt",
+            "COM¹",
+            "COM².txt",
+            "COM³",
+            "LPT¹",
+            "LPT².png",
+            "LPT³",
+            "CONIN$",
+            "CONOUT$.txt",
         ] {
             let mut invalid = sample();
             invalid.objects[0].path = format!("media/{reserved}");
             assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
-            assert_eq!(invalid.identity_transcript(), Err(ManifestError::UnsafeObject));
+            assert_eq!(
+                invalid.identity_transcript(),
+                Err(ManifestError::UnsafeObject)
+            );
 
             invalid = sample();
             invalid.pack_id = reserved.into();
@@ -478,5 +497,3 @@ mod transcript_tests {
             invalid.identity_transcript(),
             Err(ManifestError::UnsafeObject)
         );
-    }
-}
