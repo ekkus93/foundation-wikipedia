@@ -194,7 +194,12 @@ impl Manifest {
         if self.objects.len() > MAX_PACK_OBJECTS {
             return Err(ManifestError::ResourceBudget);
         }
-        let mut paths = BTreeSet::new();
+        let mut paths_lower = BTreeSet::new();
+        let mut paths_upper = BTreeSet::new();
+        // Distinct spellings of an intermediate directory must not merge on
+        // case-insensitive filesystems, even when leaf filenames differ.
+        let mut prefixes_lower = BTreeMap::new();
+        let mut prefixes_upper = BTreeMap::new();
         let mut digest_sizes = BTreeMap::new();
         let mut declared_bytes = 0_u64;
         for object in &self.objects {
@@ -215,11 +220,29 @@ impl Manifest {
             {
                 return Err(ManifestError::UnsafeObject);
             }
-            // Reject Unicode lowercase-equivalent paths as well as ASCII case
-            // aliases: a manifest must not describe two files that can map
-            // to the same destination on a case-insensitive filesystem.
-            if !paths.insert(object.path.to_lowercase()) {
+            // Unicode lowercasing alone misses case-insensitive aliases
+            // such as Greek sigma/final sigma and long-s/ASCII-s. Check
+            // both folds conservatively before touching the filesystem.
+            if !paths_lower.insert(object.path.to_lowercase())
+                || !paths_upper.insert(object.path.to_uppercase())
+            {
                 return Err(ManifestError::DuplicateObject);
+            }
+            let mut prefix = String::new();
+            for component in object.path.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                if prefixes_lower
+                    .insert(prefix.to_lowercase(), prefix.clone())
+                    .is_some_and(|previous| previous != prefix)
+                    || prefixes_upper
+                        .insert(prefix.to_uppercase(), prefix.clone())
+                        .is_some_and(|previous| previous != prefix)
+                {
+                    return Err(ManifestError::DuplicateObject);
+                }
             }
             // One content digest must have one consistent byte length.
             if digest_sizes
@@ -241,13 +264,15 @@ impl Manifest {
         // A file object cannot also be a parent directory of another object.
         // Validate after collecting all names so input order cannot affect
         // acceptance, including on case-insensitive filesystems.
-        for name in &paths {
-            let mut ancestor = name.as_str();
-            while let Some((parent, _)) = ancestor.rsplit_once('/') {
-                if paths.contains(parent) {
-                    return Err(ManifestError::DuplicateObject);
+        for paths in [&paths_lower, &paths_upper] {
+            for name in paths {
+                let mut ancestor = name.as_str();
+                while let Some((parent, _)) = ancestor.rsplit_once('/') {
+                    if paths.contains(parent) {
+                        return Err(ManifestError::DuplicateObject);
+                    }
+                    ancestor = parent;
                 }
-                ancestor = parent;
             }
         }
         Ok(())
@@ -516,6 +541,42 @@ mod transcript_tests {
         let mut valid = sample();
         valid.objects[0].path = "media/étage.svg".into();
         valid.objects[1].path = "media/etage.svg".into();
+        assert_eq!(valid.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_uppercase_equivalent_leaf_and_directory_names() {
+        for (left, right) in [
+            ("media/σ.svg", "media/ς.svg"),
+            ("media/ſ.svg", "media/s.svg"),
+        ] {
+            let mut invalid = sample();
+            invalid.objects[0].path = left.into();
+            invalid.objects[1].path = right.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+            invalid.objects.reverse();
+            assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+            assert_eq!(
+                invalid.identity_transcript(),
+                Err(ManifestError::DuplicateObject)
+            );
+        }
+
+        for (left, right) in [
+            ("media/σ/a.svg", "media/ς/b.svg"),
+            ("media/É/a.svg", "media/é/b.svg"),
+        ] {
+            let mut invalid = sample();
+            invalid.objects[0].path = left.into();
+            invalid.objects[1].path = right.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+            invalid.objects.reverse();
+            assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+        }
+
+        let mut valid = sample();
+        valid.objects[0].path = "media/σ/a.svg".into();
+        valid.objects[1].path = "media/τ/b.svg".into();
         assert_eq!(valid.validate(), Ok(()));
     }
 
