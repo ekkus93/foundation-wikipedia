@@ -178,7 +178,23 @@ pub fn stage_container_stream<R: Read>(
     parent: &Path,
     name: &str,
 ) -> Result<(Manifest, PathBuf), ContainerError> {
+    stage_container_stream_with_budget(input, parent, name, u64::MAX)
+}
+
+/// Like stage_container_stream, but bound the private spool to a caller-selected
+/// byte quota. The cap includes the envelope header, manifest and all objects.
+/// No more than max_spool_bytes are written even for an untrusted stream.
+/// The default API retains its existing behavior for callers without a quota.
+pub fn stage_container_stream_with_budget<R: Read>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+    max_spool_bytes: u64,
+) -> Result<(Manifest, PathBuf), ContainerError> {
     validate_stage_destination(parent, name)?;
+    if max_spool_bytes == 0 {
+        return Err(ContainerError::ResourceBudget);
+    }
     let mut spool = None;
     for _ in 0..16 {
         let nonce = std::time::SystemTime::now()
@@ -208,8 +224,14 @@ pub fn stage_container_stream<R: Read>(
             let mut tee = SpoolingReader {
                 source: input,
                 destination: &mut spool_file,
+                remaining: max_spool_bytes,
+                exceeded: false,
             };
-            verify_container(&mut tee)?
+            let verification = verify_container(&mut tee);
+            if tee.exceeded {
+                return Err(ContainerError::ResourceBudget);
+            }
+            verification?
         };
         spool_file.sync_all()?;
         spool_file.seek(SeekFrom::Start(0))?;
@@ -237,12 +259,29 @@ pub fn stage_container_stream<R: Read>(
 struct SpoolingReader<'a, R> {
     source: &'a mut R,
     destination: &'a mut File,
+    remaining: u64,
+    exceeded: bool,
 }
 
 impl<R: Read> Read for SpoolingReader<'_, R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let count = self.source.read(buffer)?;
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.remaining == 0 {
+            let mut probe = [0u8; 1];
+            return match self.source.read(&mut probe)? {
+                0 => Ok(0),
+                _ => {
+                    self.exceeded = true;
+                    Err(io::Error::other("pack stream spool quota exceeded"))
+                }
+            };
+        }
+        let allowed = self.remaining.min(buffer.len() as u64) as usize;
+        let count = self.source.read(&mut buffer[..allowed])?;
         self.destination.write_all(&buffer[..count])?;
+        self.remaining -= count as u64;
         Ok(count)
     }
 }
@@ -325,6 +364,51 @@ mod tests {
             assert!(!parent.join(name).exists());
             assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
         }
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn nonseekable_spool_quota_accepts_exact_size_and_cleans_up_on_overflow() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stream-quota-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let payload = b"offline diagram";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "bounded".into(),
+            project: "enwiki".into(),
+            snapshot: "20261029".into(),
+            origin: Origin::Custom {
+                definition_id: "topic".into(),
+            },
+            objects: vec![Object {
+                path: "media/diagram.svg".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        let mut encoded = Vec::new();
+        crate::container::write_container(&mut encoded, &manifest, |_, out| out.write_all(payload))
+            .unwrap();
+        let quota = encoded.len() as u64;
+        let mut exact = ReadOnly(io::Cursor::new(encoded.clone()));
+        let (_, root) =
+            stage_container_stream_with_budget(&mut exact, &parent, "exact", quota).unwrap();
+        assert_eq!(fs::read(root.join("media/diagram.svg")).unwrap(), payload);
+
+        let mut overflow = ReadOnly(io::Cursor::new(encoded));
+        assert!(matches!(
+            stage_container_stream_with_budget(&mut overflow, &parent, "overflow", quota - 1),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert!(!parent.join("overflow").exists());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
         fs::remove_dir_all(parent).unwrap();
     }
 
