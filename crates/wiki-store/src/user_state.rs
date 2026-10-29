@@ -220,7 +220,8 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
     if version >= 2 {
         // Name-only checks can accept a forged index with different query
         // semantics. Validate the owning table, keys, collation and direction.
-        const INDEXES: &[(&str, &str, &[(&str, i64)])] = &[
+        type ExpectedIndex = (&'static str, &'static str, &'static [(&'static str, i64)]);
+        const INDEXES: &[ExpectedIndex] = &[
             (
                 "history",
                 "history_recent_idx",
