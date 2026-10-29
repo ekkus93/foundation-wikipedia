@@ -382,7 +382,10 @@ mod transcript_tests {
             invalid = sample();
             invalid.objects[0].path = format!("media/{invisible}image.svg");
             assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
-            assert_eq!(invalid.identity_transcript(), Err(ManifestError::UnsafeObject));
+            assert_eq!(
+                invalid.identity_transcript(),
+                Err(ManifestError::UnsafeObject)
+            );
         }
         let mut valid = sample();
         valid.pack_id = "می\u{200c}روم".into();
