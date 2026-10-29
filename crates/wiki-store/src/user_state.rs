@@ -10,6 +10,8 @@ use wiki_model::ArticleKey;
 
 pub const SCHEMA_VERSION: i64 = 2;
 
+const PERSONAL_GENERATION_KEY: &str = "internal.personal_generation";
+
 #[derive(Debug)]
 pub enum UserStateError {
     Sql(rusqlite::Error),
@@ -850,6 +852,89 @@ impl UserState {
         self.set_setting("history.enabled", if enabled { "true" } else { "false" })
     }
 
+    /// Durable privacy fence shared by all handles of this user-state DB.
+    /// A queued operation captures this token when the user initiates it, and
+    /// must supply it to a guarded write after any asynchronous work finishes.
+    pub fn personal_generation(&self) -> Result<u64, UserStateError> {
+        Self::generation_from(&self.conn)
+    }
+
+    fn generation_from(conn: &Connection) -> Result<u64, UserStateError> {
+        let saved: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key=?1",
+                params![PERSONAL_GENERATION_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match saved {
+            None => Ok(0),
+            Some(value) => {
+                let number = value
+                    .parse::<u64>()
+                    .map_err(|_| UserStateError::InvalidValue)?;
+                if number > i64::MAX as u64 || value != number.to_string() {
+                    return Err(UserStateError::InvalidValue);
+                }
+                Ok(number)
+            }
+        }
+    }
+
+    /// A database-atomic, exact-generation bookmark upsert. Stale queued
+    /// writes cannot recreate personal data deleted by another process.
+    pub fn set_bookmark_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        anchor: &str,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64 || anchor.len() > 4096 || anchor.contains('\0') {
+            return Err(UserStateError::InvalidValue);
+        }
+        let changed = self.conn.execute(
+            "INSERT INTO bookmarks(project,page_id,revision_id,anchor)
+             SELECT ?1,?2,?3,?4
+             WHERE COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?5
+             ON CONFLICT(project,page_id) DO UPDATE SET
+                 revision_id=excluded.revision_id,anchor=excluded.anchor",
+            params![key.project, page, revision, anchor, generation.to_string()],
+        )?;
+        Ok(changed != 0)
+    }
+
+    /// History opt-in and the durable privacy generation are checked in the
+    /// same SQLite statement that inserts the visit, across DB connections.
+    pub fn record_visit_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        visited_at: i64,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64 || visited_at <= 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let changed = self.conn.execute(
+            "INSERT INTO history(project,page_id,revision_id,visited_at)
+             SELECT ?1,?2,?3,?4
+             WHERE EXISTS (
+                 SELECT 1 FROM settings
+                 WHERE key='history.enabled' AND value='true'
+             )
+             AND COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?5",
+            params![key.project, page, revision, visited_at, generation.to_string()],
+        )?;
+        Ok(changed != 0)
+    }
+
     /// Returns false when history is disabled, without creating a visit record.
     pub fn record_visit(
         &self,
@@ -916,7 +1001,22 @@ impl UserState {
     /// managed installed-pack ownership, builder jobs and non-secret settings.
     /// SQLite foreign keys cascade chat message deletion from chat threads.
     pub fn clear_personal_reading_data(&mut self) -> Result<(), UserStateError> {
-        let tx = self.conn.transaction()?;
+        // Serialize the persistent epoch bump and deletion against writes from
+        // other SQLite connections. A previously captured token is invalidated
+        // before those connections can commit a guarded personal-data write.
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let generation = Self::generation_from(&tx)?;
+        let next = generation
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(UserStateError::InvalidValue)?;
+        tx.execute(
+            "INSERT INTO settings(key,value) VALUES (?1,?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![PERSONAL_GENERATION_KEY, next.to_string()],
+        )?;
         tx.execute_batch(
             "DELETE FROM bookmarks;
              DELETE FROM reading_positions;
@@ -1189,7 +1289,8 @@ impl UserState {
 
     /// Never store provider API keys here; use OS secret storage.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), UserStateError> {
-        if key.is_empty()
+        if key == PERSONAL_GENERATION_KEY
+            || key.is_empty()
             || key.len() > 128
             || !key.bytes().all(|b| {
                 b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
@@ -1208,7 +1309,8 @@ impl UserState {
     }
 
     pub fn delete_setting(&self, key: &str) -> Result<bool, UserStateError> {
-        if key.is_empty()
+        if key == PERSONAL_GENERATION_KEY
+            || key.is_empty()
             || key.len() > 128
             || !key.bytes().all(|b| {
                 b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
@@ -1550,6 +1652,84 @@ mod tests {
         assert!(user.remove_builder_job("build_01").unwrap());
         assert!(!user.remove_builder_job("build_01").unwrap());
         assert_eq!(user.builder_job_status("build_01").unwrap(), None);
+    }
+
+    #[test]
+    fn cross_handle_personal_generation_rejects_stale_queued_writes() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-generation-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("user.sqlite");
+        let mut owner = UserState::open(&database).unwrap();
+        let other = UserState::open(&database).unwrap();
+        owner.set_history_enabled(true).unwrap();
+        owner.add_pack_owner("science", &"a".repeat(64)).unwrap();
+
+        let old = other.personal_generation().unwrap();
+        assert_eq!(old, 0);
+        assert!(other
+            .set_bookmark_for_generation(old, &key(), 123, "before")
+            .unwrap());
+        assert!(other
+            .record_visit_for_generation(old, &key(), 123, 100)
+            .unwrap());
+        owner.clear_personal_reading_data().unwrap();
+        assert_eq!(owner.personal_generation().unwrap(), 1);
+        assert!(!other
+            .set_bookmark_for_generation(old, &key(), 123, "stale")
+            .unwrap());
+        assert!(!other
+            .record_visit_for_generation(old, &key(), 123, 101)
+            .unwrap());
+        assert!(other.bookmark(&key()).unwrap().is_none());
+        assert!(other.recent_history(10).unwrap().is_empty());
+
+        let current = other.personal_generation().unwrap();
+        assert_eq!(current, 1);
+        assert!(other
+            .set_bookmark_for_generation(current, &key(), 124, "fresh")
+            .unwrap());
+        assert!(other
+            .record_visit_for_generation(current, &key(), 124, 102)
+            .unwrap());
+        assert_eq!(other.bookmark(&key()).unwrap(), Some((124, "fresh".into())));
+        assert_eq!(other.recent_history(10).unwrap().len(), 1);
+        assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
+
+        for operation in [
+            owner.set_setting(PERSONAL_GENERATION_KEY, "0"),
+            owner.delete_setting(PERSONAL_GENERATION_KEY).map(|_| ()),
+        ] {
+            assert!(matches!(operation, Err(UserStateError::InvalidValue)));
+        }
+        assert_eq!(owner.personal_generation().unwrap(), 1);
+        drop(owner);
+        drop(other);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generation_overflow_preserves_personal_data_on_failed_clear() {
+        let mut state = UserState::in_memory().unwrap();
+        state.set_bookmark(&key(), 123, "keep").unwrap();
+        state.conn.execute(
+            "INSERT INTO settings(key,value) VALUES (?1,?2)",
+            params![PERSONAL_GENERATION_KEY, i64::MAX.to_string()],
+        ).unwrap();
+        assert!(matches!(
+            state.clear_personal_reading_data(),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(
+            state.bookmark(&key()).unwrap(),
+            Some((123, "keep".into()))
+        );
     }
 
     #[test]
