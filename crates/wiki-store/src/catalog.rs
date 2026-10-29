@@ -181,7 +181,9 @@ fn read_verified_frame(
         return Err(CatalogError::InvalidFrame);
     }
     let digest = format!("{:x}", Sha256::digest(&frame));
-    if expected_digest.is_some_and(|expected| expected != digest) {
+    // Hexadecimal SHA-256 spelling is case-insensitive. The catalog accepts
+    // both cases; a verified uppercase digest must not fail a later lookup.
+    if expected_digest.is_some_and(|expected| !expected.eq_ignore_ascii_case(&digest)) {
         return Err(CatalogError::DigestMismatch);
     }
     Ok((decode_record_at(&frame, 0)?.record, digest))
@@ -1150,6 +1152,50 @@ mod tests {
         fs::write(&path, &tampered).unwrap();
         assert!(matches!(
             catalog.read_record(&root, &second_key),
+            Err(CatalogError::DigestMismatch)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uppercase_catalog_frame_digest_preserves_verified_reads() {
+        let root = temp_root();
+        let mut frame = Vec::new();
+        let record = article(42, "Earth");
+        append_record_frame(&mut frame, &record).unwrap();
+        fs::write(root.join("case.shard"), &frame).unwrap();
+        let mut catalog = SnapshotCatalog::in_memory().unwrap();
+        let key = catalog
+            .insert_verified(&root, "case.shard", 0, frame.len() as u64)
+            .unwrap();
+        let digest = catalog.lookup_entry(&key).unwrap().unwrap().frame_sha256;
+        assert!(digest.bytes().any(|b| b.is_ascii_alphabetic()));
+        catalog
+            .conn
+            .execute(
+                "UPDATE records SET frame_sha256=?1 WHERE project='enwiki' AND page_id=42",
+                params![digest.to_uppercase()],
+            )
+            .unwrap();
+        assert_eq!(catalog.read_record(&root, &key).unwrap(), Some(record));
+        assert_eq!(catalog.verify_shard_coverage(&root).unwrap(), 1);
+
+        // Case folding cannot turn an incorrect digest into a valid one.
+        let replacement = if digest.starts_with('0') { '1' } else { '0' };
+        let wrong = format!("{replacement}{}", &digest[1..]);
+        catalog
+            .conn
+            .execute(
+                "UPDATE records SET frame_sha256=?1 WHERE project='enwiki' AND page_id=42",
+                params![wrong.to_uppercase()],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.read_record(&root, &key),
+            Err(CatalogError::DigestMismatch)
+        ));
+        assert!(matches!(
+            catalog.verify_shard_coverage(&root),
             Err(CatalogError::DigestMismatch)
         ));
         fs::remove_dir_all(root).unwrap();
