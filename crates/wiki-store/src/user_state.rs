@@ -1,7 +1,7 @@
 //! Mutable user state stored separately from immutable Wikipedia snapshots.
 //! Initial STATE-001 migration; not yet a backup or history privacy manager.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::Path;
@@ -572,7 +572,11 @@ impl UserState {
 
     fn initialize(mut conn: Connection) -> Result<Self, UserStateError> {
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        // Hold the shared writer lock across version discovery, validation and
+        // migrations so concurrent processes cannot act on a stale schema.
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let version: i64 =
+            transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if !(0..=SCHEMA_VERSION).contains(&version) {
             return Err(UserStateError::UnsupportedSchema(version));
         }
@@ -581,11 +585,11 @@ impl UserState {
             // SQLite quick_check also detects violated CHECK constraints; it
             // does not detect orphaned foreign keys, so check those separately.
             let integrity: String =
-                conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+                transaction.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
             if integrity != "ok" {
                 return Err(UserStateError::InvalidValue);
             }
-            let orphan: Option<i64> = conn
+            let orphan: Option<i64> = transaction
                 .query_row(
                     "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
                     [],
@@ -597,7 +601,6 @@ impl UserState {
             }
         }
         if version == 0 {
-            let transaction = conn.transaction()?;
             transaction.execute_batch(
                 "CREATE TABLE bookmarks (
                    project TEXT NOT NULL,
@@ -644,17 +647,15 @@ impl UserState {
                  );",
             )?;
             transaction.pragma_update(None, "user_version", 1)?;
-            transaction.commit()?;
         }
         if version == 1 {
-            validate_schema_shape(&conn, version)?;
-            validate_persisted_checks(&conn)?;
+            validate_schema_shape(&transaction, version)?;
+            validate_persisted_checks(&transaction)?;
         }
         if version < 2 {
             // Indexes live in mutable user state, never in immutable article
             // snapshots. A single transaction keeps a v1 database recoverable
             // if a migration fails or the process is interrupted.
-            let transaction = conn.transaction()?;
             transaction.execute_batch(
                 "CREATE INDEX history_recent_idx ON history(visited_at DESC, id DESC);
                  CREATE INDEX chat_threads_article_idx
@@ -663,11 +664,11 @@ impl UserState {
                  CREATE INDEX pack_owners_digest_idx ON pack_owners(digest, pack_id);",
             )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            transaction.commit()?;
         }
         // Validate even a claimed-current schema before exposing user state.
-        validate_schema_shape(&conn, SCHEMA_VERSION)?;
-        validate_persisted_checks(&conn)?;
+        validate_schema_shape(&transaction, SCHEMA_VERSION)?;
+        validate_persisted_checks(&transaction)?;
+        transaction.commit()?;
         Ok(Self { conn })
     }
 
@@ -1673,6 +1674,113 @@ mod tests {
         );
         assert_eq!(first.setting("pending").unwrap().as_deref(), Some("write"));
         drop(first);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_schema_upgrade_rechecks_version_after_writer_lock() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-migration-lock-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("user.sqlite");
+        let state = UserState::open(&db).unwrap();
+        state.set_bookmark(&key(), 123, "retained").unwrap();
+        state
+            .conn
+            .execute_batch(
+                "DROP INDEX history_recent_idx;
+                 DROP INDEX chat_threads_article_idx;
+                 DROP INDEX chat_messages_thread_idx;
+                 DROP INDEX pack_owners_digest_idx;
+                 PRAGMA user_version=1;",
+            )
+            .unwrap();
+        drop(state);
+
+        // Simulate another process finishing the v1 -> v2 migration while
+        // this process opens the same database. Version discovery must occur
+        // AFTER the second opener acquires its own writer lock.
+        let migrator = Connection::open(&db).unwrap();
+        migrator
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE INDEX history_recent_idx ON history(visited_at DESC, id DESC);
+                 CREATE INDEX chat_threads_article_idx
+                   ON chat_threads(project, page_id, revision_id, id DESC);
+                 CREATE INDEX chat_messages_thread_idx ON chat_messages(thread_id, id);
+                 CREATE INDEX pack_owners_digest_idx ON pack_owners(digest, pack_id);
+                 PRAGMA user_version=2;",
+            )
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = UserState::open(&db).and_then(|state| state.bookmark(&key()));
+            result_tx.send(result).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(result_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        migrator.execute_batch("COMMIT").unwrap();
+        assert_eq!(
+            result_rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(),
+            Some((123, "retained".into()))
+        );
+        worker.join().unwrap();
+        drop(migrator);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parallel_initializers_publish_one_complete_schema() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-first-open-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("user.sqlite");
+        let gate = Arc::new(Barrier::new(9));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let db = db.clone();
+            let gate = Arc::clone(&gate);
+            workers.push(thread::spawn(move || {
+                gate.wait();
+                let state = UserState::open(&db).unwrap();
+                let version: i64 = state
+                    .conn
+                    .query_row("PRAGMA user_version", [], |row| row.get(0))
+                    .unwrap();
+                assert_eq!(version, SCHEMA_VERSION);
+                state.set_setting("migration.test", "ready").unwrap();
+            }));
+        }
+        gate.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let reopened = UserState::open(&db).unwrap();
+        assert_eq!(
+            reopened.setting("migration.test").unwrap().as_deref(),
+            Some("ready")
+        );
+        drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }
 
