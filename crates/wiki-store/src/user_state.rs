@@ -1176,6 +1176,48 @@ impl UserState {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Append a revision-scoped chat message only while the captured privacy
+    /// generation remains current. Thread identity and generation are checked
+    /// in the exact SQLite statement performing the insert.
+    pub fn append_chat_message_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        role: &str,
+        content: &str,
+    ) -> Result<Option<i64>, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64
+            || thread_id <= 0
+            || !matches!(role, "user" | "assistant")
+            || content.is_empty()
+            || content.len() > 65536
+            || content.contains('\0')
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        let changed = self.conn.execute(
+            "INSERT INTO chat_messages(thread_id,role,content)
+             SELECT id,?1,?2 FROM chat_threads
+             WHERE id=?3 AND project=?4 AND page_id=?5 AND revision_id=?6
+             AND COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?7",
+            params![
+                role,
+                content,
+                thread_id,
+                key.project,
+                page,
+                revision,
+                generation.to_string()
+            ],
+        )?;
+        Ok((changed != 0).then(|| self.conn.last_insert_rowid()))
+    }
+
     pub fn chat_messages(
         &self,
         key: &ArticleKey,
@@ -1755,6 +1797,12 @@ mod tests {
         assert!(other.bookmark(&key()).unwrap().is_none());
         assert!(other.reading_position(&key()).unwrap().is_none());
         assert!(other.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        assert_eq!(
+            other
+                .append_chat_message_for_generation(old, &key(), 123, 1, "user", "stale")
+                .unwrap(),
+            None
+        );
         assert!(other.recent_history(10).unwrap().is_empty());
 
         let current = other.personal_generation().unwrap();
@@ -1779,6 +1827,11 @@ mod tests {
             other.list_chat_threads(&key(), 124, 10).unwrap(),
             vec![thread]
         );
+        assert!(other
+            .append_chat_message_for_generation(current, &key(), 124, thread, "user", "fresh")
+            .unwrap()
+            .is_some());
+        assert_eq!(other.chat_messages(&key(), 124, thread, 10).unwrap().len(), 1);
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
