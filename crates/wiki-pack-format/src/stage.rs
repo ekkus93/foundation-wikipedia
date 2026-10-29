@@ -373,10 +373,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "wiki-stream-quota-{}-{stamp}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stream-quota-{}-{stamp}", std::process::id()));
         create_private_dir(&parent).unwrap();
         let payload = b"offline diagram";
         let manifest = Manifest {
