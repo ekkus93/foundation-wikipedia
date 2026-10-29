@@ -26,3 +26,9 @@ Both commands require one decimal `max-input-bytes` argument. The budget include
 ## Remaining acceptance
 
 The byte-budgeted stdin verifier is not an Android SAF integration, signed official pack verifier, media-completeness proof or installation/activation pipeline. `PACK-004` and `TRUST-003` remain unchecked pending those independent requirements and real-device acceptance.
+
+## Follow-up — manifest allocation preflight
+
+The bounded verifier now rejects an attacker-controlled transcript length that cannot fit within the declared total input-byte budget **before allocating** the transcript. It reads only the 12-byte envelope header for this preflight and then replays those bytes into the unchanged full verifier. A new unit regression supplies a 64-MiB declared transcript with a 32-byte budget and asserts `ResourceBudget` after consuming exactly 12 bytes.
+
+Initial source `7e79fde528527a501aa00c9a18e2ece04daa1697` failed formatting ([Rust 40882454558](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40882454558)); corrected exact source **`a0af3e078c36db8d501c27b92e9a2bcac63a325d`** passed [Rust workspace 40882587232](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40882587232), [Platform shells 40882587233](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40882587233), and [Android Rust ABI 40882587584](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40882587584). This remains a local integrity/memory-safety check, not signed-pack or installed-offline qualification.
