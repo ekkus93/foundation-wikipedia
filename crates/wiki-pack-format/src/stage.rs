@@ -253,10 +253,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "wiki-stream-stage-{}-{stamp}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stream-stage-{}-{stamp}", std::process::id()));
         create_private_dir(&parent).unwrap();
         let payload = b"offline figure";
         let manifest = Manifest {
@@ -274,10 +272,8 @@ mod tests {
             }],
         };
         let mut encoded = Vec::new();
-        crate::container::write_container(&mut encoded, &manifest, |_, out| {
-            out.write_all(payload)
-        })
-        .unwrap();
+        crate::container::write_container(&mut encoded, &manifest, |_, out| out.write_all(payload))
+            .unwrap();
 
         let mut stream = ReadOnly(io::Cursor::new(encoded.clone()));
         let (staged, root, status) =
@@ -289,10 +285,7 @@ mod tests {
 
         // Corrupt bytes and appended payloads must not leave a partial tree
         // or an archive spool on disk.
-        for (name, mut invalid) in [
-            ("corrupt", encoded.clone()),
-            ("trailing", encoded),
-        ] {
+        for (name, mut invalid) in [("corrupt", encoded.clone()), ("trailing", encoded)] {
             if name == "corrupt" {
                 *invalid.last_mut().unwrap() ^= 1;
             } else {
@@ -315,11 +308,7 @@ mod tests {
             }
         }
         assert!(matches!(
-            stage_container_stream(
-                &mut PanicOnRead,
-                Path::new("nonexistent-parent"),
-                "CON.txt"
-            ),
+            stage_container_stream(&mut PanicOnRead, Path::new("nonexistent-parent"), "CON.txt"),
             Err(ContainerError::UnsafeStagingPath)
         ));
     }
