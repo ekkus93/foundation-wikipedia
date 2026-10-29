@@ -316,7 +316,8 @@ mod tests {
                 if self.remaining == 0 {
                     return Err(io::Error::new(io::ErrorKind::BrokenPipe, "provider disconnected"));
                 }
-                let n = self.bytes.read(&mut buffer[..buffer.len().min(self.remaining)])?;
+                let limit = buffer.len().min(self.remaining);
+                let n = self.bytes.read(&mut buffer[..limit])?;
                 self.remaining -= n;
                 Ok(n)
             }
@@ -329,8 +330,11 @@ mod tests {
         let parent =
             std::env::temp_dir().join(format!("wiki-stream-error-{}-{stamp}", std::process::id()));
         create_private_dir(&parent).unwrap();
+        let mut encoded = b"FWPACK01".to_vec();
+        encoded.extend_from_slice(&50u32.to_be_bytes());
+        encoded.extend_from_slice(&[0u8; 1024]);
         let mut stream = FailingStream {
-            bytes: io::Cursor::new(vec![b'x'; 1024]),
+            bytes: io::Cursor::new(encoded),
             remaining: 17,
         };
         assert!(matches!(
@@ -418,4 +422,3 @@ mod tests {
         }
         fs::remove_dir_all(parent).unwrap();
     }
-}
