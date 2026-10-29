@@ -930,7 +930,13 @@ impl UserState {
              AND COALESCE(
                  (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
              )=?5",
-            params![key.project, page, revision, visited_at, generation.to_string()],
+            params![
+                key.project,
+                page,
+                revision,
+                visited_at,
+                generation.to_string()
+            ],
         )?;
         Ok(changed != 0)
     }
@@ -1718,18 +1724,18 @@ mod tests {
     fn generation_overflow_preserves_personal_data_on_failed_clear() {
         let mut state = UserState::in_memory().unwrap();
         state.set_bookmark(&key(), 123, "keep").unwrap();
-        state.conn.execute(
-            "INSERT INTO settings(key,value) VALUES (?1,?2)",
-            params![PERSONAL_GENERATION_KEY, i64::MAX.to_string()],
-        ).unwrap();
+        state
+            .conn
+            .execute(
+                "INSERT INTO settings(key,value) VALUES (?1,?2)",
+                params![PERSONAL_GENERATION_KEY, i64::MAX.to_string()],
+            )
+            .unwrap();
         assert!(matches!(
             state.clear_personal_reading_data(),
             Err(UserStateError::InvalidValue)
         ));
-        assert_eq!(
-            state.bookmark(&key()).unwrap(),
-            Some((123, "keep".into()))
-        );
+        assert_eq!(state.bookmark(&key()).unwrap(), Some((123, "keep".into())));
     }
 
     #[test]
