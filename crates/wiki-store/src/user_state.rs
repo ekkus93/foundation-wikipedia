@@ -1335,7 +1335,13 @@ impl UserState {
              AND COALESCE(
                  (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
              )=?5",
-            params![thread_id, key.project, page, revision, generation.to_string()],
+            params![
+                thread_id,
+                key.project,
+                page,
+                revision,
+                generation.to_string()
+            ],
         )? != 0)
     }
 
@@ -1931,9 +1937,14 @@ mod tests {
             .unwrap());
         assert_eq!(other.bookmark(&key()).unwrap(), Some((124, "fresh".into())));
         assert_eq!(other.reading_position(&key()).unwrap(), Some((124, 800)));
-        assert_eq!(other.chat_messages(&key(), 124, thread, 10).unwrap().len(), 1);
+        assert_eq!(
+            other.chat_messages(&key(), 124, thread, 10).unwrap().len(),
+            1
+        );
 
-        assert!(other.remove_bookmark_for_generation(current, &key()).unwrap());
+        assert!(other
+            .remove_bookmark_for_generation(current, &key())
+            .unwrap());
         assert!(other
             .remove_reading_position_for_generation(current, &key())
             .unwrap());
