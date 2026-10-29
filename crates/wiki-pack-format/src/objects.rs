@@ -76,6 +76,9 @@ pub fn verify_manifest_directory(
                 format!("{prefix}/{name}")
             };
             let kind = entry.file_type().map_err(ObjectVerifyError::Io)?;
+            if kind.is_symlink() || (!kind.is_file() && !kind.is_dir()) {
+                return Err(ObjectVerifyError::UnsafePath);
+            }
             if kind.is_dir() && expected_dirs.contains(&relative) {
                 pending.push((entry.path(), relative));
             } else if !(kind.is_file() && expected_files.contains(relative.as_str())) {
