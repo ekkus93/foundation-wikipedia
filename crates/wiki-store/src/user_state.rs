@@ -333,9 +333,8 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
     // Check the same canonical identity rules on existing rows that write
     // APIs enforce. A limited list query can otherwise miss a poisoned row.
     for table in ["bookmarks", "reading_positions", "history", "chat_threads"] {
-        let size_query = format!(
-            "SELECT 1 FROM {table} WHERE length(CAST(project AS BLOB)) > 255 LIMIT 1"
-        );
+        let size_query =
+            format!("SELECT 1 FROM {table} WHERE length(CAST(project AS BLOB)) > 255 LIMIT 1");
         let oversized: Option<i64> = conn
             .query_row(&size_query, [], |row| row.get(0))
             .optional()?;
