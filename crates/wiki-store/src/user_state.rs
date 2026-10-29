@@ -870,6 +870,47 @@ impl UserState {
         )? != 0)
     }
 
+    /// Delete a bookmark only if the user's captured privacy generation is
+    /// still current. An old queued removal must not delete a fresh bookmark
+    /// created after another process cleared personal data.
+    pub fn remove_bookmark_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+    ) -> Result<bool, UserStateError> {
+        let (page, _) = Self::ids(key, 1)?;
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "DELETE FROM bookmarks WHERE project=?1 AND page_id=?2
+             AND COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?3",
+            params![key.project, page, generation.to_string()],
+        )? != 0)
+    }
+
+    /// Generation-guarded deletion prevents an old asynchronous reader
+    /// session from removing a new revision's restored scroll position.
+    pub fn remove_reading_position_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+    ) -> Result<bool, UserStateError> {
+        let (page, _) = Self::ids(key, 1)?;
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "DELETE FROM reading_positions WHERE project=?1 AND page_id=?2
+             AND COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?3",
+            params![key.project, page, generation.to_string()],
+        )? != 0)
+    }
+
     /// History recording is opt-in; missing or disabled preference means no writes.
     pub fn history_enabled(&self) -> Result<bool, UserStateError> {
         Ok(self.setting("history.enabled")?.as_deref() == Some("true"))
@@ -1271,6 +1312,30 @@ impl UserState {
             "DELETE FROM chat_threads WHERE id=?1 AND project=?2
              AND page_id=?3 AND revision_id=?4",
             params![thread_id, key.project, page, revision],
+        )? != 0)
+    }
+
+    /// Delete only the exact article/revision thread while the captured
+    /// privacy generation is current. This protects a newly created thread
+    /// even if SQLite reuses a row ID after a cross-process reset.
+    pub fn delete_chat_thread_for_generation(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+    ) -> Result<bool, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64 || thread_id <= 0 {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(self.conn.execute(
+            "DELETE FROM chat_threads WHERE id=?1 AND project=?2
+             AND page_id=?3 AND revision_id=?4
+             AND COALESCE(
+                 (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )=?5",
+            params![thread_id, key.project, page, revision, generation.to_string()],
         )? != 0)
     }
 
@@ -1850,6 +1915,40 @@ mod tests {
             1
         );
         assert_eq!(other.recent_history(10).unwrap().len(), 1);
+        assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
+
+        // Stale removals must not erase new-generation data even when the
+        // article identity (or an SQLite thread row ID) is reused.
+        assert!(!other.remove_bookmark_for_generation(old, &key()).unwrap());
+        assert!(!other
+            .remove_reading_position_for_generation(old, &key())
+            .unwrap());
+        assert!(!other
+            .delete_chat_thread_for_generation(old, &key(), 124, thread)
+            .unwrap());
+        assert!(!other
+            .delete_chat_thread_for_generation(current, &key(), 123, thread)
+            .unwrap());
+        assert_eq!(other.bookmark(&key()).unwrap(), Some((124, "fresh".into())));
+        assert_eq!(other.reading_position(&key()).unwrap(), Some((124, 800)));
+        assert_eq!(other.chat_messages(&key(), 124, thread, 10).unwrap().len(), 1);
+
+        assert!(other.remove_bookmark_for_generation(current, &key()).unwrap());
+        assert!(other
+            .remove_reading_position_for_generation(current, &key())
+            .unwrap());
+        assert!(other
+            .delete_chat_thread_for_generation(current, &key(), 124, thread)
+            .unwrap());
+        assert!(other.bookmark(&key()).unwrap().is_none());
+        assert!(other.reading_position(&key()).unwrap().is_none());
+        assert!(other.list_chat_threads(&key(), 124, 10).unwrap().is_empty());
+        let orphan_messages: i64 = other.conn.query_row(
+            "SELECT COUNT(*) FROM chat_messages WHERE thread_id=?1",
+            params![thread],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(orphan_messages, 0);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
         for operation in [
