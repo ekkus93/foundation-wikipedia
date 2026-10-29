@@ -2,6 +2,8 @@
 //! Initial STATE-001 migration; not yet a backup or history privacy manager.
 
 use rusqlite::{params, Connection, OptionalExtension};
+use std::fs::{self, OpenOptions};
+use std::io;
 use std::path::Path;
 use wiki_model::ArticleKey;
 
@@ -10,12 +12,18 @@ pub const SCHEMA_VERSION: i64 = 2;
 #[derive(Debug)]
 pub enum UserStateError {
     Sql(rusqlite::Error),
+    Io(io::Error),
     UnsupportedSchema(i64),
     InvalidValue,
 }
 impl From<rusqlite::Error> for UserStateError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sql(error)
+    }
+}
+impl From<io::Error> for UserStateError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
     }
 }
 
@@ -85,6 +93,39 @@ impl UserState {
 
     pub fn in_memory() -> Result<Self, UserStateError> {
         Self::initialize(Connection::open_in_memory()?)
+    }
+
+    /// Write a consistent, standalone SQLite backup of mutable personal state.
+    /// The destination must be new, in a caller-owned private directory. It
+    /// must never be placed inside a published Wikipedia snapshot or pack.
+    /// VACUUM INTO includes committed WAL changes without copying a live WAL
+    /// file, and the backup file is synced before success is reported.
+    pub fn backup_to_path(&self, destination: &Path) -> Result<(), UserStateError> {
+        let destination_text = destination
+            .to_str()
+            .filter(|text| !text.is_empty())
+            .ok_or(UserStateError::InvalidValue)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        // Atomic create_new refuses existing files and symlinks, including a
+        // pre-existing database that must never be overwritten by a backup.
+        let file = options.open(destination)?;
+        let result = (|| -> Result<(), UserStateError> {
+            self.conn
+                .execute("VACUUM main INTO ?1", params![destination_text])?;
+            file.sync_all()?;
+            Ok(())
+        })();
+        drop(file);
+        if result.is_err() {
+            let _ = fs::remove_file(destination);
+        }
+        result
     }
 
     fn initialize(mut conn: Connection) -> Result<Self, UserStateError> {
@@ -1266,6 +1307,51 @@ mod tests {
         );
         // Reopening an already migrated database must not recreate indexes.
         assert!(UserState::initialize(upgraded.conn).is_ok());
+    }
+
+    #[test]
+    fn private_backup_is_consistent_and_refuses_to_overwrite_existing_state() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-backup-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let destination = root.join("user-backup.sqlite");
+        let state = UserState::in_memory().unwrap();
+        state.set_bookmark(&key(), 123, "saved").unwrap();
+        state.set_reading_position(&key(), 123, 8192).unwrap();
+        state.set_history_enabled(true).unwrap();
+        state.record_visit(&key(), 123, 1_700_000_000).unwrap();
+        state.add_pack_owner("physics", &"a".repeat(64)).unwrap();
+        state.backup_to_path(&destination).unwrap();
+
+        let backed_up = UserState::open(&destination).unwrap();
+        assert_eq!(backed_up.bookmark(&key()).unwrap(), Some((123, "saved".into())));
+        assert_eq!(backed_up.reading_position(&key()).unwrap(), Some((123, 8192)));
+        assert_eq!(backed_up.recent_history(10).unwrap().len(), 1);
+        assert_eq!(backed_up.object_owner_count(&"a".repeat(64)).unwrap(), 1);
+        drop(backed_up);
+
+        let original_bytes = fs::read(&destination).unwrap();
+        state.set_bookmark(&key(), 124, "newer").unwrap();
+        assert!(matches!(
+            state.backup_to_path(&destination),
+            Err(UserStateError::Io(_))
+        ));
+        assert_eq!(fs::read(&destination).unwrap(), original_bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
