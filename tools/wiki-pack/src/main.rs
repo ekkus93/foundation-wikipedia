@@ -448,7 +448,6 @@ fn main() {
             }
         }
         Some("verify-public-members") => {
-
             let supplied: Vec<OsString> = args.collect();
             let json = supplied.first().is_some_and(|value| value == "--json");
             let fields = if json { &supplied[1..] } else { &supplied[..] };
