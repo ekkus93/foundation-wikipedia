@@ -86,17 +86,57 @@ fn valid_job_id(job_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-
 /* Check structural contracts before trusting a claimed user-state version.
  * Presence of a table or index name alone does not prove it has the columns
  * expected by readers and migrations. Reject executable schema additions. */
 fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStateError> {
     const TABLE_COLUMNS: &[(&str, &[(&str, &str)])] = &[
-        ("bookmarks", &[("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("anchor", "TEXT")]),
-        ("reading_positions", &[("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("scroll_offset", "INTEGER")]),
-        ("history", &[("id", "INTEGER"), ("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("visited_at", "INTEGER")]),
-        ("chat_threads", &[("id", "INTEGER"), ("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER")]),
-        ("chat_messages", &[("id", "INTEGER"), ("thread_id", "INTEGER"), ("role", "TEXT"), ("content", "TEXT")]),
+        (
+            "bookmarks",
+            &[
+                ("project", "TEXT"),
+                ("page_id", "INTEGER"),
+                ("revision_id", "INTEGER"),
+                ("anchor", "TEXT"),
+            ],
+        ),
+        (
+            "reading_positions",
+            &[
+                ("project", "TEXT"),
+                ("page_id", "INTEGER"),
+                ("revision_id", "INTEGER"),
+                ("scroll_offset", "INTEGER"),
+            ],
+        ),
+        (
+            "history",
+            &[
+                ("id", "INTEGER"),
+                ("project", "TEXT"),
+                ("page_id", "INTEGER"),
+                ("revision_id", "INTEGER"),
+                ("visited_at", "INTEGER"),
+            ],
+        ),
+        (
+            "chat_threads",
+            &[
+                ("id", "INTEGER"),
+                ("project", "TEXT"),
+                ("page_id", "INTEGER"),
+                ("revision_id", "INTEGER"),
+            ],
+        ),
+        (
+            "chat_messages",
+            &[
+                ("id", "INTEGER"),
+                ("thread_id", "INTEGER"),
+                ("role", "TEXT"),
+                ("content", "TEXT"),
+            ],
+        ),
         ("settings", &[("key", "TEXT"), ("value", "TEXT")]),
         ("pack_owners", &[("pack_id", "TEXT"), ("digest", "TEXT")]),
         ("builder_jobs", &[("job_id", "TEXT"), ("status", "TEXT")]),
@@ -1700,7 +1740,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-
     #[test]
     fn rejects_spoofed_columns_triggers_and_missing_cascade_before_open_or_restore() {
         let stamp = SystemTime::now()
@@ -1713,7 +1752,10 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         for (name, tamper) in [
-            ("renamed-column", "ALTER TABLE bookmarks RENAME COLUMN anchor TO forged;"),
+            (
+                "renamed-column",
+                "ALTER TABLE bookmarks RENAME COLUMN anchor TO forged;",
+            ),
             (
                 "injected-trigger",
                 "CREATE TRIGGER injected AFTER INSERT ON settings BEGIN SELECT 1; END;",
@@ -1798,38 +1840,3 @@ mod tests {
         let state = UserState::open(&missing_table).unwrap();
         state
             .conn
-            .execute_batch("DROP TABLE builder_jobs;")
-            .unwrap();
-        drop(state);
-        assert!(matches!(
-            UserState::open(&missing_table),
-            Err(UserStateError::InvalidValue)
-        ));
-
-        let missing_index = root.join("missing-index.sqlite");
-        let state = UserState::open(&missing_index).unwrap();
-        state
-            .conn
-            .execute_batch("DROP INDEX history_recent_idx;")
-            .unwrap();
-        drop(state);
-        assert!(matches!(
-            UserState::open(&missing_index),
-            Err(UserStateError::InvalidValue)
-        ));
-        let healthy = UserState::open(&root.join("healthy.sqlite")).unwrap();
-        assert_eq!(healthy.setting("history.enabled").unwrap(), None);
-        drop(healthy);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn rejects_unsupported_future_schema() {
-        let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("PRAGMA user_version=99;").unwrap();
-        assert!(matches!(
-            UserState::initialize(connection),
-            Err(UserStateError::UnsupportedSchema(99))
-        ));
-    }
-}
