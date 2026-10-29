@@ -4,6 +4,7 @@
 //! must hold a private immutable staging tree during verification and install.
 
 use crate::manifest::{Manifest, ManifestError, MAX_DECLARED_BYTES};
+use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -13,6 +14,7 @@ use std::path::Path;
 pub enum ObjectVerifyError {
     Manifest(ManifestError),
     UnsafePath,
+    UnexpectedObject(String),
     Io(io::Error),
     SizeMismatch(String),
     HashMismatch(String),
@@ -21,7 +23,7 @@ pub enum ObjectVerifyError {
 
 /// Verify *every* object in a validated manifest before a caller can treat
 /// it as locally complete. The input manifest is not authenticated here.
-/// Returns the measured byte total; unlisted staging files grant no trust.
+/// Returns the measured byte total; unlisted files and directories are rejected.
 ///
 /// The caller must prevent concurrent writes/renames of the staging tree.
 /// Path inspection alone cannot defeat a writer racing the verifier.
@@ -45,6 +47,41 @@ pub fn verify_manifest_directory(
     let root_meta = fs::symlink_metadata(root).map_err(ObjectVerifyError::Io)?;
     if !root_meta.is_dir() || root_meta.file_type().is_symlink() {
         return Err(ObjectVerifyError::UnsafePath);
+    }
+
+    // A digest-complete manifest does not authorize additional files or
+    // directories. Reject undeclared entries before hashing any payloads,
+    // including empty directories, symlinks and other special files.
+    let mut expected_files = BTreeSet::new();
+    let mut expected_dirs = BTreeSet::new();
+    for object in &manifest.objects {
+        expected_files.insert(object.path.as_str());
+        let mut path = object.path.as_str();
+        while let Some((directory, _)) = path.rsplit_once('/') {
+            expected_dirs.insert(directory.to_owned());
+            path = directory;
+        }
+    }
+    let mut pending = vec![(root.to_path_buf(), String::new())];
+    while let Some((directory, prefix)) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(ObjectVerifyError::Io)? {
+            let entry = entry.map_err(ObjectVerifyError::Io)?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| ObjectVerifyError::UnsafePath)?;
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let kind = entry.file_type().map_err(ObjectVerifyError::Io)?;
+            if kind.is_dir() && expected_dirs.contains(&relative) {
+                pending.push((entry.path(), relative));
+            } else if !(kind.is_file() && expected_files.contains(relative.as_str())) {
+                return Err(ObjectVerifyError::UnexpectedObject(relative));
+            }
+        }
     }
 
     let mut total = 0u64;
@@ -281,4 +318,37 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(source).unwrap();
     }
+    #[test]
+    fn rejects_unlisted_staging_files_and_empty_directories() {
+        let root = staging_dir();
+        let bytes = b"offline diagram";
+        fs::create_dir(root.join("media")).unwrap();
+        fs::write(root.join("media/chart.svg"), bytes).unwrap();
+        let expected = manifest(vec![declared("media/chart.svg", bytes)]);
+        assert_eq!(
+            verify_manifest_directory(&expected, &root).unwrap(),
+            bytes.len() as u64
+        );
+
+        fs::write(root.join("unexpected.txt"), b"not in manifest").unwrap();
+        assert!(matches!(
+            verify_manifest_directory(&expected, &root),
+            Err(ObjectVerifyError::UnexpectedObject(path)) if path == "unexpected.txt"
+        ));
+        fs::remove_file(root.join("unexpected.txt")).unwrap();
+
+        fs::create_dir(root.join("empty")).unwrap();
+        assert!(matches!(
+            verify_manifest_directory(&expected, &root),
+            Err(ObjectVerifyError::UnexpectedObject(path)) if path == "empty"
+        ));
+        fs::remove_dir(root.join("empty")).unwrap();
+        assert_eq!(
+            verify_manifest_directory(&expected, &root).unwrap(),
+            bytes.len() as u64
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+
 }
