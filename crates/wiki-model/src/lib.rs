@@ -323,7 +323,10 @@ impl ArticleKey {
 // Keep Persian/Indic ZWNJ/ZWJ: they are meaningful in legitimate titles.
 const MAX_NAVIGATION_TITLE_BYTES: usize = 4096;
 
-fn valid_navigation_title(title: &str) -> bool {
+/// Shared canonical title-input boundary for immutable article identities and
+/// offline catalog navigation. A malformed lookup must not be treated as a
+/// valid missing title or silently normalized to a different identity.
+pub fn valid_navigation_title(title: &str) -> bool {
     !title.is_empty()
         && title.len() <= MAX_NAVIGATION_TITLE_BYTES
         && title == title.trim()

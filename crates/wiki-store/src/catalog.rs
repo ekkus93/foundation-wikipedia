@@ -11,7 +11,9 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use wiki_model::{wikipedia_title_key, Article, ArticleKey, ModelError, PageRecord};
+use wiki_model::{
+    valid_navigation_title, wikipedia_title_key, Article, ArticleKey, ModelError, PageRecord,
+};
 
 use crate::record_codec::{decode_record_at, RecordCodecError, MAX_COMPRESSED_RECORD_BYTES};
 
@@ -103,11 +105,10 @@ fn valid_shard_name(name: &str) -> bool {
 /// Underscores are spaces; the rest of the title remains case-sensitive.
 /// Avoid guessing Unicode characters with multi-scalar uppercase expansions.
 fn title_key(title: &str) -> Result<String, CatalogError> {
-    let trimmed = title.trim();
-    if trimmed.is_empty() {
+    if !valid_navigation_title(title) {
         return Err(CatalogError::InvalidCatalogEntry);
     }
-    Ok(wikipedia_title_key(trimmed))
+    Ok(wikipedia_title_key(title))
 }
 
 /// Apply the same canonical edition/Q-ID contract to indexed key lookups
@@ -877,6 +878,24 @@ mod tests {
         // Malformed edition identities must not look like valid missing
         // articles, including through redirect-aware title navigation.
         assert!(reader.lookup_key("frwiki", "Earth").unwrap().is_none());
+        // A malformed title is an invalid request, not a valid missing page.
+        // Never trim a saved citation into another canonical title.
+        for title in [
+            " Earth",
+            "Earth ",
+            "Ea\u{202e}rth",
+            "Ea\u{200b}rth",
+            "Ea\n rth",
+        ] {
+            assert!(matches!(
+                reader.lookup_key("enwiki", title),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+            assert!(matches!(
+                reader.resolve_title(&root, "enwiki", title),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+        }
         for project in ["", "ENwiki", "enwiki/other"] {
             assert!(matches!(
                 reader.lookup_key(project, "Earth"),
@@ -1396,8 +1415,27 @@ mod tests {
         assert_eq!(title_key("énergie").unwrap(), "Énergie");
         assert_eq!(title_key("gRAVITY").unwrap(), "GRAVITY");
         assert_ne!(title_key("Gravity").unwrap(), title_key("GRAVITY").unwrap());
+        // Preserve legitimate joiners in Persian/Indic titles and emoji.
+        assert_eq!(title_key("می\u{200c}روم").unwrap(), "می\u{200c}روم");
+        assert_eq!(title_key("क्\u{200d}ष").unwrap(), "क्\u{200d}ष");
+        assert_eq!(title_key("🛰️").unwrap(), "🛰️");
+        for invalid in [
+            "  ",
+            " Earth",
+            "Earth ",
+            "Ea\u{200b}rth",
+            "Ea\u{202e}rth",
+            "Ea\u{2067}rth",
+            "Ea\u{feff}rth",
+            "Ea\nrth",
+        ] {
+            assert!(matches!(
+                title_key(invalid),
+                Err(CatalogError::InvalidCatalogEntry)
+            ));
+        }
         assert!(matches!(
-            title_key("  "),
+            title_key(&"a".repeat(4097)),
             Err(CatalogError::InvalidCatalogEntry)
         ));
     }
