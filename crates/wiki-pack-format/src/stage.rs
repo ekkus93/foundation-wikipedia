@@ -19,15 +19,7 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     builder.create(path)
 }
 
-/// Verify the entire input first, then stage into a newly created private
-/// directory. A second complete directory digest check prevents a changed
-/// input between passes from being accepted. No existing files are overwritten.
-/// The caller must own the parent directory exclusively throughout the call.
-pub fn stage_container<R: Read + Seek>(
-    input: &mut R,
-    parent: &Path,
-    name: &str,
-) -> Result<(Manifest, PathBuf), ContainerError> {
+fn validate_stage_destination(parent: &Path, name: &str) -> Result<(), ContainerError> {
     if name.is_empty()
         || name.len() > 128
         || name.starts_with('.')
@@ -55,6 +47,20 @@ pub fn stage_container<R: Read + Seek>(
             return Err(ContainerError::UnsafeStagingPath);
         }
     }
+
+    Ok(())
+}
+
+/// Verify the entire input first, then stage into a newly created private
+/// directory. A second complete directory digest check prevents a changed
+/// input between passes from being accepted. No existing files are overwritten.
+/// The caller must own the parent directory exclusively throughout the call.
+pub fn stage_container<R: Read + Seek>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+) -> Result<(Manifest, PathBuf), ContainerError> {
+    validate_stage_destination(parent, name)?;
 
     input.seek(SeekFrom::Start(0))?;
     let manifest = verify_container(input)?;
@@ -137,12 +143,186 @@ pub fn stage_container_with_trust<R: Read + Seek>(
     Ok((manifest, root, status))
 }
 
+/// Copy an unseekable archive stream into a private, exclusive temporary file
+/// while validating its complete envelope. The verified spool is then staged
+/// through the same two-pass path as a seekable archive. This supports Android
+/// document-provider streams without buffering a pack in RAM.
+///
+/// The parent must be a caller-owned private directory with no concurrent
+/// writers. The resulting tree is NOT activated or publisher-authenticated.
+pub fn stage_container_stream<R: Read>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+) -> Result<(Manifest, PathBuf), ContainerError> {
+    validate_stage_destination(parent, name)?;
+    let mut spool = None;
+    for _ in 0..16 {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let id = NEXT_SPOOL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = parent.join(format!(".wpack-spool-{}-{nonce}-{id}", std::process::id()));
+        let mut options = OpenOptions::new();
+        options.write(true).read(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => {
+                spool = Some((path, file));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(ContainerError::Io(error)),
+        }
+    }
+    let (spool_path, mut spool_file) = spool.ok_or(ContainerError::ResourceBudget)?;
+    let result = (|| {
+        let verified = {
+            let mut tee = SpoolingReader {
+                source: input,
+                destination: &mut spool_file,
+            };
+            verify_container(&mut tee)?
+        };
+        spool_file.sync_all()?;
+        spool_file.seek(SeekFrom::Start(0))?;
+        let (staged, root) = stage_container(&mut spool_file, parent, name)?;
+        if staged != verified {
+            fs::remove_dir_all(root)?;
+            return Err(ContainerError::InvalidTranscript);
+        }
+        Ok((staged, root))
+    })();
+    drop(spool_file);
+    // The temporary archive is never retained, even when verification fails.
+    fs::remove_file(spool_path)?;
+    result
+}
+
+/// A tee that does not require Seek from the source and persists only bytes
+/// actually consumed by the bounded envelope verifier.
+struct SpoolingReader<'a, R> {
+    source: &'a mut R,
+    destination: &'a mut File,
+}
+
+impl<R: Read> Read for SpoolingReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.source.read(buffer)?;
+        self.destination.write_all(&buffer[..count])?;
+        Ok(count)
+    }
+}
+
+static NEXT_SPOOL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Classify a successfully staged unseekable pack conservatively: even an
+/// unsigned official-origin claim never becomes Verified Publisher.
+pub fn stage_container_stream_with_trust<R: Read>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+) -> Result<(Manifest, PathBuf, crate::trust::TrustStatus), ContainerError> {
+    let (manifest, root) = stage_container_stream(input, parent, name)?;
+    let status = crate::trust::classify(&manifest, crate::trust::IntegrityState::Passed);
+    Ok((manifest, root, status))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::{Object, Origin, FORMAT_VERSION};
     use crate::trust::TrustStatus;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct ReadOnly<R>(R);
+
+    impl<R: Read> Read for ReadOnly<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buffer)
+        }
+    }
+
+    #[test]
+    fn nonseekable_document_stream_stages_verified_objects_without_spool_residue() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stream-stage-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let payload = b"offline figure";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "figures".into(),
+            project: "enwiki".into(),
+            snapshot: "20261029".into(),
+            origin: Origin::Custom {
+                definition_id: "topic".into(),
+            },
+            objects: vec![Object {
+                path: "media/figure.svg".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        let mut encoded = Vec::new();
+        crate::container::write_container(&mut encoded, &manifest, |_, out| {
+            out.write_all(payload)
+        })
+        .unwrap();
+
+        let mut stream = ReadOnly(io::Cursor::new(encoded.clone()));
+        let (staged, root, status) =
+            stage_container_stream_with_trust(&mut stream, &parent, "imported").unwrap();
+        assert_eq!(staged, manifest);
+        assert_eq!(status, TrustStatus::CustomIntegrityVerified);
+        assert_eq!(fs::read(root.join("media/figure.svg")).unwrap(), payload);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+
+        // Corrupt bytes and appended payloads must not leave a partial tree
+        // or an archive spool on disk.
+        for (name, mut invalid) in [
+            ("corrupt", encoded.clone()),
+            ("trailing", encoded),
+        ] {
+            if name == "corrupt" {
+                *invalid.last_mut().unwrap() ^= 1;
+            } else {
+                invalid.push(0);
+            }
+            let mut stream = ReadOnly(io::Cursor::new(invalid));
+            assert!(stage_container_stream(&mut stream, &parent, name).is_err());
+            assert!(!parent.join(name).exists());
+            assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        }
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn nonseekable_import_rejects_unsafe_name_before_reading_input() {
+        struct PanicOnRead;
+        impl Read for PanicOnRead {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("invalid stage name must fail before reading input")
+            }
+        }
+        assert!(matches!(
+            stage_container_stream(
+                &mut PanicOnRead,
+                Path::new("nonexistent-parent"),
+                "CON.txt"
+            ),
+            Err(ContainerError::UnsafeStagingPath)
+        ));
+    }
 
     #[test]
     fn rejects_windows_device_names_before_touching_staging_parent() {
