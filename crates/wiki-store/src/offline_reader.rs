@@ -4,7 +4,7 @@
 //! corrupt frames and dangling redirects return errors, never a stale article.
 //! Source-publisher authentication and pack activation are caller obligations.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use wiki_model::{Article, ArticleKey, PageRecord};
@@ -57,6 +57,27 @@ impl VerifiedOfflineCatalogReader {
         // reader, also reject unindexed shard tails, gaps, missing canonical
         // title/alias rows and orphaned title mappings.
         catalog.verify_shard_coverage(snapshot_root)?;
+        let index =
+            OfflineSearchIndex::open_verified_read_only(index_path, &catalog, snapshot_root)?;
+        Ok(Self {
+            catalog,
+            index,
+            root: snapshot_root.to_path_buf(),
+        })
+    }
+
+    /// Open only after verifying every indexed shard against a caller-supplied,
+    /// previously authenticated manifest inventory. The digest/size inventory
+    /// must originate from an independently authenticated pack publication;
+    /// this method verifies its bytes, not its publisher or required media.
+    pub fn open_with_manifest_shards(
+        catalog_path: &Path,
+        index_path: &Path,
+        snapshot_root: &Path,
+        expected_shards: &BTreeMap<String, (u64, String)>,
+    ) -> Result<Self, ReaderError> {
+        let catalog = SnapshotCatalog::open_read_only(catalog_path)?;
+        catalog.verify_manifest_shard_hashes(snapshot_root, expected_shards)?;
         let index =
             OfflineSearchIndex::open_verified_read_only(index_path, &catalog, snapshot_root)?;
         Ok(Self {
@@ -305,6 +326,7 @@ impl<'a> OfflineReader<'a> {
 mod tests {
     use super::*;
     use crate::record_codec::append_record_frame;
+    use sha2::{Digest, Sha256};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
     use wiki_model::{Redirect, Revision, ARTICLE_SCHEMA_VERSION};
@@ -385,6 +407,59 @@ mod tests {
         // an installed pack or mandatory media.
         let published = root.join("published-fts.sqlite");
         OfflineSearchIndex::replace_persisted_from_catalog(&published, &catalog, &root).unwrap();
+        let expected_shards = BTreeMap::from([(
+            "reader.shard".to_owned(),
+            (bytes.len() as u64, format!("{:x}", Sha256::digest(&bytes))),
+        )]);
+        let authenticated = VerifiedOfflineCatalogReader::open_with_manifest_shards(
+            &database,
+            &published,
+            &root,
+            &expected_shards,
+        )
+        .unwrap();
+        assert_eq!(
+            authenticated
+                .reader()
+                .open_title("enwiki", "Earth")
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
+            42
+        );
+        drop(authenticated);
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open_with_manifest_shards(
+                &database,
+                &published,
+                &root,
+                &BTreeMap::new(),
+            ),
+            Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
+        let mut wrong_shards = expected_shards.clone();
+        wrong_shards.get_mut("reader.shard").unwrap().1 = "0".repeat(64);
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open_with_manifest_shards(
+                &database,
+                &published,
+                &root,
+                &wrong_shards,
+            ),
+            Err(ReaderError::Catalog(CatalogError::DigestMismatch))
+        ));
+        wrong_shards = expected_shards.clone();
+        wrong_shards.get_mut("reader.shard").unwrap().0 += 1;
+        assert!(matches!(
+            VerifiedOfflineCatalogReader::open_with_manifest_shards(
+                &database,
+                &published,
+                &root,
+                &wrong_shards,
+            ),
+            Err(ReaderError::Catalog(CatalogError::InvalidFrame))
+        ));
         let owned = VerifiedOfflineCatalogReader::open(&database, &published, &root).unwrap();
         let from_disk = owned
             .reader()
