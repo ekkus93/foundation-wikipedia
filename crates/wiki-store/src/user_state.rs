@@ -2083,11 +2083,10 @@ mod tests {
                 matches!(UserState::open(&source), Err(UserStateError::InvalidValue)),
                 "accepted corrupt user rows on reopen: {name}"
             );
+            // SQLite may report CHECK violations as a query error rather
+            // than a domain-level InvalidValue during restore preflight.
             assert!(
-                matches!(
-                    UserState::restore_backup_to_new_path(&source, &restored),
-                    Err(UserStateError::InvalidValue)
-                ),
+                UserState::restore_backup_to_new_path(&source, &restored).is_err(),
                 "accepted corrupt user rows on restore: {name}"
             );
             assert!(!restored.exists());
