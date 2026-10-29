@@ -403,6 +403,34 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
     Ok(())
 }
 
+// Verify the exact standalone SQLite image that will be handed to the user.
+// The live source can change while VACUUM INTO runs; source-only preflight
+// cannot establish the integrity of the independently copied generation.
+fn validate_standalone_copy(path: &Path, expected_schema: i64) -> Result<(), UserStateError> {
+    let copy = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let schema: i64 = copy.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if schema != expected_schema {
+        return Err(UserStateError::InvalidValue);
+    }
+    let integrity: String = copy.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        return Err(UserStateError::InvalidValue);
+    }
+    let orphan: Option<i64> = copy
+        .query_row(
+            "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if orphan.is_some() {
+        return Err(UserStateError::InvalidValue);
+    }
+    validate_schema_shape(&copy, schema)?;
+    validate_persisted_checks(&copy)?;
+    Ok(())
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         let conn = Connection::open(path)?;
@@ -449,6 +477,7 @@ impl UserState {
             self.conn
                 .execute("VACUUM main INTO ?1", params![destination_text])?;
             file.sync_all()?;
+            validate_standalone_copy(destination, SCHEMA_VERSION)?;
             Ok(())
         })();
         drop(file);
@@ -532,35 +561,7 @@ impl UserState {
             file.sync_all()?;
             // The copy must remain a valid, self-contained database after
             // closing SQLite's write transaction.
-            let restored = Connection::open_with_flags(
-                destination,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )?;
-            let check: String =
-                restored.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-            if check != "ok" {
-                return Err(UserStateError::InvalidValue);
-            }
-            // The source may have changed between the first audit and the
-            // independent VACUUM snapshot. Never publish a copy based solely
-            // on the preflight of a different source generation.
-            let copied_schema: i64 =
-                restored.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-            if copied_schema != schema {
-                return Err(UserStateError::InvalidValue);
-            }
-            let copied_orphan: Option<i64> = restored
-                .query_row(
-                    "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if copied_orphan.is_some() {
-                return Err(UserStateError::InvalidValue);
-            }
-            validate_schema_shape(&restored, copied_schema)?;
-            validate_persisted_checks(&restored)?;
+            validate_standalone_copy(destination, schema)?;
             Ok(())
         })();
         drop(file);
@@ -1932,6 +1933,52 @@ mod tests {
         );
         // Reopening an already migrated database must not recreate indexes.
         assert!(UserState::initialize(upgraded.conn).is_ok());
+    }
+
+    #[test]
+    fn backup_rejects_invalid_copied_rows_and_cleans_destination() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-backup-copy-audit-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("source.sqlite");
+        let destination = root.join("backup.sqlite");
+        let state = UserState::open(&db).unwrap();
+        state.set_bookmark(&key(), 123, "preserved").unwrap();
+
+        // A live connection can be corrupted after startup by a different
+        // writer. The backup must audit the copied generation, not trust the
+        // earlier open-time preflight or SQLite integrity_check alone.
+        state
+            .conn
+            .execute(
+                "INSERT INTO builder_jobs (job_id,status) VALUES ('forged','invalid')",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            state.backup_to_path(&destination),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(!destination.exists(), "published an invalid backup");
+        state
+            .conn
+            .execute("DELETE FROM builder_jobs WHERE job_id='forged'", [])
+            .unwrap();
+        state.backup_to_path(&destination).unwrap();
+        let backup = UserState::open(&destination).unwrap();
+        assert_eq!(
+            backup.bookmark(&key()).unwrap(),
+            Some((123, "preserved".into()))
+        );
+        drop(backup);
+        drop(state);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
