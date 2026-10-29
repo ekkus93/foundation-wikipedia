@@ -129,6 +129,18 @@ fn validate_wikidata_query(project: &str, item: &str) -> Result<(), CatalogError
     Ok(())
 }
 
+/// Never return malformed identities from a corrupted SQLite index.
+/// These are catalog errors, not legitimate missing article keys.
+fn indexed_article_key(project: &str, page_id: i64) -> Result<ArticleKey, CatalogError> {
+    let key = ArticleKey {
+        project: project.to_owned(),
+        page_id: as_u64(page_id)?,
+    };
+    key.validate()
+        .map_err(|_| CatalogError::InvalidCatalogEntry)?;
+    Ok(key)
+}
+
 fn as_i64(value: u64) -> Result<i64, CatalogError> {
     i64::try_from(value).map_err(|_| CatalogError::InvalidCatalogEntry)
 }
@@ -379,12 +391,7 @@ impl SnapshotCatalog {
             )
             .optional()?;
         found
-            .map(|page_id| {
-                Ok(ArticleKey {
-                    project: project.to_owned(),
-                    page_id: as_u64(page_id)?,
-                })
-            })
+            .map(|page_id| indexed_article_key(project, page_id))
             .transpose()
     }
 
@@ -466,10 +473,7 @@ impl SnapshotCatalog {
         )?;
         let mut matches = Vec::new();
         for row in stmt.query_map(params![project, item], |row| row.get::<_, i64>(0))? {
-            matches.push(ArticleKey {
-                project: project.to_owned(),
-                page_id: as_u64(row?)?,
-            });
+            matches.push(indexed_article_key(project, row?)?);
         }
         Ok(matches)
     }
@@ -496,10 +500,7 @@ impl SnapshotCatalog {
         })?;
         let mut articles = Vec::new();
         for row in rows {
-            let key = ArticleKey {
-                project: project.to_owned(),
-                page_id: as_u64(row?)?,
-            };
+            let key = indexed_article_key(project, row?)?;
             match self.read_record(root, &key)? {
                 Some(PageRecord::Article(article))
                     if article.wikidata_id.as_deref() == Some(item) =>
@@ -897,6 +898,42 @@ mod tests {
             Err(CatalogError::InvalidCatalogEntry)
         ));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn indexed_key_lookups_reject_corrupt_zero_page_ids() {
+        let catalog = SnapshotCatalog::in_memory().unwrap();
+        // Foreign-key-consistent SQLite corruption can still contain an
+        // invalid page ID. No key-only API may return this as a valid match.
+        catalog
+            .conn
+            .execute(
+                "INSERT INTO records
+                 (project,page_id,title,revision_id,wikidata_id,shard_name,frame_offset,frame_bytes,frame_sha256)
+                 VALUES ('enwiki',0,'Poisoned',1,'Q55','record.shard',0,40,?1)",
+                params!["0".repeat(64)],
+            )
+            .unwrap();
+        catalog
+            .conn
+            .execute(
+                "INSERT INTO title_index (project,normalized_title,page_id)
+                 VALUES ('enwiki','Poisoned',0)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            catalog.lookup_key("enwiki", "Poisoned"),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            catalog.lookup_wikidata("enwiki", "Q55"),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
+        assert!(matches!(
+            catalog.lookup_wikidata_verified(Path::new("."), "enwiki", "Q55", 10),
+            Err(CatalogError::InvalidCatalogEntry)
+        ));
     }
 
     #[test]
