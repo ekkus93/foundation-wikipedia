@@ -117,8 +117,10 @@ impl<'a> OfflineReader<'a> {
         }
     }
 
-    /// Construct a reader only after auditing every installed article
-    /// against the derived FTS identity inventory, including other editions.
+    /// Construct a reader only after auditing complete canonical shard
+    /// coverage and every installed article against the derived FTS identity
+    /// inventory, including other editions. FTS membership alone cannot
+    /// detect omitted title aliases or unindexed trailing shard bytes.
     /// Callers must separately authenticate the immutable snapshot, verify
     /// mandatory media, and keep the catalog and shards immutable.
     pub fn new_verified(
@@ -126,6 +128,7 @@ impl<'a> OfflineReader<'a> {
         index: &'a OfflineSearchIndex,
         root: &'a Path,
     ) -> Result<Self, ReaderError> {
+        catalog.verify_shard_coverage(root)?;
         index.verify_catalog_membership(catalog, root)?;
         Ok(Self::new(catalog, index, root))
     }
@@ -492,6 +495,11 @@ mod tests {
             );
         }
         assert!(OfflineSearchIndex::open_verified_read_only(&published, &catalog, &root).is_ok());
+        assert!(index.verify_catalog_membership(&catalog, &root).is_ok());
+        assert!(matches!(
+            OfflineReader::new_verified(&catalog, &index, &root),
+            Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+        ));
         assert!(matches!(
             VerifiedOfflineCatalogReader::open(&database, &published, &root),
             Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
@@ -508,6 +516,7 @@ mod tests {
             );
         }
         assert!(VerifiedOfflineCatalogReader::open(&database, &published, &root).is_ok());
+        assert!(OfflineReader::new_verified(&catalog, &index, &root).is_ok());
 
         // A trailing byte outside every indexed frame is also invisible to
         // per-record digest and FTS checks, but is not a complete snapshot.
@@ -515,12 +524,18 @@ mod tests {
         with_tail.push(0x42);
         fs::write(root.join("reader.shard"), &with_tail).unwrap();
         assert!(OfflineSearchIndex::open_verified_read_only(&published, &catalog, &root).is_ok());
+        assert!(index.verify_catalog_membership(&catalog, &root).is_ok());
+        assert!(matches!(
+            OfflineReader::new_verified(&catalog, &index, &root),
+            Err(ReaderError::Catalog(CatalogError::InvalidFrame))
+        ));
         assert!(matches!(
             VerifiedOfflineCatalogReader::open(&database, &published, &root),
             Err(ReaderError::Catalog(CatalogError::InvalidFrame))
         ));
         fs::write(root.join("reader.shard"), &bytes).unwrap();
         assert!(VerifiedOfflineCatalogReader::open(&database, &published, &root).is_ok());
+        assert!(OfflineReader::new_verified(&catalog, &index, &root).is_ok());
 
         // Bypassing FTS5 mutation machinery leaves normal text queries
         // intact, but verified disk-backed construction must refuse it.
