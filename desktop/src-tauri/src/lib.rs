@@ -306,23 +306,44 @@ fn open_private_bookmark_store(app: &tauri::AppHandle) -> Result<UserState, Stri
     UserState::open(&database).map_err(|_| "Cannot open bookmark database".to_owned())
 }
 
+/// Capture the cross-process SQLite epoch at IPC entry, before a queued
+/// blocking worker can run after another application process resets state.
+fn capture_persistent_generation(app: &tauri::AppHandle) -> Result<u64, String> {
+    open_private_bookmark_store(app)?
+        .personal_generation()
+        .map_err(|_| "Cannot read personal data generation".to_owned())
+}
+
 fn toggle_saved_bookmark(
     state: &UserState,
     key: &ArticleKey,
     revision_id: u64,
+    persistent_generation: u64,
 ) -> Result<bool, UserStateError> {
     key.validate().map_err(|_| UserStateError::InvalidValue)?;
-    if revision_id == 0 || revision_id > i64::MAX as u64 {
+    if revision_id == 0 || revision_id > i64::MAX as u64
+        || state.personal_generation()? != persistent_generation
+    {
         return Err(UserStateError::InvalidValue);
     }
-    if state.bookmark(key)?.is_some() {
-        state.remove_bookmark(key)?;
-        Ok(false)
+    let saved = if state.bookmark(key)?.is_some() {
+        // Atomic generation predicate also protects the read/write gap when
+        // another process resets personal data after the bookmark lookup.
+        if !state.remove_bookmark_for_generation(persistent_generation, key)? {
+            return Err(UserStateError::InvalidValue);
+        }
+        false
     } else {
         // Empty anchor means page-level bookmark; it is not an AI citation.
-        state.set_bookmark(key, revision_id, "")?;
-        Ok(true)
+        if !state.set_bookmark_for_generation(persistent_generation, key, revision_id, "")? {
+            return Err(UserStateError::InvalidValue);
+        }
+        true
+    };
+    if state.personal_generation()? != persistent_generation {
+        return Err(UserStateError::InvalidValue);
     }
+    Ok(saved)
 }
 
 /// Bookmark an exact page identity without saving text or media for offline use.
@@ -337,12 +358,13 @@ async fn toggle_reader_bookmark(
 ) -> Result<bool, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write(generation, || {
             let state = open_private_bookmark_store(&app)?;
             let key = ArticleKey { project, page_id };
-            toggle_saved_bookmark(&state, &key, revision_id)
-                .map_err(|_| "Invalid bookmark identity or storage operation".to_owned())
+            toggle_saved_bookmark(&state, &key, revision_id, persistent_generation)
+                .map_err(|_| "Invalid bookmark identity or stale privacy generation".to_owned())
         })
     })
     .await
@@ -387,12 +409,19 @@ async fn remove_reader_bookmark(
 ) -> Result<bool, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write(generation, || {
             let state = open_private_bookmark_store(&app)?;
             let key = ArticleKey { project, page_id };
-            state.remove_bookmark(&key)
-                .map_err(|_| "Cannot remove bookmark identity".to_owned())
+            let removed = state.remove_bookmark_for_generation(persistent_generation, &key)
+                .map_err(|_| "Cannot remove bookmark identity".to_owned())?;
+            if state.personal_generation().map_err(|_| "Cannot check privacy generation")?
+                != persistent_generation
+            {
+                return Err("Stale bookmark removal rejected".to_owned());
+            }
+            Ok(removed)
         })
     })
     .await
@@ -410,11 +439,15 @@ async fn clear_reader_personal_data(
 ) -> Result<(), String> {
     let cache = (*cache).clone();
     let gate = (*gate).clone();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.reset(|| {
             let mut state = open_private_bookmark_store(&app)?;
-            state.clear_personal_reading_data()
+            let cleared = state.clear_personal_reading_data_for_generation(persistent_generation)
                 .map_err(|_| "Cannot clear personal reading data".to_owned())?;
+            if !cleared {
+                return Err("Stale personal data clear rejected".to_owned());
+            }
             clear_online_preview_cache(&cache)
         })
     })
@@ -442,6 +475,7 @@ async fn record_reader_visit(
     let gate = (*gate).clone();
     let generation = gate.generation();
     let visit_generation = gate.visit_generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write_visit(generation, visit_generation, || {
             let state = open_private_bookmark_store(&app)?;
@@ -449,8 +483,15 @@ async fn record_reader_visit(
             let seconds = SystemTime::now().duration_since(UNIX_EPOCH)
                 .map_err(|_| "System clock is invalid")?.as_secs();
             let timestamp = i64::try_from(seconds).map_err(|_| "System clock is invalid")?;
-            state.record_visit(&key, revision_id, timestamp)
-                .map_err(|_| "Cannot record reading history".to_owned())
+            let recorded = state.record_visit_for_generation(
+                persistent_generation, &key, revision_id, timestamp
+            ).map_err(|_| "Cannot record reading history".to_owned())?;
+            if state.personal_generation().map_err(|_| "Cannot check privacy generation")?
+                != persistent_generation
+            {
+                return Err("Stale history visit rejected".to_owned());
+            }
+            Ok(recorded)
         })
     })
     .await
@@ -522,10 +563,13 @@ async fn clear_reader_history(
 ) -> Result<usize, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.revoke_queued_visits(generation, || {
-            open_private_bookmark_store(&app)?.clear_history()
-                .map_err(|_| "Cannot clear reading history".to_owned())
+            let mut state = open_private_bookmark_store(&app)?;
+            state.clear_history_for_generation(persistent_generation)
+                .map_err(|_| "Cannot clear reading history".to_owned())?
+                .ok_or_else(|| "Stale history clear rejected".to_owned())
         })
     })
     .await
@@ -848,6 +892,7 @@ mod bookmark_tests {
             state.set_setting("reading.width", "narrow").unwrap();
             state.set_setting("reading.theme", "dark").unwrap();
         }
+
         {
             let state = UserState::open(&db).unwrap();
             assert_eq!(
@@ -884,7 +929,7 @@ mod bookmark_tests {
         })
         .unwrap();
         gate.write(queued_generation, || {
-            toggle_saved_bookmark(&state, &key, 333)
+            toggle_saved_bookmark(&state, &key, 333, state.personal_generation().unwrap())
                 .map_err(|error| format!("{error:?}"))
         })
         .unwrap();
@@ -905,7 +950,7 @@ mod bookmark_tests {
             .is_err());
         assert!(gate
             .write(queued_generation, || {
-                toggle_saved_bookmark(&state, &key, 334)
+                toggle_saved_bookmark(&state, &key, 334, state.personal_generation().unwrap())
                     .map_err(|error| format!("{error:?}"))
             })
             .is_err());
@@ -917,7 +962,7 @@ mod bookmark_tests {
         assert_ne!(queued_generation, current_generation);
         assert!(gate
             .write(current_generation, || {
-                toggle_saved_bookmark(&state, &key, 335)
+                toggle_saved_bookmark(&state, &key, 335, state.personal_generation().unwrap())
                     .map_err(|error| format!("{error:?}"))
             })
             .unwrap());
@@ -941,7 +986,7 @@ mod bookmark_tests {
         })
         .unwrap();
         gate.write(generation, || {
-            toggle_saved_bookmark(&state, &key, 333)
+            toggle_saved_bookmark(&state, &key, 333, state.personal_generation().unwrap())
                 .map_err(|error| format!("{error:?}"))
         })
         .unwrap();
@@ -1054,20 +1099,52 @@ mod bookmark_tests {
     }
 
     #[test]
+    fn desktop_bookmark_toggle_rejects_cross_process_privacy_reset() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-desktop-generation-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("user-state.sqlite");
+        let mut owner = UserState::open(&db).unwrap();
+        let other = UserState::open(&db).unwrap();
+        let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
+        let stale = other.personal_generation().unwrap();
+        assert!(toggle_saved_bookmark(&other, &key, 333, stale).unwrap());
+        assert!(owner.clear_personal_reading_data_for_generation(stale).unwrap());
+        let fresh = other.personal_generation().unwrap();
+        assert!(other.set_bookmark_for_generation(fresh, &key, 334, "").unwrap());
+        assert!(matches!(
+            toggle_saved_bookmark(&other, &key, 335, stale),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(owner.bookmark(&key).unwrap(), Some((334, String::new())));
+        assert!(!other.remove_bookmark_for_generation(stale, &key).unwrap());
+        assert_eq!(owner.bookmark(&key).unwrap(), Some((334, String::new())));
+        drop(owner);
+        drop(other);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
         let state = UserState::in_memory().unwrap();
         let article = ArticleKey {
             project: "enwiki".to_owned(),
             page_id: 42,
         };
-        assert_eq!(toggle_saved_bookmark(&state, &article, 333).unwrap(), true);
+        assert_eq!(toggle_saved_bookmark(&state, &article, 333, state.personal_generation().unwrap()).unwrap(), true);
         assert_eq!(state.bookmark(&article).unwrap(), Some((333, String::new())));
         assert_eq!(saved_bookmark_rows(&state).unwrap(), vec![("enwiki".to_owned(), 42, 333)]);
-        assert_eq!(toggle_saved_bookmark(&state, &article, 334).unwrap(), false);
+        assert_eq!(toggle_saved_bookmark(&state, &article, 334, state.personal_generation().unwrap()).unwrap(), false);
         assert!(saved_bookmark_rows(&state).unwrap().is_empty());
         assert_eq!(state.bookmark(&article).unwrap(), None);
-        assert!(toggle_saved_bookmark(&state, &article, 0).is_err());
-        assert!(toggle_saved_bookmark(&state, &article, i64::MAX as u64 + 1).is_err());
+        assert!(toggle_saved_bookmark(&state, &article, 0, state.personal_generation().unwrap()).is_err());
+        assert!(toggle_saved_bookmark(&state, &article, i64::MAX as u64 + 1, state.personal_generation().unwrap()).is_err());
     }
 }
 

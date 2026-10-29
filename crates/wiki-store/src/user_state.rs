@@ -848,6 +848,7 @@ impl UserState {
         key: &ArticleKey,
         revision_id: u64,
     ) -> Result<Option<u64>, UserStateError> {
+
         Self::ids(key, revision_id)?;
         Ok(self
             .reading_position(key)?
@@ -1102,6 +1103,42 @@ impl UserState {
         let removed = tx.execute("DELETE FROM history", [])?;
         tx.commit()?;
         Ok(Some(removed))
+    }
+
+    /// An asynchronous deletion must not erase data created after another
+    /// process already completed a privacy reset. Check the captured generation
+    /// and advance it in the same SQLite IMMEDIATE transaction as deletion.
+    /// Returns false without changing anything when the request is stale.
+    pub fn clear_personal_reading_data_for_generation(
+        &mut self,
+        generation: u64,
+    ) -> Result<bool, UserStateError> {
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if Self::generation_from(&tx)? != generation {
+            return Ok(false);
+        }
+        let next = generation
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(UserStateError::InvalidValue)?;
+        tx.execute(
+            "INSERT INTO settings(key,value) VALUES (?1,?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![PERSONAL_GENERATION_KEY, next.to_string()],
+        )?;
+        tx.execute_batch(
+            "DELETE FROM bookmarks;
+             DELETE FROM reading_positions;
+             DELETE FROM history;
+             DELETE FROM chat_threads;",
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Atomically delete personal reading activity while preserving separately
@@ -1698,6 +1735,7 @@ mod tests {
             .append_chat_message(&key(), 123, thread, "user", "What is this?")
             .unwrap();
         let second = user
+
             .append_chat_message(&key(), 123, thread, "assistant", "A test.")
             .unwrap();
         assert!(second > first);
@@ -2005,6 +2043,43 @@ mod tests {
             assert!(matches!(operation, Err(UserStateError::InvalidValue)));
         }
         assert_eq!(owner.personal_generation().unwrap(), 1);
+        drop(owner);
+        drop(other);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_cross_process_full_clear_cannot_erase_newer_personal_data() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-stale-full-clear-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("user.sqlite");
+        let mut owner = UserState::open(&database).unwrap();
+        let mut other = UserState::open(&database).unwrap();
+        owner.add_pack_owner("science", &"c".repeat(64)).unwrap();
+        let old = other.personal_generation().unwrap();
+        owner.set_bookmark(&key(), 123, "before").unwrap();
+        assert!(owner.clear_personal_reading_data_for_generation(old).unwrap());
+        let fresh = other.personal_generation().unwrap();
+        assert_eq!(fresh, old + 1);
+        assert!(other
+            .set_bookmark_for_generation(fresh, &key(), 124, "after")
+            .unwrap());
+        assert!(!other.clear_personal_reading_data_for_generation(old).unwrap());
+        assert_eq!(owner.personal_generation().unwrap(), fresh);
+        assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
+        assert_eq!(owner.object_owner_count(&"c".repeat(64)).unwrap(), 1);
+        assert!(matches!(
+            owner.clear_personal_reading_data_for_generation(i64::MAX as u64),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
         drop(owner);
         drop(other);
         fs::remove_dir_all(root).unwrap();
@@ -2548,6 +2623,7 @@ mod tests {
         state.set_reading_position(&key(), 123, 8192).unwrap();
         state.set_history_enabled(true).unwrap();
         state.record_visit(&key(), 123, 1_700_000_000).unwrap();
+
         state.add_pack_owner("physics", &"a".repeat(64)).unwrap();
         state.backup_to_path(&destination).unwrap();
 
