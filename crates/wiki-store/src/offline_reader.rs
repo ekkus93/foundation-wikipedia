@@ -420,11 +420,26 @@ mod tests {
             .unwrap()
             .is_none());
         for invalid_key in [
-            ArticleKey { project: "enwiki".into(), page_id: 0 },
-            ArticleKey { project: "enwiki".into(), page_id: u64::MAX },
-            ArticleKey { project: "".into(), page_id: 999 },
-            ArticleKey { project: "ENwiki".into(), page_id: 999 },
-            ArticleKey { project: "enwiki/other".into(), page_id: 999 },
+            ArticleKey {
+                project: "enwiki".into(),
+                page_id: 0,
+            },
+            ArticleKey {
+                project: "enwiki".into(),
+                page_id: u64::MAX,
+            },
+            ArticleKey {
+                project: "".into(),
+                page_id: 999,
+            },
+            ArticleKey {
+                project: "ENwiki".into(),
+                page_id: 999,
+            },
+            ArticleKey {
+                project: "enwiki/other".into(),
+                page_id: 999,
+            },
         ] {
             assert!(matches!(
                 reader.open_page(&invalid_key),
