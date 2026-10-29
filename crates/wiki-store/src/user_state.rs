@@ -221,11 +221,20 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
         // Name-only checks can accept a forged index with different query
         // semantics. Validate the owning table, keys, collation and direction.
         const INDEXES: &[(&str, &str, &[(&str, i64)])] = &[
-            ("history", "history_recent_idx", &[("visited_at", 1), ("id", 1)]),
+            (
+                "history",
+                "history_recent_idx",
+                &[("visited_at", 1), ("id", 1)],
+            ),
             (
                 "chat_threads",
                 "chat_threads_article_idx",
-                &[("project", 0), ("page_id", 0), ("revision_id", 0), ("id", 1)],
+                &[
+                    ("project", 0),
+                    ("page_id", 0),
+                    ("revision_id", 0),
+                    ("id", 1),
+                ],
             ),
             (
                 "chat_messages",
@@ -266,7 +275,10 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             if actual_keys.len() != expected_keys.len()
                 || !actual_keys.iter().zip(expected_keys.iter()).all(
-                    |((name, descending, collation, column_id), &(expected_name, expected_desc))| {
+                    |(
+                        (name, descending, collation, column_id),
+                        &(expected_name, expected_desc),
+                    )| {
                         name == expected_name
                             && *descending == expected_desc
                             && collation == "BINARY"
