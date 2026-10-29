@@ -810,8 +810,14 @@ mod tests {
             Err(UserStateError::InvalidValue)
         ));
         assert_eq!(user.reading_position(&key()).unwrap(), Some((124, 4096)));
-        assert_eq!(user.reading_position_for_revision(&key(), 124).unwrap(), Some(4096));
-        assert_eq!(user.reading_position_for_revision(&key(), 123).unwrap(), None);
+        assert_eq!(
+            user.reading_position_for_revision(&key(), 124).unwrap(),
+            Some(4096)
+        );
+        assert_eq!(
+            user.reading_position_for_revision(&key(), 123).unwrap(),
+            None
+        );
         assert!(matches!(
             user.reading_position_for_revision(&key(), 0),
             Err(UserStateError::InvalidValue)
@@ -1199,7 +1205,8 @@ mod tests {
         old.set_history_enabled(true).unwrap();
         old.record_visit(&key(), 123, 1_700_000_000).unwrap();
         let thread = old.create_chat_thread(&key(), 123).unwrap();
-        old.append_chat_message(&key(), 123, thread, "user", "Hello").unwrap();
+        old.append_chat_message(&key(), 123, thread, "user", "Hello")
+            .unwrap();
         old.add_pack_owner("physics", &"a".repeat(64)).unwrap();
         old.set_builder_job_status("job_1", "queued").unwrap();
 
@@ -1246,7 +1253,10 @@ mod tests {
         );
         assert_eq!(upgraded.recent_history(10).unwrap().len(), 1);
         assert_eq!(
-            upgraded.chat_messages(&key(), 123, thread, 10).unwrap().len(),
+            upgraded
+                .chat_messages(&key(), 123, thread, 10)
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(upgraded.object_owner_count(&"a".repeat(64)).unwrap(), 1);
