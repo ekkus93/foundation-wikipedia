@@ -44,8 +44,22 @@ pub enum ManifestError {
     ResourceBudget,
 }
 
-fn unsafe_directional_mark(c: char) -> bool {
-    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+/// Reject invisible/spoofing format characters and Unicode noncharacters in
+/// pack display identities and object paths. Retain meaningful ZWNJ/ZWJ in
+/// multilingual labels, matching the canonical article-title policy.
+fn unsafe_label_character(c: char) -> bool {
+    let scalar = c as u32;
+    matches!(
+        c,
+        '\u{061c}'
+            | '\u{200b}'
+            | '\u{200e}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+    ) || (0xfdd0..=0xfdef).contains(&scalar)
+        || (scalar & 0xfffe) == 0xfffe
 }
 
 fn safe_id(value: &str) -> bool {
@@ -59,7 +73,7 @@ fn safe_id(value: &str) -> bool {
         && !unsafe_component(value)
         && !value
             .chars()
-            .any(|c| c.is_control() || unsafe_directional_mark(c))
+            .any(|c| c.is_control() || unsafe_label_character(c))
 }
 
 /// Pack project identity must match the source and article-key edition syntax.
@@ -175,7 +189,7 @@ impl Manifest {
                 || object
                     .path
                     .chars()
-                    .any(|c| c.is_control() || unsafe_directional_mark(c))
+                    .any(|c| c.is_control() || unsafe_label_character(c))
                 || object.path.contains(':')
                 || object.path.split('/').count() > MAX_OBJECT_PATH_COMPONENTS
                 || object.path.split('/').any(|component| {
@@ -335,6 +349,45 @@ mod transcript_tests {
         invalid = sample();
         invalid.objects[0].path = "media/\u{2066}figure.svg".into();
         assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+    }
+
+    #[test]
+    fn rejects_invisible_and_noncharacter_pack_identifiers_and_object_paths() {
+        for invisible in [
+            "\u{200b}",
+            "\u{2060}",
+            "\u{2029}",
+            "\u{206a}",
+            "\u{feff}",
+            "\u{fdd0}",
+            "\u{ffff}",
+            "\u{10ffff}",
+        ] {
+            let mut invalid = sample();
+            invalid.pack_id = format!("science{invisible}topic");
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.snapshot = format!("2026{invisible}1009");
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.origin = Origin::Official {
+                publisher: format!("Wiki{invisible}media"),
+            };
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.origin = Origin::Custom {
+                definition_id: format!("custom{invisible}topic"),
+            };
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.objects[0].path = format!("media/{invisible}image.svg");
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+            assert_eq!(invalid.identity_transcript(), Err(ManifestError::UnsafeObject));
+        }
+        let mut valid = sample();
+        valid.pack_id = "می\u{200c}روم".into();
+        valid.objects[0].path = "media/क्\u{200d}ष.png".into();
+        assert_eq!(valid.validate(), Ok(()));
     }
 
     #[test]
