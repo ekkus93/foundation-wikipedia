@@ -497,3 +497,5 @@ mod transcript_tests {
             invalid.identity_transcript(),
             Err(ManifestError::UnsafeObject)
         );
+    }
+}
