@@ -136,6 +136,11 @@ impl<'a> OfflineReader<'a> {
     /// Open an installed page by stable project/page ID, including redirects.
     /// Only a genuinely absent key reports `None`.
     pub fn open_page(&self, key: &ArticleKey) -> Result<Option<Article>, ReaderError> {
+        // A malformed caller-supplied identity is not an uninstalled page.
+        // This also protects exact-revision and redirect-target citation APIs,
+        // which all delegate to this navigation path.
+        key.validate()
+            .map_err(|_| CatalogError::InvalidCatalogEntry)?;
         // A redirect has a stable target page ID. Resolving its mutable title
         // again would incorrectly depend on a separate title-index entry.
         // Every hop must still pass the catalog's digest and identity checks.
@@ -404,6 +409,36 @@ mod tests {
         let mut index = OfflineSearchIndex::in_memory().unwrap();
         index.rebuild_from_catalog(&catalog, &root).unwrap();
         let reader = OfflineReader::new_verified(&catalog, &index, &root).unwrap();
+
+        // A missing but well-formed page is absent; malformed saved page
+        // identities must never be confused with an uninstalled article.
+        assert!(reader
+            .open_page(&ArticleKey {
+                project: "enwiki".into(),
+                page_id: 999,
+            })
+            .unwrap()
+            .is_none());
+        for invalid_key in [
+            ArticleKey { project: "enwiki".into(), page_id: 0 },
+            ArticleKey { project: "enwiki".into(), page_id: u64::MAX },
+            ArticleKey { project: "".into(), page_id: 999 },
+            ArticleKey { project: "ENwiki".into(), page_id: 999 },
+            ArticleKey { project: "enwiki/other".into(), page_id: 999 },
+        ] {
+            assert!(matches!(
+                reader.open_page(&invalid_key),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+            assert!(matches!(
+                reader.open_exact_revision(&invalid_key, 1042),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+            assert!(matches!(
+                reader.open_exact_page_target_revision(&invalid_key, 42, 1042),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+        }
 
         // Product adapters can now open both on-disk databases through one
         // owned verified read-only entry point. This alone does not qualify
