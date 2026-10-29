@@ -2,9 +2,9 @@
 
 ## Defect and correction
 
-The shared local-only `OfflineReader::open_page` previously accepted a caller-supplied `ArticleKey` without validating its project/page identity. A malformed project or page ID zero could therefore be indistinguishable from a valid uninstalled page (`Ok(None)`). Saved exact-revision and redirect-target citation paths delegate to this lookup, so they inherited the ambiguity for otherwise valid revision/target arguments.
+The shared local-only `OfflineReader::open_page` previously delegated caller-supplied `ArticleKey` validation to `SnapshotCatalog::lookup_entry`, which **already rejected** malformed project/page identities with `CatalogError::Model(ModelError::InvalidIdentity)` rather than returning `Ok(None)`. Saved exact-revision and redirect-target citation paths inherited that existing protection. The improvement here is a consistent reader-level `InvalidCatalogEntry` error boundary, not a newly discovered absent-page bypass.
 
-The entry point now calls the canonical `ArticleKey::validate` before catalog access and returns `ReaderError::Catalog(CatalogError::InvalidCatalogEntry)` on malformed identity. Valid missing pages still return `None`; valid installed pages and redirects retain their existing behavior. No network, snapshot mutation or trust promotion occurs.
+The entry point now calls the canonical `ArticleKey::validate` before catalog access and returns `ReaderError::Catalog(CatalogError::InvalidCatalogEntry)` on malformed identity, instead of relying on the catalog's existing model error. Valid missing pages still return `None`; valid installed pages and redirects retain their existing behavior. No network, snapshot mutation or trust promotion occurs.
 
 ## Regression and CI scope
 
