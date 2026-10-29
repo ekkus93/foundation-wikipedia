@@ -341,6 +341,13 @@ impl SnapshotCatalog {
         project: &str,
         title: &str,
     ) -> Result<Option<ArticleKey>, CatalogError> {
+        // An invalid Wikimedia edition is not an uninstalled title. Keep
+        // direct catalog callers and offline title navigation fail-closed.
+        ArticleKey {
+            project: project.to_owned(),
+            page_id: 1,
+        }
+        .validate()?;
         let title = title_key(title)?;
         let found: Option<i64> = self
             .conn
@@ -854,6 +861,19 @@ mod tests {
             Some(key.clone())
         );
         assert!(reader.read_record(&root, &key).unwrap().is_some());
+        // Malformed edition identities must not look like valid missing
+        // articles, including through redirect-aware title navigation.
+        assert!(reader.lookup_key("frwiki", "Earth").unwrap().is_none());
+        for project in ["", "ENwiki", "enwiki/other"] {
+            assert!(matches!(
+                reader.lookup_key(project, "Earth"),
+                Err(CatalogError::Model(ModelError::InvalidIdentity))
+            ));
+            assert!(matches!(
+                reader.resolve_title(&root, project, "Earth"),
+                Err(CatalogError::Model(ModelError::InvalidIdentity))
+            ));
+        }
         assert!(reader.conn.execute("DELETE FROM records", []).is_err());
         assert!(reader.lookup_entry(&key).unwrap().is_some());
         assert!(SnapshotCatalog::open_read_only(&root.join("missing.sqlite")).is_err());
