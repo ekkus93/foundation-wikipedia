@@ -208,7 +208,10 @@ impl Manifest {
             {
                 return Err(ManifestError::UnsafeObject);
             }
-            if !paths.insert(object.path.to_ascii_lowercase()) {
+            // Reject Unicode lowercase-equivalent paths as well as ASCII case
+            // aliases: a manifest must not describe two files that can map
+            // to the same destination on a case-insensitive filesystem.
+            if !paths.insert(object.path.to_lowercase()) {
                 return Err(ManifestError::DuplicateObject);
             }
             // One content digest must have one consistent byte length.
@@ -473,6 +476,28 @@ mod transcript_tests {
 
         invalid.objects[1].path = "medial".into();
         assert_eq!(invalid.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_unicode_case_equivalent_paths_and_directory_aliases() {
+        let mut invalid = sample();
+        invalid.objects[0].path = "media/Étage.svg".into();
+        invalid.objects[1].path = "media/étage.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+        invalid.objects.reverse();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+
+        invalid.objects[0].path = "media/Étage.svg/child".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::DuplicateObject));
+        assert_eq!(
+            invalid.identity_transcript(),
+            Err(ManifestError::DuplicateObject)
+        );
+
+        let mut valid = sample();
+        valid.objects[0].path = "media/étage.svg".into();
+        valid.objects[1].path = "media/etage.svg".into();
+        assert_eq!(valid.validate(), Ok(()));
     }
 
     #[test]
