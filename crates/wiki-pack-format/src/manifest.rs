@@ -1,5 +1,6 @@
 //! Versioned pack manifest structure; no signature verification yet.
 use std::collections::{BTreeMap, BTreeSet};
+use unicode_normalization::UnicodeNormalization;
 
 pub const FORMAT_VERSION: u32 = 1;
 /// Provisional safeguards until archive framing and mobile benchmarks are final.
@@ -94,6 +95,9 @@ pub(crate) fn unsafe_component(component: &str) -> bool {
         || component == ".."
         || component.ends_with('.')
         || component.ends_with(' ')
+        // Some filesystems normalize decomposed Unicode path components.
+        // Require one canonical spelling before constructing on-disk paths.
+        || !component.nfc().eq(component.chars())
         // Windows forbids these characters even on filesystems that allow them.
         || component
             .chars()
@@ -512,6 +516,43 @@ mod transcript_tests {
         let mut valid = sample();
         valid.objects[0].path = "media/étage.svg".into();
         valid.objects[1].path = "media/etage.svg".into();
+        assert_eq!(valid.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_non_nfc_filesystem_names_without_rejecting_multilingual_nfc() {
+        // macOS filesystems can resolve canonically equivalent Unicode names
+        // to the same directory entry. Reject decomposed paths *before* staging
+        // rather than allowing a manifest's signed identity to diverge from disk.
+        let mut invalid = sample();
+        invalid.objects[0].path = "media/cafe\u{301}.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+        assert_eq!(
+            invalid.identity_transcript(),
+            Err(ManifestError::UnsafeObject)
+        );
+        invalid = sample();
+        invalid.objects[0].path = "re\u{301}cords/figure.svg".into();
+        assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+
+        for name in ["cafe\u{301}", "A\u{30a}"] {
+            let mut invalid = sample();
+            invalid.pack_id = name.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.snapshot = name.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+            invalid = sample();
+            invalid.origin = Origin::Official {
+                publisher: name.into(),
+            };
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+        }
+
+        let mut valid = sample();
+        valid.pack_id = "café".into();
+        valid.objects[0].path = "media/café.svg".into();
+        valid.objects[1].path = "articles/日本語.cbor".into();
         assert_eq!(valid.validate(), Ok(()));
     }
 
