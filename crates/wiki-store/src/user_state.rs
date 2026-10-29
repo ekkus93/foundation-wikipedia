@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use wiki_model::ArticleKey;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug)]
 pub enum UserStateError {
@@ -139,6 +139,21 @@ impl UserState {
                    job_id TEXT PRIMARY KEY,
                    status TEXT NOT NULL
                  );",
+            )?;
+            transaction.pragma_update(None, "user_version", 1)?;
+            transaction.commit()?;
+        }
+        if version < 2 {
+            // Indexes live in mutable user state, never in immutable article
+            // snapshots. A single transaction keeps a v1 database recoverable
+            // if a migration fails or the process is interrupted.
+            let transaction = conn.transaction()?;
+            transaction.execute_batch(
+                "CREATE INDEX history_recent_idx ON history(visited_at DESC, id DESC);
+                 CREATE INDEX chat_threads_article_idx
+                   ON chat_threads(project, page_id, revision_id, id DESC);
+                 CREATE INDEX chat_messages_thread_idx ON chat_messages(thread_id, id);
+                 CREATE INDEX pack_owners_digest_idx ON pack_owners(digest, pack_id);",
             )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
@@ -276,6 +291,19 @@ impl UserState {
                 Ok((revision, offset))
             })
             .transpose()
+    }
+
+    /// Return a scroll offset only for the exact displayed revision. A saved
+    /// position from an older revision is not a reliable HTML coordinate.
+    pub fn reading_position_for_revision(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+    ) -> Result<Option<u64>, UserStateError> {
+        Self::ids(key, revision_id)?;
+        Ok(self
+            .reading_position(key)?
+            .and_then(|(saved_revision, offset)| (saved_revision == revision_id).then_some(offset)))
     }
 
     pub fn remove_bookmark(&self, key: &ArticleKey) -> Result<bool, UserStateError> {
@@ -782,6 +810,12 @@ mod tests {
             Err(UserStateError::InvalidValue)
         ));
         assert_eq!(user.reading_position(&key()).unwrap(), Some((124, 4096)));
+        assert_eq!(user.reading_position_for_revision(&key(), 124).unwrap(), Some(4096));
+        assert_eq!(user.reading_position_for_revision(&key(), 123).unwrap(), None);
+        assert!(matches!(
+            user.reading_position_for_revision(&key(), 0),
+            Err(UserStateError::InvalidValue)
+        ));
         assert!(user.remove_reading_position(&key()).unwrap());
         assert!(!user.remove_reading_position(&key()).unwrap());
         assert_eq!(user.reading_position(&key()).unwrap(), None);
@@ -1155,6 +1189,73 @@ mod tests {
         assert_eq!(snapshot.current().unwrap().as_deref(), Some("new"));
         drop(user);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_v1_in_place_without_losing_mutable_state() {
+        let old = UserState::in_memory().unwrap();
+        old.set_bookmark(&key(), 123, "Saved").unwrap();
+        old.set_reading_position(&key(), 123, 1234).unwrap();
+        old.set_history_enabled(true).unwrap();
+        old.record_visit(&key(), 123, 1_700_000_000).unwrap();
+        let thread = old.create_chat_thread(&key(), 123).unwrap();
+        old.append_chat_message(&key(), 123, thread, "user", "Hello").unwrap();
+        old.add_pack_owner("physics", &"a".repeat(64)).unwrap();
+        old.set_builder_job_status("job_1", "queued").unwrap();
+
+        // Reconstruct the exact v1 schema (before the four v2 indexes) with
+        // existing data, as would be found after upgrading an older install.
+        old.conn
+            .execute_batch(
+                "DROP INDEX history_recent_idx;
+                 DROP INDEX chat_threads_article_idx;
+                 DROP INDEX chat_messages_thread_idx;
+                 DROP INDEX pack_owners_digest_idx;
+                 PRAGMA user_version=1;",
+            )
+            .unwrap();
+        let upgraded = UserState::initialize(old.conn).unwrap();
+        let version: i64 = upgraded
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        for name in [
+            "history_recent_idx",
+            "chat_threads_article_idx",
+            "chat_messages_thread_idx",
+            "pack_owners_digest_idx",
+        ] {
+            let count: i64 = upgraded
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    params![name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "missing migrated index: {name}");
+        }
+        assert_eq!(
+            upgraded.bookmark(&key()).unwrap(),
+            Some((123, "Saved".into()))
+        );
+        assert_eq!(
+            upgraded.reading_position_for_revision(&key(), 123).unwrap(),
+            Some(1234)
+        );
+        assert_eq!(upgraded.recent_history(10).unwrap().len(), 1);
+        assert_eq!(
+            upgraded.chat_messages(&key(), 123, thread, 10).unwrap().len(),
+            1
+        );
+        assert_eq!(upgraded.object_owner_count(&"a".repeat(64)).unwrap(), 1);
+        assert_eq!(
+            upgraded.builder_job_status("job_1").unwrap().as_deref(),
+            Some("queued")
+        );
+        // Reopening an already migrated database must not recreate indexes.
+        assert!(UserState::initialize(upgraded.conn).is_ok());
     }
 
     #[test]
