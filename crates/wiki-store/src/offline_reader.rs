@@ -140,6 +140,29 @@ impl<'a> OfflineReader<'a> {
             .transpose()
     }
 
+    /// Open a stable installed page/redirect ID only when the resolved target
+    /// page ID AND exact revision still match the saved citation. A redirect
+    /// retargeted to a different page must not satisfy a historical citation
+    /// merely because its new target has the same revision number.
+    pub fn open_exact_page_target_revision(
+        &self,
+        source: &ArticleKey,
+        expected_target_page_id: u64,
+        expected_revision: u64,
+    ) -> Result<Option<Article>, ReaderError> {
+        if expected_target_page_id == 0 || expected_target_page_id > i64::MAX as u64 {
+            return Err(CatalogError::InvalidCatalogEntry.into());
+        }
+        self.open_page(source)?
+            .map(|article| {
+                if article.key.project != source.project {
+                    return Err(CatalogError::IdentityMismatch.into());
+                }
+                Self::check_page_and_revision(article, expected_target_page_id, expected_revision)
+            })
+            .transpose()
+    }
+
     /// Open a canonical title or installed redirect alias without requesting
     /// the network, returning `None` for an uninstalled title.
     pub fn open_title(&self, project: &str, title: &str) -> Result<Option<Article>, ReaderError> {
@@ -178,16 +201,22 @@ impl<'a> OfflineReader<'a> {
             return Err(CatalogError::InvalidCatalogEntry.into());
         }
         self.open_title(project, title)?
-            .map(|article| {
-                if article.key.page_id != expected_page_id {
-                    return Err(ReaderError::PageIdentityMismatch {
-                        expected: expected_page_id,
-                        actual: article.key.page_id,
-                    });
-                }
-                Self::check_revision(article, expected_revision)
-            })
+            .map(|article| Self::check_page_and_revision(article, expected_page_id, expected_revision))
             .transpose()
+    }
+
+    fn check_page_and_revision(
+        article: Article,
+        expected_page_id: u64,
+        expected_revision: u64,
+    ) -> Result<Article, ReaderError> {
+        if article.key.page_id != expected_page_id {
+            return Err(ReaderError::PageIdentityMismatch {
+                expected: expected_page_id,
+                actual: article.key.page_id,
+            });
+        }
+        Self::check_revision(article, expected_revision)
     }
 
     fn check_revision(article: Article, expected: u64) -> Result<Article, ReaderError> {
@@ -472,6 +501,64 @@ mod tests {
             project: "enwiki".into(),
             page_id: 43,
         };
+        // A saved redirect citation pins both its source and resolved target.
+        // Matching revision alone is insufficient after a redirect retarget.
+        assert_eq!(
+            reader
+                .open_exact_page_target_revision(&redirect_key, 42, 1042)
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
+            42
+        );
+        assert!(matches!(
+            reader.open_exact_page_target_revision(&redirect_key, 43, 1042),
+            Err(ReaderError::PageIdentityMismatch {
+                expected: 43,
+                actual: 42
+            })
+        ));
+        assert!(matches!(
+            reader.open_exact_page_target_revision(&redirect_key, 42, 999),
+            Err(ReaderError::StaleRevision {
+                expected: 999,
+                actual: 1042
+            })
+        ));
+        for invalid in [0, u64::MAX] {
+            assert!(matches!(
+                reader.open_exact_page_target_revision(&redirect_key, invalid, 1042),
+                Err(ReaderError::Catalog(CatalogError::InvalidCatalogEntry))
+            ));
+        }
+        assert!(reader
+            .open_exact_page_target_revision(
+                &ArticleKey {
+                    project: "enwiki".into(),
+                    page_id: 999,
+                },
+                42,
+                1042,
+            )
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            reader
+                .open_exact_page_target_revision(
+                    &ArticleKey {
+                        project: "enwiki".into(),
+                        page_id: 42,
+                    },
+                    42,
+                    1042,
+                )
+                .unwrap()
+                .unwrap()
+                .key
+                .page_id,
+            42
+        );
         assert_eq!(
             reader
                 .open_page(&redirect_key)
