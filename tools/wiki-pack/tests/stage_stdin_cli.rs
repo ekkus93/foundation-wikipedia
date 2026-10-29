@@ -2,7 +2,7 @@
 //! No publisher trust or installed-pack activation is implied.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,11 +12,11 @@ use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin, FO
 use wiki_pack_builder::wiki_pack_format::sha256_hex;
 
 fn private_parent() -> std::path::PathBuf {
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "wiki-cli-stdin-{}-{stamp}",
-        std::process::id()
-    ));
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("wiki-cli-stdin-{}-{stamp}", std::process::id()));
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
@@ -65,11 +65,18 @@ fn stdin_staging_checks_integrity_and_quota_without_spool_residue() {
     let quota = encoded.len() as u64;
 
     let success = invoke(&parent, "verified", quota, &encoded);
-    assert!(success.status.success(), "{}", String::from_utf8_lossy(&success.stderr));
+    assert!(
+        success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&success.stderr)
+    );
     let stdout = String::from_utf8_lossy(&success.stdout);
     assert!(stdout.contains("UNTRUSTED STAGING ONLY"));
     assert!(stdout.contains("Publisher signature: NOT VERIFIED"));
-    assert_eq!(fs::read(parent.join("verified/media/figure.svg")).unwrap(), payload);
+    assert_eq!(
+        fs::read(parent.join("verified/media/figure.svg")).unwrap(),
+        payload
+    );
 
     let limited = invoke(&parent, "limited", quota - 1, &encoded);
     assert!(!limited.status.success());

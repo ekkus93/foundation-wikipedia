@@ -21,7 +21,9 @@ use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, wri
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::Origin;
-use wiki_pack_builder::wiki_pack_format::stage::{stage_container, stage_container_stream_with_budget};
+use wiki_pack_builder::wiki_pack_format::stage::{
+    stage_container, stage_container_stream_with_budget,
+};
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
@@ -719,9 +721,7 @@ fn main() {
                 eprintln!("Spool budget must be a decimal byte count");
                 std::process::exit(2);
             };
-            if let Err(error) =
-                stage_unsigned_stdin(PathBuf::from(&fields[0]), name, max_bytes)
-            {
+            if let Err(error) = stage_unsigned_stdin(PathBuf::from(&fields[0]), name, max_bytes) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
