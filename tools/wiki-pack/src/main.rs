@@ -16,11 +16,13 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wiki_pack_builder::wiki_pack_format::container::verify_container;
+use wiki_pack_builder::wiki_pack_format::container::{
+    verify_container, verify_container_with_budget,
+};
 use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
-use wiki_pack_builder::wiki_pack_format::manifest::Origin;
+use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Origin};
 use wiki_pack_builder::wiki_pack_format::stage::{
     stage_container, stage_container_stream_with_budget,
 };
@@ -50,6 +52,8 @@ fn usage() {
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
     println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
+    println!("       wiki-pack verify-stdin <max-input-bytes>");
+    println!("       wiki-pack inspect-stdin <max-input-bytes>");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -58,10 +62,7 @@ fn usage() {
     println!("Publisher signatures and offline media completeness are NOT verified.");
 }
 
-fn inspect_file(path: PathBuf, detailed: bool) -> Result<(), String> {
-    let file = File::open(&path).map_err(|error| format!("cannot open input: {error}"))?;
-    let manifest = verify_container(&mut BufReader::new(file))
-        .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
+fn print_inspection(manifest: Manifest, detailed: bool) {
     let total_bytes: u64 = manifest.objects.iter().map(|object| object.bytes).sum();
     println!(
         "Envelope integrity verified: {} objects, {} declared payload bytes",
@@ -84,6 +85,21 @@ fn inspect_file(path: PathBuf, detailed: bool) -> Result<(), String> {
             }
         }
     }
+}
+
+fn inspect_file(path: PathBuf, detailed: bool) -> Result<(), String> {
+    let file = File::open(&path).map_err(|error| format!("cannot open input: {error}"))?;
+    let manifest = verify_container(&mut BufReader::new(file))
+        .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
+    print_inspection(manifest, detailed);
+    Ok(())
+}
+
+fn inspect_stdin(max_bytes: u64, detailed: bool) -> Result<(), String> {
+    let stdin = std::io::stdin();
+    let manifest = verify_container_with_budget(&mut stdin.lock(), max_bytes)
+        .map_err(|error| format!("stdin envelope integrity verification failed: {error:?}"))?;
+    print_inspection(manifest, detailed);
     Ok(())
 }
 
@@ -448,6 +464,7 @@ fn main() {
                 eprintln!("Generation identity and byte limit must be UTF-8");
                 std::process::exit(2);
             };
+
             let Ok(max_bytes) = identity[3].parse::<u64>() else {
                 eprintln!("Compressed byte limit must be a decimal integer");
                 std::process::exit(2);
@@ -699,6 +716,21 @@ fn main() {
                 )
             };
             if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some(command @ ("verify-stdin" | "inspect-stdin")) => {
+            let fields: Vec<OsString> = args.collect();
+            let Some(max_bytes) = fields.as_slice().first().filter(|_| fields.len() == 1)
+                .and_then(|value| value.to_str())
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                eprintln!("stdin verification requires exactly one decimal byte budget");
+                usage();
+                std::process::exit(2);
+            };
+            if let Err(error) = inspect_stdin(max_bytes, command == "inspect-stdin") {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

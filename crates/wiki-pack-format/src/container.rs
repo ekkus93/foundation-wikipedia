@@ -222,6 +222,58 @@ pub fn verify_container<R: Read>(input: &mut R) -> Result<Manifest, ContainerErr
     Ok(manifest)
 }
 
+struct ByteBudgetReader<'a, R> {
+    source: &'a mut R,
+    remaining: u64,
+    exceeded: bool,
+}
+
+impl<R: Read> Read for ByteBudgetReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.remaining == 0 {
+            let mut probe = [0u8; 1];
+            return match self.source.read(&mut probe)? {
+                0 => Ok(0),
+                _ => {
+                    self.exceeded = true;
+                    Err(io::Error::other("pack input exceeds byte budget"))
+                }
+            };
+        }
+        let allowed = self.remaining.min(buffer.len() as u64) as usize;
+        let count = self.source.read(&mut buffer[..allowed])?;
+        self.remaining -= count as u64;
+        Ok(count)
+    }
+}
+
+/// Verify an unseekable envelope with a hard input-byte ceiling and no
+/// temporary files. The ceiling includes framing, manifest and all objects.
+/// At the boundary one extra byte may be consumed to distinguish EOF from
+/// an over-budget stream; no more than max_input_bytes are retained.
+/// This checks local integrity, not publisher signatures or offline media.
+pub fn verify_container_with_budget<R: Read>(
+    input: &mut R,
+    max_input_bytes: u64,
+) -> Result<Manifest, ContainerError> {
+    if max_input_bytes == 0 {
+        return Err(ContainerError::ResourceBudget);
+    }
+    let mut bounded = ByteBudgetReader {
+        source: input,
+        remaining: max_input_bytes,
+        exceeded: false,
+    };
+    let result = verify_container(&mut bounded);
+    if bounded.exceeded {
+        return Err(ContainerError::ResourceBudget);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
