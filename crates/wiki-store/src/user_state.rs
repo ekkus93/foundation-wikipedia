@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 use wiki_model::ArticleKey;
 
 pub const SCHEMA_VERSION: i64 = 2;
@@ -398,12 +399,26 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
             }
         }
     }
+
     Ok(())
 }
 
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
-        Self::initialize(Connection::open(path)?)
+        let conn = Connection::open(path)?;
+        // A second process may hold a short write transaction. Retry rather
+        // than treating ordinary concurrent state updates as database errors.
+        conn.busy_timeout(Duration::from_secs(5))?;
+        let state = Self::initialize(conn)?;
+        // Disk-backed personal state supports concurrent readers while another
+        // process writes. In-memory state intentionally retains its own mode.
+        let mode: String = state
+            .conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
+        if mode != "wal" {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(state)
     }
 
     pub fn in_memory() -> Result<Self, UserStateError> {
@@ -798,6 +813,7 @@ impl UserState {
         Self::ids(key, revision_id)?;
         Ok(self
             .reading_position(key)?
+
             .and_then(|(saved_revision, offset)| (saved_revision == revision_id).then_some(offset)))
     }
 
@@ -1197,6 +1213,7 @@ impl UserState {
             .execute("DELETE FROM settings WHERE key=?1", params![key])?
             != 0)
     }
+
 
     pub fn setting(&self, key: &str) -> Result<Option<String>, UserStateError> {
         if key.is_empty() || key.len() > 128 {
@@ -1598,6 +1615,7 @@ mod tests {
         );
         assert_eq!(
             user.list_chat_threads(&key(), 124, 2).unwrap(),
+
             vec![another]
         );
         assert_eq!(
@@ -1613,6 +1631,49 @@ mod tests {
             user.list_chat_threads(&key(), 123, 2).unwrap(),
             vec![newest]
         );
+    }
+
+    #[test]
+    fn disk_backed_handles_use_wal_and_wait_for_concurrent_writer() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-concurrency-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("user.sqlite");
+        let first = UserState::open(&db).unwrap();
+        let second = UserState::open(&db).unwrap();
+        let mode: String = first
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+
+        first.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        first.set_setting("pending", "write").unwrap();
+        // A WAL reader sees the previous committed snapshot, not dirty data.
+        assert_eq!(second.setting("pending").unwrap(), None);
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            sender
+                .send(second.set_setting("concurrent", "ready").is_ok())
+                .unwrap();
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        first.conn.execute_batch("COMMIT").unwrap();
+        assert!(receiver.recv_timeout(Duration::from_secs(5)).unwrap());
+        worker.join().unwrap();
+        assert_eq!(first.setting("concurrent").unwrap().as_deref(), Some("ready"));
+        assert_eq!(first.setting("pending").unwrap().as_deref(), Some("write"));
+        drop(first);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1998,6 +2059,7 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
             "wiki-user-state-schema-shape-{}-{stamp}",
+
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
@@ -2398,6 +2460,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_future_schema() {
         let connection = Connection::open_in_memory().unwrap();
+
         connection.execute_batch("PRAGMA user_version=99;").unwrap();
         assert!(matches!(
             UserState::initialize(connection),
