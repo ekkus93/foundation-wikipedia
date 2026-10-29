@@ -848,7 +848,6 @@ impl UserState {
         key: &ArticleKey,
         revision_id: u64,
     ) -> Result<Option<u64>, UserStateError> {
-
         Self::ids(key, revision_id)?;
         Ok(self
             .reading_position(key)?
@@ -1735,7 +1734,6 @@ mod tests {
             .append_chat_message(&key(), 123, thread, "user", "What is this?")
             .unwrap();
         let second = user
-
             .append_chat_message(&key(), 123, thread, "assistant", "A test.")
             .unwrap();
         assert!(second > first);
@@ -2065,13 +2063,17 @@ mod tests {
         owner.add_pack_owner("science", &"c".repeat(64)).unwrap();
         let old = other.personal_generation().unwrap();
         owner.set_bookmark(&key(), 123, "before").unwrap();
-        assert!(owner.clear_personal_reading_data_for_generation(old).unwrap());
+        assert!(owner
+            .clear_personal_reading_data_for_generation(old)
+            .unwrap());
         let fresh = other.personal_generation().unwrap();
         assert_eq!(fresh, old + 1);
         assert!(other
             .set_bookmark_for_generation(fresh, &key(), 124, "after")
             .unwrap());
-        assert!(!other.clear_personal_reading_data_for_generation(old).unwrap());
+        assert!(!other
+            .clear_personal_reading_data_for_generation(old)
+            .unwrap());
         assert_eq!(owner.personal_generation().unwrap(), fresh);
         assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
         assert_eq!(owner.object_owner_count(&"c".repeat(64)).unwrap(), 1);
