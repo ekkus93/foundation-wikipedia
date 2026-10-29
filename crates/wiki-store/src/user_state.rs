@@ -1071,6 +1071,39 @@ impl UserState {
     pub fn clear_history(&self) -> Result<usize, UserStateError> {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
+    /// Clear only visit history while atomically advancing the persistent
+    /// privacy generation. A delayed visit captured before this clear cannot
+    /// recreate history, and a delayed older clear cannot erase fresh visits.
+    /// Returns None for a stale request, or Some(number of deleted visits).
+    /// The global generation also fences other queued personal writes; callers
+    /// should recapture a token after a successful history-only clear.
+    pub fn clear_history_for_generation(
+        &mut self,
+        generation: u64,
+    ) -> Result<Option<usize>, UserStateError> {
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if Self::generation_from(&tx)? != generation {
+            return Ok(None);
+        }
+        let next = generation
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(UserStateError::InvalidValue)?;
+        tx.execute(
+            "INSERT INTO settings(key,value) VALUES (?1,?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![PERSONAL_GENERATION_KEY, next.to_string()],
+        )?;
+        let removed = tx.execute("DELETE FROM history", [])?;
+        tx.commit()?;
+        Ok(Some(removed))
+    }
+
     /// Atomically delete personal reading activity while preserving separately
     /// managed installed-pack ownership, builder jobs and non-secret settings.
     /// SQLite foreign keys cascade chat message deletion from chat threads.
@@ -1975,6 +2008,69 @@ mod tests {
         drop(owner);
         drop(other);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_only_clear_fences_stale_visits_and_stale_clears_across_handles() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-history-generation-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("user.sqlite");
+        let mut owner = UserState::open(&database).unwrap();
+        let mut other = UserState::open(&database).unwrap();
+        owner.set_history_enabled(true).unwrap();
+        owner.set_bookmark(&key(), 123, "keep").unwrap();
+        owner.add_pack_owner("science", &"b".repeat(64)).unwrap();
+
+        let old = other.personal_generation().unwrap();
+        assert!(other
+            .record_visit_for_generation(old, &key(), 123, 100)
+            .unwrap());
+        assert_eq!(owner.clear_history_for_generation(old).unwrap(), Some(1));
+        assert_eq!(owner.personal_generation().unwrap(), old + 1);
+        assert!(!other
+            .record_visit_for_generation(old, &key(), 123, 101)
+            .unwrap());
+        assert!(other.recent_history(10).unwrap().is_empty());
+
+        let current = other.personal_generation().unwrap();
+        assert!(other
+            .record_visit_for_generation(current, &key(), 124, 102)
+            .unwrap());
+        assert_eq!(owner.clear_history_for_generation(old).unwrap(), None);
+        assert_eq!(other.recent_history(10).unwrap().len(), 1);
+        assert_eq!(owner.bookmark(&key()).unwrap(), Some((123, "keep".into())));
+        assert_eq!(owner.object_owner_count(&"b".repeat(64)).unwrap(), 1);
+        assert_eq!(other.clear_history_for_generation(current).unwrap(), Some(1));
+        assert!(other.recent_history(10).unwrap().is_empty());
+        assert_eq!(other.personal_generation().unwrap(), current + 1);
+        drop(owner);
+        drop(other);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_only_clear_generation_overflow_preserves_visits() {
+        let mut user = UserState::in_memory().unwrap();
+        user.set_history_enabled(true).unwrap();
+        assert!(user.record_visit(&key(), 123, 100).unwrap());
+        user.conn
+            .execute(
+                "INSERT INTO settings(key,value) VALUES (?1,?2)",
+                params![PERSONAL_GENERATION_KEY, i64::MAX.to_string()],
+            )
+            .unwrap();
+        assert!(matches!(
+            user.clear_history_for_generation(i64::MAX as u64),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(user.recent_history(10).unwrap().len(), 1);
     }
 
     #[test]
