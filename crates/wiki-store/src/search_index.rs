@@ -1157,8 +1157,19 @@ mod identity_tests {
             );
         }
         let unverified = OfflineSearchIndex::open_read_only(&path).unwrap();
-        assert_eq!(unverified.verify_catalog_membership(&catalog, &root).unwrap(), 1);
-        assert_eq!(unverified.search_project("enwiki", "Earth", 10).unwrap().len(), 1);
+        assert_eq!(
+            unverified
+                .verify_catalog_membership(&catalog, &root)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            unverified
+                .search_project("enwiki", "Earth", 10)
+                .unwrap()
+                .len(),
+            1
+        );
         drop(unverified);
         assert!(matches!(
             OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root),
@@ -1167,7 +1178,12 @@ mod identity_tests {
         let audit_leftovers = fs::read_dir(&root)
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".offline-fts-audit."))
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".offline-fts-audit.")
+            })
             .count();
         assert_eq!(audit_leftovers, 0);
         OfflineSearchIndex::replace_persisted_from_catalog(&path, &catalog, &root).unwrap();
