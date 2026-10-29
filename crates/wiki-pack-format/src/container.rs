@@ -271,10 +271,7 @@ pub fn verify_container_with_budget<R: Read>(
         return Err(ContainerError::InvalidHeader);
     }
     let length = u32::from_be_bytes(header[8..12].try_into().unwrap()) as u64;
-    if length == 0
-        || length > MAX_MANIFEST_BYTES as u64
-        || length > max_input_bytes - 12
-    {
+    if length == 0 || length > MAX_MANIFEST_BYTES as u64 || length > max_input_bytes - 12 {
         return Err(ContainerError::ResourceBudget);
     }
     let mut replay = io::Cursor::new(header).chain(input);
@@ -305,7 +302,6 @@ mod tests {
         ));
         assert_eq!(input.position(), 12);
     }
-
 
     fn sample() -> Manifest {
         Manifest {
