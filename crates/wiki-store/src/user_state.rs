@@ -128,7 +128,6 @@ impl UserState {
         result
     }
 
-
     /// Restore a vetted SQLite backup to a NEW user-state database path.
     ///
     /// The source is opened read-only and audited before creating the target.
@@ -154,20 +153,24 @@ impl UserState {
                 return Err(UserStateError::InvalidValue);
             }
         }
-        let source = Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let source =
+            Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         // Never run a migration or initialize a blank, unrelated SQLite file
         // while deciding whether it is safe to restore.
         let schema: i64 = source.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if !(1..=SCHEMA_VERSION).contains(&schema) {
             return Err(UserStateError::UnsupportedSchema(schema));
         }
-        let integrity: String =
-            source.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        let integrity: String = source.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
         if integrity != "ok" {
             return Err(UserStateError::InvalidValue);
         }
         let foreign_key_violation: Option<i64> = source
-            .query_row("SELECT 1 FROM pragma_foreign_key_check LIMIT 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
             .optional()?;
         if foreign_key_violation.is_some() {
             return Err(UserStateError::InvalidValue);
@@ -1455,7 +1458,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-
     #[test]
     fn private_restore_is_new_only_and_preserves_state_and_original() {
         let stamp = SystemTime::now()
@@ -1486,7 +1488,10 @@ mod tests {
             restored.bookmark(&key()).unwrap(),
             Some((123, "original".into()))
         );
-        assert_eq!(restored.reading_position(&key()).unwrap(), Some((123, 2048)));
+        assert_eq!(
+            restored.reading_position(&key()).unwrap(),
+            Some((123, 2048))
+        );
         assert_eq!(restored.recent_history(10).unwrap().len(), 1);
         assert_eq!(restored.object_owner_count(&"a".repeat(64)).unwrap(), 1);
         assert_eq!(
