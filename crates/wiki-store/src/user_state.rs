@@ -2077,10 +2077,11 @@ mod tests {
         assert_eq!(owner.personal_generation().unwrap(), fresh);
         assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
         assert_eq!(owner.object_owner_count(&"c".repeat(64)).unwrap(), 1);
-        assert!(matches!(
-            owner.clear_personal_reading_data_for_generation(i64::MAX as u64),
-            Err(UserStateError::InvalidValue)
-        ));
+        // A syntactically valid but stale MAX generation is a no-op, not
+        // an overflow: overflow is checked only after an exact match.
+        assert!(!owner
+            .clear_personal_reading_data_for_generation(i64::MAX as u64)
+            .unwrap());
         assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
         drop(owner);
         drop(other);
