@@ -796,9 +796,7 @@ mod tests {
         fs::write(root.join("reader.shard"), &bytes).unwrap();
         assert!(matches!(
             OfflineReader::new_verified(&catalog, &index, &root),
-            Err(ReaderError::Search(SearchError::Catalog(
-                CatalogError::DigestMismatch
-            )))
+            Err(ReaderError::Catalog(CatalogError::DigestMismatch))
         ));
         assert!(matches!(
             reader.search_title_prefix("enwiki", "Earth", 10),
