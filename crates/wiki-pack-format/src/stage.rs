@@ -149,8 +149,8 @@ mod tests {
         // Invalid names fail before parent metadata or input I/O is accessed.
         let absent_parent = Path::new("missing-private-stage-parent");
         for name in [
-            "CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "COM9.txt",
-            "LPT1", "lpt9.bin", "CONIN$", "CONOUT$",
+            "CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "COM9.txt", "LPT1", "lpt9.bin",
+            "CONIN$", "CONOUT$",
         ] {
             let mut empty = io::Cursor::new(Vec::<u8>::new());
             assert!(matches!(
