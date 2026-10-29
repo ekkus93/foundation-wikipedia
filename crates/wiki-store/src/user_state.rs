@@ -1840,3 +1840,38 @@ mod tests {
         let state = UserState::open(&missing_table).unwrap();
         state
             .conn
+            .execute_batch("DROP TABLE builder_jobs;")
+            .unwrap();
+        drop(state);
+        assert!(matches!(
+            UserState::open(&missing_table),
+            Err(UserStateError::InvalidValue)
+        ));
+
+        let missing_index = root.join("missing-index.sqlite");
+        let state = UserState::open(&missing_index).unwrap();
+        state
+            .conn
+            .execute_batch("DROP INDEX history_recent_idx;")
+            .unwrap();
+        drop(state);
+        assert!(matches!(
+            UserState::open(&missing_index),
+            Err(UserStateError::InvalidValue)
+        ));
+        let healthy = UserState::open(&root.join("healthy.sqlite")).unwrap();
+        assert_eq!(healthy.setting("history.enabled").unwrap(), None);
+        drop(healthy);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_unsupported_future_schema() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA user_version=99;").unwrap();
+        assert!(matches!(
+            UserState::initialize(connection),
+            Err(UserStateError::UnsupportedSchema(99))
+        ));
+    }
+}
