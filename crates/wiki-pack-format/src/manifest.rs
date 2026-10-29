@@ -94,15 +94,22 @@ fn unsafe_component(component: &str) -> bool {
         || component == ".."
         || component.ends_with('.')
         || component.ends_with(' ')
+        // Windows forbids these characters even on filesystems that allow them.
+        || component
+            .chars()
+            .any(|c| matches!(c, '<' | '>' | '"' | '|' | '?' | '*'))
     {
         return true;
     }
     let upper = component.to_ascii_uppercase();
     let base = upper.split('.').next().unwrap_or("");
-    let port = base.len() == 4
-        && (base.starts_with("COM") || base.starts_with("LPT"))
-        && (b'1'..=b'9').contains(&base.as_bytes()[3]);
-    ["CON", "PRN", "AUX", "NUL"].contains(&base) || port
+    // Win32 reserves superscript 1/2/3 spellings as COM/LPT port names too.
+    let port = ["COM", "LPT"].iter().any(|prefix| {
+        base.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+        })
+    });
+    ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base) || port
 }
 
 /// Provisional, unambiguous binary encoding for manifest *identity* only.
@@ -228,6 +235,7 @@ impl Manifest {
                     return Err(ManifestError::DuplicateObject);
                 }
                 ancestor = parent;
+
             }
         }
         Ok(())
@@ -390,6 +398,41 @@ mod transcript_tests {
         let mut valid = sample();
         valid.pack_id = "می\u{200c}روم".into();
         valid.objects[0].path = "media/क्\u{200d}ष.png".into();
+        assert_eq!(valid.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_windows_reserved_names_and_invalid_filename_characters() {
+        for reserved in [
+            "CON", "con.txt", "PRN", "AUX.svg", "NUL", "COM1", "com9.log",
+            "LPT1", "LPT9.txt", "COM¹", "COM².txt", "COM³", "LPT¹",
+            "LPT².png", "LPT³", "CONIN$", "CONOUT$.txt",
+        ] {
+            let mut invalid = sample();
+            invalid.objects[0].path = format!("media/{reserved}");
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+            assert_eq!(invalid.identity_transcript(), Err(ManifestError::UnsafeObject));
+
+            invalid = sample();
+            invalid.pack_id = reserved.into();
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+        }
+
+        for forbidden in ['<', '>', '"', '|', '?', '*'] {
+            let mut invalid = sample();
+            invalid.objects[0].path = format!("media/fig{forbidden}ure.svg");
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeObject));
+
+            invalid = sample();
+            invalid.origin = Origin::Custom {
+                definition_id: format!("topic{forbidden}name"),
+            };
+            assert_eq!(invalid.validate(), Err(ManifestError::UnsafeMetadata));
+        }
+
+        let mut valid = sample();
+        valid.objects[0].path = "media/compact-figures.svg".into();
+        valid.pack_id = "scientific-figures".into();
         assert_eq!(valid.validate(), Ok(()));
     }
 
