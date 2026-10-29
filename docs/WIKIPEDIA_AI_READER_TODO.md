@@ -344,6 +344,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 - [ ] **TRUST-003** Harden pack inputs. **Depends:** PACK-004.  
   - [ ] Protect against traversal, zip bombs, oversized objects, MIME spoofing, malformed manifests and unsafe HTML/SVG.
   - [ ] Validate origin, content handlers and file-size quotas even for signed content.
+  - **Progress (2026-10-29, partial — Windows padded DOS-device stems):** Pack object paths, pack metadata identifiers and private staging names now reject reserved Windows device stems with ASCII spaces immediately before an extension (for example `CON .txt`, `COM1 .svg`, `LPT² .png`, `CONOUT$ .txt`). This closes a cross-platform path-validation gap in the unsigned provisional pack format while retaining harmless names such as `CONtent .svg` and `COM10 .txt`. Synthetic manifest and staging regressions passed at corrected exact source SHA **`04d99cc1c4fd9c7514291872b892b9e1f6fc1764`**: [Rust workspace 40897069175](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40897069175), [Platform shells 40897069108](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40897069108), [Android Rust ABI 40897069190](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40897069190). Initial SHA `24d8501d5fcada255362d05f007ee49ef052281c` failed formatting only ([Rust 40896735757](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40896735757)). [Scoped qualification](TRUST_003_WINDOWS_PADDED_DEVICE_STEMS_2026-10-29.md). This is local hostile-path hardening, **not** publisher authentication, offline media completeness or desktop/Android pack-install acceptance. **TRUST-003/PACK-001 remain unchecked.**
   - **Accept:** malicious fixture suite fails closed with no filesystem escape or process crash.
 
 ## Phase 6 — RAG and evidence-based answer contracts
@@ -748,6 +749,7 @@ Spec deviation/ADR:
 ### AI-001 — provider-neutral interface, streaming, cancellation and fake-provider acceptance
 
 - Qualified master SHA: `5cccbd289ef234f694724e190d761230f7939138`. Rust workspace CI [37976320142](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37976320142) and Platform shells CI [37976320137](https://github.com/ekkus93/foundation-wikipedia/actions/runs/37976320137), both passed with exact head consistency.
+
 - Contract: `crates/wiki-ai/src/lib.rs` exposes UI-independent `LlmProvider` with capability and model enumeration, connection tests, typed errors, streaming event callbacks, cooperative cancellation and explicit locality/outbound restrictions. `crates/wiki-ai/src/rag.rs` composes that trait without importing Tauri/Kotlin/Android/UI types or provider-specific APIs.
 - Tests: `cargo test --workspace --locked` includes fake-provider success, timeout, invalid response, cancellation, invalid request, outbound-policy and citation-stream orchestration cases. Rust CI also runs `cargo fmt --all -- --check` and strict Clippy.
 - Scope: **AI-001 complete; AI-002 through AI-005 are separate and remain unchecked**. No actual Ollama, llama-server, OpenAI, Anthropic or Gemini transport is claimed, and no real-device/UI chat acceptance is claimed.
@@ -1498,6 +1500,7 @@ _None at initial creation._ If a blocker arises, record exact failing operation,
 - **Implementation:** `wiki-store::search_index::OfflineSearchIndex::search` now validates the project/page-ID identity with `ArticleKey::validate` and requires a positive revision ID before returning any result from its persisted SQLite FTS5 index. This rejects corrupted or externally altered index rows with page ID zero/negative, revision ID zero/negative, uppercase or unsafe project names rather than exposing them as apparently valid search hits. Synthetic tests inject malformed FTS rows and retain a passing canonical row. This complements, but does not replace, digest-verified `search_verified` catalog resolution.
 - **Exact-head qualification:** `eeac13d1ae90e6bfcbe3a86f42291b8370f08f98` passed [Rust workspace CI 38372843457](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38372843457), [Platform shells CI 38372843227](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38372843227), and [Android Rust ABI CI 38372843459](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38372843459). [Android record codec probe 38372843433](https://github.com/ekkus93/foundation-wikipedia/actions/runs/38372843433) was still running when recorded.
 - **Remaining:** Full authentic source and pack membership, installed device search, global index rebuild/performance and airplane-mode acceptance remain outstanding. **STORE-004 remains unchecked.**
+
 
 ### 2026-10-13 — STATE-001 deterministic validated bookmark enumeration (partial)
 
