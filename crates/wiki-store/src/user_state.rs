@@ -813,7 +813,6 @@ impl UserState {
         Self::ids(key, revision_id)?;
         Ok(self
             .reading_position(key)?
-
             .and_then(|(saved_revision, offset)| (saved_revision == revision_id).then_some(offset)))
     }
 
@@ -1213,7 +1212,6 @@ impl UserState {
             .execute("DELETE FROM settings WHERE key=?1", params![key])?
             != 0)
     }
-
 
     pub fn setting(&self, key: &str) -> Result<Option<String>, UserStateError> {
         if key.is_empty() || key.len() > 128 {
@@ -1615,7 +1613,6 @@ mod tests {
         );
         assert_eq!(
             user.list_chat_threads(&key(), 124, 2).unwrap(),
-
             vec![another]
         );
         assert_eq!(
@@ -1670,7 +1667,10 @@ mod tests {
         first.conn.execute_batch("COMMIT").unwrap();
         assert!(receiver.recv_timeout(Duration::from_secs(5)).unwrap());
         worker.join().unwrap();
-        assert_eq!(first.setting("concurrent").unwrap().as_deref(), Some("ready"));
+        assert_eq!(
+            first.setting("concurrent").unwrap().as_deref(),
+            Some("ready")
+        );
         assert_eq!(first.setting("pending").unwrap().as_deref(), Some("write"));
         drop(first);
         fs::remove_dir_all(root).unwrap();
@@ -2059,7 +2059,6 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
             "wiki-user-state-schema-shape-{}-{stamp}",
-
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
@@ -2460,7 +2459,6 @@ mod tests {
     #[test]
     fn rejects_unsupported_future_schema() {
         let connection = Connection::open_in_memory().unwrap();
-
         connection.execute_batch("PRAGMA user_version=99;").unwrap();
         assert!(matches!(
             UserState::initialize(connection),
