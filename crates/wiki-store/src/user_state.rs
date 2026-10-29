@@ -86,6 +86,85 @@ fn valid_job_id(job_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
+
+/* Check structural contracts before trusting a claimed user-state version.
+ * Presence of a table or index name alone does not prove it has the columns
+ * expected by readers and migrations. Reject executable schema additions. */
+fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStateError> {
+    const TABLE_COLUMNS: &[(&str, &[(&str, &str)])] = &[
+        ("bookmarks", &[("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("anchor", "TEXT")]),
+        ("reading_positions", &[("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("scroll_offset", "INTEGER")]),
+        ("history", &[("id", "INTEGER"), ("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER"), ("visited_at", "INTEGER")]),
+        ("chat_threads", &[("id", "INTEGER"), ("project", "TEXT"), ("page_id", "INTEGER"), ("revision_id", "INTEGER")]),
+        ("chat_messages", &[("id", "INTEGER"), ("thread_id", "INTEGER"), ("role", "TEXT"), ("content", "TEXT")]),
+        ("settings", &[("key", "TEXT"), ("value", "TEXT")]),
+        ("pack_owners", &[("pack_id", "TEXT"), ("digest", "TEXT")]),
+        ("builder_jobs", &[("job_id", "TEXT"), ("status", "TEXT")]),
+    ];
+    for &(table, expected) in TABLE_COLUMNS {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            params![table],
+            |row| row.get(0),
+        )?;
+        if count != 1 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let mut statement =
+            conn.prepare("SELECT name, type FROM pragma_table_info(?1) ORDER BY cid")?;
+        let actual = statement
+            .query_map(params![table], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if actual.len() != expected.len()
+            || !actual.iter().zip(expected.iter()).all(
+                |((name, column_type), &(expected_name, expected_type))| {
+                    name == expected_name && column_type.eq_ignore_ascii_case(expected_type)
+                },
+            )
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+    }
+    let unexpected: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+        [],
+        |row| row.get(0),
+    )?;
+    if unexpected != 0 {
+        return Err(UserStateError::InvalidValue);
+    }
+    let cascade: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list('chat_messages')
+         WHERE \"table\"='chat_threads' AND \"from\"='thread_id'
+           AND \"to\"='id' AND on_delete='CASCADE'",
+        [],
+        |row| row.get(0),
+    )?;
+    if cascade != 1 {
+        return Err(UserStateError::InvalidValue);
+    }
+    if version >= 2 {
+        for index in [
+            "history_recent_idx",
+            "chat_threads_article_idx",
+            "chat_messages_thread_idx",
+            "pack_owners_digest_idx",
+        ] {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                params![index],
+                |row| row.get(0),
+            )?;
+            if count != 1 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl UserState {
     pub fn open(path: &Path) -> Result<Self, UserStateError> {
         Self::initialize(Connection::open(path)?)
@@ -175,25 +254,7 @@ impl UserState {
         if foreign_key_violation.is_some() {
             return Err(UserStateError::InvalidValue);
         }
-        for table in [
-            "bookmarks",
-            "reading_positions",
-            "history",
-            "chat_threads",
-            "chat_messages",
-            "settings",
-            "pack_owners",
-            "builder_jobs",
-        ] {
-            let count: i64 = source.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                params![table],
-                |row| row.get(0),
-            )?;
-            if count != 1 {
-                return Err(UserStateError::InvalidValue);
-            }
-        }
+        validate_schema_shape(&source, schema)?;
 
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -282,6 +343,9 @@ impl UserState {
             transaction.pragma_update(None, "user_version", 1)?;
             transaction.commit()?;
         }
+        if version == 1 {
+            validate_schema_shape(&conn, version)?;
+        }
         if version < 2 {
             // Indexes live in mutable user state, never in immutable article
             // snapshots. A single transaction keeps a v1 database recoverable
@@ -297,43 +361,8 @@ impl UserState {
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
         }
-        // A database claiming the current schema must actually provide its
-        // required tables and indexes. Otherwise startup must fail before any
-        // UI command mistakes corruption for an empty bookmark/history list.
-        for table in [
-            "bookmarks",
-            "reading_positions",
-            "history",
-            "chat_threads",
-            "chat_messages",
-            "settings",
-            "pack_owners",
-            "builder_jobs",
-        ] {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                params![table],
-                |row| row.get(0),
-            )?;
-            if count != 1 {
-                return Err(UserStateError::InvalidValue);
-            }
-        }
-        for index in [
-            "history_recent_idx",
-            "chat_threads_article_idx",
-            "chat_messages_thread_idx",
-            "pack_owners_digest_idx",
-        ] {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
-                params![index],
-                |row| row.get(0),
-            )?;
-            if count != 1 {
-                return Err(UserStateError::InvalidValue);
-            }
-        }
+        // Validate even a claimed-current schema before exposing user state.
+        validate_schema_shape(&conn, SCHEMA_VERSION)?;
         Ok(Self { conn })
     }
 
@@ -1668,6 +1697,54 @@ mod tests {
         assert_eq!(index_count, 1);
         drop(restored);
         drop(old);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+
+    #[test]
+    fn rejects_spoofed_columns_triggers_and_missing_cascade_before_open_or_restore() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-schema-shape-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for (name, tamper) in [
+            ("renamed-column", "ALTER TABLE bookmarks RENAME COLUMN anchor TO forged;"),
+            (
+                "injected-trigger",
+                "CREATE TRIGGER injected AFTER INSERT ON settings BEGIN SELECT 1; END;",
+            ),
+            (
+                "missing-cascade",
+                "DROP TABLE chat_messages;
+                 CREATE TABLE chat_messages (
+                   id INTEGER PRIMARY KEY,
+                   thread_id INTEGER NOT NULL,
+                   role TEXT NOT NULL,
+                   content TEXT NOT NULL
+                 );
+                 CREATE INDEX chat_messages_thread_idx ON chat_messages(thread_id, id);",
+            ),
+        ] {
+            let source_path = root.join(format!("{name}.sqlite"));
+            let destination = root.join(format!("{name}-restored.sqlite"));
+            let state = UserState::open(&source_path).unwrap();
+            state.conn.execute_batch(tamper).unwrap();
+            drop(state);
+            assert!(matches!(
+                UserState::open(&source_path),
+                Err(UserStateError::InvalidValue)
+            ));
+            assert!(matches!(
+                UserState::restore_backup_to_new_path(&source_path, &destination),
+                Err(UserStateError::InvalidValue)
+            ));
+            assert!(!destination.exists());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
