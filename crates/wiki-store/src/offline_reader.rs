@@ -201,7 +201,9 @@ impl<'a> OfflineReader<'a> {
             return Err(CatalogError::InvalidCatalogEntry.into());
         }
         self.open_title(project, title)?
-            .map(|article| Self::check_page_and_revision(article, expected_page_id, expected_revision))
+            .map(|article| {
+                Self::check_page_and_revision(article, expected_page_id, expected_revision)
+            })
             .transpose()
     }
 
