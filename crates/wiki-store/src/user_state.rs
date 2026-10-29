@@ -453,6 +453,16 @@ impl UserState {
         backup: &Path,
         destination: &Path,
     ) -> Result<(), UserStateError> {
+        Self::restore_backup_with_preflight_hook(backup, destination, || {})
+    }
+
+    // A deterministic test hook exercises an external writer changing the
+    // source after preflight but before VACUUM INTO takes its own snapshot.
+    fn restore_backup_with_preflight_hook(
+        backup: &Path,
+        destination: &Path,
+        after_preflight: impl FnOnce(),
+    ) -> Result<(), UserStateError> {
         let destination_text = destination
             .to_str()
             .filter(|text| !text.is_empty())
@@ -492,6 +502,7 @@ impl UserState {
         }
         validate_schema_shape(&source, schema)?;
         validate_persisted_checks(&source)?;
+        after_preflight();
 
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -515,6 +526,26 @@ impl UserState {
             if check != "ok" {
                 return Err(UserStateError::InvalidValue);
             }
+            // The source may have changed between the first audit and the
+            // independent VACUUM snapshot. Never publish a copy based solely
+            // on the preflight of a different source generation.
+            let copied_schema: i64 =
+                restored.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+            if copied_schema != schema {
+                return Err(UserStateError::InvalidValue);
+            }
+            let copied_orphan: Option<i64> = restored
+                .query_row(
+                    "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if copied_orphan.is_some() {
+                return Err(UserStateError::InvalidValue);
+            }
+            validate_schema_shape(&restored, copied_schema)?;
+            validate_persisted_checks(&restored)?;
             Ok(())
         })();
         drop(file);
@@ -2315,6 +2346,56 @@ mod tests {
             );
             assert!(!destination.exists(), "published invalid backup: {name}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_rechecks_copied_rows_after_concurrent_source_mutation() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-restore-race-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let backup = root.join("source.sqlite");
+        let destination = root.join("restored.sqlite");
+        let state = UserState::open(&backup).unwrap();
+        state.set_builder_job_status("good", "queued").unwrap();
+        drop(state);
+
+        // A separate SQLite writer commits after the source's successful
+        // semantic preflight, but before VACUUM INTO copies the source.
+        let result = UserState::restore_backup_with_preflight_hook(
+            &backup,
+            &destination,
+            || {
+                let writer = Connection::open(&backup).unwrap();
+                writer
+                    .execute(
+                        "INSERT INTO builder_jobs (job_id,status) VALUES (?1,?2)",
+                        params!["forged", "invalid"],
+                    )
+                    .unwrap();
+            },
+        );
+        assert!(matches!(result, Err(UserStateError::InvalidValue)));
+        assert!(!destination.exists(), "published a tampered backup");
+
+        let writer = Connection::open(&backup).unwrap();
+        writer
+            .execute("DELETE FROM builder_jobs WHERE job_id='forged'", [])
+            .unwrap();
+        drop(writer);
+        UserState::restore_backup_to_new_path(&backup, &destination).unwrap();
+        let restored = UserState::open(&destination).unwrap();
+        assert_eq!(
+            restored.builder_job_status("good").unwrap().as_deref(),
+            Some("queued")
+        );
+        drop(restored);
         fs::remove_dir_all(root).unwrap();
     }
 
