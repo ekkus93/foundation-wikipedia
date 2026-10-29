@@ -150,21 +150,53 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
         if count != 1 {
             return Err(UserStateError::InvalidValue);
         }
-        let mut statement =
-            conn.prepare("SELECT name, type FROM pragma_table_info(?1) ORDER BY cid")?;
+        let mut statement = conn.prepare(
+            "SELECT name, type, \"notnull\", pk FROM pragma_table_info(?1) ORDER BY cid",
+        )?;
         let actual = statement
             .query_map(params![table], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        if actual.len() != expected.len()
-            || !actual.iter().zip(expected.iter()).all(
-                |((name, column_type), &(expected_name, expected_type))| {
-                    name == expected_name && column_type.eq_ignore_ascii_case(expected_type)
-                },
-            )
-        {
+        if actual.len() != expected.len() {
             return Err(UserStateError::InvalidValue);
+        }
+        for ((name, column_type, not_null, primary_key), &(expected_name, expected_type)) in
+            actual.iter().zip(expected.iter())
+        {
+            let expected_primary_key = match (table, name.as_str()) {
+                ("bookmarks" | "reading_positions", "project") => 1,
+                ("bookmarks" | "reading_positions", "page_id") => 2,
+                ("pack_owners", "pack_id") => 1,
+                ("pack_owners", "digest") => 2,
+                ("history" | "chat_threads" | "chat_messages", "id") => 1,
+                ("settings", "key") | ("builder_jobs", "job_id") => 1,
+                _ => 0,
+            };
+            // SQLite reports NOT NULL=0 for an INTEGER PRIMARY KEY and for
+            // legacy TEXT PRIMARY KEY columns unless explicitly declared.
+            let expected_not_null = if matches!(
+                (table, name.as_str()),
+                ("history" | "chat_threads" | "chat_messages", "id")
+                    | ("settings", "key")
+                    | ("builder_jobs", "job_id")
+            ) {
+                0
+            } else {
+                1
+            };
+            if name != expected_name
+                || !column_type.eq_ignore_ascii_case(expected_type)
+                || *not_null != expected_not_null
+                || *primary_key != expected_primary_key
+            {
+                return Err(UserStateError::InvalidValue);
+            }
         }
     }
     let unexpected: i64 = conn.query_row(
@@ -186,18 +218,62 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
         return Err(UserStateError::InvalidValue);
     }
     if version >= 2 {
-        for index in [
-            "history_recent_idx",
-            "chat_threads_article_idx",
-            "chat_messages_thread_idx",
-            "pack_owners_digest_idx",
-        ] {
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
-                params![index],
-                |row| row.get(0),
+        // Name-only checks can accept a forged index with different query
+        // semantics. Validate the owning table, keys, collation and direction.
+        const INDEXES: &[(&str, &str, &[(&str, i64)])] = &[
+            ("history", "history_recent_idx", &[("visited_at", 1), ("id", 1)]),
+            (
+                "chat_threads",
+                "chat_threads_article_idx",
+                &[("project", 0), ("page_id", 0), ("revision_id", 0), ("id", 1)],
+            ),
+            (
+                "chat_messages",
+                "chat_messages_thread_idx",
+                &[("thread_id", 0), ("id", 0)],
+            ),
+            (
+                "pack_owners",
+                "pack_owners_digest_idx",
+                &[("digest", 0), ("pack_id", 0)],
+            ),
+        ];
+        for &(table, index, expected_keys) in INDEXES {
+            let metadata: Option<(i64, String, i64)> = conn
+                .query_row(
+                    "SELECT \"unique\", origin, partial FROM pragma_index_list(?1)
+                     WHERE name=?2",
+                    params![table, index],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+            if metadata != Some((0, "c".to_owned(), 0)) {
+                return Err(UserStateError::InvalidValue);
+            }
+            let mut statement = conn.prepare(
+                "SELECT name, \"desc\", coll, cid FROM pragma_index_xinfo(?1)
+                 WHERE \"key\"=1 ORDER BY seqno",
             )?;
-            if count != 1 {
+            let actual_keys = statement
+                .query_map(params![index], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if actual_keys.len() != expected_keys.len()
+                || !actual_keys.iter().zip(expected_keys.iter()).all(
+                    |((name, descending, collation, column_id), &(expected_name, expected_desc))| {
+                        name == expected_name
+                            && *descending == expected_desc
+                            && collation == "BINARY"
+                            && *column_id >= 0
+                    },
+                )
+            {
                 return Err(UserStateError::InvalidValue);
             }
         }
@@ -1786,6 +1862,79 @@ mod tests {
                 Err(UserStateError::InvalidValue)
             ));
             assert!(!destination.exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_primary_key_nullability_and_index_spoofs_on_open_and_restore() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-schema-constraints-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        for (name, tamper) in [
+            (
+                "nullable-status",
+                "DROP TABLE builder_jobs;
+                 CREATE TABLE builder_jobs (job_id TEXT PRIMARY KEY, status TEXT);",
+            ),
+            (
+                "wrong-primary-key",
+                "DROP TABLE bookmarks;
+                 CREATE TABLE bookmarks (
+                   project TEXT NOT NULL,
+                   page_id INTEGER NOT NULL,
+                   revision_id INTEGER NOT NULL,
+                   anchor TEXT NOT NULL,
+                   PRIMARY KEY(project, revision_id)
+                 );",
+            ),
+            (
+                "wrong-index-column",
+                "DROP INDEX history_recent_idx;
+                 CREATE INDEX history_recent_idx ON history(project);",
+            ),
+            (
+                "wrong-index-direction",
+                "DROP INDEX history_recent_idx;
+                 CREATE INDEX history_recent_idx ON history(visited_at ASC, id DESC);",
+            ),
+            (
+                "unique-index",
+                "DROP INDEX history_recent_idx;
+                 CREATE UNIQUE INDEX history_recent_idx ON history(visited_at DESC, id DESC);",
+            ),
+            (
+                "expression-index",
+                "DROP INDEX history_recent_idx;
+                 CREATE INDEX history_recent_idx ON history((visited_at + 1), id DESC);",
+            ),
+        ] {
+            let source_path = root.join(format!("{name}.sqlite"));
+            let destination = root.join(format!("{name}-restored.sqlite"));
+            let state = UserState::open(&source_path).unwrap();
+            state.conn.execute_batch(tamper).unwrap();
+            drop(state);
+            assert!(
+                matches!(
+                    UserState::open(&source_path),
+                    Err(UserStateError::InvalidValue)
+                ),
+                "accepted spoofed schema on open: {name}"
+            );
+            assert!(
+                matches!(
+                    UserState::restore_backup_to_new_path(&source_path, &destination),
+                    Err(UserStateError::InvalidValue)
+                ),
+                "accepted spoofed schema on restore: {name}"
+            );
+            assert!(!destination.exists(), "published invalid restore: {name}");
         }
         fs::remove_dir_all(root).unwrap();
     }
