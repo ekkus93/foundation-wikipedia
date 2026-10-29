@@ -946,7 +946,10 @@ mod tests {
             Err(CatalogError::InvalidCatalogEntry)
         ));
         let maximal_qid = format!("Q{}", "1".repeat(63));
-        assert!(catalog.lookup_wikidata("enwiki", &maximal_qid).unwrap().is_empty());
+        assert!(catalog
+            .lookup_wikidata("enwiki", &maximal_qid)
+            .unwrap()
+            .is_empty());
         for invalid_project in ["", "ENwiki", "enwiki/other"] {
             assert!(matches!(
                 catalog.lookup_wikidata(invalid_project, "Q2"),
