@@ -4,8 +4,8 @@
 //! must hold a private immutable staging tree during verification and install.
 
 use crate::manifest::{Manifest, ManifestError, MAX_DECLARED_BYTES};
-use std::collections::BTreeSet;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
@@ -349,6 +349,4 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
-
-
 }
