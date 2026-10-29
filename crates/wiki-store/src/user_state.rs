@@ -128,6 +128,101 @@ impl UserState {
         result
     }
 
+
+    /// Restore a vetted SQLite backup to a NEW user-state database path.
+    ///
+    /// The source is opened read-only and audited before creating the target.
+    /// This never replaces a current user database and never touches installed
+    /// content or pack snapshots. Caller must prevent concurrent backup edits
+    /// and choose a trusted, private destination directory.
+    pub fn restore_backup_to_new_path(
+        backup: &Path,
+        destination: &Path,
+    ) -> Result<(), UserStateError> {
+        let destination_text = destination
+            .to_str()
+            .filter(|text| !text.is_empty())
+            .ok_or(UserStateError::InvalidValue)?;
+        let backup_meta = fs::symlink_metadata(backup)?;
+        if !backup_meta.is_file() || backup_meta.file_type().is_symlink() {
+            return Err(UserStateError::InvalidValue);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if backup_meta.nlink() != 1 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+        let source = Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        // Never run a migration or initialize a blank, unrelated SQLite file
+        // while deciding whether it is safe to restore.
+        let schema: i64 = source.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if !(1..=SCHEMA_VERSION).contains(&schema) {
+            return Err(UserStateError::UnsupportedSchema(schema));
+        }
+        let integrity: String =
+            source.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(UserStateError::InvalidValue);
+        }
+        let foreign_key_violation: Option<i64> = source
+            .query_row("SELECT 1 FROM pragma_foreign_key_check LIMIT 1", [], |row| row.get(0))
+            .optional()?;
+        if foreign_key_violation.is_some() {
+            return Err(UserStateError::InvalidValue);
+        }
+        for table in [
+            "bookmarks",
+            "reading_positions",
+            "history",
+            "chat_threads",
+            "chat_messages",
+            "settings",
+            "pack_owners",
+            "builder_jobs",
+        ] {
+            let count: i64 = source.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |row| row.get(0),
+            )?;
+            if count != 1 {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(destination)?;
+        let result = (|| -> Result<(), UserStateError> {
+            source.execute("VACUUM main INTO ?1", params![destination_text])?;
+            file.sync_all()?;
+            // The copy must remain a valid, self-contained database after
+            // closing SQLite's write transaction.
+            let restored = Connection::open_with_flags(
+                destination,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            let check: String =
+                restored.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            if check != "ok" {
+                return Err(UserStateError::InvalidValue);
+            }
+            Ok(())
+        })();
+        drop(file);
+        if result.is_err() {
+            let _ = fs::remove_file(destination);
+        }
+        result
+    }
+
     fn initialize(mut conn: Connection) -> Result<Self, UserStateError> {
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -1356,6 +1451,127 @@ mod tests {
                 fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
                 0o600
             );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+
+    #[test]
+    fn private_restore_is_new_only_and_preserves_state_and_original() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-restore-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let backup = root.join("backup.sqlite");
+        let restored_path = root.join("restored.sqlite");
+        let original = UserState::in_memory().unwrap();
+        original.set_bookmark(&key(), 123, "original").unwrap();
+        original.set_reading_position(&key(), 123, 2048).unwrap();
+        original.set_history_enabled(true).unwrap();
+        original.record_visit(&key(), 123, 1_700_000_000).unwrap();
+        original.add_pack_owner("physics", &"a".repeat(64)).unwrap();
+        original.set_builder_job_status("build1", "queued").unwrap();
+        original.backup_to_path(&backup).unwrap();
+        let before = fs::read(&backup).unwrap();
+
+        UserState::restore_backup_to_new_path(&backup, &restored_path).unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), before);
+        let restored = UserState::open(&restored_path).unwrap();
+        assert_eq!(
+            restored.bookmark(&key()).unwrap(),
+            Some((123, "original".into()))
+        );
+        assert_eq!(restored.reading_position(&key()).unwrap(), Some((123, 2048)));
+        assert_eq!(restored.recent_history(10).unwrap().len(), 1);
+        assert_eq!(restored.object_owner_count(&"a".repeat(64)).unwrap(), 1);
+        assert_eq!(
+            restored.builder_job_status("build1").unwrap().as_deref(),
+            Some("queued")
+        );
+        original.set_bookmark(&key(), 124, "newer").unwrap();
+        assert_eq!(
+            restored.bookmark(&key()).unwrap(),
+            Some((123, "original".into()))
+        );
+        assert!(matches!(
+            UserState::restore_backup_to_new_path(&backup, &restored_path),
+            Err(UserStateError::Io(_))
+        ));
+        assert_eq!(fs::read(&backup).unwrap(), before);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&restored_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_rejects_blank_future_and_incomplete_backup_without_publishing() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-restore-invalid-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let backup = root.join("untrusted.sqlite");
+        let target = root.join("restored.sqlite");
+
+        let empty = Connection::open(&backup).unwrap();
+        drop(empty);
+        assert!(matches!(
+            UserState::restore_backup_to_new_path(&backup, &target),
+            Err(UserStateError::UnsupportedSchema(0))
+        ));
+        assert!(!target.exists());
+
+        let bad = Connection::open(&backup).unwrap();
+        bad.execute_batch("PRAGMA user_version=99;").unwrap();
+        drop(bad);
+        assert!(matches!(
+            UserState::restore_backup_to_new_path(&backup, &target),
+            Err(UserStateError::UnsupportedSchema(99))
+        ));
+        assert!(!target.exists());
+
+        let bad = Connection::open(&backup).unwrap();
+        bad.execute_batch("PRAGMA user_version=2;").unwrap();
+        drop(bad);
+        assert!(matches!(
+            UserState::restore_backup_to_new_path(&backup, &target),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(!target.exists());
+
+        fs::write(&backup, b"not sqlite").unwrap();
+        assert!(UserState::restore_backup_to_new_path(&backup, &target).is_err());
+        assert!(!target.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let real = root.join("real.sqlite");
+            let state = UserState::open(&real).unwrap();
+            drop(state);
+            fs::remove_file(&backup).unwrap();
+            symlink(&real, &backup).unwrap();
+            assert!(matches!(
+                UserState::restore_backup_to_new_path(&backup, &target),
+                Err(UserStateError::InvalidValue)
+            ));
+            assert!(!target.exists());
         }
         fs::remove_dir_all(root).unwrap();
     }
