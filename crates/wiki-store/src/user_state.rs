@@ -1943,11 +1943,14 @@ mod tests {
         assert!(other.bookmark(&key()).unwrap().is_none());
         assert!(other.reading_position(&key()).unwrap().is_none());
         assert!(other.list_chat_threads(&key(), 124, 10).unwrap().is_empty());
-        let orphan_messages: i64 = other.conn.query_row(
-            "SELECT COUNT(*) FROM chat_messages WHERE thread_id=?1",
-            params![thread],
-            |row| row.get(0),
-        ).unwrap();
+        let orphan_messages: i64 = other
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM chat_messages WHERE thread_id=?1",
+                params![thread],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(orphan_messages, 0);
         assert_eq!(other.object_owner_count(&"a".repeat(64)).unwrap(), 1);
 
