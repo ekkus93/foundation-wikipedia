@@ -1581,7 +1581,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-
     #[test]
     fn restore_of_v1_backup_migrates_after_open_without_losing_records() {
         let stamp = SystemTime::now()
@@ -1649,7 +1648,10 @@ mod tests {
         let backup = root.join("orphan.sqlite");
         let target = root.join("restored.sqlite");
         let source = UserState::open(&backup).unwrap();
-        source.conn.execute_batch("PRAGMA foreign_keys=OFF;").unwrap();
+        source
+            .conn
+            .execute_batch("PRAGMA foreign_keys=OFF;")
+            .unwrap();
         source
             .conn
             .execute(
