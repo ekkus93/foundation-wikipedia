@@ -259,11 +259,27 @@ pub fn verify_container_with_budget<R: Read>(
     input: &mut R,
     max_input_bytes: u64,
 ) -> Result<Manifest, ContainerError> {
-    if max_input_bytes == 0 {
+    // Reject impossible transcript allocations before verify_container can
+    // reserve memory from an attacker-controlled u32 length. Only the fixed
+    // 12-byte header is read before this check, even for a nonseekable pipe.
+    if max_input_bytes < 12 {
         return Err(ContainerError::ResourceBudget);
     }
+    let mut header = [0u8; 12];
+    input.read_exact(&mut header)?;
+    if &header[..8] != MAGIC {
+        return Err(ContainerError::InvalidHeader);
+    }
+    let length = u32::from_be_bytes(header[8..12].try_into().unwrap()) as u64;
+    if length == 0
+        || length > MAX_MANIFEST_BYTES as u64
+        || length > max_input_bytes - 12
+    {
+        return Err(ContainerError::ResourceBudget);
+    }
+    let mut replay = io::Cursor::new(header).chain(input);
     let mut bounded = ByteBudgetReader {
-        source: input,
+        source: &mut replay,
         remaining: max_input_bytes,
         exceeded: false,
     };
@@ -277,6 +293,19 @@ pub fn verify_container_with_budget<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_verification_rejects_oversized_declared_transcript_before_allocation() {
+        let mut header = b"FWPACK01".to_vec();
+        header.extend_from_slice(&(MAX_MANIFEST_BYTES as u32).to_be_bytes());
+        let mut input = io::Cursor::new(header);
+        assert!(matches!(
+            verify_container_with_budget(&mut input, 32),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(input.position(), 12);
+    }
+
 
     fn sample() -> Manifest {
         Manifest {
