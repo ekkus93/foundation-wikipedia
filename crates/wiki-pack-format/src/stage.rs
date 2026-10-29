@@ -48,6 +48,29 @@ fn validate_stage_destination(parent: &Path, name: &str) -> Result<(), Container
         }
     }
 
+    // Do not consume a seekable archive or an Android document-provider
+    // stream when a destination is already occupied. create_private_dir
+    // below remains the authoritative race-safe exclusive creation.
+    match fs::symlink_metadata(parent.join(name)) {
+        Ok(_) => return Err(ContainerError::Io(io::ErrorKind::AlreadyExists.into())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(ContainerError::Io(error)),
+    }
+
+    Ok(())
+}
+
+// A failed parent-directory durability barrier must not leave a new staged
+// pack behind while reporting failure to its caller.
+fn finalize_staged_tree(
+    parent: &Path,
+    root: &Path,
+    sync_parent: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<(), ContainerError> {
+    if let Err(error) = sync_parent(parent) {
+        fs::remove_dir_all(root)?;
+        return Err(ContainerError::Io(error));
+    }
     Ok(())
 }
 
@@ -126,7 +149,7 @@ pub fn stage_container<R: Read + Seek>(
         fs::remove_dir_all(&root)?;
         return Err(error);
     }
-    File::open(parent)?.sync_all()?;
+    finalize_staged_tree(parent, &root, |path| File::open(path)?.sync_all())?;
     Ok((manifest, root))
 }
 
@@ -218,6 +241,7 @@ struct SpoolingReader<'a, R> {
 
 impl<R: Read> Read for SpoolingReader<'_, R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+
         let count = self.source.read(buffer)?;
         self.destination.write_all(&buffer[..count])?;
         Ok(count)
@@ -360,6 +384,73 @@ mod tests {
             stage_container_stream(&mut PanicOnRead, Path::new("nonexistent-parent"), "CON.txt"),
             Err(ContainerError::UnsafeStagingPath)
         ));
+    }
+
+    #[test]
+    fn occupied_destination_rejects_seekable_and_nonseekable_input_without_reading() {
+        struct PanicInput;
+        impl Read for PanicInput {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("occupied destination must not consume input");
+            }
+        }
+        impl Seek for PanicInput {
+            fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
+                panic!("occupied destination must not seek input");
+            }
+        }
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stage-occupied-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let existing = parent.join("installed");
+        create_private_dir(&existing).unwrap();
+        fs::write(existing.join("sentinel"), b"keep").unwrap();
+
+        for stream in [false, true] {
+            let result = if stream {
+                stage_container_stream(&mut PanicInput, &parent, "installed")
+            } else {
+                stage_container(&mut PanicInput, &parent, "installed")
+            };
+            assert!(matches!(
+                result,
+                Err(ContainerError::Io(ref error))
+                    if error.kind() == io::ErrorKind::AlreadyExists
+            ));
+            assert_eq!(fs::read(existing.join("sentinel")).unwrap(), b"keep");
+            assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+        }
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn failed_parent_durability_sync_rolls_back_new_staging_tree() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stage-sync-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let root = parent.join("new-stage");
+        create_private_dir(&root).unwrap();
+        fs::write(root.join("object"), b"unpublished").unwrap();
+        let result = finalize_staged_tree(&parent, &root, |_| {
+            Err(io::Error::other("simulated directory sync failure"))
+        });
+        assert!(matches!(result, Err(ContainerError::Io(_))));
+        assert!(!root.exists());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]
