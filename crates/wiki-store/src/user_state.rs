@@ -463,6 +463,14 @@ impl UserState {
             .to_str()
             .filter(|text| !text.is_empty())
             .ok_or(UserStateError::InvalidValue)?;
+        // A standalone v1 backup is supported and migrates only on a later
+        // open. Audit the copied schema generation rather than requiring v2.
+        let source_schema: i64 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if !(1..=SCHEMA_VERSION).contains(&source_schema) {
+            return Err(UserStateError::UnsupportedSchema(source_schema));
+        }
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -477,7 +485,7 @@ impl UserState {
             self.conn
                 .execute("VACUUM main INTO ?1", params![destination_text])?;
             file.sync_all()?;
-            validate_standalone_copy(destination, SCHEMA_VERSION)?;
+            validate_standalone_copy(destination, source_schema)?;
             Ok(())
         })();
         drop(file);
