@@ -5,7 +5,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::container::{canonical_objects, verify_container, verify_container_with_budget, ContainerError};
+use crate::container::{
+    canonical_objects, verify_container, verify_container_with_budget, ContainerError,
+};
 use crate::manifest::Manifest;
 use crate::objects::verify_manifest_directory;
 
