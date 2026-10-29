@@ -17,3 +17,9 @@ The caller provides a private, exclusively controlled staging parent and validat
 ## Outstanding
 
 This is bounded-memory local-integrity staging, **not** a signed publisher format, Android SAF integration, authenticated offline media/attribution completeness, atomic install/rollback or physical-device test. A writer sharing the private parent can race pathname checks; descriptor-relative race-resistant access and power-loss qualification remain pending. The spool requires disk space proportional to archive size; callers must enforce free-space and quota policies. PACK-001 and TRUST-003 remain unchecked.
+
+## Follow-up: cleanup on spool-removal error and provider disconnect
+
+A successful staging operation must not be reported as failed while leaving a newly materialized pack directory behind merely because temporary spool removal failed. The importer now removes the staged tree before returning that cleanup error. The additional synthetic test injects a document-provider `BrokenPipe` after a syntactically valid envelope header and checks that the private parent is empty after failure.
+
+Final code SHA `f44eb31b02015556b76b00b59533042bc081fd9f` passed exact-commit [Rust workspace CI 40869777599](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40869777599), [Platform shells CI 40869777597](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40869777597), and [Android Rust ABI CI 40869777594](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40869777594). An intermediate bounded-file-read truncation was corrected before qualification; `9f2ba2b5895479be940b071b974fa959267315c5` and `34c6841f01674ffea3f1fc6cc95a1f26a56c4c51` failed Rust formatting/parsing and must not be used as release evidence. OS-level cleanup failure, concurrent directory mutation, storage exhaustion and power loss still require production hardening and device testing.
