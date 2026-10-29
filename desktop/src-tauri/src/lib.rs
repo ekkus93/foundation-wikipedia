@@ -523,15 +523,23 @@ async fn set_reader_history_enabled(
 ) -> Result<(), String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let update = || {
-            open_private_bookmark_store(&app)?.set_history_enabled(enabled)
-                .map_err(|_| "Cannot save history preference".to_owned())
+            let mut state = open_private_bookmark_store(&app)?;
+            let updated = state
+                .set_history_enabled_for_generation(persistent_generation, enabled)
+                .map_err(|_| "Cannot save history preference".to_owned())?;
+            if !updated {
+                return Err("Stale history preference update rejected".to_owned());
+            }
+            Ok(())
         };
         if enabled {
             gate.write(generation, update)
         } else {
-            // Revoking consent also fences visits queued while it was enabled.
+            // Revoking consent fences visits from this and other processes,
+            // including requests replayed after another process opts back in.
             gate.revoke_queued_visits(generation, update)
         }
     })

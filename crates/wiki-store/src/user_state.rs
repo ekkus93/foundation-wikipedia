@@ -911,6 +911,44 @@ impl UserState {
         )? != 0)
     }
 
+    /// Update history consent under the same durable privacy epoch used by
+    /// queued visit writes. Opting out advances the generation atomically so
+    /// an old visit cannot appear after another process re-enables history.
+    /// A stale preference request must not override a newer user's choice.
+    pub fn set_history_enabled_for_generation(
+        &mut self,
+        generation: u64,
+        enabled: bool,
+    ) -> Result<bool, UserStateError> {
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if Self::generation_from(&tx)? != generation {
+            return Ok(false);
+        }
+        if !enabled {
+            let next = generation
+                .checked_add(1)
+                .filter(|value| *value <= i64::MAX as u64)
+                .ok_or(UserStateError::InvalidValue)?;
+            tx.execute(
+                "INSERT INTO settings(key,value) VALUES (?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![PERSONAL_GENERATION_KEY, next.to_string()],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO settings(key,value) VALUES ('history.enabled',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![if enabled { "true" } else { "false" }],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// History recording is opt-in; missing or disabled preference means no writes.
     pub fn history_enabled(&self) -> Result<bool, UserStateError> {
         Ok(self.setting("history.enabled")?.as_deref() == Some("true"))
@@ -2083,6 +2121,59 @@ mod tests {
             .clear_personal_reading_data_for_generation(i64::MAX as u64)
             .unwrap());
         assert_eq!(owner.bookmark(&key()).unwrap(), Some((124, "after".into())));
+        drop(owner);
+        drop(other);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cross_process_history_opt_out_fences_preference_and_visit_replay() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-history-consent-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("user.sqlite");
+        let mut owner = UserState::open(&database).unwrap();
+        let mut other = UserState::open(&database).unwrap();
+        let old = other.personal_generation().unwrap();
+        assert!(owner
+            .set_history_enabled_for_generation(old, true)
+            .unwrap());
+        assert!(other
+            .record_visit_for_generation(old, &key(), 123, 100)
+            .unwrap());
+        assert!(owner
+            .set_history_enabled_for_generation(old, false)
+            .unwrap());
+        let fresh = owner.personal_generation().unwrap();
+        assert_eq!(fresh, old + 1);
+        assert!(!other.history_enabled().unwrap());
+        assert!(!other
+            .record_visit_for_generation(old, &key(), 123, 101)
+            .unwrap());
+        assert!(!other
+            .set_history_enabled_for_generation(old, true)
+            .unwrap());
+        assert!(!other.history_enabled().unwrap());
+        assert!(other
+            .set_history_enabled_for_generation(fresh, true)
+            .unwrap());
+        assert!(!owner
+            .record_visit_for_generation(old, &key(), 123, 102)
+            .unwrap());
+        assert!(owner
+            .record_visit_for_generation(fresh, &key(), 124, 103)
+            .unwrap());
+        assert!(!owner
+            .set_history_enabled_for_generation(old, false)
+            .unwrap());
+        assert!(owner.history_enabled().unwrap());
+        assert_eq!(owner.recent_history(10).unwrap().len(), 2);
         drop(owner);
         drop(other);
         fs::remove_dir_all(root).unwrap();
