@@ -29,8 +29,8 @@ use wiki_pack_builder::wiki_pack_format::stage::{
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
-    println!("Usage: wiki-pack verify <file.wpack>");
-    println!("       wiki-pack inspect <file.wpack>");
+    println!("Usage: wiki-pack verify <file.wpack> [max-input-bytes]");
+    println!("       wiki-pack inspect <file.wpack> [max-input-bytes]");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
     println!("       wiki-pack media-owner-release <--dry-run|--confirm-release> <media-root> <existing-registry.sqlite> <pack|cache|pin> <owner-id> <max-candidates>");
@@ -89,10 +89,18 @@ fn print_inspection(manifest: Manifest, detailed: bool) {
     }
 }
 
-fn inspect_file(path: PathBuf, detailed: bool) -> Result<(), String> {
+fn inspect_file(
+    path: PathBuf,
+    detailed: bool,
+    max_input_bytes: Option<u64>,
+) -> Result<(), String> {
     let file = File::open(&path).map_err(|error| format!("cannot open input: {error}"))?;
-    let manifest = verify_container(&mut BufReader::new(file))
-        .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
+    let mut reader = BufReader::new(file);
+    let manifest = match max_input_bytes {
+        Some(limit) => verify_container_with_budget(&mut reader, limit),
+        None => verify_container(&mut reader),
+    }
+    .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
     print_inspection(manifest, detailed);
     Ok(())
 }
@@ -856,20 +864,32 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some("verify" | "inspect") => {
-            let detailed = env::args_os().nth(1).as_deref() == Some(OsStr::new("inspect"));
-            match (args.next(), args.next()) {
-                (Some(path), None) => {
-                    if let Err(error) = inspect_file(PathBuf::from(path), detailed) {
-                        eprintln!("{error}");
-                        std::process::exit(1);
-                    }
-                }
-                _ => {
-                    eprintln!("Expected exactly one input .wpack file");
-                    usage();
+        Some(command @ ("verify" | "inspect")) => {
+            let fields: Vec<OsString> = args.collect();
+            if fields.len() != 1 && fields.len() != 2 {
+                eprintln!("Expected an input .wpack file and optional decimal byte budget");
+                usage();
+                std::process::exit(2);
+            }
+            let max_input_bytes = if fields.len() == 2 {
+                let Some(limit) = fields[1]
+                    .to_str()
+                    .and_then(|value| value.parse::<u64>().ok())
+                else {
+                    eprintln!("Input byte budget must be a decimal integer");
                     std::process::exit(2);
-                }
+                };
+                Some(limit)
+            } else {
+                None
+            };
+            if let Err(error) = inspect_file(
+                PathBuf::from(&fields[0]),
+                command == "inspect",
+                max_input_bytes,
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
             }
         }
         _ => {
