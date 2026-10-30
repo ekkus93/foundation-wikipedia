@@ -155,100 +155,100 @@ private fun FoundationApp() {
                     },
                     navigationIcon = {
                         if (shell.settingsOpen) {
-                                TextButton(onClick = { shell = shell.back() }) {
-                                    Text(if (shell.settingsCategory != null) "← Settings" else "← Reader")
-                                }
-                            }
-                        },
-                    )
-                },
-                snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                floatingActionButton = {
-                    if (!shell.settingsOpen) {
-                        Column(horizontalAlignment = Alignment.End) {
-                            // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
-                            if (shell.actionsOpen) {
-                                for (label in listOf("Settings", "Offline", "Bookmark", "Chat")) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            when (label) {
-                                                "Settings" -> shell = shell.showSettings()
-                                                "Offline" -> shell = shell.withOffline(!shell.offline)
-                                                else -> {
-                                                    shell = shell.copy(actionsOpen = false)
-                                                    scope.launch {
-                                                        snackbarHostState.showSnackbar(
-                                                            "$label requires a loaded, verified article; this build has none."
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        modifier = if (label == "Chat") {
-                                            Modifier.focusRequester(chatActionFocus)
-                                        } else {
-                                            Modifier
-                                        },
-                                    ) {
-                                        Text(if (label == "Offline" && shell.offline) "Go online" else label)
-                                    }
-                                }
-                            }
-                            FloatingActionButton(
-                                onClick = { shell = shell.toggleActions() },
-                                modifier = Modifier.semantics {
-                                    contentDescription = if (shell.actionsOpen) {
-                                        "Close reader actions"
-                                    } else {
-                                        "Open reader actions"
-                                    }
-                                },
-                            ) {
-                                Text(if (shell.actionsOpen) "Close" else "Actions")
+                            TextButton(onClick = { shell = shell.back() }) {
+                                Text(if (shell.settingsCategory != null) "← Settings" else "← Reader")
                             }
                         }
-                    }
-                },
-            ) { padding ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { viewContext ->
-                            WebView(viewContext).apply {
-                                settings.javaScriptEnabled = false
-                                settings.javaScriptCanOpenWindowsAutomatically = false
-                                settings.domStorageEnabled = false
-                                settings.allowFileAccess = false
-                                settings.allowContentAccess = false
-                                settings.blockNetworkLoads = true
-                                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                                webViewClient = object : WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(
-                                        view: WebView?,
-                                        request: WebResourceRequest?,
-                                    ): Boolean = true
+                    },
+                )
+            },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            floatingActionButton = {
+                if (!shell.settingsOpen) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
+                        if (shell.actionsOpen) {
+                            for (label in listOf("Settings", "Offline", "Bookmark", "Chat")) {
+                                OutlinedButton(
+                                    onClick = {
+                                        when (label) {
+                                            "Settings" -> shell = shell.showSettings()
+                                            "Offline" -> shell = shell.withOffline(!shell.offline)
+                                            else -> {
+                                                shell = shell.copy(actionsOpen = false)
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "$label requires a loaded, verified article; this build has none."
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = if (label == "Chat") {
+                                        Modifier.focusRequester(chatActionFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                ) {
+                                    Text(if (label == "Offline" && shell.offline) "Go online" else label)
                                 }
-                                loadDataWithBaseURL(
-                                    "https://foundation.invalid/",
-                                    BOOTSTRAP_HTML,
-                                    "text/html",
-                                    "UTF-8",
-                                    null,
-                                )
                             }
-                        },
-                        update = { view ->
-                            // Keep the same WebView mounted while Settings is open:
-                            // no reload or loss of the current in-memory scroll position.
-                            view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
-                            view.importantForAccessibility = if (shell.settingsOpen) {
-                                View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                            } else {
-                                View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                        }
+                        FloatingActionButton(
+                            onClick = { shell = shell.toggleActions() },
+                            modifier = Modifier.semantics {
+                                contentDescription = if (shell.actionsOpen) {
+                                    "Close reader actions"
+                                } else {
+                                    "Open reader actions"
+                                }
+                            },
+                        ) {
+                            Text(if (shell.actionsOpen) "Close" else "Actions")
+                        }
+                    }
+                }
+            },
+        ) { padding ->
+            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { viewContext ->
+                        WebView(viewContext).apply {
+                            settings.javaScriptEnabled = false
+                            settings.javaScriptCanOpenWindowsAutomatically = false
+                            settings.domStorageEnabled = false
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+                            settings.blockNetworkLoads = true
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                ): Boolean = true
                             }
-                        },
-                    )
-                    if (shell.settingsOpen) {
+                            loadDataWithBaseURL(
+                                "https://foundation.invalid/",
+                                BOOTSTRAP_HTML,
+                                "text/html",
+                                "UTF-8",
+                                null,
+                            )
+                        }
+                    },
+                    update = { view ->
+                        // Keep the same WebView mounted while Settings is open:
+                        // no reload or loss of the current in-memory scroll position.
+                        view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
+                        view.importantForAccessibility = if (shell.settingsOpen) {
+                            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                        } else {
+                            View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                        }
+                    },
+                )
+                if (shell.settingsOpen) {
                     Column(
                         modifier = Modifier.fillMaxSize()
                             .background(MaterialTheme.colorScheme.background)
