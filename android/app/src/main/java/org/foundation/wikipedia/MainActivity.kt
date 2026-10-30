@@ -11,6 +11,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
@@ -106,9 +108,17 @@ private fun FoundationApp() {
         }
     }
     val shellSaver = remember {
-        listSaver<ReaderShellState, Boolean>(
-            save = { listOf(it.offline, it.settingsOpen) },
-            restore = { ReaderShellState.restore(it[0], it[1]) },
+        listSaver<ReaderShellState, Any>(
+            save = {
+                listOf(it.offline, it.settingsOpen, it.settingsCategory?.name ?: "")
+            },
+            restore = {
+                ReaderShellState.restore(
+                    it[0] as Boolean,
+                    it[1] as Boolean,
+                    it.getOrNull(2) as? String,
+                )
+            },
         )
     }
     var shell by rememberSaveable(stateSaver = shellSaver) {
@@ -134,11 +144,16 @@ private fun FoundationApp() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(if (shell.settingsOpen) "Settings" else "Wikipedia") },
+                    title = {
+                        Text(
+                            if (shell.settingsOpen) shell.settingsCategory?.title ?: "Settings"
+                            else "Wikipedia"
+                        )
+                    },
                     navigationIcon = {
                         if (shell.settingsOpen) {
                             TextButton(onClick = { shell = shell.back() }) {
-                                Text("← Reader")
+                                Text(if (shell.settingsCategory != null) "← Settings" else "← Reader")
                             }
                         }
                     },
@@ -193,30 +208,53 @@ private fun FoundationApp() {
             },
         ) { padding ->
             if (shell.settingsOpen) {
-                Column(modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
-                    Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("Work offline", modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = shell.offline,
-                            onCheckedChange = { shell = shell.withOffline(it) },
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(padding)
+                        .verticalScroll(rememberScrollState()).padding(20.dp),
+                ) {
+                    val category = shell.settingsCategory
+                    if (category == null) {
+                        Text("Settings", style = MaterialTheme.typography.titleLarge)
+                        for (item in ReaderSettingsCategory.entries) {
+                            OutlinedButton(
+                                onClick = { shell = shell.openSettingsCategory(item) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(item.title)
+                            }
+                        }
+                    } else if (category == ReaderSettingsCategory.WIKIPEDIA_OFFLINE_DATA) {
+                        Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Work offline", modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = shell.offline,
+                                onCheckedChange = { shell = shell.withOffline(it) },
+                            )
+                        }
+                        Text(
+                            if (shell.offline) "Offline mode selected on this device."
+                            else "Offline mode is off. Online article fetching is not implemented yet.",
+                        )
+                        Text(
+                            "No verified Wikipedia pack is installed. This development WebView never " +
+                                "requests network resources, even when Work offline is off.",
+                        )
+                        Text(
+                            "The offline choice persists across app restarts. It does not download " +
+                                "articles, enable bookmarks, or certify missing images and attribution.",
+                        )
+                    } else {
+                        Text(category.title, style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "No controls are available for this category in the development build. " +
+                                "Reader, AI and pack capabilities must be verified before settings " +
+                                "for those features are enabled.",
                         )
                     }
-                    Text(
-                        if (shell.offline) "Offline mode selected on this device."
-                        else "Offline mode is off. Online article fetching is not implemented yet.",
-                    )
-                    Text(
-                        "No verified Wikipedia pack is installed. This development WebView never " +
-                            "requests network resources, even when Work offline is off.",
-                    )
-                    Text(
-                        "The offline choice persists across app restarts. It does not download " +
-                            "articles, enable bookmarks, or certify missing images and attribution.",
-                    )
                 }
             } else {
                 AndroidView(
