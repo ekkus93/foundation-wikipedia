@@ -314,6 +314,24 @@ fn capture_persistent_generation(app: &tauri::AppHandle) -> Result<u64, String> 
         .map_err(|_| "Cannot read personal data generation".to_owned())
 }
 
+/// Refuse to return private rows from an IPC request started before another
+/// process revoked history consent or cleared personal data. Recheck after
+/// reading because a second SQLite handle can reset state during the query.
+fn read_personal_data_for_generation<T>(
+    state: &UserState,
+    generation: u64,
+    read: impl FnOnce() -> Result<T, UserStateError>,
+) -> Result<T, UserStateError> {
+    if state.personal_generation()? != generation {
+        return Err(UserStateError::InvalidValue);
+    }
+    let result = read()?;
+    if state.personal_generation()? != generation {
+        return Err(UserStateError::InvalidValue);
+    }
+    Ok(result)
+}
+
 fn toggle_saved_bookmark(
     state: &UserState,
     key: &ArticleKey,
@@ -388,11 +406,13 @@ async fn list_reader_bookmarks(
 ) -> Result<Vec<(String, u64, u64)>, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write(generation, || {
             let state = open_private_bookmark_store(&app)?;
-            saved_bookmark_rows(&state)
-                .map_err(|_| "Cannot read saved page identities".to_owned())
+            read_personal_data_for_generation(&state, persistent_generation, || {
+                saved_bookmark_rows(&state)
+            }).map_err(|_| "Cannot read saved page identities or stale privacy generation".to_owned())
         })
     })
     .await
@@ -505,10 +525,13 @@ async fn reader_history_enabled(
 ) -> Result<bool, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write(generation, || {
-            open_private_bookmark_store(&app)?.history_enabled()
-                .map_err(|_| "Cannot read history preference".to_owned())
+            let state = open_private_bookmark_store(&app)?;
+            read_personal_data_for_generation(&state, persistent_generation, || {
+                state.history_enabled()
+            }).map_err(|_| "Cannot read history preference or stale privacy generation".to_owned())
         })
     })
     .await
@@ -554,10 +577,13 @@ async fn list_reader_history(
 ) -> Result<Vec<(String, u64, u64, i64)>, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         gate.write(generation, || {
             let state = open_private_bookmark_store(&app)?;
-            reader_history_rows(&state).map_err(|_| "Cannot load reading history".to_owned())
+            read_personal_data_for_generation(&state, persistent_generation, || {
+                reader_history_rows(&state)
+            }).map_err(|_| "Cannot load reading history or stale privacy generation".to_owned())
         })
     })
     .await
@@ -1104,6 +1130,78 @@ mod bookmark_tests {
             .map_err(|error| format!("{error:?}"))).is_err());
         assert!(gate.write(generation, || saved_bookmark_rows(&state)
             .map_err(|error| format!("{error:?}"))).is_err());
+    }
+
+    #[test]
+    fn cross_process_privacy_reset_rejects_stale_desktop_reads() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-desktop-private-read-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("user-state.sqlite");
+        let mut owner = UserState::open(&db).unwrap();
+        let reader = UserState::open(&db).unwrap();
+        let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
+        owner.set_bookmark(&key, 333, "").unwrap();
+        owner.set_history_enabled(true).unwrap();
+        assert!(owner.record_visit(&key, 333, 1_700_000_000).unwrap());
+        let stale = reader.personal_generation().unwrap();
+
+        // The reset occurs after the first generation check and after rows
+        // have been loaded, but before the desktop adapter returns them.
+        let raced = read_personal_data_for_generation(&reader, stale, || {
+            let rows = saved_bookmark_rows(&reader)?;
+            assert_eq!(rows.len(), 1);
+            assert!(owner.clear_personal_reading_data_for_generation(stale)?);
+            Ok(rows)
+        });
+        assert!(matches!(raced, Err(UserStateError::InvalidValue)));
+        assert!(matches!(
+            read_personal_data_for_generation(&reader, stale, || reader_history_rows(&reader)),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            read_personal_data_for_generation(&reader, stale, || reader.history_enabled()),
+            Err(UserStateError::InvalidValue)
+        ));
+
+        // A newly initiated request may read the new state normally.
+        let fresh = reader.personal_generation().unwrap();
+        assert_ne!(fresh, stale);
+        assert!(read_personal_data_for_generation(&reader, fresh, || {
+            saved_bookmark_rows(&reader)
+        }).unwrap().is_empty());
+        assert!(read_personal_data_for_generation(&reader, fresh, || {
+            reader_history_rows(&reader)
+        }).unwrap().is_empty());
+        drop(reader);
+        drop(owner);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn history_consent_revocation_invalidates_stale_desktop_preference_read() {
+        let state = UserState::in_memory().unwrap();
+        let old = state.personal_generation().unwrap();
+        assert!(read_personal_data_for_generation(&state, old, || {
+            state.history_enabled()
+        }).is_ok());
+        // Use a separate generation-aware write, as an external process would.
+        let mut state = state;
+        assert!(state.set_history_enabled_for_generation(old, false).unwrap());
+        assert!(matches!(
+            read_personal_data_for_generation(&state, old, || state.history_enabled()),
+            Err(UserStateError::InvalidValue)
+        ));
+        let fresh = state.personal_generation().unwrap();
+        assert!(!read_personal_data_for_generation(&state, fresh, || {
+            state.history_enabled()
+        }).unwrap());
     }
 
     #[test]
