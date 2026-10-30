@@ -89,11 +89,7 @@ fn print_inspection(manifest: Manifest, detailed: bool) {
     }
 }
 
-fn inspect_file(
-    path: PathBuf,
-    detailed: bool,
-    max_input_bytes: Option<u64>,
-) -> Result<(), String> {
+fn inspect_file(path: PathBuf, detailed: bool, max_input_bytes: Option<u64>) -> Result<(), String> {
     let file = File::open(&path).map_err(|error| format!("cannot open input: {error}"))?;
     let mut reader = BufReader::new(file);
     let manifest = match max_input_bytes {

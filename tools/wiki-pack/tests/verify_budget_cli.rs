@@ -24,7 +24,10 @@ fn fixture() -> Vec<u8> {
         }],
     };
     let mut bytes = Vec::new();
-    write_container(&mut bytes, &manifest, |_, output| output.write_all(b"article")).unwrap();
+    write_container(&mut bytes, &manifest, |_, output| {
+        output.write_all(b"article")
+    })
+    .unwrap();
     bytes
 }
 
@@ -47,7 +50,11 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
     let binary = env!("CARGO_BIN_EXE_wiki-pack");
 
     for command in ["verify", "inspect"] {
-        let ordinary = Command::new(binary).arg(command).arg(&path).output().unwrap();
+        let ordinary = Command::new(binary)
+            .arg(command)
+            .arg(&path)
+            .output()
+            .unwrap();
         assert!(ordinary.status.success(), "{ordinary:?}");
 
         let exact = Command::new(binary)
@@ -57,7 +64,9 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
             .output()
             .unwrap();
         assert!(exact.status.success(), "{exact:?}");
-        assert!(String::from_utf8_lossy(&exact.stdout).contains("Publisher signature: NOT VERIFIED"));
+        assert!(
+            String::from_utf8_lossy(&exact.stdout).contains("Publisher signature: NOT VERIFIED")
+        );
 
         let short = Command::new(binary)
             .arg(command)
