@@ -185,3 +185,47 @@ fn malformed_staging_invocations_exit_with_usage_status() {
         assert_eq!(output.status.code(), Some(2), "{output:?}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn json_staging_rejects_non_utf8_destination_before_consuming_or_publishing() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = private_parent();
+    let parent = root.join(OsString::from_vec(vec![b'b', b'a', b'd', 0xff]));
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let archive = root.join("input.wpack");
+    fs::write(&archive, fixture()).unwrap();
+    let binary = env!("CARGO_BIN_EXE_wiki-pack");
+
+    let file = Command::new(binary)
+        .arg("stage-unsigned")
+        .arg("--json")
+        .arg(&archive)
+        .arg(&parent)
+        .arg("candidate")
+        .output()
+        .unwrap();
+    assert_eq!(file.status.code(), Some(1), "{file:?}");
+    assert!(file.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&file.stderr).contains("must be UTF-8"));
+
+    // No stdin bytes are needed: destination identity is rejected first.
+    let stream = Command::new(binary)
+        .arg("stage-unsigned-stdin")
+        .arg("--json")
+        .arg(&parent)
+        .arg("candidate")
+        .arg("1048576")
+        .output()
+        .unwrap();
+    assert_eq!(stream.status.code(), Some(1), "{stream:?}");
+    assert!(stream.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&stream.stderr).contains("must be UTF-8"));
+    assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -274,7 +274,7 @@ fn print_staging_receipt(manifest: &Manifest, staged: &Path, json_output: bool) 
             serde_json::json!({
                 "schema_version": 1,
                 "status": "untrusted_staging",
-                "staging_path": staged.to_string_lossy(),
+                "staging_path": staged.to_str().expect("JSON staging parent preflight"),
                 "integrity_verified": true,
                 "publisher_signature_verified": false,
                 "offline_media_complete": false,
@@ -304,6 +304,15 @@ fn print_staging_receipt(manifest: &Manifest, staged: &Path, json_output: bool) 
     println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
 }
 
+/// A lossy JSON path is not a usable filesystem identity. Refuse such
+/// destinations before reading input or creating a staged tree.
+fn validate_json_staging_parent(parent: &Path, json_output: bool) -> Result<(), String> {
+    if json_output && parent.to_str().is_none() {
+        return Err("JSON staging parent path must be UTF-8".into());
+    }
+    Ok(())
+}
+
 /// Verify, then extract into a private staging directory. This deliberately
 /// never changes installed packs or confers publisher trust.
 fn stage_unsigned(
@@ -313,6 +322,7 @@ fn stage_unsigned(
     max_input_bytes: Option<u64>,
     json_output: bool,
 ) -> Result<(), String> {
+    validate_json_staging_parent(&parent, json_output)?;
     let input = File::open(&source).map_err(|error| format!("cannot open input: {error}"))?;
     let mut reader = BufReader::new(input);
     let result = match max_input_bytes {
@@ -333,6 +343,7 @@ fn stage_unsigned_stdin(
     max_bytes: u64,
     json_output: bool,
 ) -> Result<(), String> {
+    validate_json_staging_parent(&parent, json_output)?;
     let stdin = std::io::stdin();
     let (manifest, staged) =
         stage_container_stream_with_budget(&mut stdin.lock(), &parent, name, max_bytes)
