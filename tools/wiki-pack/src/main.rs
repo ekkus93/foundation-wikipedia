@@ -49,7 +49,7 @@ fn usage() {
     println!("       wiki-pack verify-public-generation-live [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
-    println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
+    println!("       wiki-pack export-custom [--json] <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!(
         "       wiki-pack stage-unsigned [--json] <file.wpack> <private-parent> <name> [max-input-bytes]"
     );
@@ -152,7 +152,11 @@ fn export_custom_tree(
     snapshot: &str,
     definition_id: &str,
     destination: PathBuf,
+    json_output: bool,
 ) -> Result<(), String> {
+    if json_output && destination.to_str().is_none() {
+        return Err("JSON export destination path must be UTF-8".into());
+    }
     let manifest = custom_manifest_from_tree(&source, pack_id, project, snapshot, definition_id)
         .map_err(|error| format!("invalid source object tree: {error:?}"))?;
     let parent = destination
@@ -229,9 +233,32 @@ fn export_custom_tree(
     result?;
     #[cfg(unix)]
     sync_export_publication(parent, &destination, |path| File::open(path)?.sync_all())?;
-    println!("Custom envelope written: {}", destination.display());
-    println!("Object digests: VERIFIED; publisher signature: NOT VERIFIED");
-    println!("Offline media completeness: NOT VERIFIED; pack is NOT installed");
+    if json_output {
+        let declared_payload_bytes: u64 = manifest.objects.iter().map(|object| object.bytes).sum();
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": 1,
+                "status": "untrusted_export",
+                "output_path": destination.to_str().expect("JSON export path preflight"),
+                "integrity_verified": true,
+                "publisher_signature_verified": false,
+                "offline_media_complete": false,
+                "installed": false,
+                "pack_id": manifest.pack_id,
+                "project": manifest.project,
+                "snapshot": manifest.snapshot,
+                "object_count": manifest.objects.len(),
+                "declared_payload_bytes": declared_payload_bytes,
+                "claimed_origin": "custom",
+                "claimed_origin_identity": definition_id,
+            })
+        );
+    } else {
+        println!("Custom envelope written: {}", destination.display());
+        println!("Object digests: VERIFIED; publisher signature: NOT VERIFIED");
+        println!("Offline media completeness: NOT VERIFIED; pack is NOT installed");
+    }
     Ok(())
 }
 
@@ -934,9 +961,17 @@ fn main() {
             }
         }
         Some("export-custom") => {
-            let fields: Vec<OsString> = args.collect();
+            let supplied: Vec<OsString> = args.collect();
+            let json_output = supplied
+                .first()
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let fields = if json_output {
+                &supplied[1..]
+            } else {
+                &supplied[..]
+            };
             if fields.len() != 6 {
-                eprintln!("export-custom requires exactly six arguments");
+                eprintln!("export-custom requires [--json] and exactly six arguments");
                 usage();
                 std::process::exit(2);
             }
@@ -955,6 +990,7 @@ fn main() {
                 identity[2],
                 identity[3],
                 PathBuf::from(&fields[5]),
+                json_output,
             ) {
                 eprintln!("{error}");
                 std::process::exit(1);
