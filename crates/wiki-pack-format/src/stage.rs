@@ -89,10 +89,27 @@ pub fn stage_container<R: Read + Seek>(
 
     input.seek(SeekFrom::Start(0))?;
     let manifest = verify_container(input)?;
-    input.seek(SeekFrom::Start(8))?;
-    let mut length = [0; 4];
-    input.read_exact(&mut length)?;
-    input.seek(SeekFrom::Current(i64::from(u32::from_be_bytes(length))))?;
+    // The source may change between the verification and staging passes
+    // (for example, a seekable provider backed by a mutable file). Do not
+    // trust the second-pass header to select a different payload offset, or
+    // silently associate objects with a different pack identity. Recheck the
+    // exact canonical transcript before creating any staging directory.
+    let transcript = manifest.identity_transcript()?;
+    input.seek(SeekFrom::Start(0))?;
+    let mut header = [0u8; 12];
+    input.read_exact(&mut header)?;
+    if &header[..8] != b"FWPACK01"
+        || u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize != transcript.len()
+    {
+        return Err(ContainerError::InvalidTranscript);
+    }
+    let mut buffer = [0u8; 64 * 1024];
+    for chunk in transcript.chunks(buffer.len()) {
+        input.read_exact(&mut buffer[..chunk.len()])?;
+        if &buffer[..chunk.len()] != chunk {
+            return Err(ContainerError::InvalidTranscript);
+        }
+    }
 
     let root = parent.join(name);
     create_private_dir(&root)?;
@@ -317,6 +334,79 @@ mod tests {
         fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             self.0.read(buffer)
         }
+    }
+
+    /// A valid replacement envelope with identical objects must not be
+    /// accepted under the metadata authenticated during the first pass.
+    #[test]
+    fn seekable_staging_rejects_manifest_swap_between_verification_and_copy() {
+        struct SwappingInput {
+            current: io::Cursor<Vec<u8>>,
+            replacement: Vec<u8>,
+            seeks: usize,
+        }
+        impl Read for SwappingInput {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                self.current.read(bytes)
+            }
+        }
+        impl Seek for SwappingInput {
+            fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+                if self.seeks == 1 {
+                    self.current = io::Cursor::new(std::mem::take(&mut self.replacement));
+                }
+                self.seeks += 1;
+                self.current.seek(position)
+            }
+        }
+
+        let payload = b"revision-matched diagram";
+        let mut manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "alpha".into(),
+            project: "enwiki".into(),
+            snapshot: "20261030".into(),
+            origin: Origin::Custom {
+                definition_id: "topic".into(),
+            },
+            objects: vec![Object {
+                path: "media/diagram.svg".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        let mut original = Vec::new();
+        crate::container::write_container(&mut original, &manifest, |_, output| {
+            output.write_all(payload)
+        })
+        .unwrap();
+        manifest.pack_id = "omega".into();
+        let mut replacement = Vec::new();
+        crate::container::write_container(&mut replacement, &manifest, |_, output| {
+            output.write_all(payload)
+        })
+        .unwrap();
+        assert_eq!(original.len(), replacement.len());
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stage-swap-{}-{stamp}", std::process::id()));
+        create_private_dir(&parent).unwrap();
+        let mut input = SwappingInput {
+            current: io::Cursor::new(original),
+            replacement,
+            seeks: 0,
+        };
+        assert!(matches!(
+            stage_container(&mut input, &parent, "swapped"),
+            Err(ContainerError::InvalidTranscript)
+        ));
+        assert!(!parent.join("swapped").exists());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]
@@ -547,6 +637,7 @@ mod tests {
         }
         fs::remove_dir_all(parent).unwrap();
     }
+
 
     #[test]
     fn failed_parent_durability_sync_rolls_back_new_staging_tree() {
