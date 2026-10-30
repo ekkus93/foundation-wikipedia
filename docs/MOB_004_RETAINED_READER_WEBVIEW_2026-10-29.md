@@ -24,3 +24,14 @@ and top-level URL navigation. No authenticated article, verified offline
 media, installed pack, or in-WebView citation bridge is claimed.
 
 **MOB-002 and MOB-004 remain unchecked.**
+
+## Exact-head automated evidence
+
+Implementation SHA `3c87a1e0cbd4148c0a06e4ac05dd017439df9b9c` passed
+[Rust workspace CI 41005942516](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005942516).
+The Android build/unit/lint job in
+[Platform shells CI 41005942509](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005942509)
+passed, while the overall workflow and
+[Android emulator smoke 41005942545](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005942545)
+were still running at documentation. Neither automated check exercises Settings
+round-trip scroll retention in a real WebView; that remains unqualified.

@@ -26,3 +26,13 @@ of this setting. No verified Wikipedia pack, network-capable article transport,
 device-backed preference test, or offline media acceptance is claimed. The
 preference is intentionally not an authorization to make network requests.
 **MOB-004 and MOB-002 remain unchecked.**
+
+## Exact-head automated evidence
+
+Implementation SHA `8ca8ca2a68f23272127dcb9fd0d2fd49dbb2b682` passed
+[Rust workspace CI 41004932238](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41004932238),
+[Platform shells CI 41004932242](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41004932242)
+(Android unit tests, APK and lint included), and
+[Android emulator install smoke 41004932250](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41004932250).
+An emulator install/launch is not proof of actual preference persistence across
+process death on a physical device.

@@ -25,3 +25,12 @@ This source-level slice does not yet implement settings for AI, bookmarks,
 history, installed packs or storage, nor prove actual article/scroll restoration,
 real-device behavior, or offline visual fidelity. The bootstrap WebView remains
 network-disabled. **MOB-004 and STATE-003 remain unchecked.**
+
+## Exact-head automated evidence
+
+Implementation SHA `e7a2af6c9b9987f92099e049c98fe628651e6b8c` passed
+[Rust workspace CI 41005698864](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005698864)
+and [Platform shells CI 41005698788](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005698788),
+including Android APK compilation, JUnit and lint. The separate
+[Android emulator smoke 41005698771](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41005698771)
+was still running at this update and must be checked before claiming success.
