@@ -40,3 +40,11 @@ The output path must be representable exactly as UTF-8 in JSON mode. A non-UTF8 
 ## Acceptance still outstanding
 
 The archive remains **unsigned and untrusted**. Neither the receipt nor its SHA-256 object verification proves publisher identity, required offline diagrams/images/math/captions/attribution completeness, a production installer, pack activation, or physical Android/desktop acceptance. `PACK-004`, `TRUST-001`, `TRUST-002`, and `TRUST-003` remain unchecked. Exact-head CI must be reconciled before treating this code slice as qualified.
+
+## CI reconciliation and JSON failure-channel hardening (2026-10-30)
+
+The original implementation `bfed64d63c1638c1975f670b9c5ab499729b21b2` and documentation commit `710ca587a2a2a021a77f03c3cc014349f8be4658` both failed Rust workspace qualification: the first failure was `cargo fmt --check`, and after formatting the black-box regression exposed a real CLI defect. Malformed `export-custom --json` requests emitted human-readable usage on **stdout**, violating the expected empty-on-failure JSON channel.
+
+The CLI now suppresses human usage on stdout for malformed `--json` calls to export, inspect, verify, and file/stdin unsigned staging. Errors remain on stderr and exit nonzero; successful JSON receipts remain unchanged. Legacy human-readable help and command syntax are preserved. Black-box tests cover the malformed input boundary, a missing export source, and file/stdin success parity.
+
+**Qualified exact source:** `af97492b13feaf07d3913e734ca07384699e4fc8`. [Rust workspace 41110535221](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41110535221) and [Platform shells 41110535201](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41110535201) **passed** at that SHA. The earlier intermediate `e90c6d705876805b2bc855ac06ef4c8ffdfbd14b` failed only rustfmt and was corrected. No claim of publisher trust, installed-pack state, offline-media completeness, or device acceptance follows from these tests.
