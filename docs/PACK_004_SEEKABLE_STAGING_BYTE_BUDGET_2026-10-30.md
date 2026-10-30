@@ -19,7 +19,7 @@ The nonseekable stdin staging path had an explicit spool-byte quota, but the see
 ## Qualification
 
 - Exact implementation SHA `373906e90a8652ce2fc737c540b5a64a459a0c56` passed [Rust workspace](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41058936083) and [Platform shells](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41058935878).
-- The black-box test head `9d51b9be5fb43f0b9655d2bbe6aec80f7d4e2d21` has [Rust workspace](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41059474870) and [Platform shells](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41059474912) CI; reconcile exact-head outcomes before treating this as fully qualified.
+- The black-box test head `9d51b9be5fb43f0b9655d2bbe6aec80f7d4e2d21` passed [Rust workspace](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41059474870) and [Platform shells](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41059474912) CI, including the real CLI regression.
 - Initial implementation SHA `c9b50582e37fd9bbd1ad6a69e2fb889369d10ff5` and initial black-box test SHA `2b253de6ea07e7c34d038da8b12e7691c74fbb51` failed rustfmt only; both were corrected.
 
 ## Remaining
