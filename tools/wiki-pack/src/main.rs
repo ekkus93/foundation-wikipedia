@@ -529,7 +529,6 @@ fn main() {
             let Some(identity) = [0usize, 1, 2, 4]
                 .iter()
                 .map(|index| fields[*index].to_str())
-
                 .collect::<Option<Vec<_>>>()
             else {
                 eprintln!("Generation identity and byte limit must be UTF-8");
@@ -796,7 +795,11 @@ fn main() {
             let json_output = fields
                 .first()
                 .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
-            let values = if json_output { &fields[1..] } else { &fields[..] };
+            let values = if json_output {
+                &fields[1..]
+            } else {
+                &fields[..]
+            };
             let Some(max_bytes) = values
                 .first()
                 .filter(|_| values.len() == 1)
@@ -807,9 +810,7 @@ fn main() {
                 usage();
                 std::process::exit(2);
             };
-            if let Err(error) =
-                inspect_stdin(max_bytes, command == "inspect-stdin", json_output)
-            {
+            if let Err(error) = inspect_stdin(max_bytes, command == "inspect-stdin", json_output) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
@@ -902,9 +903,15 @@ fn main() {
             let json_output = fields
                 .first()
                 .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
-            let values = if json_output { &fields[1..] } else { &fields[..] };
+            let values = if json_output {
+                &fields[1..]
+            } else {
+                &fields[..]
+            };
             if values.len() != 1 && values.len() != 2 {
-                eprintln!("Expected [--json], an input .wpack file and optional decimal byte budget");
+                eprintln!(
+                    "Expected [--json], an input .wpack file and optional decimal byte budget"
+                );
                 usage();
                 std::process::exit(2);
             }
