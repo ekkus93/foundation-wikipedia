@@ -61,23 +61,34 @@ there are no versioned DTOs, coroutine adapters, cancellation bridge or
 device-tested Rust calls. MOB-001 owns that production boundary. An APK or
 generated Kotlin file alone is not proof of a native bridge.
 
-The Android development shell now has a native Compose **Settings** screen with
-a session-only **Work offline** toggle. The FAB exposes Settings, Offline,
-Bookmark and Chat actions. Settings and the offline choice survive rotation
-through a `rememberSaveable` state saver; an expanded action menu does not.
-Android Back closes the action menu before leaving the reader or Settings.
-Pure Kotlin/JUnit tests cover these transitions. Bookmark and Chat still
-report that no verified article is available.
+The Android development shell has native Compose **Settings** categories,
+System/Light/Dark appearance, a versioned private **Work offline** preference
+and an explicit opt-in **reading-history consent** preference. Settings category
+navigation survives configuration recreation; transient FAB actions and Chat
+do not. Chat opens a dismissible native bottom sheet but sends no data to an
+AI provider. Bookmark remains unavailable until a verified article is loaded.
+The placeholder WebView stays mounted when Settings or Chat is displayed.
 
-**Important:** The offline switch is a presentation preference only in this
+**Privacy and offline durability:** A user-triggered history-consent change
+uses synchronous `SharedPreferences.commit()` before the UI can show consent
+enabled. Failed writes leave consent disabled for the current session and show
+a warning that a previously saved choice might reappear after restart. Consent
+is re-read from storage after activity recreation, rather than restoring a
+potentially stale saved Compose value. Offline changes also commit synchronously
+before allowing online mode; failed writes keep the current session offline
+and display an error. Both settings have pure Kotlin/JUnit failure-path tests.
+See [scoped durability report](../docs/MOB_004_ANDROID_DURABLE_PRIVACY_AND_OFFLINE_SETTINGS_2026-10-30.md).
+
+**Important:** These switches are presentation preferences only in this
 bootstrap. The WebView always blocks network loads, JavaScript, DOM storage,
 file/content access, mixed content and top-level URL navigation, even when
-the switch is off. The manifest grants no Internet permission. The only
-rendered content remains bundled bootstrap HTML, not Wikipedia content.
-Do not treat this as an installed pack, a qualified media origin, a usable
-offline reader, or evidence of production navigation. Native Rust bindings,
-real article rendering, content/media authentication, Settings persistence,
-bookmark/history integration, process-death restoration and physical-device
-interaction/accessibility tests remain outstanding.
+offline mode is off. The manifest grants no Internet permission. The only
+rendered content is bundled bootstrap HTML, not Wikipedia content. No reading
+history is collected and there is no Rust `UserState` consent bridge.
+These settings do **not** prove persistent revocation across a failed disk
+write, installed packs, qualified media, production article navigation or
+device-tested lifecycle/accessibility behavior. Native Rust bindings, verified
+article/media rendering, bookmark/history integration, cross-process privacy
+coordination and physical-device acceptance remain outstanding.
 
 See [scoped Android shell qualification](../docs/MOB_002_004_ANDROID_OFFLINE_SETTINGS_SHELL_2026-10-28.md).
