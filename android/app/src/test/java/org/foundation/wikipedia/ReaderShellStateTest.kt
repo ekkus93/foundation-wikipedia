@@ -43,6 +43,41 @@ class ReaderShellStateTest {
     }
 
     @Test
+    fun offlineModeOnlyGoesOnlineAfterSuccessfulPersistence() {
+        val recorded = mutableListOf<String>()
+        val online = ReaderOfflinePreference.update(false) {
+            recorded.add(it)
+            true
+        }
+        assertEquals(listOf("v1:online"), recorded)
+        assertTrue(online.saved)
+        assertFalse(online.offline)
+
+        val offline = ReaderOfflinePreference.update(true) {
+            recorded.add(it)
+            true
+        }
+        assertEquals(listOf("v1:online", "v1:offline"), recorded)
+        assertTrue(offline.saved)
+        assertTrue(offline.offline)
+    }
+
+    @Test
+    fun failedOfflinePreferenceWritesNeverEnableNetworkMode() {
+        for (requested in listOf(true, false)) {
+            val failed = ReaderOfflinePreference.update(requested) { false }
+            assertFalse(failed.saved)
+            assertTrue(failed.offline)
+
+            val throwing = ReaderOfflinePreference.update(requested) {
+                throw IllegalStateException("simulated storage failure")
+            }
+            assertFalse(throwing.saved)
+            assertTrue(throwing.offline)
+        }
+    }
+
+    @Test
     fun corruptOrFuturePreferenceFailsClosedToOffline() {
         for (value in listOf("", "true", "1", "v2:online", "v1:OFFLINE", "v1:online\\n")) {
             assertTrue("unexpected online fallback for $value", ReaderOfflinePreference.decode(value))

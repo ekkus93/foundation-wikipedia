@@ -74,6 +74,8 @@ data class ReaderShellState(
  * offline rather than unexpectedly permitting future network-capable readers
  * to fetch content. A missing setting defaults to online-first.
  */
+internal data class ReaderOfflineUpdate(val offline: Boolean, val saved: Boolean)
+
 internal object ReaderOfflinePreference {
     const val FILE = "foundation_reader_settings"
     const val KEY = "work_offline"
@@ -86,6 +88,19 @@ internal object ReaderOfflinePreference {
         null, ONLINE -> false
         OFFLINE -> true
         else -> true
+    }
+
+    /**
+     * A failed write must never allow a requested online transition. Retain
+     * offline mode until the preference can be committed successfully.
+     */
+    fun update(requestedOffline: Boolean, persist: (String) -> Boolean): ReaderOfflineUpdate {
+        val saved = try {
+            persist(encode(requestedOffline))
+        } catch (_: RuntimeException) {
+            false
+        }
+        return ReaderOfflineUpdate(offline = if (saved) requestedOffline else true, saved = saved)
     }
 }
 

@@ -173,13 +173,27 @@ private fun FoundationApp() {
     var shell by rememberSaveable(stateSaver = shellSaver) {
         mutableStateOf(ReaderShellState(offline = initialOffline))
     }
-    LaunchedEffect(shell.offline, offlinePreferences) {
-        offlinePreferences.edit()
-            .putString(ReaderOfflinePreference.KEY, ReaderOfflinePreference.encode(shell.offline))
-            .apply()
-    }
+    // Offline changes must be durable before the shell can display "Go online".
+    // A failed write retains offline mode for this session, never online.
+    var offlinePersistenceFailed by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val setOfflineChoice: (Boolean) -> Unit = { requested ->
+        val update = ReaderOfflinePreference.update(requested) { value ->
+            offlinePreferences.edit()
+                .putString(ReaderOfflinePreference.KEY, value)
+                .commit()
+        }
+        shell = shell.withOffline(update.offline)
+        offlinePersistenceFailed = !update.saved
+        if (!update.saved) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "Could not save offline choice. Staying offline for this session."
+                )
+            }
+        }
+    }
     val chatActionFocus = remember { FocusRequester() }
 
     BackHandler(enabled = shell.actionsOpen || shell.settingsOpen || shell.chatOpen) {
@@ -219,7 +233,7 @@ private fun FoundationApp() {
                                     onClick = {
                                         when (label) {
                                             "Settings" -> shell = shell.showSettings()
-                                            "Offline" -> shell = shell.withOffline(!shell.offline)
+                                            "Offline" -> setOfflineChoice(!shell.offline)
                                             "Chat" -> shell = shell.showChat()
                                             else -> {
                                                 shell = shell.copy(actionsOpen = false)
@@ -389,7 +403,13 @@ private fun FoundationApp() {
                                 Text("Work offline", modifier = Modifier.weight(1f))
                                 Switch(
                                     checked = shell.offline,
-                                    onCheckedChange = { shell = shell.withOffline(it) },
+                                    onCheckedChange = setOfflineChoice,
+                                )
+                            }
+                            if (offlinePersistenceFailed) {
+                                Text(
+                                    "The offline preference could not be saved. This session stays " +
+                                        "offline; a previous choice may return after restart."
                                 )
                             }
                             Text(
