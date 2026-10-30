@@ -88,3 +88,18 @@ internal object ReaderOfflinePreference {
         else -> true
     }
 }
+
+/**
+ * Privacy-sensitive Android consent preference. Missing, malformed and future
+ * values must never silently opt the user into recording reading history.
+ * This does not implement history storage or authorize a network request.
+ */
+internal object ReaderHistoryPreference {
+    const val KEY = "save_reading_history"
+    private const val ENABLED = "v1:enabled"
+    private const val DISABLED = "v1:disabled"
+
+    fun encode(enabled: Boolean): String = if (enabled) ENABLED else DISABLED
+
+    fun decode(value: String?): Boolean = value == ENABLED
+}

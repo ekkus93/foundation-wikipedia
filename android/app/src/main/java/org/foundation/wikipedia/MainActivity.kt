@@ -139,6 +139,25 @@ private fun FoundationApp() {
             true
         }
     }
+    // Consent only: article/history persistence is not wired to Rust yet.
+    val historyPreferences = remember(context) {
+        context.getSharedPreferences(ReaderOfflinePreference.FILE, Context.MODE_PRIVATE)
+    }
+    val initialHistoryEnabled = remember(historyPreferences) {
+        try {
+            ReaderHistoryPreference.decode(
+                historyPreferences.getString(ReaderHistoryPreference.KEY, null)
+            )
+        } catch (_: ClassCastException) {
+            false
+        }
+    }
+    var historyEnabled by rememberSaveable { mutableStateOf(initialHistoryEnabled) }
+    LaunchedEffect(historyEnabled, historyPreferences) {
+        historyPreferences.edit()
+            .putString(ReaderHistoryPreference.KEY, ReaderHistoryPreference.encode(historyEnabled))
+            .apply()
+    }
     val shellSaver = remember {
         listSaver<ReaderShellState, Any>(
             save = {
@@ -323,6 +342,30 @@ private fun FoundationApp() {
                             Text(
                                 "System follows the Android appearance setting. Light and Dark " +
                                     "override it for this app. Other reading controls are not available yet.",
+                            )
+                        } else if (category == ReaderSettingsCategory.HISTORY_SAVED_CONTENT) {
+                            Text("History & Saved Content", style = MaterialTheme.typography.titleLarge)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Allow saving reading history", modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = historyEnabled,
+                                    onCheckedChange = { historyEnabled = it },
+                                )
+                            }
+                            Text(
+                                if (historyEnabled) {
+                                    "History consent is on. No reading history is currently " +
+                                        "recorded: verified articles and Rust storage are not connected."
+                                } else {
+                                    "History consent is off. Reading history is not recorded."
+                                },
+                            )
+                            Text(
+                                "This preference does not enable article loading, create bookmarks, " +
+                                    "or delete history from another installation."
                             )
                         } else if (category == ReaderSettingsCategory.WIKIPEDIA_OFFLINE_DATA) {
                             Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
