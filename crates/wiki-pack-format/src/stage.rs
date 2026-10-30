@@ -638,7 +638,6 @@ mod tests {
         fs::remove_dir_all(parent).unwrap();
     }
 
-
     #[test]
     fn failed_parent_durability_sync_rolls_back_new_staging_tree() {
         let stamp = SystemTime::now()
