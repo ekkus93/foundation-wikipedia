@@ -891,10 +891,8 @@ mod export_publication_tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let parent = std::env::temp_dir().join(format!(
-            "wiki-export-sync-{}-{stamp}",
-            std::process::id()
-        ));
+        let parent =
+            std::env::temp_dir().join(format!("wiki-export-sync-{}-{stamp}", std::process::id()));
         fs::create_dir(&parent).unwrap();
         let destination = parent.join("new.wpack");
         fs::write(&destination, b"provisional envelope").unwrap();
@@ -906,10 +904,8 @@ mod export_publication_tests {
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
 
         fs::write(&destination, b"complete envelope").unwrap();
-        sync_export_publication(&parent, &destination, |path| {
-            File::open(path)?.sync_all()
-        })
-        .unwrap();
+        sync_export_publication(&parent, &destination, |path| File::open(path)?.sync_all())
+            .unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"complete envelope");
         fs::remove_dir_all(parent).unwrap();
     }
