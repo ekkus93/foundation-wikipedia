@@ -875,7 +875,9 @@ fn main() {
                 .and_then(|value| value.parse::<u64>().ok())
             else {
                 eprintln!("stdin verification requires [--json] and one decimal byte budget");
-                usage();
+                if !json_output {
+                    usage();
+                }
                 std::process::exit(2);
             };
             if let Err(error) = inspect_stdin(max_bytes, command == "inspect-stdin", json_output) {
@@ -895,7 +897,9 @@ fn main() {
             };
             if values.len() != 3 {
                 eprintln!("stage-unsigned-stdin requires [--json] and exactly three arguments");
-                usage();
+                if !json_output {
+                    usage();
+                }
                 std::process::exit(2);
             }
             let Some(name) = values[1].to_str() else {
@@ -930,7 +934,9 @@ fn main() {
                 eprintln!(
                     "stage-unsigned requires [--json], three arguments and an optional byte budget"
                 );
-                usage();
+                if !json_output {
+                    usage();
+                }
                 std::process::exit(2);
             }
             let Some(name) = values[2].to_str() else {
@@ -1012,7 +1018,9 @@ fn main() {
                 eprintln!(
                     "Expected [--json], an input .wpack file and optional decimal byte budget"
                 );
-                usage();
+                if !json_output {
+                    usage();
+                }
                 std::process::exit(2);
             }
             let max_input_bytes = if values.len() == 2 {

@@ -183,6 +183,8 @@ fn malformed_staging_invocations_exit_with_usage_status() {
     ] {
         let output = Command::new(binary).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(!output.stderr.is_empty(), "{output:?}");
     }
 }
 

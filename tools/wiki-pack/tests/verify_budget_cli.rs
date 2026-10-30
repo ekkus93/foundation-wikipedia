@@ -177,6 +177,21 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
             .output()
             .unwrap();
         assert_eq!(extra.status.code(), Some(2), "{extra:?}");
+
+        for bad_args in [
+            vec![command, "--json"],
+            vec![command, "--json", path.to_str().unwrap(), "bad-budget"],
+        ] {
+            let malformed = Command::new(binary).args(bad_args).output().unwrap();
+            assert_eq!(malformed.status.code(), Some(2), "{malformed:?}");
+            assert!(malformed.stdout.is_empty(), "{malformed:?}");
+        }
+        let malformed_stdin = Command::new(binary)
+            .args([stdin_command, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(malformed_stdin.status.code(), Some(2), "{malformed_stdin:?}");
+        assert!(malformed_stdin.stdout.is_empty(), "{malformed_stdin:?}");
     }
 
     // An appended byte must never be accepted even if the declared objects fit.
