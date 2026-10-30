@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
@@ -91,7 +93,32 @@ content, offline packs, article citation bridges and AI are not implemented yet.
 @Composable
 private fun FoundationApp() {
     val context = LocalContext.current
-    val isDark = isSystemInDarkTheme()
+    val appearancePreferences = remember(context) {
+        context.getSharedPreferences(ReaderAppearancePreference.FILE, Context.MODE_PRIVATE)
+    }
+    val initialTheme = remember(appearancePreferences) {
+        // Legacy wrong-type preferences must not crash the reader.
+        try {
+            ReaderAppearancePreference.decode(
+                appearancePreferences.getString(ReaderAppearancePreference.KEY, null)
+            )
+        } catch (_: ClassCastException) {
+            ReaderThemeMode.SYSTEM
+        }
+    }
+    var themeName by rememberSaveable { mutableStateOf(initialTheme.name) }
+    val themeMode = ReaderThemeMode.entries.firstOrNull { it.name == themeName }
+        ?: ReaderThemeMode.SYSTEM
+    LaunchedEffect(themeName, appearancePreferences) {
+        appearancePreferences.edit()
+            .putString(ReaderAppearancePreference.KEY, ReaderAppearancePreference.encode(themeMode))
+            .apply()
+    }
+    val isDark = when (themeMode) {
+        ReaderThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ReaderThemeMode.LIGHT -> false
+        ReaderThemeMode.DARK -> true
+    }
     val scheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else {
@@ -265,6 +292,24 @@ private fun FoundationApp() {
                                     Text(item.title)
                                 }
                             }
+                        } else if (category == ReaderSettingsCategory.APPEARANCE_READING) {
+                            Text("Appearance & Reading", style = MaterialTheme.typography.titleLarge)
+                            Text("Color theme")
+                            for (mode in ReaderThemeMode.entries) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        themeName = mode.name
+                                    },
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(selected = themeMode == mode, onClick = null)
+                                    Text(mode.title)
+                                }
+                            }
+                            Text(
+                                "System follows the Android appearance setting. Light and Dark " +
+                                    "override it for this app. Other reading controls are not available yet.",
+                            )
                         } else if (category == ReaderSettingsCategory.WIKIPEDIA_OFFLINE_DATA) {
                             Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
                             Row(
