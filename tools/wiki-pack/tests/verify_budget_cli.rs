@@ -71,7 +71,10 @@ fn json_inspection_never_authenticates_claimed_official_origin() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "untrusted_verification");
-    assert_eq!(json["manifest_sha256"], transcript_digest(&fs::read(&path).unwrap()));
+    assert_eq!(
+        json["manifest_sha256"],
+        transcript_digest(&fs::read(&path).unwrap())
+    );
     assert_ne!(json["manifest_sha256"], transcript_digest(&fixture()));
     assert_eq!(json["claimed_origin"], "official");
     assert_eq!(json["claimed_origin_identity"], "unverified-publisher");

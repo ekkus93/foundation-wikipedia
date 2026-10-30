@@ -97,7 +97,11 @@ fn file_and_piped_staging_emit_untrusted_receipts_only_after_success() {
         .unwrap();
     assert!(file.status.success(), "{file:?}");
     let mut file_json: serde_json::Value = serde_json::from_slice(&file.stdout).unwrap();
-    assert_untrusted_receipt(&file_json, &parent.join("file-stage"), &transcript_digest(&bytes));
+    assert_untrusted_receipt(
+        &file_json,
+        &parent.join("file-stage"),
+        &transcript_digest(&bytes),
+    );
 
     let mut child = Command::new(binary)
         .arg("stage-unsigned-stdin")
@@ -114,7 +118,11 @@ fn file_and_piped_staging_emit_untrusted_receipts_only_after_success() {
     let piped = child.wait_with_output().unwrap();
     assert!(piped.status.success(), "{piped:?}");
     let stream_json: serde_json::Value = serde_json::from_slice(&piped.stdout).unwrap();
-    assert_untrusted_receipt(&stream_json, &parent.join("stream-stage"), &transcript_digest(&bytes));
+    assert_untrusted_receipt(
+        &stream_json,
+        &parent.join("stream-stage"),
+        &transcript_digest(&bytes),
+    );
     file_json["staging_path"] = stream_json["staging_path"].clone();
     assert_eq!(file_json, stream_json);
     assert_eq!(fs::read_dir(&parent).unwrap().count(), 2);
