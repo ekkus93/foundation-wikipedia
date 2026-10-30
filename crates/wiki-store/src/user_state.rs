@@ -1130,6 +1130,42 @@ impl UserState {
         Ok(entries)
     }
 
+    /// Read the desktop saved-content panel from one SQLite snapshot. A
+    /// generation captured before the worker was queued must still match
+    /// inside the snapshot and again after releasing it. Same-generation
+    /// writes from another process cannot mix bookmark, consent and visit
+    /// rows from different committed database states.
+    pub fn saved_panel_snapshot_for_generation(
+        &self,
+        generation: u64,
+    ) -> Result<(Vec<SavedBookmark>, bool, Vec<HistoryEntry>), UserStateError> {
+        self.saved_panel_snapshot_with_hook(generation, || {})
+    }
+
+    fn saved_panel_snapshot_with_hook(
+        &self,
+        generation: u64,
+        after_snapshot_started: impl FnOnce(),
+    ) -> Result<(Vec<SavedBookmark>, bool, Vec<HistoryEntry>), UserStateError> {
+        // A deferred read transaction pins the WAL snapshot on its first
+        // SELECT. All existing validated row readers use this connection.
+        let transaction = self.conn.unchecked_transaction()?;
+        if Self::generation_from(&transaction)? != generation {
+            return Err(UserStateError::InvalidValue);
+        }
+        after_snapshot_started();
+        let bookmarks = self.list_bookmarks(100)?;
+        let consent = self.history_enabled()?;
+        let visits = self.recent_history(50)?;
+        transaction.commit()?;
+        // A privacy reset committed during the read is invisible to its
+        // pinned snapshot, so check again on a fresh read transaction.
+        if self.personal_generation()? != generation {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok((bookmarks, consent, visits))
+    }
+
     pub fn clear_history(&self) -> Result<usize, UserStateError> {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
@@ -1952,6 +1988,68 @@ mod tests {
         assert!(user.remove_builder_job("build_01").unwrap());
         assert!(!user.remove_builder_job("build_01").unwrap());
         assert_eq!(user.builder_job_status("build_01").unwrap(), None);
+    }
+
+    #[test]
+    fn saved_panel_snapshot_is_consistent_across_same_generation_writes() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-saved-panel-snapshot-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let database = root.join("user.sqlite");
+        let mut owner = UserState::open(&database).unwrap();
+        let reader = UserState::open(&database).unwrap();
+        owner.set_history_enabled(true).unwrap();
+        owner.set_bookmark(&key(), 123, "").unwrap();
+        assert!(owner.record_visit(&key(), 123, 100).unwrap());
+        let generation = reader.personal_generation().unwrap();
+
+        let (bookmarks, consent, visits) = reader
+            .saved_panel_snapshot_with_hook(generation, || {
+                // These commits happen after the reader pins its WAL snapshot.
+                // The panel must not mix old bookmarks with new history.
+                owner.set_bookmark(&key(), 124, "").unwrap();
+                assert!(owner.record_visit(&key(), 124, 200).unwrap());
+                owner.set_history_enabled(false).unwrap();
+            })
+            .unwrap();
+        assert_eq!(bookmarks[0].revision_id, 123);
+        assert!(consent);
+        assert_eq!(visits.len(), 1);
+        assert_eq!(visits[0].revision_id, 123);
+
+        let (bookmarks, consent, visits) = reader
+            .saved_panel_snapshot_for_generation(generation)
+            .unwrap();
+        assert_eq!(bookmarks[0].revision_id, 124);
+        assert!(!consent);
+        assert_eq!(visits.len(), 2);
+        assert_eq!(visits[0].revision_id, 124);
+
+        assert!(matches!(
+            reader.saved_panel_snapshot_with_hook(generation, || {
+                assert!(owner
+                    .clear_personal_reading_data_for_generation(generation)
+                    .unwrap());
+            }),
+            Err(UserStateError::InvalidValue)
+        ));
+        let current = reader.personal_generation().unwrap();
+        assert!(current > generation);
+        let (bookmarks, consent, visits) = reader
+            .saved_panel_snapshot_for_generation(current)
+            .unwrap();
+        assert!(bookmarks.is_empty());
+        assert!(!consent);
+        assert!(visits.is_empty());
+        drop(reader);
+        drop(owner);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

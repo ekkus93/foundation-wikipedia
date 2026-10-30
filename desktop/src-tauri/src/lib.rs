@@ -525,9 +525,16 @@ fn reader_history_rows(state: &UserState) -> Result<Vec<(String, u64, u64, i64)>
 type SavedPanelRows = (Vec<(String, u64, u64)>, bool, Vec<(String, u64, u64, i64)>);
 
 fn saved_panel_rows(state: &UserState, generation: u64) -> Result<SavedPanelRows, UserStateError> {
-    read_personal_data_for_generation(state, generation, || {
-        Ok((saved_bookmark_rows(state)?, state.history_enabled()?, reader_history_rows(state)?))
-    })
+    let (bookmarks, consent, visits) = state.saved_panel_snapshot_for_generation(generation)?;
+    Ok((
+        bookmarks.into_iter()
+            .map(|item| (item.key.project, item.key.page_id, item.revision_id))
+            .collect(),
+        consent,
+        visits.into_iter()
+            .map(|item| (item.key.project, item.key.page_id, item.revision_id, item.visited_at))
+            .collect(),
+    ))
 }
 
 #[tauri::command]
