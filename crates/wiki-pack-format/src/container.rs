@@ -183,7 +183,10 @@ where
 
 /// Validate every streamed object and reject appended data. This is read-only:
 /// installers must stage and authenticate separately before activation.
-pub fn verify_container<R: Read>(input: &mut R) -> Result<Manifest, ContainerError> {
+fn verify_container_impl<R: Read>(
+    input: &mut R,
+    max_input_bytes: Option<u64>,
+) -> Result<Manifest, ContainerError> {
     let mut magic = [0; 8];
     input.read_exact(&mut magic)?;
     if &magic != MAGIC {
@@ -196,6 +199,21 @@ pub fn verify_container<R: Read>(input: &mut R) -> Result<Manifest, ContainerErr
     let mut transcript = vec![0; length];
     input.read_exact(&mut transcript)?;
     let manifest = parse_transcript(&transcript)?;
+    // For unseekable inputs, reject an impossible declared envelope before
+    // consuming any object bytes. The byte-budget reader still enforces the
+    // actual input length and trailing-data probe during verification.
+    if let Some(max_input_bytes) = max_input_bytes {
+        let declared_bytes = manifest
+            .objects
+            .iter()
+            .try_fold(12_u64 + length as u64, |total, object| {
+                total.checked_add(object.bytes)
+            })
+            .ok_or(ContainerError::ResourceBudget)?;
+        if declared_bytes > max_input_bytes {
+            return Err(ContainerError::ResourceBudget);
+        }
+    }
     let mut buffer = [0u8; 64 * 1024];
     for object in canonical_objects(&manifest) {
         let mut digest = Sha256::new();
@@ -220,6 +238,11 @@ pub fn verify_container<R: Read>(input: &mut R) -> Result<Manifest, ContainerErr
         }
     }
     Ok(manifest)
+}
+
+/// Verify a complete envelope without a caller-specific byte quota.
+pub fn verify_container<R: Read>(input: &mut R) -> Result<Manifest, ContainerError> {
+    verify_container_impl(input, None)
 }
 
 struct ByteBudgetReader<'a, R> {
@@ -280,7 +303,7 @@ pub fn verify_container_with_budget<R: Read>(
         remaining: max_input_bytes,
         exceeded: false,
     };
-    let result = verify_container(&mut bounded);
+    let result = verify_container_impl(&mut bounded, Some(max_input_bytes));
     if bounded.exceeded {
         return Err(ContainerError::ResourceBudget);
     }
@@ -301,6 +324,34 @@ mod tests {
             Err(ContainerError::ResourceBudget)
         ));
         assert_eq!(input.position(), 12);
+    }
+
+    #[test]
+    fn bounded_verification_rejects_declared_payload_over_quota_before_reading_it() {
+        let mut manifest = sample();
+        manifest.objects[0].bytes = 1_000_000;
+        let transcript = manifest.identity_transcript().unwrap();
+        let mut forged = b"FWPACK01".to_vec();
+        forged.extend_from_slice(&(transcript.len() as u32).to_be_bytes());
+        forged.extend_from_slice(&transcript);
+        let mut input = io::Cursor::new(forged.clone());
+        assert!(matches!(
+            verify_container_with_budget(&mut input, forged.len() as u64 + 100),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(input.position(), forged.len() as u64);
+
+        let valid = envelope(&sample());
+        let exact_budget = valid.len() as u64;
+        assert!(verify_container_with_budget(&mut valid.as_slice(), exact_budget).is_ok());
+        let mut one_byte_short = io::Cursor::new(valid);
+        assert!(matches!(
+            verify_container_with_budget(&mut one_byte_short, exact_budget - 1),
+            Err(ContainerError::ResourceBudget)
+        ));
+        let transcript_length =
+            u32::from_be_bytes(one_byte_short.get_ref()[8..12].try_into().unwrap()) as u64;
+        assert_eq!(one_byte_short.position(), 12 + transcript_length);
     }
 
     fn sample() -> Manifest {

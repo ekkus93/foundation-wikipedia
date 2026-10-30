@@ -308,6 +308,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Reject incomplete mandatory media rather than labeling the pack offline-ready.
   - **Accept:** representative mathematics/physics articles render *every required visual* in airplane mode.
 - [ ] **PACK-004** Build pack pipeline and CLI. **Depends:** PACK-002, PACK-003, STORE-004.  
+  - **Progress (2026-10-30, partial — bounded input quota preflight):** The provisional `.wpack` verifier now checks declared object bytes against the full caller-specified envelope budget before reading payload bytes. Synthetic tests cover forged oversized declarations, exact-quota success and one-byte-short rejection. [Scoped report](PACK_004_EARLY_OBJECT_BUDGET_PREFLIGHT_2026-10-30.md). Publisher authentication, offline media completeness, installation and Android document-provider acceptance remain open; **PACK-004 stays unchecked.**
   - [ ] Source → selection → revisions → assets → transforms → indexes/RAG chunks → verify → artifact.
   - [ ] Implement `wiki-pack import/build/inspect/verify/export` commands backed by Rust library.
   - [ ] Report measured article/media/index/download/installed bytes, overlap savings and free space.
