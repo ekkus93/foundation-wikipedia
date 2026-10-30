@@ -9,15 +9,13 @@ use sha2::{Digest, Sha256};
 use wiki_pack_builder::wiki_pack_format::container::write_container;
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin};
 
-fn fixture() -> Vec<u8> {
+fn fixture_with_origin(origin: Origin) -> Vec<u8> {
     let manifest = Manifest {
         version: 1,
         pack_id: "science".into(),
         project: "enwiki".into(),
         snapshot: "20261001".into(),
-        origin: Origin::Custom {
-            definition_id: "cli-budget-test".into(),
-        },
+        origin,
         objects: vec![Object {
             path: "articles/1.cbor".into(),
             sha256: format!("{:x}", Sha256::digest(b"article")),
@@ -30,6 +28,50 @@ fn fixture() -> Vec<u8> {
     })
     .unwrap();
     bytes
+}
+
+fn fixture() -> Vec<u8> {
+    fixture_with_origin(Origin::Custom {
+        definition_id: "cli-budget-test".into(),
+    })
+}
+
+#[test]
+fn json_inspection_never_authenticates_claimed_official_origin() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "fwpack-json-claimed-origin-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("untrusted-official-claim.wpack");
+    fs::write(
+        &path,
+        fixture_with_origin(Origin::Official {
+            publisher: "unverified-publisher".into(),
+        }),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
+        .arg("inspect")
+        .arg("--json")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["claimed_origin"], "official");
+    assert_eq!(json["claimed_origin_identity"], "unverified-publisher");
+    assert_eq!(json["integrity_verified"], true);
+    assert_eq!(json["publisher_signature_verified"], false);
+    assert_eq!(json["offline_media_complete"], false);
+    assert_eq!(json["installed"], false);
+
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
