@@ -152,12 +152,10 @@ private fun FoundationApp() {
             false
         }
     }
-    var historyEnabled by rememberSaveable { mutableStateOf(initialHistoryEnabled) }
-    LaunchedEffect(historyEnabled, historyPreferences) {
-        historyPreferences.edit()
-            .putString(ReaderHistoryPreference.KEY, ReaderHistoryPreference.encode(historyEnabled))
-            .apply()
-    }
+    // Consent changes are synchronous: a deferred apply() could be lost on process death.
+    // Do not restore a stale saveable consent value over the durable preference.
+    var historyEnabled by remember { mutableStateOf(initialHistoryEnabled) }
+    var historyPersistenceFailed by remember { mutableStateOf(false) }
     val shellSaver = remember {
         listSaver<ReaderShellState, Any>(
             save = {
@@ -352,7 +350,15 @@ private fun FoundationApp() {
                                 Text("Allow saving reading history", modifier = Modifier.weight(1f))
                                 Switch(
                                     checked = historyEnabled,
-                                    onCheckedChange = { historyEnabled = it },
+                                    onCheckedChange = { requested ->
+                                        val update = ReaderHistoryPreference.update(requested) { value ->
+                                            historyPreferences.edit()
+                                                .putString(ReaderHistoryPreference.KEY, value)
+                                                .commit()
+                                        }
+                                        historyEnabled = update.enabled
+                                        historyPersistenceFailed = !update.saved
+                                    },
                                 )
                             }
                             Text(
@@ -363,6 +369,13 @@ private fun FoundationApp() {
                                     "History consent is off. Reading history is not recorded."
                                 },
                             )
+                            if (historyPersistenceFailed) {
+                                Text(
+                                    "Could not save reading-history consent. History stays disabled " +
+                                        "for this session; an older saved choice may reappear after " +
+                                        "restart. No history is collected by this preview."
+                                )
+                            }
                             Text(
                                 "This preference does not enable article loading, create bookmarks, " +
                                     "or delete history from another installation."

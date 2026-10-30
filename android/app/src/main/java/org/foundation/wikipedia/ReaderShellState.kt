@@ -94,6 +94,8 @@ internal object ReaderOfflinePreference {
  * values must never silently opt the user into recording reading history.
  * This does not implement history storage or authorize a network request.
  */
+internal data class ReaderHistoryConsentUpdate(val enabled: Boolean, val saved: Boolean)
+
 internal object ReaderHistoryPreference {
     const val KEY = "save_reading_history"
     private const val ENABLED = "v1:enabled"
@@ -102,4 +104,18 @@ internal object ReaderHistoryPreference {
     fun encode(enabled: Boolean): String = if (enabled) ENABLED else DISABLED
 
     fun decode(value: String?): Boolean = value == ENABLED
+
+    /**
+     * Commit consent before presenting it as enabled. A failed opt-in never
+     * authorizes recording; a failed revocation disables the current session
+     * and must be reported because a previous durable choice may remain.
+     */
+    fun update(requested: Boolean, persist: (String) -> Boolean): ReaderHistoryConsentUpdate {
+        val saved = try {
+            persist(encode(requested))
+        } catch (_: RuntimeException) {
+            false
+        }
+        return ReaderHistoryConsentUpdate(enabled = saved && requested, saved = saved)
+    }
 }

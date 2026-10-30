@@ -17,4 +17,39 @@ class ReaderHistoryPreferenceTest {
             assertFalse("unexpected history consent for $value", ReaderHistoryPreference.decode(value))
         }
     }
+
+    @Test
+    fun consentIsEnabledOnlyAfterSuccessfulSynchronousPersistence() {
+        val written = mutableListOf<String>()
+        val enabled = ReaderHistoryPreference.update(true) {
+            written.add(it)
+            true
+        }
+        assertEquals(listOf("v1:enabled"), written)
+        assertTrue(enabled.saved)
+        assertTrue(enabled.enabled)
+
+        val disabled = ReaderHistoryPreference.update(false) {
+            written.add(it)
+            true
+        }
+        assertEquals(listOf("v1:enabled", "v1:disabled"), written)
+        assertTrue(disabled.saved)
+        assertFalse(disabled.enabled)
+    }
+
+    @Test
+    fun failedAndThrowingWritesFailClosedForOptInAndRevocation() {
+        for (requested in listOf(true, false)) {
+            val rejected = ReaderHistoryPreference.update(requested) { false }
+            assertFalse(rejected.saved)
+            assertFalse(rejected.enabled)
+
+            val throwing = ReaderHistoryPreference.update(requested) {
+                throw IllegalStateException("simulated storage failure")
+            }
+            assertFalse(throwing.saved)
+            assertFalse(throwing.enabled)
+        }
+    }
 }
