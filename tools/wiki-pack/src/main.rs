@@ -191,12 +191,35 @@ fn export_custom_tree(
     let _ = fs::remove_file(&temp_path);
     result?;
     #[cfg(unix)]
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("cannot sync output directory: {error}"))?;
+    sync_export_publication(parent, &destination, |path| File::open(path)?.sync_all())?;
     println!("Custom envelope written: {}", destination.display());
     println!("Object digests: VERIFIED; publisher signature: NOT VERIFIED");
     println!("Offline media completeness: NOT VERIFIED; pack is NOT installed");
+    Ok(())
+}
+
+/// A failed parent-directory durability barrier must not leave a newly
+/// published custom pack behind while reporting export failure. The caller
+/// exclusively owns the output parent throughout publication.
+#[cfg(unix)]
+fn sync_export_publication(
+    parent: &Path,
+    destination: &Path,
+    sync_parent: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
+    if let Err(error) = sync_parent(parent) {
+        fs::remove_file(destination).map_err(|rollback| {
+            format!("cannot sync output directory: {error}; cannot roll back output: {rollback}")
+        })?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|rollback| {
+                format!("cannot sync output directory: {error}; rollback sync failed: {rollback}")
+            })?;
+        return Err(format!(
+            "cannot sync output directory: {error}; published output rolled back"
+        ));
+    }
     Ok(())
 }
 
@@ -854,5 +877,40 @@ fn main() {
             usage();
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod export_publication_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn failed_directory_sync_removes_newly_published_output() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-export-sync-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&parent).unwrap();
+        let destination = parent.join("new.wpack");
+        fs::write(&destination, b"provisional envelope").unwrap();
+        let result = sync_export_publication(&parent, &destination, |_| {
+            Err(std::io::Error::other("simulated directory sync failure"))
+        });
+        assert!(result.is_err());
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+
+        fs::write(&destination, b"complete envelope").unwrap();
+        sync_export_publication(&parent, &destination, |path| {
+            File::open(path)?.sync_all()
+        })
+        .unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"complete envelope");
+        fs::remove_dir_all(parent).unwrap();
     }
 }
