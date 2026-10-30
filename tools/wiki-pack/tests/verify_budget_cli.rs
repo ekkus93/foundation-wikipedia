@@ -31,7 +31,6 @@ fn fixture() -> Vec<u8> {
     bytes
 }
 
-
 #[test]
 fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
     let unique = SystemTime::now()
