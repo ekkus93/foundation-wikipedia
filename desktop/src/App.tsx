@@ -9,6 +9,7 @@ import { THEMES, isTheme, type Theme } from "./theme";
 import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { ReaderPersonalDataSession } from "./readerPersonalDataSession";
+import { ReaderLatestPreferenceWriter } from "./readerLatestPreferenceWriter";
 import { ReaderBookmarkInFlight } from "./readerBookmarkInFlight";
 import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 
@@ -56,6 +57,7 @@ export default function App() {
   const mainActionRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
   const themeChoiceRevision = useRef(0);
+  const themeWriteQueueRef = useRef(new ReaderLatestPreferenceWriter<Theme>());
   const layoutChoiceRevision = useRef(0);
 
   // A second desktop process can revoke consent or clear reading data while
@@ -141,9 +143,13 @@ export default function App() {
     themeChoiceRevision.current += 1;
     setTheme(choice);
     setThemeError(null);
-    void invoke<void>("set_reader_theme", { theme: choice }).catch(() => {
-      setThemeError("Theme applies in this session, but could not be saved to the private settings database.");
-    });
+    // Serialize theme writes: an older IPC must not persist after a newer choice.
+    // Only the most recent choice can report a persistence failure.
+    void themeWriteQueueRef.current.submit(
+      choice,
+      (value) => invoke<void>("set_reader_theme", { theme: value }),
+      () => setThemeError("Theme applies in this session, but could not be saved to the private settings database."),
+    );
   }
 
   useEffect(() => {
