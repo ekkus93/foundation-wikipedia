@@ -168,7 +168,12 @@ fn reconcile_preview_cache_generation(
     durable_generation: u64,
 ) -> Result<(), String> {
     let mut seen = cache.2.lock().map_err(|_| "Cannot inspect privacy cache generation")?;
-    if seen.is_some_and(|previous| previous != durable_generation) {
+    // Concurrent IPC workers can finish out of order. A stale snapshot
+    // must never roll back the observed epoch or clear newer cached content.
+    if seen.is_some_and(|previous| durable_generation <= previous) {
+        return Ok(());
+    }
+    if seen.is_some() {
         clear_online_preview_cache(cache)?;
     }
     *seen = Some(durable_generation);
@@ -901,6 +906,14 @@ mod privacy_cache_generation_tests {
         assert_eq!(cache.1.load(Ordering::Acquire), 1);
         reconcile_preview_cache_generation(&cache, 2).unwrap();
         assert_eq!(cache.1.load(Ordering::Acquire), 2);
+        // A slower worker captured the old generation before another worker
+        // observed generation 2. It must not invalidate the newer cache.
+        reconcile_preview_cache_generation(&cache, 1).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 2);
+        reconcile_preview_cache_generation(&cache, 2).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 2);
+        reconcile_preview_cache_generation(&cache, 3).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 3);
     }
 }
 

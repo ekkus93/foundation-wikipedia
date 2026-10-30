@@ -58,12 +58,15 @@ export default function App() {
   const layoutChoiceRevision = useRef(0);
 
   // A second desktop process can revoke consent or clear reading data while
-  // this window is idle. Reconcile on focus/visibility rather than retaining
-  // its old tabs, saved identities, and cached article previews indefinitely.
+  // this window is visible. Reconcile on focus, visibility and a bounded
+  // visible-window poll; no background/hidden-window SQLite polling.
   useEffect(() => {
     let active = true;
     let latestRequest = 0;
+    let inFlight = false;
     function reconcile() {
+      if (!active || inFlight) return;
+      inFlight = true;
       const request = ++latestRequest;
       void invoke<string>("sync_reader_privacy_generation").then((generation) => {
         if (!active || request !== latestRequest) return;
@@ -88,7 +91,7 @@ export default function App() {
         }
       }).catch(() => {
         // Standalone browser preview has no native SQLite state.
-      });
+      }).finally(() => { inFlight = false; });
     }
     function onVisibilityChange() {
       if (document.visibilityState === "visible") reconcile();
@@ -96,8 +99,14 @@ export default function App() {
     reconcile();
     window.addEventListener("focus", reconcile);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    // A visible but unfocused window must not retain deleted personal data
+    // indefinitely. Do not overlap native SQLite reads when one is delayed.
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === "visible") reconcile();
+    }, 5000);
     return () => {
       active = false;
+      window.clearInterval(poll);
       window.removeEventListener("focus", reconcile);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

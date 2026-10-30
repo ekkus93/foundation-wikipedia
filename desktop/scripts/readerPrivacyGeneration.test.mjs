@@ -20,3 +20,15 @@ test("invalid or rounded SQLite generation never replaces the last accepted valu
   assert.equal(monitor.observe("7"), "unchanged");
   assert.equal(monitor.observe("8"), "changed");
 });
+
+test("out-of-order older generations cannot roll back a privacy reset", () => {
+  const monitor = new ReaderPrivacyGenerationMonitor();
+  assert.equal(monitor.observe("8"), "initial");
+  assert.equal(monitor.observe("10"), "changed");
+  assert.equal(monitor.observe("9"), "stale");
+  assert.equal(monitor.observe("10"), "unchanged");
+  assert.equal(monitor.observe("11"), "changed");
+  assert.equal(monitor.observe("0"), "stale");
+  assert.equal(monitor.observe("9223372036854775807"), "changed");
+  assert.equal(monitor.observe("9223372036854775806"), "stale");
+});
