@@ -67,10 +67,21 @@ fn validate_stage_destination(parent: &Path, name: &str) -> Result<(), Container
 fn finalize_staged_tree(
     parent: &Path,
     root: &Path,
-    sync_parent: impl FnOnce(&Path) -> io::Result<()>,
+    mut sync_parent: impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(), ContainerError> {
     if let Err(error) = sync_parent(parent) {
-        fs::remove_dir_all(root)?;
+        // The first directory sync failed after the staged tree was created.
+        // Removing it is not durable until the parent is synced again.
+        if let Err(rollback) = fs::remove_dir_all(root) {
+            return Err(ContainerError::Io(io::Error::other(format!(
+                "staging parent sync failed: {error}; rollback removal failed: {rollback}"
+            ))));
+        }
+        if let Err(rollback) = sync_parent(parent) {
+            return Err(ContainerError::Io(io::Error::other(format!(
+                "staging parent sync failed: {error}; rollback sync failed: {rollback}"
+            ))));
+        }
         return Err(ContainerError::Io(error));
     }
     Ok(())
@@ -739,10 +750,61 @@ mod tests {
         let root = parent.join("new-stage");
         create_private_dir(&root).unwrap();
         fs::write(root.join("object"), b"unpublished").unwrap();
+        let mut sync_calls = 0;
         let result = finalize_staged_tree(&parent, &root, |_| {
-            Err(io::Error::other("simulated directory sync failure"))
+            sync_calls += 1;
+            if sync_calls == 1 {
+                Err(io::Error::other("simulated directory sync failure"))
+            } else {
+                assert!(!root.exists(), "rollback must remove the staged tree first");
+                Ok(())
+            }
         });
-        assert!(matches!(result, Err(ContainerError::Io(_))));
+        assert_eq!(sync_calls, 2, "publish and rollback must each sync the parent");
+        match result {
+            Err(ContainerError::Io(error)) => {
+                assert!(error.to_string().contains("simulated directory sync failure"));
+            }
+            other => panic!("unexpected staging outcome: {other:?}"),
+        }
+        assert!(!root.exists());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn failed_rollback_parent_sync_is_reported_separately() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stage-rollback-sync-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let root = parent.join("new-stage");
+        create_private_dir(&root).unwrap();
+        fs::write(root.join("object"), b"unpublished").unwrap();
+
+        let mut sync_calls = 0;
+        let result = finalize_staged_tree(&parent, &root, |_| {
+            sync_calls += 1;
+            if sync_calls == 1 {
+                Err(io::Error::other("publish sync failed"))
+            } else {
+                Err(io::Error::other("rollback sync failed"))
+            }
+        });
+        assert_eq!(sync_calls, 2);
+        match result {
+            Err(ContainerError::Io(error)) => {
+                let message = error.to_string();
+                assert!(message.contains("publish sync failed"), "{message}");
+                assert!(message.contains("rollback sync failed"), "{message}");
+            }
+            other => panic!("unexpected staging outcome: {other:?}"),
+        }
         assert!(!root.exists());
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
         fs::remove_dir_all(parent).unwrap();
