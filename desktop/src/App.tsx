@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
-import { parseReaderBookmarks, parseReaderVisits, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
+import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
 import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
@@ -256,13 +256,9 @@ export default function App() {
     const revision = personalDataSessionRef.current.snapshot();
     setSavedBusy(true);
     setSavedError(null);
-    void Promise.all([
-      invoke<unknown>("list_reader_bookmarks").then(parseReaderBookmarks),
-      invoke<boolean>("reader_history_enabled"),
-      invoke<unknown>("list_reader_history").then(parseReaderVisits),
-    ]).then(([bookmarks, enabled, visits]) => {
+    void invoke<unknown>("read_reader_saved_panel").then(parseReaderSavedPanel)
+      .then(([bookmarks, enabled, visits]) => {
       if (!active || !personalDataSessionRef.current.accepts(revision)) return;
-      if (typeof enabled !== "boolean") throw new Error("Invalid history preference");
       setSavedBookmarks(bookmarks);
       setHistoryEnabled(enabled);
       setRecentVisits(visits);

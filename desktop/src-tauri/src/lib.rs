@@ -520,6 +520,35 @@ fn reader_history_rows(state: &UserState) -> Result<Vec<(String, u64, u64, i64)>
         .collect())
 }
 
+/// One generation-checked panel response prevents separate bookmark, consent
+/// and visit IPC calls from returning a mixed pre-/post-deletion snapshot.
+type SavedPanelRows = (Vec<(String, u64, u64)>, bool, Vec<(String, u64, u64, i64)>);
+
+fn saved_panel_rows(state: &UserState, generation: u64) -> Result<SavedPanelRows, UserStateError> {
+    read_personal_data_for_generation(state, generation, || {
+        Ok((saved_bookmark_rows(state)?, state.history_enabled()?, reader_history_rows(state)?))
+    })
+}
+
+#[tauri::command]
+async fn read_reader_saved_panel(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+) -> Result<SavedPanelRows, String> {
+    let gate = (*gate).clone();
+    let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            saved_panel_rows(&state, persistent_generation)
+                .map_err(|_| "Cannot load saved content or stale privacy generation".to_owned())
+        })
+    })
+    .await
+    .map_err(|_| "Saved content worker stopped".to_owned())?
+}
+
 /// Visit storage is strictly opt-in and records only an exact verified article
 /// identity following a user-initiated successful navigation. No HTML is stored.
 #[tauri::command]
@@ -1303,6 +1332,42 @@ mod bookmark_tests {
     }
 
     #[test]
+    fn saved_panel_rejects_a_cross_process_privacy_generation_change() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-desktop-saved-panel-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("user-state.sqlite");
+        let mut owner = UserState::open(&db).unwrap();
+        let reader = UserState::open(&db).unwrap();
+        let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
+        let before = reader.personal_generation().unwrap();
+        assert!(owner.set_bookmark_for_generation(before, &key, 333, "").unwrap());
+        let (bookmarks, consent, visits) = saved_panel_rows(&reader, before).unwrap();
+        assert_eq!(bookmarks, vec![("enwiki".to_owned(), 42, 333)]);
+        assert!(!consent);
+        assert!(visits.is_empty());
+        assert!(owner.clear_personal_reading_data_for_generation(before).unwrap());
+        assert!(matches!(
+            saved_panel_rows(&reader, before),
+            Err(UserStateError::InvalidValue)
+        ));
+        let after = reader.personal_generation().unwrap();
+        let (bookmarks, consent, visits) = saved_panel_rows(&reader, after).unwrap();
+        assert!(bookmarks.is_empty());
+        assert!(!consent);
+        assert!(visits.is_empty());
+        drop(reader);
+        drop(owner);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn page_bookmarks_toggle_without_creating_offline_content() {
         let state = UserState::in_memory().unwrap();
         let article = ArticleKey {
@@ -1337,6 +1402,7 @@ pub fn run() {
             reader_history_enabled,
             set_reader_history_enabled,
             list_reader_history,
+            read_reader_saved_panel,
             clear_reader_history,
             read_reader_theme,
             set_reader_theme,

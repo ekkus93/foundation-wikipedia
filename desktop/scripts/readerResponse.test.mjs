@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, parseReaderVisits, validReaderTitleInput, normalizedReaderSearchQuery } from "../src/readerResponse.ts";
+import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, parseReaderVisits, parseReaderSavedPanel, validReaderTitleInput, normalizedReaderSearchQuery } from "../src/readerResponse.ts";
 
 test("accepts bounded revision-scoped article and search IPC responses", () => {
   assert.deepEqual(parseReaderSearchHits([[12, "Physics"], [13, "Mathematics"]]), [[12, "Physics"], [13, "Mathematics"]]);
@@ -125,5 +125,18 @@ test("opt-in reading history IPC accepts repeated visits but rejects malformed r
     [["enwiki", 42, 1, 0]], [["enwiki", 42, 1, Number.NaN]],
     [["enwiki", 42, 1, 253402300800]], Array(51).fill(entries[0])]) {
     assert.throws(() => parseReaderVisits(bad), /Invalid reading history/);
+  }
+});
+
+
+test("saved panel response rejects mixed or incomplete IPC tuples as a unit", () => {
+  const bookmarks = [["enwiki", 42, 333]];
+  const visits = [["enwiki", 42, 333, 1700000000]];
+  assert.deepEqual(parseReaderSavedPanel([bookmarks, true, visits]), [bookmarks, true, visits]);
+  assert.deepEqual(parseReaderSavedPanel([[], false, []]), [[], false, []]);
+  for (const invalid of [null, {}, [bookmarks, false], [bookmarks, false, visits, []],
+    [bookmarks, "false", visits], [bookmarks, false, [["enwiki", 0, 333, 1700000000]]],
+    [[["enwiki", 42, 0]], false, visits], [bookmarks, false, null]]) {
+    assert.throws(() => parseReaderSavedPanel(invalid), /Invalid/);
   }
 });

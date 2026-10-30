@@ -140,3 +140,12 @@ export function parseReaderVisits(value: unknown): ReaderVisit[] {
     return [row[0], row[1], row[2], row[3]];
   });
 }
+
+/** Validate all three saved-content lists as one native privacy-generation-fenced
+ * response. Never display a partially decoded saved panel. */
+export function parseReaderSavedPanel(value: unknown): [ReaderBookmark[], boolean, ReaderVisit[]] {
+  if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "boolean") {
+    throw new Error("Invalid saved content panel");
+  }
+  return [parseReaderBookmarks(value[0]), value[1], parseReaderVisits(value[2])];
+}
