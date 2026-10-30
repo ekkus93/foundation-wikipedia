@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -164,7 +165,7 @@ private fun FoundationApp() {
     val scope = rememberCoroutineScope()
     val chatActionFocus = remember { FocusRequester() }
 
-    BackHandler(enabled = shell.actionsOpen || shell.settingsOpen) {
+    BackHandler(enabled = shell.actionsOpen || shell.settingsOpen || shell.chatOpen) {
         shell = shell.back()
     }
     LaunchedEffect(shell.actionsOpen) {
@@ -202,6 +203,7 @@ private fun FoundationApp() {
                                         when (label) {
                                             "Settings" -> shell = shell.showSettings()
                                             "Offline" -> shell = shell.withOffline(!shell.offline)
+                                            "Chat" -> shell = shell.showChat()
                                             else -> {
                                                 shell = shell.copy(actionsOpen = false)
                                                 scope.launch {
@@ -269,7 +271,7 @@ private fun FoundationApp() {
                         // Keep the same WebView mounted while Settings is open:
                         // no reload or loss of the current in-memory scroll position.
                         view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
-                        view.importantForAccessibility = if (shell.settingsOpen || shell.actionsOpen) {
+                        view.importantForAccessibility = if (shell.settingsOpen || shell.actionsOpen || shell.chatOpen) {
                             View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                         } else {
                             View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
@@ -354,6 +356,22 @@ private fun FoundationApp() {
                                     "for those features are enabled.",
                             )
                         }
+                    }
+                }
+            }
+        }
+        if (shell.chatOpen) {
+            // Presentation-only: no unverified article data or prompts are sent.
+            ModalBottomSheet(onDismissRequest = { shell = shell.closeChat() }) {
+                Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+                    Text("Article chat", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Chat is unavailable in this development build. " +
+                            "A verified Wikipedia article, revision-scoped citations, " +
+                            "and an explicitly configured AI provider are required.",
+                    )
+                    TextButton(onClick = { shell = shell.closeChat() }) {
+                        Text("Close chat")
                     }
                 }
             }

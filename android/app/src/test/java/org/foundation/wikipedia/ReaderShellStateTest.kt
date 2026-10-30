@@ -95,4 +95,30 @@ class ReaderShellStateTest {
         assertFalse(restored.actionsOpen)
         assertFalse(restored.back().settingsOpen)
     }
+    @Test
+    fun chatActionOpensDismissibleSheetWithoutChangingOfflineState() {
+        val reader = ReaderShellState(offline = true)
+        val chat = reader.toggleActions().showChat()
+        assertTrue(chat.chatOpen)
+        assertFalse(chat.actionsOpen)
+        assertTrue(chat.offline)
+        assertEquals(reader, chat.closeChat())
+        assertEquals(reader, chat.back())
+        assertEquals(chat, chat.toggleActions())
+    }
+
+    @Test
+    fun settingsAndChatAreMutuallyExclusiveAndRecreationClosesChat() {
+        val reader = ReaderShellState()
+        val chat = reader.showChat()
+        assertFalse(chat.showSettings().chatOpen)
+        val settings = reader.showSettings()
+        assertEquals(settings, settings.showChat())
+        val restored = ReaderShellState.restore(
+            chat.offline, chat.settingsOpen, chat.settingsCategory?.name,
+        )
+        assertFalse(restored.chatOpen)
+        assertEquals(reader, restored)
+    }
+
 }

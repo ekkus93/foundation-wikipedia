@@ -21,22 +21,30 @@ data class ReaderShellState(
     val settingsOpen: Boolean = false,
     val actionsOpen: Boolean = false,
     val settingsCategory: ReaderSettingsCategory? = null,
+    val chatOpen: Boolean = false,
 ) {
     fun toggleActions(): ReaderShellState =
-        if (settingsOpen) this else copy(actionsOpen = !actionsOpen)
+        if (settingsOpen || chatOpen) this else copy(actionsOpen = !actionsOpen)
 
     fun dismissActions(): ReaderShellState = copy(actionsOpen = false)
+
+    /** Presentation-only chat shell; does not authorize model calls. */
+    fun showChat(): ReaderShellState =
+        if (settingsOpen) this else copy(chatOpen = true, actionsOpen = false)
+
+    fun closeChat(): ReaderShellState = copy(chatOpen = false)
 
     fun withOffline(enabled: Boolean): ReaderShellState =
         copy(offline = enabled, actionsOpen = false)
 
     fun showSettings(): ReaderShellState =
-        copy(settingsOpen = true, settingsCategory = null, actionsOpen = false)
+        copy(settingsOpen = true, settingsCategory = null, actionsOpen = false, chatOpen = false)
 
     fun openSettingsCategory(category: ReaderSettingsCategory): ReaderShellState =
         if (!settingsOpen) this else copy(settingsCategory = category, actionsOpen = false)
 
     fun back(): ReaderShellState = when {
+        chatOpen -> copy(chatOpen = false)
         actionsOpen -> copy(actionsOpen = false)
         settingsCategory != null -> copy(settingsCategory = null)
         settingsOpen -> copy(settingsOpen = false)
@@ -44,7 +52,7 @@ data class ReaderShellState(
     }
 
     companion object {
-        /** Never restore an expanded speed dial after configuration recreation. */
+        /** Never restore transient chat or expanded actions after configuration recreation. */
         fun restore(
             offline: Boolean,
             settingsOpen: Boolean,
