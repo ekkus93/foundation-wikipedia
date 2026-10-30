@@ -50,3 +50,7 @@ The first implementation and test commits were followed by a rustfmt correction 
 ## Remaining acceptance
 
 This is a provisional **unsigned staging** interface. Publisher signature verification, signed official catalog trust, required offline image/diagram/math/caption/reference/attribution completeness, production pack installation/activation, desktop/Android integration and real-device acceptance remain outstanding. `PACK-004`, `TRUST-002` and `TRUST-003` are not complete.
+
+## Follow-up: exact UTF-8 staging paths
+
+The initial JSON receipt used lossy path formatting, which could silently misidentify a staged directory whose parent contains non-UTF8 filesystem bytes. Follow-up code **`d9df9135a46d06cea72dcbc1947f9dd768a94196`** rejects non-UTF8 JSON destinations **before** opening the file input or consuming the stdin stream, and then serializes the exact validated UTF-8 path. Human-readable staging is unchanged. The Unix black-box regression exercises both transports with a real non-UTF8 parent and checks exit 1, no success JSON and no staging residue. [Rust workspace CI 41093702752](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41093702752) passed; [Platform shells CI 41093702749](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41093702749) was still running at this documentation update.
