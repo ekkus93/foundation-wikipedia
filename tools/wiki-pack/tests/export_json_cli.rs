@@ -8,10 +8,8 @@ fn sandbox() -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let parent = std::env::temp_dir().join(format!(
-        "fwpack-export-json-{}-{stamp}",
-        std::process::id()
-    ));
+    let parent =
+        std::env::temp_dir().join(format!("fwpack-export-json-{}-{stamp}", std::process::id()));
     fs::create_dir(&parent).unwrap();
     parent
 }
