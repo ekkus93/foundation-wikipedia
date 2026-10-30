@@ -36,10 +36,8 @@ fn private_parent() -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let parent = std::env::temp_dir().join(format!(
-        "fwpack-json-stage-{}-{unique}",
-        std::process::id()
-    ));
+    let parent =
+        std::env::temp_dir().join(format!("fwpack-json-stage-{}-{unique}", std::process::id()));
     fs::create_dir(&parent).unwrap();
     #[cfg(unix)]
     {
@@ -64,7 +62,10 @@ fn assert_untrusted_receipt(json: &serde_json::Value, staged: &std::path::Path) 
     assert_eq!(json["declared_payload_bytes"], 7);
     assert_eq!(json["claimed_origin"], "official");
     assert_eq!(json["claimed_origin_identity"], "unverified-publisher");
-    assert_eq!(fs::read(staged.join("articles/1.cbor")).unwrap(), b"article");
+    assert_eq!(
+        fs::read(staged.join("articles/1.cbor")).unwrap(),
+        b"article"
+    );
 }
 
 #[test]
@@ -171,7 +172,14 @@ fn malformed_staging_invocations_exit_with_usage_status() {
     for args in [
         vec!["stage-unsigned", "--json"],
         vec!["stage-unsigned-stdin", "--json", "parent", "name"],
-        vec!["stage-unsigned", "--json", "source", "parent", "name", "bad-budget"],
+        vec![
+            "stage-unsigned",
+            "--json",
+            "source",
+            "parent",
+            "name",
+            "bad-budget",
+        ],
     ] {
         let output = Command::new(binary).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{output:?}");

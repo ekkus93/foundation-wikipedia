@@ -53,7 +53,9 @@ fn usage() {
     println!(
         "       wiki-pack stage-unsigned [--json] <file.wpack> <private-parent> <name> [max-input-bytes]"
     );
-    println!("       wiki-pack stage-unsigned-stdin [--json] <private-parent> <name> <max-spool-bytes>");
+    println!(
+        "       wiki-pack stage-unsigned-stdin [--json] <private-parent> <name> <max-spool-bytes>"
+    );
     println!("       wiki-pack verify-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack inspect-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack --help");
@@ -848,7 +850,11 @@ fn main() {
             let json_output = fields
                 .first()
                 .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
-            let values = if json_output { &fields[1..] } else { &fields[..] };
+            let values = if json_output {
+                &fields[1..]
+            } else {
+                &fields[..]
+            };
             if values.len() != 3 {
                 eprintln!("stage-unsigned-stdin requires [--json] and exactly three arguments");
                 usage();
@@ -865,12 +871,9 @@ fn main() {
                 eprintln!("Spool budget must be a decimal byte count");
                 std::process::exit(2);
             };
-            if let Err(error) = stage_unsigned_stdin(
-                PathBuf::from(&values[0]),
-                name,
-                max_bytes,
-                json_output,
-            ) {
+            if let Err(error) =
+                stage_unsigned_stdin(PathBuf::from(&values[0]), name, max_bytes, json_output)
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
@@ -880,9 +883,15 @@ fn main() {
             let json_output = fields
                 .first()
                 .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
-            let values = if json_output { &fields[1..] } else { &fields[..] };
+            let values = if json_output {
+                &fields[1..]
+            } else {
+                &fields[..]
+            };
             if values.len() != 3 && values.len() != 4 {
-                eprintln!("stage-unsigned requires [--json], three arguments and an optional byte budget");
+                eprintln!(
+                    "stage-unsigned requires [--json], three arguments and an optional byte budget"
+                );
                 usage();
                 std::process::exit(2);
             }
