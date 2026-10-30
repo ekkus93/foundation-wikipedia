@@ -51,9 +51,9 @@ fn usage() {
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
     println!(
-        "       wiki-pack stage-unsigned <file.wpack> <private-parent> <name> [max-input-bytes]"
+        "       wiki-pack stage-unsigned [--json] <file.wpack> <private-parent> <name> [max-input-bytes]"
     );
-    println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
+    println!("       wiki-pack stage-unsigned-stdin [--json] <private-parent> <name> <max-spool-bytes>");
     println!("       wiki-pack verify-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack inspect-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack --help");
@@ -258,6 +258,50 @@ fn sync_export_publication(
     Ok(())
 }
 
+/// Emit a machine-readable receipt only after durable staging. An unsigned
+/// official-origin claim is never proof of publisher identity or installation.
+fn print_staging_receipt(manifest: &Manifest, staged: &Path, json_output: bool) {
+    let (origin_kind, origin_identity) = match &manifest.origin {
+        Origin::Custom { definition_id } => ("custom", definition_id.as_str()),
+        Origin::Official { publisher } => ("official", publisher.as_str()),
+    };
+    if json_output {
+        let declared_payload_bytes: u64 = manifest.objects.iter().map(|object| object.bytes).sum();
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": 1,
+                "status": "untrusted_staging",
+                "staging_path": staged.to_string_lossy(),
+                "integrity_verified": true,
+                "publisher_signature_verified": false,
+                "offline_media_complete": false,
+                "installed": false,
+                "pack_id": manifest.pack_id,
+                "project": manifest.project,
+                "snapshot": manifest.snapshot,
+                "object_count": manifest.objects.len(),
+                "declared_payload_bytes": declared_payload_bytes,
+                "claimed_origin": origin_kind,
+                "claimed_origin_identity": origin_identity,
+            })
+        );
+        return;
+    }
+    println!("Envelope verified and staged: {}", staged.display());
+    println!("Pack ID: {}", manifest.pack_id);
+    match &manifest.origin {
+        Origin::Official { publisher } => {
+            println!("Claimed official publisher: {publisher}; claim NOT authenticated");
+        }
+        Origin::Custom { definition_id } => {
+            println!("Claimed custom definition: {definition_id}");
+        }
+    }
+    println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
+    println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+}
+
 /// Verify, then extract into a private staging directory. This deliberately
 /// never changes installed packs or confers publisher trust.
 fn stage_unsigned(
@@ -265,6 +309,7 @@ fn stage_unsigned(
     parent: PathBuf,
     name: &str,
     max_input_bytes: Option<u64>,
+    json_output: bool,
 ) -> Result<(), String> {
     let input = File::open(&source).map_err(|error| format!("cannot open input: {error}"))?;
     let mut reader = BufReader::new(input);
@@ -274,40 +319,23 @@ fn stage_unsigned(
     };
     let (manifest, staged) =
         result.map_err(|error| format!("unsigned staging rejected: {error:?}"))?;
-    println!("Envelope verified and staged: {}", staged.display());
-    println!("Pack ID: {}", manifest.pack_id);
-    match manifest.origin {
-        Origin::Official { publisher } => {
-            println!("Claimed official publisher: {publisher}; claim NOT authenticated");
-        }
-        Origin::Custom { definition_id } => {
-            println!("Claimed custom definition: {definition_id}");
-        }
-    }
-    println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
-    println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+    print_staging_receipt(&manifest, &staged, json_output);
     Ok(())
 }
 
 /// Stage an unseekable stdin archive with an explicit spool quota. This is
 /// useful for document-provider-like pipes and never activates an installation.
-fn stage_unsigned_stdin(parent: PathBuf, name: &str, max_bytes: u64) -> Result<(), String> {
+fn stage_unsigned_stdin(
+    parent: PathBuf,
+    name: &str,
+    max_bytes: u64,
+    json_output: bool,
+) -> Result<(), String> {
     let stdin = std::io::stdin();
     let (manifest, staged) =
         stage_container_stream_with_budget(&mut stdin.lock(), &parent, name, max_bytes)
             .map_err(|error| format!("unsigned stdin staging rejected: {error:?}"))?;
-    println!("Envelope verified and staged: {}", staged.display());
-    println!("Pack ID: {}", manifest.pack_id);
-    match manifest.origin {
-        Origin::Official { publisher } => {
-            println!("Claimed official publisher: {publisher}; claim NOT authenticated");
-        }
-        Origin::Custom { definition_id } => {
-            println!("Claimed custom definition: {definition_id}");
-        }
-    }
-    println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
-    println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+    print_staging_receipt(&manifest, &staged, json_output);
     Ok(())
 }
 
@@ -817,40 +845,53 @@ fn main() {
         }
         Some("stage-unsigned-stdin") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 3 {
-                eprintln!("stage-unsigned-stdin requires exactly three arguments");
+            let json_output = fields
+                .first()
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let values = if json_output { &fields[1..] } else { &fields[..] };
+            if values.len() != 3 {
+                eprintln!("stage-unsigned-stdin requires [--json] and exactly three arguments");
                 usage();
                 std::process::exit(2);
             }
-            let Some(name) = fields[1].to_str() else {
+            let Some(name) = values[1].to_str() else {
                 eprintln!("Staging directory name must be UTF-8");
                 std::process::exit(2);
             };
-            let Some(max_bytes) = fields[2]
+            let Some(max_bytes) = values[2]
                 .to_str()
                 .and_then(|value| value.parse::<u64>().ok())
             else {
                 eprintln!("Spool budget must be a decimal byte count");
                 std::process::exit(2);
             };
-            if let Err(error) = stage_unsigned_stdin(PathBuf::from(&fields[0]), name, max_bytes) {
+            if let Err(error) = stage_unsigned_stdin(
+                PathBuf::from(&values[0]),
+                name,
+                max_bytes,
+                json_output,
+            ) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
         }
         Some("stage-unsigned") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 3 && fields.len() != 4 {
-                eprintln!("stage-unsigned requires three arguments and an optional byte budget");
+            let json_output = fields
+                .first()
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let values = if json_output { &fields[1..] } else { &fields[..] };
+            if values.len() != 3 && values.len() != 4 {
+                eprintln!("stage-unsigned requires [--json], three arguments and an optional byte budget");
                 usage();
                 std::process::exit(2);
             }
-            let Some(name) = fields[2].to_str() else {
+            let Some(name) = values[2].to_str() else {
                 eprintln!("Staging directory name must be UTF-8");
                 std::process::exit(2);
             };
-            let max_input_bytes = if fields.len() == 4 {
-                let Some(limit) = fields[3]
+            let max_input_bytes = if values.len() == 4 {
+                let Some(limit) = values[3]
                     .to_str()
                     .and_then(|value| value.parse::<u64>().ok())
                 else {
@@ -862,10 +903,11 @@ fn main() {
                 None
             };
             if let Err(error) = stage_unsigned(
-                PathBuf::from(&fields[0]),
-                PathBuf::from(&fields[1]),
+                PathBuf::from(&values[0]),
+                PathBuf::from(&values[1]),
                 name,
                 max_input_bytes,
+                json_output,
             ) {
                 eprintln!("{error}");
                 std::process::exit(1);
