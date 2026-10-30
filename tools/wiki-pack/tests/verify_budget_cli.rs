@@ -190,7 +190,11 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
             .args([stdin_command, "--json"])
             .output()
             .unwrap();
-        assert_eq!(malformed_stdin.status.code(), Some(2), "{malformed_stdin:?}");
+        assert_eq!(
+            malformed_stdin.status.code(),
+            Some(2),
+            "{malformed_stdin:?}"
+        );
         assert!(malformed_stdin.stdout.is_empty(), "{malformed_stdin:?}");
     }
 
