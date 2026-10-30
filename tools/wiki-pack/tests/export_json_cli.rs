@@ -90,6 +90,12 @@ fn json_export_is_durable_integrity_only_and_does_not_overwrite() {
         .unwrap();
     assert_eq!(malformed.status.code(), Some(2));
     assert!(malformed.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&malformed.stderr).contains("exactly six arguments"));
+
+    let missing_source = run_export(&parent.join("missing"), &parent.join("nope.wpack"), true);
+    assert_eq!(missing_source.status.code(), Some(1), "{missing_source:?}");
+    assert!(missing_source.stdout.is_empty());
+    assert!(!parent.join("nope.wpack").exists());
     fs::remove_dir_all(parent).unwrap();
 }
 

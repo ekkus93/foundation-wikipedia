@@ -972,7 +972,9 @@ fn main() {
             };
             if fields.len() != 6 {
                 eprintln!("export-custom requires [--json] and exactly six arguments");
-                usage();
+                if !json_output {
+                    usage();
+                }
                 std::process::exit(2);
             }
             let identity = fields[1..5]
