@@ -2,6 +2,7 @@ package org.foundation.wikipedia
 
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.content.Context
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -10,6 +11,8 @@ import android.webkit.WebSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -207,9 +210,48 @@ private fun FoundationApp() {
                 }
             },
         ) { padding ->
-            if (shell.settingsOpen) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { viewContext ->
+                        WebView(viewContext).apply {
+                            settings.javaScriptEnabled = false
+                            settings.javaScriptCanOpenWindowsAutomatically = false
+                            settings.domStorageEnabled = false
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+                            settings.blockNetworkLoads = true
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                ): Boolean = true
+                            }
+                            loadDataWithBaseURL(
+                                "https://foundation.invalid/",
+                                BOOTSTRAP_HTML,
+                                "text/html",
+                                "UTF-8",
+                                null,
+                            )
+                        }
+                    },
+                    update = { view ->
+                        // Keep the same WebView mounted while Settings is open:
+                        // no reload or loss of the current in-memory scroll position.
+                        view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
+                        view.importantForAccessibility = if (shell.settingsOpen) {
+                            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                        } else {
+                            View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                        }
+                    },
+                )
+                if (shell.settingsOpen) {
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(padding)
+                    modifier = Modifier.fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
                         .verticalScroll(rememberScrollState()).padding(20.dp),
                 ) {
                     val category = shell.settingsCategory
@@ -256,34 +298,7 @@ private fun FoundationApp() {
                         )
                     }
                 }
-            } else {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    factory = { viewContext ->
-                        WebView(viewContext).apply {
-                            settings.javaScriptEnabled = false
-                            settings.javaScriptCanOpenWindowsAutomatically = false
-                            settings.domStorageEnabled = false
-                            settings.allowFileAccess = false
-                            settings.allowContentAccess = false
-                            settings.blockNetworkLoads = true
-                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    request: WebResourceRequest?,
-                                ): Boolean = true
-                            }
-                            loadDataWithBaseURL(
-                                "https://foundation.invalid/",
-                                BOOTSTRAP_HTML,
-                                "text/html",
-                                "UTF-8",
-                                null,
-                            )
-                        }
-                    },
-                )
+                }
             }
         }
     }
