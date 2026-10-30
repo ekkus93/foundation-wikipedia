@@ -337,6 +337,9 @@ export default function App() {
       await invoke<void>("clear_reader_personal_data");
       setSavedBookmarks([]);
       setRecentVisits([]);
+      // The reset invalidates pending preference requests. A fresh saved-state
+      // load will recover the authoritative consent value from SQLite.
+      setHistoryEnabled(null);
       // Purge mounted article previews and Back/Forward state, not only SQLite.
       tabScrollRef.current.clear();
       tabArticleRef.current.clear();
@@ -350,6 +353,9 @@ export default function App() {
       setSavedError("Unable to delete personal reading data. No successful deletion was confirmed.");
     } finally {
       personalDataSessionRef.current.finishReset();
+      // A pre-reset history preference/clear may still be pending, but its
+      // completion is now session-stale and will not release this busy flag.
+      setHistoryBusy(false);
       setSavedBusy(false);
     }
   }
