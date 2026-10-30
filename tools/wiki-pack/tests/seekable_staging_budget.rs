@@ -48,7 +48,10 @@ fn seekable_staging_cli_enforces_optional_input_budget_without_partial_output() 
         }],
     };
     let mut envelope = Vec::new();
-    write_container(&mut envelope, &manifest, |_, output| output.write_all(payload)).unwrap();
+    write_container(&mut envelope, &manifest, |_, output| {
+        output.write_all(payload)
+    })
+    .unwrap();
     let input = work.join("sample.wpack");
     fs::write(&input, &envelope).unwrap();
 
@@ -90,7 +93,10 @@ fn seekable_staging_cli_enforces_optional_input_budget_without_partial_output() 
         .output()
         .unwrap();
     assert!(legacy.status.success(), "{legacy:?}");
-    assert_eq!(fs::read(parent.join("legacy/media/figure.svg")).unwrap(), payload);
+    assert_eq!(
+        fs::read(parent.join("legacy/media/figure.svg")).unwrap(),
+        payload
+    );
 
     let invalid = Command::new(binary)
         .arg("stage-unsigned")
