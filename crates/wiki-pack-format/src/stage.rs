@@ -760,10 +760,15 @@ mod tests {
                 Ok(())
             }
         });
-        assert_eq!(sync_calls, 2, "publish and rollback must each sync the parent");
+        assert_eq!(
+            sync_calls, 2,
+            "publish and rollback must each sync the parent"
+        );
         match result {
             Err(ContainerError::Io(error)) => {
-                assert!(error.to_string().contains("simulated directory sync failure"));
+                assert!(error
+                    .to_string()
+                    .contains("simulated directory sync failure"));
             }
             other => panic!("unexpected staging outcome: {other:?}"),
         }
