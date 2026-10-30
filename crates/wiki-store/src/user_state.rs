@@ -441,14 +441,38 @@ impl UserState {
         conn.busy_timeout(Duration::from_secs(5))?;
         let state = Self::initialize(conn)?;
         // Disk-backed personal state supports concurrent readers while another
-        // process writes. In-memory state intentionally retains its own mode.
-        let mode: String = state
-            .conn
-            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
-        if mode != "wal" {
-            return Err(UserStateError::InvalidValue);
+        // process writes. Query first: setting journal_mode=WAL on every open
+        // can require an exclusive lock even when WAL is already active.
+        // Concurrent first-open initializers may briefly race the transition;
+        // retry only SQLITE_BUSY/LOCKED (or an uncompleted mode transition),
+        // never malformed schemas or unrelated SQLite errors.
+        for attempt in 0..=50 {
+            let mode = (|| -> rusqlite::Result<String> {
+                let current: String = state
+                    .conn
+                    .query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+                if current == "wal" {
+                    return Ok(current);
+                }
+                state
+                    .conn
+                    .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            })();
+            match mode {
+                Ok(mode) if mode == "wal" => return Ok(state),
+                Ok(_) if attempt < 50 => {}
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if attempt < 50
+                        && matches!(
+                            error.code,
+                            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                        ) => {}
+                Ok(_) => return Err(UserStateError::InvalidValue),
+                Err(error) => return Err(error.into()),
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        Ok(state)
+        unreachable!("WAL mode retries must return before loop exhaustion")
     }
 
     pub fn in_memory() -> Result<Self, UserStateError> {
