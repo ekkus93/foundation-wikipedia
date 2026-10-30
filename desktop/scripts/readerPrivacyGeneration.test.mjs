@@ -32,3 +32,18 @@ test("out-of-order older generations cannot roll back a privacy reset", () => {
   assert.equal(monitor.observe("9223372036854775807"), "changed");
   assert.equal(monitor.observe("9223372036854775806"), "stale");
 });
+
+test("generation changes remain pending while a local reset owns the session", () => {
+  const monitor = new ReaderPrivacyGenerationMonitor();
+  assert.equal(monitor.observe("4"), "initial");
+  assert.equal(monitor.observe("5", false), "deferred");
+  assert.equal(monitor.observe("4"), "unchanged");
+  assert.equal(monitor.observe("5", true), "changed");
+  assert.equal(monitor.observe("5"), "unchanged");
+
+  const fresh = new ReaderPrivacyGenerationMonitor();
+  assert.equal(fresh.observe("7", false), "deferred");
+  assert.equal(fresh.observe("7", true), "initial");
+  assert.equal(fresh.observe("8", false), "deferred");
+  assert.equal(fresh.observe("8"), "changed");
+});

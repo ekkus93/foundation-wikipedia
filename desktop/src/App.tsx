@@ -70,8 +70,10 @@ export default function App() {
       const request = ++latestRequest;
       void invoke<string>("sync_reader_privacy_generation").then((generation) => {
         if (!active || request !== latestRequest) return;
-        if (privacyGenerationMonitorRef.current.observe(generation) !== "changed") return;
         const session = personalDataSessionRef.current;
+        // A local reset may be in flight. Never acknowledge an external
+        // generation while we cannot invalidate the corresponding UI state.
+        if (privacyGenerationMonitorRef.current.observe(generation, session.canWrite()) !== "changed") return;
         if (!session.beginReset()) return;
         try {
           tabScrollRef.current.clear();

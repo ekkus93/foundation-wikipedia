@@ -3,12 +3,13 @@
 export class ReaderPrivacyGenerationMonitor {
   private last: string | null = null;
 
-  observe(value: unknown): "invalid" | "initial" | "unchanged" | "changed" | "stale" {
+  observe(value: unknown, canApply = true): "invalid" | "initial" | "unchanged" | "changed" | "stale" | "deferred" {
     if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)
       || value.length > 19 || BigInt(value) > 9223372036854775807n) {
       return "invalid";
     }
     if (this.last === null) {
+      if (!canApply) return "deferred";
       this.last = value;
       return "initial";
     }
@@ -16,6 +17,9 @@ export class ReaderPrivacyGenerationMonitor {
     // Cross-process reads can complete out of order. A lower generation
     // cannot supersede a later, already-observed privacy reset.
     if (BigInt(value) < BigInt(this.last)) return "stale";
+    // If a local deletion already owns the reset session, do not consume an
+    // external change before the UI can invalidate its cached personal data.
+    if (!canApply) return "deferred";
     this.last = value;
     return "changed";
   }
