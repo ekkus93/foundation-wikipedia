@@ -1,7 +1,8 @@
 //! Black-box checks for the optional file-verification byte budget.
 //! A verified unsigned envelope is not publisher-authenticated or installed.
 use std::fs;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
@@ -65,6 +66,50 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
         assert!(
             String::from_utf8_lossy(&exact.stdout).contains("Publisher signature: NOT VERIFIED")
         );
+
+        let json = Command::new(binary)
+            .arg(command)
+            .arg("--json")
+            .arg(&path)
+            .arg(bytes.len().to_string())
+            .output()
+            .unwrap();
+        assert!(json.status.success(), "{json:?}");
+        let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(parsed["integrity_verified"], true);
+        assert_eq!(parsed["publisher_signature_verified"], false);
+        assert_eq!(parsed["offline_media_complete"], false);
+        assert_eq!(parsed["installed"], false);
+        assert_eq!(parsed["object_count"], 1);
+        assert_eq!(parsed["declared_payload_bytes"], 7);
+        if command == "inspect" {
+            assert_eq!(parsed["pack_id"], "science");
+            assert_eq!(parsed["project"], "enwiki");
+            assert_eq!(parsed["claimed_origin"], "custom");
+            assert_eq!(parsed["claimed_origin_identity"], "cli-budget-test");
+        } else {
+            assert!(parsed.get("pack_id").is_none());
+        }
+
+        let stdin_command = if command == "verify" {
+            "verify-stdin"
+        } else {
+            "inspect-stdin"
+        };
+        let mut child = Command::new(binary)
+            .arg(stdin_command)
+            .arg("--json")
+            .arg(bytes.len().to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        let piped = child.wait_with_output().unwrap();
+        assert!(piped.status.success(), "{piped:?}");
+        let piped_json: serde_json::Value = serde_json::from_slice(&piped.stdout).unwrap();
+        assert_eq!(piped_json, parsed);
 
         let short = Command::new(binary)
             .arg(command)

@@ -29,8 +29,8 @@ use wiki_pack_builder::wiki_pack_format::stage::{
 
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
-    println!("Usage: wiki-pack verify <file.wpack> [max-input-bytes]");
-    println!("       wiki-pack inspect <file.wpack> [max-input-bytes]");
+    println!("Usage: wiki-pack verify [--json] <file.wpack> [max-input-bytes]");
+    println!("       wiki-pack inspect [--json] <file.wpack> [max-input-bytes]");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
     println!("       wiki-pack media-owner-release <--dry-run|--confirm-release> <media-root> <existing-registry.sqlite> <pack|cache|pin> <owner-id> <max-candidates>");
@@ -54,8 +54,8 @@ fn usage() {
         "       wiki-pack stage-unsigned <file.wpack> <private-parent> <name> [max-input-bytes]"
     );
     println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
-    println!("       wiki-pack verify-stdin <max-input-bytes>");
-    println!("       wiki-pack inspect-stdin <max-input-bytes>");
+    println!("       wiki-pack verify-stdin [--json] <max-input-bytes>");
+    println!("       wiki-pack inspect-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -64,8 +64,34 @@ fn usage() {
     println!("Publisher signatures and offline media completeness are NOT verified.");
 }
 
-fn print_inspection(manifest: Manifest, detailed: bool) {
+fn print_inspection(manifest: Manifest, detailed: bool, json_output: bool) {
     let total_bytes: u64 = manifest.objects.iter().map(|object| object.bytes).sum();
+    if json_output {
+        // JSON describes local envelope integrity only. Never promote a
+        // claimed official origin to authenticated publisher trust.
+        let mut output = serde_json::json!({
+            "integrity_verified": true,
+            "publisher_signature_verified": false,
+            "offline_media_complete": false,
+            "installed": false,
+            "object_count": manifest.objects.len(),
+            "declared_payload_bytes": total_bytes,
+        });
+        if detailed {
+            let (origin_kind, origin_identity) = match &manifest.origin {
+                Origin::Custom { definition_id } => ("custom", definition_id),
+                Origin::Official { publisher } => ("official", publisher),
+            };
+            output["pack_id"] = serde_json::json!(manifest.pack_id);
+            output["project"] = serde_json::json!(manifest.project);
+            output["snapshot"] = serde_json::json!(manifest.snapshot);
+            output["format_version"] = serde_json::json!(manifest.version);
+            output["claimed_origin"] = serde_json::json!(origin_kind);
+            output["claimed_origin_identity"] = serde_json::json!(origin_identity);
+        }
+        println!("{output}");
+        return;
+    }
     println!(
         "Envelope integrity verified: {} objects, {} declared payload bytes",
         manifest.objects.len(),
@@ -89,7 +115,12 @@ fn print_inspection(manifest: Manifest, detailed: bool) {
     }
 }
 
-fn inspect_file(path: PathBuf, detailed: bool, max_input_bytes: Option<u64>) -> Result<(), String> {
+fn inspect_file(
+    path: PathBuf,
+    detailed: bool,
+    max_input_bytes: Option<u64>,
+    json_output: bool,
+) -> Result<(), String> {
     let file = File::open(&path).map_err(|error| format!("cannot open input: {error}"))?;
     let mut reader = BufReader::new(file);
     let manifest = match max_input_bytes {
@@ -97,15 +128,15 @@ fn inspect_file(path: PathBuf, detailed: bool, max_input_bytes: Option<u64>) -> 
         None => verify_container(&mut reader),
     }
     .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
-    print_inspection(manifest, detailed);
+    print_inspection(manifest, detailed, json_output);
     Ok(())
 }
 
-fn inspect_stdin(max_bytes: u64, detailed: bool) -> Result<(), String> {
+fn inspect_stdin(max_bytes: u64, detailed: bool, json_output: bool) -> Result<(), String> {
     let stdin = std::io::stdin();
     let manifest = verify_container_with_budget(&mut stdin.lock(), max_bytes)
         .map_err(|error| format!("stdin envelope integrity verification failed: {error:?}"))?;
-    print_inspection(manifest, detailed);
+    print_inspection(manifest, detailed, json_output);
     Ok(())
 }
 
@@ -498,6 +529,7 @@ fn main() {
             let Some(identity) = [0usize, 1, 2, 4]
                 .iter()
                 .map(|index| fields[*index].to_str())
+
                 .collect::<Option<Vec<_>>>()
             else {
                 eprintln!("Generation identity and byte limit must be UTF-8");
@@ -761,18 +793,23 @@ fn main() {
         }
         Some(command @ ("verify-stdin" | "inspect-stdin")) => {
             let fields: Vec<OsString> = args.collect();
-            let Some(max_bytes) = fields
-                .as_slice()
+            let json_output = fields
                 .first()
-                .filter(|_| fields.len() == 1)
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let values = if json_output { &fields[1..] } else { &fields[..] };
+            let Some(max_bytes) = values
+                .first()
+                .filter(|_| values.len() == 1)
                 .and_then(|value| value.to_str())
                 .and_then(|value| value.parse::<u64>().ok())
             else {
-                eprintln!("stdin verification requires exactly one decimal byte budget");
+                eprintln!("stdin verification requires [--json] and one decimal byte budget");
                 usage();
                 std::process::exit(2);
             };
-            if let Err(error) = inspect_stdin(max_bytes, command == "inspect-stdin") {
+            if let Err(error) =
+                inspect_stdin(max_bytes, command == "inspect-stdin", json_output)
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
@@ -862,13 +899,17 @@ fn main() {
         }
         Some(command @ ("verify" | "inspect")) => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 1 && fields.len() != 2 {
-                eprintln!("Expected an input .wpack file and optional decimal byte budget");
+            let json_output = fields
+                .first()
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let values = if json_output { &fields[1..] } else { &fields[..] };
+            if values.len() != 1 && values.len() != 2 {
+                eprintln!("Expected [--json], an input .wpack file and optional decimal byte budget");
                 usage();
                 std::process::exit(2);
             }
-            let max_input_bytes = if fields.len() == 2 {
-                let Some(limit) = fields[1]
+            let max_input_bytes = if values.len() == 2 {
+                let Some(limit) = values[1]
                     .to_str()
                     .and_then(|value| value.parse::<u64>().ok())
                 else {
@@ -880,9 +921,10 @@ fn main() {
                 None
             };
             if let Err(error) = inspect_file(
-                PathBuf::from(&fields[0]),
+                PathBuf::from(&values[0]),
                 command == "inspect",
                 max_input_bytes,
+                json_output,
             ) {
                 eprintln!("{error}");
                 std::process::exit(1);
