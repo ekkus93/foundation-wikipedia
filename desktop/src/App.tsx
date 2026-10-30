@@ -9,6 +9,7 @@ import { THEMES, isTheme, type Theme } from "./theme";
 import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { ReaderPersonalDataSession } from "./readerPersonalDataSession";
+import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
@@ -46,6 +47,7 @@ export default function App() {
   const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
   const bookmarkInFlightRef = useRef(false);
   const personalDataSessionRef = useRef(new ReaderPersonalDataSession());
+  const privacyGenerationMonitorRef = useRef(new ReaderPrivacyGenerationMonitor());
   const nextBookmarkOpenId = useRef(1);
   const returnFocusRef = useRef(false);
   const settingsBackRef = useRef<HTMLButtonElement>(null);
@@ -54,6 +56,52 @@ export default function App() {
   const firstActionRef = useRef<HTMLButtonElement>(null);
   const themeChoiceRevision = useRef(0);
   const layoutChoiceRevision = useRef(0);
+
+  // A second desktop process can revoke consent or clear reading data while
+  // this window is idle. Reconcile on focus/visibility rather than retaining
+  // its old tabs, saved identities, and cached article previews indefinitely.
+  useEffect(() => {
+    let active = true;
+    let latestRequest = 0;
+    function reconcile() {
+      const request = ++latestRequest;
+      void invoke<string>("sync_reader_privacy_generation").then((generation) => {
+        if (!active || request !== latestRequest) return;
+        if (privacyGenerationMonitorRef.current.observe(generation) !== "changed") return;
+        const session = personalDataSessionRef.current;
+        if (!session.beginReset()) return;
+        try {
+          tabScrollRef.current.clear();
+          tabArticleRef.current.clear();
+          setBookmarkOpen(null);
+          setReaderTabs(initialReaderTabs());
+          setReaderSessionId((id) => id + 1);
+          setSavedBookmarks([]);
+          setRecentVisits([]);
+          setHistoryEnabled(null);
+          setConfirmClearHistory(false);
+          setConfirmClearReading(false);
+          setSavedResult(null);
+          setMessage("Reading data changed in another application window; old article previews were cleared.");
+        } finally {
+          session.finishReset();
+        }
+      }).catch(() => {
+        // Standalone browser preview has no native SQLite state.
+      });
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") reconcile();
+    }
+    reconcile();
+    window.addEventListener("focus", reconcile);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", reconcile);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   // SQLite is authoritative when available; preserve the existing browser
   // preference as a fallback for the standalone Vite development shell.
@@ -179,6 +227,7 @@ export default function App() {
   useEffect(() => {
     if (destination !== "settings" || settingsSection !== "History & Saved Content") return;
     let active = true;
+    const revision = personalDataSessionRef.current.snapshot();
     setSavedBusy(true);
     setSavedError(null);
     void Promise.all([
@@ -186,16 +235,16 @@ export default function App() {
       invoke<boolean>("reader_history_enabled"),
       invoke<unknown>("list_reader_history").then(parseReaderVisits),
     ]).then(([bookmarks, enabled, visits]) => {
-      if (!active) return;
+      if (!active || !personalDataSessionRef.current.accepts(revision)) return;
       if (typeof enabled !== "boolean") throw new Error("Invalid history preference");
       setSavedBookmarks(bookmarks);
       setHistoryEnabled(enabled);
       setRecentVisits(visits);
     }).catch(() => {
-      if (active) setSavedError("Saved pages or reading history is unavailable.");
-    }).finally(() => { if (active) setSavedBusy(false); });
+      if (active && personalDataSessionRef.current.accepts(revision)) setSavedError("Saved pages or reading history is unavailable.");
+    }).finally(() => { if (active && personalDataSessionRef.current.accepts(revision)) setSavedBusy(false); });
     return () => { active = false; };
-  }, [destination, settingsSection]);
+  }, [destination, settingsSection, readerSessionId]);
 
   async function changeHistoryEnabled(enabled: boolean) {
     if (savedBusy || historyBusy || historyEnabled === null) return;

@@ -19,7 +19,7 @@ use wiki_source::online_selection::NetworkState;
 /// Shared across desktop commands for this application process only. A cached
 /// sanitized HTML preview is never an installed/offline-complete article.
 #[derive(Clone, Default)]
-struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>, Arc<AtomicU64>);
+struct DesktopOnlineCache(Arc<Mutex<OnlineRevisionCache>>, Arc<AtomicU64>, Arc<Mutex<Option<u64>>>);
 
 /// Serialize privacy-sensitive writes with deletion and reject operations
 /// queued before a privacy reset. The generation is captured at IPC entry,
@@ -157,6 +157,21 @@ fn clear_online_preview_cache(cache: &DesktopOnlineCache) -> Result<(), String> 
     cache.1.fetch_add(1, Ordering::AcqRel);
     let mut locked = cache.0.lock().map_err(|_| "Cannot clear online preview cache")?;
     *locked = OnlineRevisionCache::default();
+    Ok(())
+}
+
+/// On desktop focus, reconcile another process's durable privacy epoch with
+/// this process's in-memory HTML preview cache. The cache generation fence
+/// prevents queued pre-reset network workers from refilling the old cache.
+fn reconcile_preview_cache_generation(
+    cache: &DesktopOnlineCache,
+    durable_generation: u64,
+) -> Result<(), String> {
+    let mut seen = cache.2.lock().map_err(|_| "Cannot inspect privacy cache generation")?;
+    if seen.is_some_and(|previous| previous != durable_generation) {
+        clear_online_preview_cache(cache)?;
+    }
+    *seen = Some(durable_generation);
     Ok(())
 }
 
@@ -312,6 +327,24 @@ fn capture_persistent_generation(app: &tauri::AppHandle) -> Result<u64, String> 
     open_private_bookmark_store(app)?
         .personal_generation()
         .map_err(|_| "Cannot read personal data generation".to_owned())
+}
+
+/// Return a canonical decimal string: SQLite generations can exceed the
+/// JavaScript safe-integer range. Also invalidate any preview cache retained
+/// by this process when another process advanced the durable generation.
+#[tauri::command]
+async fn sync_reader_privacy_generation(
+    app: tauri::AppHandle,
+    cache: tauri::State<'_, DesktopOnlineCache>,
+) -> Result<String, String> {
+    let cache = (*cache).clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let generation = capture_persistent_generation(&app)?;
+        reconcile_preview_cache_generation(&cache, generation)?;
+        Ok(generation.to_string())
+    })
+    .await
+    .map_err(|_| "Privacy generation worker stopped".to_owned())?
 }
 
 /// Refuse to return private rows from an IPC request started before another
@@ -852,6 +885,26 @@ mod online_preview_cache_tests {
 }
 
 #[cfg(test)]
+mod privacy_cache_generation_tests {
+    use super::*;
+
+    #[test]
+    fn cross_process_generation_change_invalidates_cached_previews_once() {
+        let cache = DesktopOnlineCache::default();
+        reconcile_preview_cache_generation(&cache, 0).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 0);
+        reconcile_preview_cache_generation(&cache, 0).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 0);
+        reconcile_preview_cache_generation(&cache, 1).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 1);
+        reconcile_preview_cache_generation(&cache, 1).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 1);
+        reconcile_preview_cache_generation(&cache, 2).unwrap();
+        assert_eq!(cache.1.load(Ordering::Acquire), 2);
+    }
+}
+
+#[cfg(test)]
 mod bookmark_tests {
     use super::*;
 
@@ -1266,6 +1319,7 @@ pub fn run() {
             list_reader_bookmarks,
             remove_reader_bookmark,
             clear_reader_personal_data,
+            sync_reader_privacy_generation,
             record_reader_visit,
             reader_history_enabled,
             set_reader_history_enabled,

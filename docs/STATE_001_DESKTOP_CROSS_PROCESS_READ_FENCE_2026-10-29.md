@@ -18,4 +18,6 @@ The three read commands now capture `UserState::personal_generation()` at IPC en
 
 This is an optimistic two-check fence, not an OS-level cross-process notification or an atomic guarantee against a reset *after* the second check but before the UI consumes the response. Existing frontend session/cache state in another process still requires explicit invalidation or focus-time reconciliation. The IPC-entry SQLite open is synchronous and needs a latency evaluation. Android adapter and real desktop/Android device qualification remain outstanding.
 
+**Exact source CI:** `15a16bac4d7836e06e4fb2ebb3d6ae89849f6a44` passed [Rust workspace 40981774732](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40981774732), [Platform shells 40981774740](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40981774740), and [Desktop launch smoke 40981774863](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40981774863).
+
 **Disposition:** `STATE-001` remains unchecked; no branch or PR was created.
