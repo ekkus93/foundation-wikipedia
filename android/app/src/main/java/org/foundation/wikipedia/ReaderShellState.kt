@@ -25,6 +25,8 @@ data class ReaderShellState(
     fun toggleActions(): ReaderShellState =
         if (settingsOpen) this else copy(actionsOpen = !actionsOpen)
 
+    fun dismissActions(): ReaderShellState = copy(actionsOpen = false)
+
     fun withOffline(enabled: Boolean): ReaderShellState =
         copy(offline = enabled, actionsOpen = false)
 

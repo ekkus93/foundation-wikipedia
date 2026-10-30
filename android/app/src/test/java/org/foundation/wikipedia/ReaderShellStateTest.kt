@@ -64,6 +64,17 @@ class ReaderShellStateTest {
     }
 
     @Test
+    fun outsideTapDismissesActionsWithoutChangingReaderOrSettings() {
+        val reader = ReaderShellState(offline = true)
+        val expanded = reader.toggleActions()
+        assertTrue(expanded.actionsOpen)
+        assertEquals(reader, expanded.dismissActions())
+        assertEquals(reader, reader.dismissActions())
+        val settings = reader.showSettings()
+        assertEquals(settings, settings.dismissActions())
+    }
+
+    @Test
     fun backDismissesActionsBeforeLeavingReaderAndSettings() {
         val expanded = ReaderShellState().toggleActions()
         assertTrue(expanded.actionsOpen)

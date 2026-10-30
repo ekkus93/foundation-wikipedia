@@ -13,6 +13,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
@@ -268,13 +269,24 @@ private fun FoundationApp() {
                         // Keep the same WebView mounted while Settings is open:
                         // no reload or loss of the current in-memory scroll position.
                         view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
-                        view.importantForAccessibility = if (shell.settingsOpen) {
+                        view.importantForAccessibility = if (shell.settingsOpen || shell.actionsOpen) {
                             View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                         } else {
                             View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                         }
                     },
                 )
+                if (shell.actionsOpen && !shell.settingsOpen) {
+                    // Intercept outside taps without reloading or obscuring the reader.
+                    // The Scaffold FAB and its action buttons remain above this overlay.
+                    Box(
+                        modifier = Modifier.fillMaxSize().clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { shell = shell.dismissActions() },
+                        ).semantics { contentDescription = "Dismiss reader actions" },
+                    )
+                }
                 if (shell.settingsOpen) {
                     Column(
                         modifier = Modifier.fillMaxSize()
