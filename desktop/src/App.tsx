@@ -9,6 +9,7 @@ import { THEMES, isTheme, type Theme } from "./theme";
 import { TEXT_SIZE_OPTIONS, WIDTH_OPTIONS, parseReaderLayout, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { ReaderPersonalDataSession } from "./readerPersonalDataSession";
+import { ReaderBookmarkInFlight } from "./readerBookmarkInFlight";
 import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 
 export default function App() {
@@ -45,7 +46,7 @@ export default function App() {
   });
   const tabScrollRef = useRef(new Map<number, number>());
   const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
-  const bookmarkInFlightRef = useRef(false);
+  const bookmarkInFlightRef = useRef(new ReaderBookmarkInFlight());
   const personalDataSessionRef = useRef(new ReaderPersonalDataSession());
   const privacyGenerationMonitorRef = useRef(new ReaderPrivacyGenerationMonitor());
   const nextBookmarkOpenId = useRef(1);
@@ -75,6 +76,9 @@ export default function App() {
         // generation while we cannot invalidate the corresponding UI state.
         if (privacyGenerationMonitorRef.current.observe(generation, session.canWrite()) !== "changed") return;
         if (!session.beginReset()) return;
+        // The old IPC may never settle; allow a new bookmark after reset.
+        // Its late finally must not unlock a newer request.
+        bookmarkInFlightRef.current.invalidate();
         try {
           tabScrollRef.current.clear();
           tabArticleRef.current.clear();
@@ -330,6 +334,7 @@ export default function App() {
 
   async function clearPersonalReadingData() {
     if (!confirmClearReading || savedBusy || !personalDataSessionRef.current.beginReset()) return;
+    bookmarkInFlightRef.current.invalidate();
     setSavedBusy(true);
     setSavedError(null);
     setSavedResult(null);
@@ -407,9 +412,10 @@ export default function App() {
         setMessage("Personal reading data is being cleared. Try bookmarking afterward.");
       } else if (!current) {
         setMessage("Open a Wikipedia article before bookmarking it.");
-      } else if (!bookmarkInFlightRef.current) {
+      } else {
+        const operation = bookmarkInFlightRef.current.begin();
+        if (operation === null) return;
         const revision = session.snapshot();
-        bookmarkInFlightRef.current = true;
         void invoke<boolean>("toggle_reader_bookmark", { project: current.project, pageId: current.pageId, revisionId: current.revisionId })
           .then((saved) => {
             if (session.accepts(revision)) setMessage(saved
@@ -419,7 +425,7 @@ export default function App() {
           .catch(() => {
             if (session.accepts(revision)) setMessage("Bookmark storage unavailable; no offline content was changed.");
           })
-          .finally(() => { bookmarkInFlightRef.current = false; });
+          .finally(() => { bookmarkInFlightRef.current.finish(operation); });
       }
     } else {
       setMessage(`${action} is not implemented yet. This screen is a development shell.`);
