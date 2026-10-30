@@ -84,6 +84,11 @@ export default function App() {
           setSavedBookmarks([]);
           setRecentVisits([]);
           setHistoryEnabled(null);
+          // Old IPC completions are now session-stale and must not leave
+          // loading controls permanently disabled while fresh data reloads.
+          setSavedBusy(false);
+          setHistoryBusy(false);
+          setSavedError(null);
           setConfirmClearHistory(false);
           setConfirmClearReading(false);
           setSavedResult(null);
@@ -258,48 +263,58 @@ export default function App() {
   }, [destination, settingsSection, readerSessionId]);
 
   async function changeHistoryEnabled(enabled: boolean) {
-    if (savedBusy || historyBusy || historyEnabled === null) return;
+    const session = personalDataSessionRef.current;
+    if (savedBusy || historyBusy || historyEnabled === null || !session.canWrite()) return;
+    const revision = session.snapshot();
     setHistoryBusy(true);
     setSavedError(null);
     try {
       await invoke<void>("set_reader_history_enabled", { enabled });
+      // A second process may have reset privacy state while IPC was pending.
+      if (!session.accepts(revision)) return;
       setHistoryEnabled(enabled);
       setSavedResult(enabled ? "Visit history enabled for future article navigation." :
         "Visit history disabled. Previously saved visits remain until deleted.");
     } catch {
-      setSavedError("History preference was not changed.");
+      if (session.accepts(revision)) setSavedError("History preference was not changed.");
     } finally {
-      setHistoryBusy(false);
+      if (session.accepts(revision)) setHistoryBusy(false);
     }
   }
 
   async function clearVisitHistory() {
-    if (!confirmClearHistory || savedBusy || historyBusy) return;
+    const session = personalDataSessionRef.current;
+    if (!confirmClearHistory || savedBusy || historyBusy || !session.canWrite()) return;
+    const revision = session.snapshot();
     setHistoryBusy(true);
     setSavedError(null);
     try {
       await invoke<number>("clear_reader_history");
+      if (!session.accepts(revision)) return;
       setRecentVisits([]);
       setConfirmClearHistory(false);
       setSavedResult("Saved visit history deleted. Bookmarks and installed packs are unchanged.");
     } catch {
-      setSavedError("Unable to clear visit history.");
+      if (session.accepts(revision)) setSavedError("Unable to clear visit history.");
     } finally {
-      setHistoryBusy(false);
+      if (session.accepts(revision)) setHistoryBusy(false);
     }
   }
 
   async function removeSavedBookmark(project: string, pageId: number) {
-    if (savedBusy) return;
+    const session = personalDataSessionRef.current;
+    if (savedBusy || !session.canWrite()) return;
+    const revision = session.snapshot();
     setSavedBusy(true);
     setSavedError(null);
     try {
       await invoke<boolean>("remove_reader_bookmark", { project, pageId });
+      if (!session.accepts(revision)) return;
       setSavedBookmarks((rows) => rows.filter(([p, id]) => p !== project || id !== pageId));
     } catch {
-      setSavedError("Unable to remove the saved bookmark.");
+      if (session.accepts(revision)) setSavedError("Unable to remove the saved bookmark.");
     } finally {
-      setSavedBusy(false);
+      if (session.accepts(revision)) setSavedBusy(false);
     }
   }
 
