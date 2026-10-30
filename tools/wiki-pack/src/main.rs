@@ -66,12 +66,25 @@ fn usage() {
     println!("Publisher signatures and offline media completeness are NOT verified.");
 }
 
+/// SHA-256 of the canonical manifest identity transcript, not an authenticated
+/// publisher signature or a digest of the full archive envelope.
+fn manifest_transcript_sha256(manifest: &Manifest) -> String {
+    use sha2::{Digest, Sha256};
+    let transcript = manifest
+        .identity_transcript()
+        .expect("verified manifest must have a canonical identity transcript");
+    format!("{:x}", Sha256::digest(transcript))
+}
+
 fn print_inspection(manifest: Manifest, detailed: bool, json_output: bool) {
     let total_bytes: u64 = manifest.objects.iter().map(|object| object.bytes).sum();
     if json_output {
         // JSON describes local envelope integrity only. Never promote a
         // claimed official origin to authenticated publisher trust.
         let mut output = serde_json::json!({
+            "schema_version": 1,
+            "status": "untrusted_verification",
+            "manifest_sha256": manifest_transcript_sha256(&manifest),
             "integrity_verified": true,
             "publisher_signature_verified": false,
             "offline_media_complete": false,
@@ -240,6 +253,7 @@ fn export_custom_tree(
             serde_json::json!({
                 "schema_version": 1,
                 "status": "untrusted_export",
+                "manifest_sha256": manifest_transcript_sha256(&manifest),
                 "output_path": destination.to_str().expect("JSON export path preflight"),
                 "integrity_verified": true,
                 "publisher_signature_verified": false,
@@ -301,6 +315,7 @@ fn print_staging_receipt(manifest: &Manifest, staged: &Path, json_output: bool) 
             serde_json::json!({
                 "schema_version": 1,
                 "status": "untrusted_staging",
+                "manifest_sha256": manifest_transcript_sha256(manifest),
                 "staging_path": staged.to_str().expect("JSON staging parent preflight"),
                 "integrity_verified": true,
                 "publisher_signature_verified": false,

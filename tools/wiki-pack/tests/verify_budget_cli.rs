@@ -36,6 +36,11 @@ fn fixture() -> Vec<u8> {
     })
 }
 
+fn transcript_digest(bytes: &[u8]) -> String {
+    let length = u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    format!("{:x}", Sha256::digest(&bytes[12..12 + length]))
+}
+
 #[test]
 fn json_inspection_never_authenticates_claimed_official_origin() {
     let unique = SystemTime::now()
@@ -64,6 +69,10 @@ fn json_inspection_never_authenticates_claimed_official_origin() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["status"], "untrusted_verification");
+    assert_eq!(json["manifest_sha256"], transcript_digest(&fs::read(&path).unwrap()));
+    assert_ne!(json["manifest_sha256"], transcript_digest(&fixture()));
     assert_eq!(json["claimed_origin"], "official");
     assert_eq!(json["claimed_origin_identity"], "unverified-publisher");
     assert_eq!(json["integrity_verified"], true);
@@ -118,6 +127,9 @@ fn verify_and_inspect_file_budget_is_opt_in_and_fail_closed() {
             .unwrap();
         assert!(json.status.success(), "{json:?}");
         let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["status"], "untrusted_verification");
+        assert_eq!(parsed["manifest_sha256"], transcript_digest(&bytes));
         assert_eq!(parsed["integrity_verified"], true);
         assert_eq!(parsed["publisher_signature_verified"], false);
         assert_eq!(parsed["offline_media_complete"], false);

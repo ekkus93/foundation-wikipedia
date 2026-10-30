@@ -3,6 +3,8 @@ use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sha2::Digest;
+
 fn sandbox() -> std::path::PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -47,6 +49,13 @@ fn json_export_is_durable_integrity_only_and_does_not_overwrite() {
     let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(receipt["schema_version"], 1);
     assert_eq!(receipt["status"], "untrusted_export");
+    let archive_bytes = fs::read(&output).unwrap();
+    let transcript_len = u32::from_be_bytes(archive_bytes[8..12].try_into().unwrap()) as usize;
+    let expected_digest = format!(
+        "{:x}",
+        sha2::Sha256::digest(&archive_bytes[12..12 + transcript_len])
+    );
+    assert_eq!(receipt["manifest_sha256"], expected_digest);
     assert_eq!(receipt["output_path"], output.to_str().unwrap());
     assert_eq!(receipt["integrity_verified"], true);
     assert_eq!(receipt["publisher_signature_verified"], false);
@@ -69,6 +78,7 @@ fn json_export_is_durable_integrity_only_and_does_not_overwrite() {
     assert!(verify.status.success(), "{verify:?}");
     let inspected: serde_json::Value = serde_json::from_slice(&verify.stdout).unwrap();
     assert_eq!(inspected["integrity_verified"], true);
+    assert_eq!(inspected["manifest_sha256"], receipt["manifest_sha256"]);
     assert_eq!(inspected["claimed_origin"], "custom");
     assert_eq!(inspected["publisher_signature_verified"], false);
 

@@ -31,6 +31,11 @@ fn fixture() -> Vec<u8> {
     bytes
 }
 
+fn transcript_digest(bytes: &[u8]) -> String {
+    let length = u32::from_be_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    format!("{:x}", Sha256::digest(&bytes[12..12 + length]))
+}
+
 fn private_parent() -> std::path::PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -47,9 +52,14 @@ fn private_parent() -> std::path::PathBuf {
     parent
 }
 
-fn assert_untrusted_receipt(json: &serde_json::Value, staged: &std::path::Path) {
+fn assert_untrusted_receipt(
+    json: &serde_json::Value,
+    staged: &std::path::Path,
+    expected_digest: &str,
+) {
     assert_eq!(json["schema_version"], 1);
     assert_eq!(json["status"], "untrusted_staging");
+    assert_eq!(json["manifest_sha256"], expected_digest);
     assert_eq!(json["staging_path"], staged.to_string_lossy().as_ref());
     assert_eq!(json["integrity_verified"], true);
     assert_eq!(json["publisher_signature_verified"], false);
@@ -87,7 +97,7 @@ fn file_and_piped_staging_emit_untrusted_receipts_only_after_success() {
         .unwrap();
     assert!(file.status.success(), "{file:?}");
     let mut file_json: serde_json::Value = serde_json::from_slice(&file.stdout).unwrap();
-    assert_untrusted_receipt(&file_json, &parent.join("file-stage"));
+    assert_untrusted_receipt(&file_json, &parent.join("file-stage"), &transcript_digest(&bytes));
 
     let mut child = Command::new(binary)
         .arg("stage-unsigned-stdin")
@@ -104,7 +114,7 @@ fn file_and_piped_staging_emit_untrusted_receipts_only_after_success() {
     let piped = child.wait_with_output().unwrap();
     assert!(piped.status.success(), "{piped:?}");
     let stream_json: serde_json::Value = serde_json::from_slice(&piped.stdout).unwrap();
-    assert_untrusted_receipt(&stream_json, &parent.join("stream-stage"));
+    assert_untrusted_receipt(&stream_json, &parent.join("stream-stage"), &transcript_digest(&bytes));
     file_json["staging_path"] = stream_json["staging_path"].clone();
     assert_eq!(file_json, stream_json);
     assert_eq!(fs::read_dir(&parent).unwrap().count(), 2);
