@@ -24,7 +24,7 @@ use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, wri
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Origin};
 use wiki_pack_builder::wiki_pack_format::stage::{
-    stage_container, stage_container_stream_with_budget,
+    stage_container, stage_container_stream_with_budget, stage_container_with_budget,
 };
 
 fn usage() {
@@ -50,7 +50,7 @@ fn usage() {
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
-    println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name>");
+    println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name> [max-input-bytes]");
     println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
     println!("       wiki-pack verify-stdin <max-input-bytes>");
     println!("       wiki-pack inspect-stdin <max-input-bytes>");
@@ -200,10 +200,20 @@ fn export_custom_tree(
 
 /// Verify, then extract into a private staging directory. This deliberately
 /// never changes installed packs or confers publisher trust.
-fn stage_unsigned(source: PathBuf, parent: PathBuf, name: &str) -> Result<(), String> {
+fn stage_unsigned(
+    source: PathBuf,
+    parent: PathBuf,
+    name: &str,
+    max_input_bytes: Option<u64>,
+) -> Result<(), String> {
     let input = File::open(&source).map_err(|error| format!("cannot open input: {error}"))?;
-    let (manifest, staged) = stage_container(&mut BufReader::new(input), &parent, name)
-        .map_err(|error| format!("unsigned staging rejected: {error:?}"))?;
+    let mut reader = BufReader::new(input);
+    let result = match max_input_bytes {
+        Some(limit) => stage_container_with_budget(&mut reader, &parent, name, limit),
+        None => stage_container(&mut reader, &parent, name),
+    };
+    let (manifest, staged) =
+        result.map_err(|error| format!("unsigned staging rejected: {error:?}"))?;
     println!("Envelope verified and staged: {}", staged.display());
     println!("Pack ID: {}", manifest.pack_id);
     match manifest.origin {
@@ -763,8 +773,8 @@ fn main() {
         }
         Some("stage-unsigned") => {
             let fields: Vec<OsString> = args.collect();
-            if fields.len() != 3 {
-                eprintln!("stage-unsigned requires exactly three arguments");
+            if fields.len() != 3 && fields.len() != 4 {
+                eprintln!("stage-unsigned requires three arguments and an optional byte budget");
                 usage();
                 std::process::exit(2);
             }
@@ -772,9 +782,24 @@ fn main() {
                 eprintln!("Staging directory name must be UTF-8");
                 std::process::exit(2);
             };
-            if let Err(error) =
-                stage_unsigned(PathBuf::from(&fields[0]), PathBuf::from(&fields[1]), name)
-            {
+            let max_input_bytes = if fields.len() == 4 {
+                let Some(limit) = fields[3]
+                    .to_str()
+                    .and_then(|value| value.parse::<u64>().ok())
+                else {
+                    eprintln!("Input byte budget must be a decimal integer");
+                    std::process::exit(2);
+                };
+                Some(limit)
+            } else {
+                None
+            };
+            if let Err(error) = stage_unsigned(
+                PathBuf::from(&fields[0]),
+                PathBuf::from(&fields[1]),
+                name,
+                max_input_bytes,
+            ) {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

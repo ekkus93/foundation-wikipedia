@@ -85,10 +85,35 @@ pub fn stage_container<R: Read + Seek>(
     parent: &Path,
     name: &str,
 ) -> Result<(Manifest, PathBuf), ContainerError> {
+    stage_container_impl(input, parent, name, None)
+}
+
+/// Stage a seekable archive only if its entire declared envelope fits the
+/// caller's byte quota. Reject an oversized manifest before allocating it
+/// and an oversized declared object set before consuming payload bytes.
+/// This bounds input processing, not available disk space or publisher trust.
+pub fn stage_container_with_budget<R: Read + Seek>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+    max_input_bytes: u64,
+) -> Result<(Manifest, PathBuf), ContainerError> {
+    stage_container_impl(input, parent, name, Some(max_input_bytes))
+}
+
+fn stage_container_impl<R: Read + Seek>(
+    input: &mut R,
+    parent: &Path,
+    name: &str,
+    max_input_bytes: Option<u64>,
+) -> Result<(Manifest, PathBuf), ContainerError> {
     validate_stage_destination(parent, name)?;
 
     input.seek(SeekFrom::Start(0))?;
-    let manifest = verify_container(input)?;
+    let manifest = match max_input_bytes {
+        Some(limit) => verify_container_with_budget(input, limit)?,
+        None => verify_container(input)?,
+    };
     // The source may change between the verification and staging passes
     // (for example, a seekable provider backed by a mutable file). Do not
     // trust the second-pass header to select a different payload offset, or
@@ -406,6 +431,70 @@ mod tests {
         ));
         assert!(!parent.join("swapped").exists());
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn seekable_stage_budget_rejects_oversized_declarations_before_copy() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent =
+            std::env::temp_dir().join(format!("wiki-stage-budget-{}-{stamp}", std::process::id()));
+        create_private_dir(&parent).unwrap();
+        let payload = b"offline revision figure";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "bounded".into(),
+            project: "enwiki".into(),
+            snapshot: "20261030".into(),
+            origin: Origin::Custom {
+                definition_id: "topic".into(),
+            },
+            objects: vec![Object {
+                path: "media/figure.svg".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        let mut encoded = Vec::new();
+        crate::container::write_container(&mut encoded, &manifest, |_, out| out.write_all(payload))
+            .unwrap();
+        let exact = encoded.len() as u64;
+        let transcript_end = 12 + manifest.identity_transcript().unwrap().len() as u64;
+
+        let mut too_small = io::Cursor::new(encoded.clone());
+        assert!(matches!(
+            stage_container_with_budget(&mut too_small, &parent, "rejected", exact - 1),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(too_small.position(), transcript_end);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+
+        let mut accepted = io::Cursor::new(encoded);
+        let (verified, root) =
+            stage_container_with_budget(&mut accepted, &parent, "accepted", exact).unwrap();
+        assert_eq!(verified, manifest);
+        assert_eq!(fs::read(root.join("media/figure.svg")).unwrap(), payload);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
+
+        let mut header = b"FWPACK01".to_vec();
+        header.extend_from_slice(&(crate::container::MAX_MANIFEST_BYTES as u32).to_be_bytes());
+        let mut forged = io::Cursor::new(header.clone());
+        assert!(matches!(
+            stage_container_with_budget(&mut forged, &parent, "forged", 32),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(forged.position(), 12);
+
+        let mut short = io::Cursor::new(header);
+        assert!(matches!(
+            stage_container_with_budget(&mut short, &parent, "short", 11),
+            Err(ContainerError::ResourceBudget)
+        ));
+        assert_eq!(short.position(), 0);
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
         fs::remove_dir_all(parent).unwrap();
     }
 
