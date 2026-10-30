@@ -30,3 +30,23 @@ data class ReaderShellState(
             ReaderShellState(offline = offline, settingsOpen = settingsOpen)
     }
 }
+
+/**
+ * Versioned, non-secret Android setting. Unknown/corrupt values are treated as
+ * offline rather than unexpectedly permitting future network-capable readers
+ * to fetch content. A missing setting defaults to online-first.
+ */
+internal object ReaderOfflinePreference {
+    const val FILE = "foundation_reader_settings"
+    const val KEY = "work_offline"
+    private const val ONLINE = "v1:online"
+    private const val OFFLINE = "v1:offline"
+
+    fun encode(offline: Boolean): String = if (offline) OFFLINE else ONLINE
+
+    fun decode(value: String?): Boolean = when (value) {
+        null, ONLINE -> false
+        OFFLINE -> true
+        else -> true
+    }
+}

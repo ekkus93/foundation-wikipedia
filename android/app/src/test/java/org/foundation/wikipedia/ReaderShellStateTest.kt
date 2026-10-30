@@ -7,6 +7,22 @@ import org.junit.Test
 
 class ReaderShellStateTest {
     @Test
+    fun persistedOfflinePreferenceRoundTripsAndDefaultsOnlineFirst() {
+        assertFalse(ReaderOfflinePreference.decode(null))
+        assertEquals("v1:offline", ReaderOfflinePreference.encode(true))
+        assertEquals("v1:online", ReaderOfflinePreference.encode(false))
+        assertTrue(ReaderOfflinePreference.decode(ReaderOfflinePreference.encode(true)))
+        assertFalse(ReaderOfflinePreference.decode(ReaderOfflinePreference.encode(false)))
+    }
+
+    @Test
+    fun corruptOrFuturePreferenceFailsClosedToOffline() {
+        for (value in listOf("", "true", "1", "v2:online", "v1:OFFLINE", "v1:online\\n")) {
+            assertTrue("unexpected online fallback for $value", ReaderOfflinePreference.decode(value))
+        }
+    }
+
+    @Test
     fun offlineChoiceIsSharedAcrossActionsAndSettings() {
         val start = ReaderShellState()
         val offline = start.toggleActions().withOffline(true)

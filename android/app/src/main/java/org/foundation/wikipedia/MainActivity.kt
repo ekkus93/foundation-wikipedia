@@ -2,6 +2,7 @@ package org.foundation.wikipedia
 
 import android.os.Build
 import android.os.Bundle
+import android.content.Context
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
@@ -91,6 +92,19 @@ private fun FoundationApp() {
     } else {
         if (isDark) darkColorScheme() else lightColorScheme()
     }
+    val offlinePreferences = remember(context) {
+        context.getSharedPreferences(ReaderOfflinePreference.FILE, Context.MODE_PRIVATE)
+    }
+    val initialOffline = remember(offlinePreferences) {
+        // A malformed or newer stored preference must not silently enable network access.
+        try {
+            ReaderOfflinePreference.decode(
+                offlinePreferences.getString(ReaderOfflinePreference.KEY, null)
+            )
+        } catch (_: ClassCastException) {
+            true
+        }
+    }
     val shellSaver = remember {
         listSaver<ReaderShellState, Boolean>(
             save = { listOf(it.offline, it.settingsOpen) },
@@ -98,7 +112,12 @@ private fun FoundationApp() {
         )
     }
     var shell by rememberSaveable(stateSaver = shellSaver) {
-        mutableStateOf(ReaderShellState())
+        mutableStateOf(ReaderShellState(offline = initialOffline))
+    }
+    LaunchedEffect(shell.offline, offlinePreferences) {
+        offlinePreferences.edit()
+            .putString(ReaderOfflinePreference.KEY, ReaderOfflinePreference.encode(shell.offline))
+            .apply()
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -187,7 +206,7 @@ private fun FoundationApp() {
                         )
                     }
                     Text(
-                        if (shell.offline) "Offline mode selected for this reader session."
+                        if (shell.offline) "Offline mode selected on this device."
                         else "Offline mode is off. Online article fetching is not implemented yet.",
                     )
                     Text(
@@ -195,7 +214,7 @@ private fun FoundationApp() {
                             "requests network resources, even when Work offline is off.",
                     )
                     Text(
-                        "The offline choice survives screen rotation. It does not download " +
+                        "The offline choice persists across app restarts. It does not download " +
                             "articles, enable bookmarks, or certify missing images and attribution.",
                     )
                 }
