@@ -34,6 +34,21 @@ class ReaderShellStateTest {
     }
 
     @Test
+    fun recreationUsesDurableOfflineChoiceNotOldSaveableShellValue() {
+        val staleUi = ReaderShellState(offline = false).showSettings()
+            .openSettingsCategory(ReaderSettingsCategory.HISTORY_SAVED_CONTENT)
+        val durableOffline = ReaderOfflinePreference.decode("v1:offline")
+        val restored = ReaderShellState.restore(
+            durableOffline, staleUi.settingsOpen, staleUi.settingsCategory?.name,
+        )
+        assertTrue(restored.offline)
+        assertTrue(restored.settingsOpen)
+        assertEquals(ReaderSettingsCategory.HISTORY_SAVED_CONTENT, restored.settingsCategory)
+        assertFalse(restored.actionsOpen)
+        assertFalse(restored.chatOpen)
+    }
+
+    @Test
     fun persistedOfflinePreferenceRoundTripsAndDefaultsOnlineFirst() {
         assertFalse(ReaderOfflinePreference.decode(null))
         assertEquals("v1:offline", ReaderOfflinePreference.encode(true))

@@ -108,13 +108,18 @@ private fun FoundationApp() {
             ReaderThemeMode.SYSTEM
         }
     }
-    var themeName by rememberSaveable { mutableStateOf(initialTheme.name) }
-    val themeMode = ReaderThemeMode.entries.firstOrNull { it.name == themeName }
-        ?: ReaderThemeMode.SYSTEM
-    LaunchedEffect(themeName, appearancePreferences) {
-        appearancePreferences.edit()
-            .putString(ReaderAppearancePreference.KEY, ReaderAppearancePreference.encode(themeMode))
-            .apply()
+    // Read the durable value on activity recreation, rather than restoring an
+    // older saveable UI value or writing it back asynchronously on startup.
+    var themeMode by remember(appearancePreferences) { mutableStateOf(initialTheme) }
+    var themePersistenceFailed by remember { mutableStateOf(false) }
+    val setThemeChoice: (ReaderThemeMode) -> Unit = { requested ->
+        val update = ReaderAppearancePreference.update(themeMode, requested) { value ->
+            appearancePreferences.edit()
+                .putString(ReaderAppearancePreference.KEY, value)
+                .commit()
+        }
+        themeMode = update.mode
+        themePersistenceFailed = !update.saved
     }
     val isDark = when (themeMode) {
         ReaderThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -159,13 +164,14 @@ private fun FoundationApp() {
     val shellSaver = remember {
         listSaver<ReaderShellState, Any>(
             save = {
-                listOf(it.offline, it.settingsOpen, it.settingsCategory?.name ?: "")
+                // Offline mode is durable; only restore presentation navigation.
+                listOf(it.settingsOpen, it.settingsCategory?.name ?: "")
             },
             restore = {
                 ReaderShellState.restore(
+                    initialOffline,
                     it[0] as Boolean,
-                    it[1] as Boolean,
-                    it.getOrNull(2) as? String,
+                    it.getOrNull(1) as? String,
                 )
             },
         )
@@ -343,13 +349,19 @@ private fun FoundationApp() {
                             for (mode in ReaderThemeMode.entries) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().clickable {
-                                        themeName = mode.name
+                                        setThemeChoice(mode)
                                     },
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     RadioButton(selected = themeMode == mode, onClick = null)
                                     Text(mode.title)
                                 }
+                            }
+                            if (themePersistenceFailed) {
+                                Text(
+                                    "Could not save the appearance choice. The previous theme remains " +
+                                        "active; try again when storage is available.",
+                                )
                             }
                             Text(
                                 "System follows the Android appearance setting. Light and Dark " +

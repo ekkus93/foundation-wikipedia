@@ -11,6 +11,8 @@ enum class ReaderThemeMode(val title: String) {
  * Versioned, non-secret appearance preference. Unknown future values fall back
  * to the system setting instead of silently imposing an outdated color choice.
  */
+internal data class ReaderAppearanceUpdate(val mode: ReaderThemeMode, val saved: Boolean)
+
 internal object ReaderAppearancePreference {
     const val FILE = "foundation_reader_settings"
     const val KEY = "theme_mode"
@@ -25,5 +27,19 @@ internal object ReaderAppearancePreference {
         "v1:light" -> ReaderThemeMode.LIGHT
         "v1:dark" -> ReaderThemeMode.DARK
         else -> ReaderThemeMode.SYSTEM
+    }
+
+    /** Never show an unsaved choice as durable, including on write exceptions. */
+    fun update(
+        previous: ReaderThemeMode,
+        requested: ReaderThemeMode,
+        persist: (String) -> Boolean,
+    ): ReaderAppearanceUpdate {
+        val saved = try {
+            persist(encode(requested))
+        } catch (_: RuntimeException) {
+            false
+        }
+        return ReaderAppearanceUpdate(if (saved) requested else previous, saved)
     }
 }
