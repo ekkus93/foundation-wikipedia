@@ -50,7 +50,9 @@ fn usage() {
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
     println!("       wiki-pack export-custom <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
-    println!("       wiki-pack stage-unsigned <file.wpack> <private-parent> <name> [max-input-bytes]");
+    println!(
+        "       wiki-pack stage-unsigned <file.wpack> <private-parent> <name> [max-input-bytes]"
+    );
     println!("       wiki-pack stage-unsigned-stdin <private-parent> <name> <max-spool-bytes>");
     println!("       wiki-pack verify-stdin <max-input-bytes>");
     println!("       wiki-pack inspect-stdin <max-input-bytes>");
