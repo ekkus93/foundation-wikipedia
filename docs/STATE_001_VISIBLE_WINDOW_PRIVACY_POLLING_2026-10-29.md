@@ -25,3 +25,15 @@ These are source and CI qualifications. No physical desktop or Android device wa
 ## Limitations and remaining acceptance
 
 Polling is eventual (five seconds while visible) and is **not** cross-process push notification. A background/hidden window reconciles when made visible. Application-local privacy operations may also advance the durable generation and cause conservative re-reconciliation; precise origin attribution and selective cache invalidation are not implemented. A reset after the last read check but before the next poll cannot be prevented by polling alone. Remaining STATE-001 work includes complete application-adapter/Android integration, lifecycle and restore qualification, cross-process push/notification if required, and physical-device privacy tests. Do not mark the parent task complete on this evidence alone.
+
+## Follow-up: do not acknowledge an epoch during an active local reset
+
+**Exact follow-up source SHA:** `a9330f5be4ae66e5558dc7e3c3c9d28d2d9f2fae`
+
+A concurrent local `clear_reader_personal_data` can already own the UI reset session when the visible-window poll completes. Previously, the generation monitor could advance its remembered epoch before `beginReset()` refused to acquire that busy session. A subsequent poll would then see `unchanged`, potentially suppressing a necessary later reconciliation if the local operation failed.
+
+The monitor now supports a `canApply` guard and returns `deferred` without advancing its epoch when the UI cannot apply a change. `App.tsx` passes `ReaderPersonalDataSession.canWrite()` before acknowledging a new generation; the subsequent `beginReset()` is synchronous. Node tests verify a deferred epoch is still detected after the session becomes available, including first-observation behavior.
+
+**Exact-head CI passed:** [Rust workspace 40988840952](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40988840952), [Platform shells 40988840939](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40988840939), and [Desktop launch smoke 40988840934](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40988840934).
+
+This is a concurrency regression fix, not physical-device acceptance. The parent STATE-001 item remains unchecked.
