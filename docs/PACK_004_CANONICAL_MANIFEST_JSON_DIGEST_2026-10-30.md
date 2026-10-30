@@ -3,7 +3,8 @@
 **Date:** 2026-10-30 (America/Los_Angeles)  
 **Initial source SHA:** `0dd625075ed3004bcccbd0fd4b5ac2633c2194e5` (rustfmt failed)  
 **Corrected source SHA:** `4430dad13365a0425bbd316d8a39c3fbe700e223`  
-**CI:** Exact-head qualification pending at documentation; verify before claiming success.
+**Corrected-source CI:** [Rust workspace 41118165524](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41118165524) and [Platform shells 41118165518](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41118165518) — both **passed**.  
+**Documentation CI:** [Rust workspace 41118455433](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41118455433) and [Platform shells 41118455774](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41118455774) — both **passed**.
 
 ## Scope
 
@@ -27,7 +28,7 @@ Example new fields:
 
 ## Regression tests
 
-`tools/wiki-pack/tests/verify_budget_cli.rs` independently hashes the raw transcript from the archive and checks file/stdin parity, inspect/verify parity, and differing digests when the claimed origin changes despite identical object bytes. `stage_json_cli.rs` independently hashes the fixture and checks file/stdin staging receipts. `export_json_cli.rs` independently hashes the exported envelope transcript and compares its receipt with a subsequent `inspect --json` result. The initial source failed Rust formatting; the corrected source applies the exact formatting changes from CI.
+`tools/wiki-pack/tests/verify_budget_cli.rs` independently hashes the raw transcript from the archive and checks file/stdin parity, inspect/verify parity, and differing digests when the claimed origin changes despite identical object bytes. `stage_json_cli.rs` independently hashes the fixture and checks file/stdin staging receipts. `export_json_cli.rs` independently hashes the exported envelope transcript and compares its receipt with a subsequent `inspect --json` result. The initial source failed Rust formatting ([Rust workspace 41117973606](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41117973606)); the corrected source applies the exact formatting changes from CI. Both corrected-source and subsequent documentation exact-head CI workflows passed.
 
 ## Outstanding acceptance
 
