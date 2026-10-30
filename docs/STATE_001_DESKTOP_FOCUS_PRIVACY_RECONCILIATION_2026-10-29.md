@@ -12,7 +12,7 @@ On initial mount, window focus, and visibility restoration, React calls the sync
 
 ## Regression and limits
 
-Native Rust test covers idempotent cache reconciliation and generation invalidation. Node tests cover first observation, stable focus checks, reset changes, maximum supported generation and invalid values. CI should verify the exact source commit before qualifying this slice.
+Native Rust test covers idempotent cache reconciliation and generation invalidation. Node tests cover first observation, stable focus checks, reset changes, maximum supported generation and invalid values. Exact source SHA **`feb215b47a27b94a6f68ca100081925ac7596cd6`** passed [Rust workspace 40982290624](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40982290624), [Platform shells 40982290611](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40982290611), and [Desktop launch smoke 40982290530](https://github.com/ekkus93/foundation-wikipedia/actions/runs/40982290530).
 
 This is eventual focus-time reconciliation, **not** immediate cross-process notification while both windows stay foregrounded. A reset after a completed check remains possible until the next focus/visibility check; other app processes can still retain UI state temporarily. No physical desktop or Android device acceptance is claimed.
 
