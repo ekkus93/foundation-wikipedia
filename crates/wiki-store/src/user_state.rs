@@ -2041,9 +2041,8 @@ mod tests {
         ));
         let current = reader.personal_generation().unwrap();
         assert!(current > generation);
-        let (bookmarks, consent, visits) = reader
-            .saved_panel_snapshot_for_generation(current)
-            .unwrap();
+        let (bookmarks, consent, visits) =
+            reader.saved_panel_snapshot_for_generation(current).unwrap();
         assert!(bookmarks.is_empty());
         assert!(!consent);
         assert!(visits.is_empty());
