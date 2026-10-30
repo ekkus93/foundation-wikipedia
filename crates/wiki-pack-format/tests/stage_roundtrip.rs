@@ -65,7 +65,7 @@ fn verified_envelope_stages_into_private_tree() {
     // validation. Stage must reject a second-pass tail and delete all files.
     struct AppendAfterVerification {
         input: Cursor<Vec<u8>>,
-        appended: bool,
+        seeks: usize,
     }
     impl std::io::Read for AppendAfterVerification {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -74,16 +74,18 @@ fn verified_envelope_stages_into_private_tree() {
     }
     impl std::io::Seek for AppendAfterVerification {
         fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-            if !self.appended && pos == std::io::SeekFrom::Start(8) {
+            // The implementation may recheck the full transcript rather
+            // than seeking directly to the first payload byte.
+            if self.seeks == 1 {
                 self.input.get_mut().push(0xff);
-                self.appended = true;
             }
+            self.seeks += 1;
             std::io::Seek::seek(&mut self.input, pos)
         }
     }
     let mut changed = AppendAfterVerification {
         input: Cursor::new(envelope.clone()),
-        appended: false,
+        seeks: 0,
     };
     assert!(matches!(
         stage_container(&mut changed, &parent, "changed"),
