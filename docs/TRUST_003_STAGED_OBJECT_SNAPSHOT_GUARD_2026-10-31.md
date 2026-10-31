@@ -14,4 +14,10 @@ This is defense in depth. Metadata sampling cannot prove race freedom against a 
 
 ## CI
 
-Exact-head Rust workspace and platform shell CI must be checked after the implementation commit. No CI result is presumed by this document.
+Initial implementation `5d2327d0f2c21414f4d7c60cbb4db4a153085bd2` failed Rust formatting at the test assertion. Corrected implementation `f3fe58a60096bc381acafa34b8603de7c90e2cd5` passed all three exact-head workflows:
+
+- [Rust workspace — passed](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41221261133)
+- [Platform shells — passed](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41221261043)
+- [Android Rust ABI qualification — passed](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41221261259)
+
+The acceptance claim is limited to this staged-object metadata guard and synthetic regression tests; it does not close TRUST-003 or PACK-004.
