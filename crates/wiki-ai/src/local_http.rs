@@ -115,8 +115,7 @@ fn parse_openai_models(json: &Value) -> Result<Vec<ModelInfo>, ProviderError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or(ProviderError::InvalidResponse)?;
-        if !valid_model_id(id) || !seen.insert(id)
-        {
+        if !valid_model_id(id) || !seen.insert(id) {
             return Err(ProviderError::InvalidResponse);
         }
         let context_window = match item.get("context_window") {

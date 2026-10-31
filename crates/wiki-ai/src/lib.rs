@@ -85,7 +85,8 @@ pub(crate) fn valid_model_id(id: &str) -> bool {
 
 impl GenerateRequest {
     pub fn validate(&self) -> Result<(), ProviderError> {
-        if !valid_model_id(&self.model) || self.messages.is_empty()
+        if !valid_model_id(&self.model)
+            || self.messages.is_empty()
             || self.max_output_tokens == 0
             || self
                 .messages
@@ -539,7 +540,11 @@ mod tests {
         ] {
             let mut request = request();
             request.model = id.into();
-            assert_eq!(request.validate(), Err(ProviderError::InvalidRequest), "{id:?}");
+            assert_eq!(
+                request.validate(),
+                Err(ProviderError::InvalidRequest),
+                "{id:?}"
+            );
         }
         for id in ["qwen3:8b", "org/model:Q4_K_M", "modèle-1"] {
             let mut request = request();
