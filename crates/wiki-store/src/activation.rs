@@ -1027,3 +1027,22 @@ mod interruption_tests {
         assert_eq!(store.read_verified(&digest).unwrap(), bytes);
 
         fs::write(root.join("snapshots/old/manifest.json"), b"{}").unwrap();
+        assert_eq!(snapshots.current().unwrap(), Some("old".into()));
+        assert!(matches!(
+            release_inactive_snapshot_pack_and_reclaim_media(
+                &snapshots,
+                &store,
+                &mut registry,
+                "old",
+                10
+            ),
+            Err(InactivePackReleaseError::ActiveSnapshot)
+        ));
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
