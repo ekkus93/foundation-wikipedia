@@ -21,6 +21,32 @@ pub enum ObjectVerifyError {
     ResourceBudget,
 }
 
+// Detect a same-size rewrite or pathname replacement during object hashing.
+// This is defense in depth, not a substitute for exclusive ownership of the
+// private staging tree: metadata checks cannot eliminate adversarial races.
+fn same_file_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    if !before.is_file() || !after.is_file() || before.len() != after.len() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.nlink() == 1
+            && after.nlink() == 1
+            && before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
+    }
+    #[cfg(not(unix))]
+    {
+        before.modified().ok() == after.modified().ok()
+            && before.created().ok() == after.created().ok()
+    }
+}
+
 /// Verify *every* object in a validated manifest before a caller can treat
 /// it as locally complete. The input manifest is not authenticated here.
 /// Returns the measured byte total; unlisted files and directories are rejected.
@@ -119,12 +145,8 @@ pub fn verify_manifest_directory(
         }
         let mut file = File::open(&path).map_err(ObjectVerifyError::Io)?;
         let opened = file.metadata().map_err(ObjectVerifyError::Io)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if opened.dev() != before.dev() || opened.ino() != before.ino() || opened.nlink() != 1 {
-                return Err(ObjectVerifyError::UnsafePath);
-            }
+        if !same_file_snapshot(&before, &opened) {
+            return Err(ObjectVerifyError::UnsafePath);
         }
         if !opened.is_file() || opened.len() != object.bytes {
             return Err(ObjectVerifyError::SizeMismatch(object.path.clone()));
@@ -150,10 +172,19 @@ pub fn verify_manifest_directory(
             }
             hasher.update(&buffer[..n]);
         }
-        if seen != object.bytes
-            || file.metadata().map_err(ObjectVerifyError::Io)?.len() != object.bytes
-        {
+        let after = file.metadata().map_err(ObjectVerifyError::Io)?;
+        if seen != object.bytes || after.len() != object.bytes {
             return Err(ObjectVerifyError::SizeMismatch(object.path.clone()));
+        }
+        // Hashes alone do not detect an in-place write that restores the
+        // original bytes before EOF. Check file identity and timestamps both
+        // across the read and against the final directory entry.
+        if !same_file_snapshot(&opened, &after) {
+            return Err(ObjectVerifyError::UnsafePath);
+        }
+        let path_after = fs::symlink_metadata(&path).map_err(ObjectVerifyError::Io)?;
+        if path_after.file_type().is_symlink() || !same_file_snapshot(&after, &path_after) {
+            return Err(ObjectVerifyError::UnsafePath);
         }
         if !format!("{:x}", hasher.finalize()).eq_ignore_ascii_case(&object.sha256) {
             return Err(ObjectVerifyError::HashMismatch(object.path.clone()));
@@ -204,6 +235,29 @@ mod tests {
             },
             objects,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_guard_detects_same_size_rewrite_and_path_replacement() {
+        let root = staging_dir();
+        let path = root.join("record.pack");
+        fs::write(&path, b"AAAA").unwrap();
+        let before = fs::symlink_metadata(&path).unwrap();
+        assert!(same_file_snapshot(&before, &fs::symlink_metadata(&path).unwrap()));
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&path, b"BBBB").unwrap();
+        let changed = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(before.len(), changed.len());
+        assert!(!same_file_snapshot(&before, &changed));
+
+        let stable = fs::symlink_metadata(&path).unwrap();
+        fs::rename(&path, root.join("old.pack")).unwrap();
+        fs::write(&path, b"BBBB").unwrap();
+        let replacement = fs::symlink_metadata(&path).unwrap();
+        assert!(!same_file_snapshot(&stable, &replacement));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
