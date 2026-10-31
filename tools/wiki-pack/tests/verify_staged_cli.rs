@@ -1,9 +1,9 @@
 //! Black-box staged-object validation: local integrity is not publisher trust.
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use sha2::{Digest, Sha256};
 use wiki_pack_builder::wiki_pack_format::container::write_container;
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin};
 
@@ -13,7 +13,9 @@ fn fixture() -> Vec<u8> {
         pack_id: "science".into(),
         project: "enwiki".into(),
         snapshot: "20261030".into(),
-        origin: Origin::Official { publisher: "unverified-publisher".into() },
+        origin: Origin::Official {
+            publisher: "unverified-publisher".into(),
+        },
         objects: vec![Object {
             path: "articles/1.cbor".into(),
             sha256: format!("{:x}", Sha256::digest(b"article")),
@@ -21,15 +23,23 @@ fn fixture() -> Vec<u8> {
         }],
     };
     let mut bytes = Vec::new();
-    write_container(&mut bytes, &manifest, |_, output| output.write_all(b"article")).unwrap();
+    write_container(&mut bytes, &manifest, |_, output| {
+        output.write_all(b"article")
+    })
+    .unwrap();
     bytes
 }
 
 fn parent() -> std::path::PathBuf {
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let root = std::env::temp_dir().join(format!("fwpack-tree-check-{}-{stamp}", std::process::id()));
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("fwpack-tree-check-{}-{stamp}", std::process::id()));
     fs::create_dir(&root).unwrap();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     }
@@ -45,14 +55,25 @@ fn untrusted_tree_verification_rejects_tampering_and_extras_without_mutating_tre
     let staged = root.join("candidate");
     let binary = env!("CARGO_BIN_EXE_wiki-pack");
     let stage = Command::new(binary)
-        .arg("stage-unsigned").arg("--json").arg(&archive).arg(&root)
-        .arg("candidate").output().unwrap();
+        .arg("stage-unsigned")
+        .arg("--json")
+        .arg(&archive)
+        .arg(&root)
+        .arg("candidate")
+        .output()
+        .unwrap();
     assert!(stage.status.success(), "{stage:?}");
     let receipt: serde_json::Value = serde_json::from_slice(&stage.stdout).unwrap();
 
-    let verify = || Command::new(binary)
-        .arg("verify-staged").arg("--json").arg(&archive).arg(&staged)
-        .output().unwrap();
+    let verify = || {
+        Command::new(binary)
+            .arg("verify-staged")
+            .arg("--json")
+            .arg(&archive)
+            .arg(&staged)
+            .output()
+            .unwrap()
+    };
     let valid = verify();
     assert!(valid.status.success(), "{valid:?}");
     let json: serde_json::Value = serde_json::from_slice(&valid.stdout).unwrap();
@@ -66,14 +87,23 @@ fn untrusted_tree_verification_rejects_tampering_and_extras_without_mutating_tre
     assert_eq!(json["offline_media_complete"], false);
     assert_eq!(json["installed"], false);
     assert_eq!(json["claimed_origin"], "official");
-    let human = Command::new(binary).arg("verify-staged").arg(&archive)
-        .arg(&staged).output().unwrap();
+    let human = Command::new(binary)
+        .arg("verify-staged")
+        .arg(&archive)
+        .arg(&staged)
+        .output()
+        .unwrap();
     assert!(human.status.success(), "{human:?}");
     assert!(String::from_utf8_lossy(&human.stdout).contains("NOT INSTALLED"));
 
-    let limited = Command::new(binary).arg("verify-staged").arg("--json")
-        .arg(&archive).arg(&staged).arg((bytes.len()-1).to_string())
-        .output().unwrap();
+    let limited = Command::new(binary)
+        .arg("verify-staged")
+        .arg("--json")
+        .arg(&archive)
+        .arg(&staged)
+        .arg((bytes.len() - 1).to_string())
+        .output()
+        .unwrap();
     assert_eq!(limited.status.code(), Some(1));
     assert!(limited.stdout.is_empty());
 
@@ -113,8 +143,12 @@ fn symlinked_tree_is_never_accepted_as_verified_staging() {
     let staged = root.join("candidate");
     symlink(&root, &staged).unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_wiki-pack"))
-        .arg("verify-staged").arg("--json").arg(&archive).arg(&staged)
-        .output().unwrap();
+        .arg("verify-staged")
+        .arg("--json")
+        .arg(&archive)
+        .arg(&staged)
+        .output()
+        .unwrap();
     assert_eq!(result.status.code(), Some(1), "{result:?}");
     assert!(result.stdout.is_empty());
     fs::remove_file(staged).unwrap();

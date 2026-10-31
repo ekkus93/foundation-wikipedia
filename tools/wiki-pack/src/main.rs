@@ -31,7 +31,9 @@ use wiki_pack_builder::wiki_pack_format::stage::{
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify [--json] <file.wpack> [max-input-bytes]");
-    println!("       wiki-pack verify-staged [--json] <file.wpack> <staged-directory> [max-input-bytes]");
+    println!(
+        "       wiki-pack verify-staged [--json] <file.wpack> <staged-directory> [max-input-bytes]"
+    );
     println!("       wiki-pack inspect [--json] <file.wpack> [max-input-bytes]");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
