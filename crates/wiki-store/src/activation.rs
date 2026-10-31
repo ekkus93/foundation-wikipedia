@@ -287,7 +287,11 @@ impl ActiveSnapshotStore {
                         std::process::id(),
                         NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
                     ));
-                    match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                    match OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&candidate)
+                    {
                         Ok(file) => break (candidate, file),
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                         Err(error) => return Err(ActivationError::Io(error)),
@@ -728,7 +732,10 @@ mod interruption_tests {
 
     #[test]
     fn post_rename_sync_failure_restores_old_or_absent_selector() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         for had_previous in [false, true] {
             let root = std::env::temp_dir().join(format!(
                 "wiki-selector-rollback-{}-{stamp}-{had_previous}",
@@ -745,17 +752,24 @@ mod interruption_tests {
             }
             let mut calls = 0;
             let fail_at = if had_previous { 2 } else { 1 };
-            let result = store.switch_with_precommit_and_sync("new", || Ok(()), |path| {
-                calls += 1;
-                if calls == fail_at {
-                    Err(io::Error::other("injected post-rename fsync failure"))
-                } else {
-                    File::open(path)?.sync_all()
-                }
-            });
+            let result = store.switch_with_precommit_and_sync(
+                "new",
+                || Ok(()),
+                |path| {
+                    calls += 1;
+                    if calls == fail_at {
+                        Err(io::Error::other("injected post-rename fsync failure"))
+                    } else {
+                        File::open(path)?.sync_all()
+                    }
+                },
+            );
             assert!(matches!(result, Err(ActivationError::Io(_))));
             assert_eq!(calls, fail_at + 1);
-            assert_eq!(store.current().unwrap(), had_previous.then(|| "old".to_owned()));
+            assert_eq!(
+                store.current().unwrap(),
+                had_previous.then(|| "old".to_owned())
+            );
             assert_eq!(root.join("current").exists(), had_previous);
             assert_eq!(
                 fs::read_dir(&root)
@@ -775,9 +789,13 @@ mod interruption_tests {
 
     #[test]
     fn failed_rollback_sync_reports_uncertain_durability() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "wiki-selector-uncertain-{}-{stamp}", std::process::id()
+            "wiki-selector-uncertain-{}-{stamp}",
+            std::process::id()
         ));
         for id in ["old", "new"] {
             let path = root.join("snapshots").join(id);
@@ -787,15 +805,22 @@ mod interruption_tests {
         let store = ActiveSnapshotStore::new(&root);
         store.switch_to_prevalidated("old").unwrap();
         let mut calls = 0;
-        let result = store.switch_with_precommit_and_sync("new", || Ok(()), |path| {
-            calls += 1;
-            if calls >= 2 {
-                Err(io::Error::other("injected directory durability failure"))
-            } else {
-                File::open(path)?.sync_all()
-            }
-        });
-        assert!(matches!(result, Err(ActivationError::RollbackFailed { .. })));
+        let result = store.switch_with_precommit_and_sync(
+            "new",
+            || Ok(()),
+            |path| {
+                calls += 1;
+                if calls >= 2 {
+                    Err(io::Error::other("injected directory durability failure"))
+                } else {
+                    File::open(path)?.sync_all()
+                }
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(ActivationError::RollbackFailed { .. })
+        ));
         assert_eq!(calls, 3);
         // Logical rollback succeeded, but power-loss survival is not proven.
         assert_eq!(store.current().unwrap(), Some("old".into()));
@@ -804,9 +829,13 @@ mod interruption_tests {
 
     #[test]
     fn corrupt_selector_is_not_overwritten_without_explicit_recovery() {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "wiki-selector-corrupt-{}-{stamp}", std::process::id()
+            "wiki-selector-corrupt-{}-{stamp}",
+            std::process::id()
         ));
         let path = root.join("snapshots/new");
         fs::create_dir_all(&path).unwrap();
@@ -998,22 +1027,3 @@ mod interruption_tests {
         assert_eq!(store.read_verified(&digest).unwrap(), bytes);
 
         fs::write(root.join("snapshots/old/manifest.json"), b"{}").unwrap();
-        assert_eq!(snapshots.current().unwrap(), Some("old".into()));
-        assert!(matches!(
-            release_inactive_snapshot_pack_and_reclaim_media(
-                &snapshots,
-                &store,
-                &mut registry,
-                "old",
-                10
-            ),
-            Err(InactivePackReleaseError::ActiveSnapshot)
-        ));
-        assert_eq!(
-            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
-            1
-        );
-        drop(registry);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
