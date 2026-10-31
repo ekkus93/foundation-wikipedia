@@ -87,9 +87,7 @@ fn real_file(path: &Path) -> Result<bool, io::Error> {
 // opening, after reading, and at the pathname. This is defense in depth;
 // the snapshot root must still be owned exclusively by the caller.
 fn same_pointer_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
-    if !before.file_type().is_file()
-        || !after.file_type().is_file()
-        || before.len() != after.len()
+    if !before.file_type().is_file() || !after.file_type().is_file() || before.len() != after.len()
     {
         return false;
     }
@@ -175,8 +173,8 @@ impl ActiveSnapshotStore {
             .read_to_end(&mut bytes)?;
         after_read();
         let after = opened.metadata()?;
-        let path_after = fs::symlink_metadata(&pointer)
-            .map_err(|_| ActivationError::CorruptCurrentPointer)?;
+        let path_after =
+            fs::symlink_metadata(&pointer).map_err(|_| ActivationError::CorruptCurrentPointer)?;
         if bytes.len() > 129
             || bytes.len() as u64 != opened_meta.len()
             || !same_pointer_snapshot(&opened_meta, &after)
