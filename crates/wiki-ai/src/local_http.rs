@@ -68,6 +68,16 @@ impl LlmProvider for LocalOpenAiProvider {
 
 /// HTTP-only initial transport: no DNS, no proxies, no redirects, no secrets.
 pub fn discover_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, ProviderError> {
+    let json = fetch_local_json(endpoint, "/v1/models")?;
+    parse_openai_models(&json)
+}
+
+// Shared read-only, bounded JSON GET for explicit OpenAI and Ollama adapters.
+// Callers supply fixed, compile-time API routes, never user-controlled paths.
+pub(crate) fn fetch_local_json(
+    endpoint: &LocalEndpoint,
+    path: &'static str,
+) -> Result<Value, ProviderError> {
     let authority = endpoint
         .base_url()
         .strip_prefix("http://")
@@ -80,14 +90,17 @@ pub fn discover_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, Provi
     socket.set_read_timeout(Some(READ_POLL)).map_err(map_io)?;
     socket.set_write_timeout(Some(TIMEOUT)).map_err(map_io)?;
     let request = format!(
-        "GET /v1/models HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
     );
     socket.write_all(request.as_bytes()).map_err(map_io)?;
     // A peer that drips one byte before every socket timeout must not
     // keep model discovery alive indefinitely.
     let response = read_bounded_response(&mut socket, Instant::now() + TIMEOUT)?;
     let body = parse_http_response(&response)?;
-    let json: Value = serde_json::from_slice(&body).map_err(|_| ProviderError::InvalidResponse)?;
+    serde_json::from_slice(&body).map_err(|_| ProviderError::InvalidResponse)
+}
+
+fn parse_openai_models(json: &Value) -> Result<Vec<ModelInfo>, ProviderError> {
     let data = json
         .get("data")
         .and_then(Value::as_array)
