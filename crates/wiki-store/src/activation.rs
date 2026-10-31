@@ -83,6 +83,35 @@ fn real_file(path: &Path) -> Result<bool, io::Error> {
     }
 }
 
+// A selector read must refer to the same stable, singly linked file before
+// opening, after reading, and at the pathname. This is defense in depth;
+// the snapshot root must still be owned exclusively by the caller.
+fn same_pointer_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+    if !before.file_type().is_file()
+        || !after.file_type().is_file()
+        || before.len() != after.len()
+    {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.nlink() == 1
+            && after.nlink() == 1
+            && before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
+    }
+    #[cfg(not(unix))]
+    {
+        before.modified().ok() == after.modified().ok()
+            && before.created().ok() == after.created().ok()
+    }
+}
+
 impl ActiveSnapshotStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -112,6 +141,14 @@ impl ActiveSnapshotStore {
     }
 
     pub fn current(&self) -> Result<Option<String>, ActivationError> {
+        self.current_with_after_read(|| {})
+    }
+
+    // Injection seam for deterministic replacement during selector reads.
+    fn current_with_after_read(
+        &self,
+        after_read: impl FnOnce(),
+    ) -> Result<Option<String>, ActivationError> {
         self.ensure_root()?;
         let pointer = self.root.join("current");
         let meta = match fs::symlink_metadata(&pointer) {
@@ -129,39 +166,23 @@ impl ActiveSnapshotStore {
         // the path by name during a possible concurrent replacement.
         let mut opened = File::open(&pointer)?;
         let opened_meta = opened.metadata()?;
-        if !opened_meta.is_file() || opened_meta.len() != meta.len() {
+        if !same_pointer_snapshot(&meta, &opened_meta) {
             return Err(ActivationError::CorruptCurrentPointer);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            // An outside hard link could rewrite the active snapshot selector
-            // without going through the verified atomic switch protocol.
-            if meta.ino() != opened_meta.ino()
-                || meta.dev() != opened_meta.dev()
-                || meta.nlink() != 1
-                || opened_meta.nlink() != 1
-            {
-                return Err(ActivationError::CorruptCurrentPointer);
-            }
         }
         let mut bytes = Vec::new();
         Read::by_ref(&mut opened)
             .take(130)
             .read_to_end(&mut bytes)?;
+        after_read();
         let after = opened.metadata()?;
+        let path_after = fs::symlink_metadata(&pointer)
+            .map_err(|_| ActivationError::CorruptCurrentPointer)?;
         if bytes.len() > 129
             || bytes.len() as u64 != opened_meta.len()
-            || after.len() != opened_meta.len()
+            || !same_pointer_snapshot(&opened_meta, &after)
+            || !same_pointer_snapshot(&after, &path_after)
         {
             return Err(ActivationError::CorruptCurrentPointer);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if after.nlink() != 1 {
-                return Err(ActivationError::CorruptCurrentPointer);
-            }
         }
         let id = std::str::from_utf8(&bytes).map_err(|_| ActivationError::CorruptCurrentPointer)?;
         let id = id.strip_suffix('\n').unwrap_or(id);
@@ -584,6 +605,70 @@ mod interruption_tests {
             store.current(),
             Err(ActivationError::CorruptCurrentPointer)
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_rejects_same_bytes_path_replacement_after_read() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-selector-replaced-{}-{stamp}",
+            std::process::id()
+        ));
+        let snapshot = root.join("snapshots/old");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("manifest.json"), "{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let current = root.join("current");
+        let retired = root.join("retired");
+        assert!(matches!(
+            store.current_with_after_read(|| {
+                fs::rename(&current, &retired).unwrap();
+                fs::write(&current, b"old\n").unwrap();
+            }),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        // The replacement has the same length and digest but a different inode.
+        assert_eq!(fs::read(&current).unwrap(), fs::read(&retired).unwrap());
+        assert_eq!(store.current().unwrap(), Some("old".to_owned()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn current_rejects_symlink_substitution_after_read() {
+        use std::os::unix::fs::symlink;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-selector-symlink-swap-{}-{stamp}",
+            std::process::id()
+        ));
+        let snapshot = root.join("snapshots/old");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("manifest.json"), "{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let current = root.join("current");
+        let retired = root.join("retired");
+        assert!(matches!(
+            store.current_with_after_read(|| {
+                fs::rename(&current, &retired).unwrap();
+                symlink("retired", &current).unwrap();
+            }),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        fs::remove_file(&current).unwrap();
+        fs::rename(&retired, &current).unwrap();
+        assert_eq!(store.current().unwrap(), Some("old".to_owned()));
         fs::remove_dir_all(root).unwrap();
     }
 
