@@ -1,7 +1,6 @@
 //! Black-box staged-object validation: local integrity is not publisher trust.
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiki_pack_builder::wiki_pack_format::container::write_container;
