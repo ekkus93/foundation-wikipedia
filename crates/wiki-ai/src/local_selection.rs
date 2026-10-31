@@ -33,7 +33,7 @@ pub struct LocalModelInventory {
     models: Vec<ModelInfo>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedLocalModel {
     protocol: LocalProtocol,
     endpoint: LocalEndpoint,
