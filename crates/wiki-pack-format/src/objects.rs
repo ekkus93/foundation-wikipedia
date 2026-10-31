@@ -24,7 +24,7 @@ pub enum ObjectVerifyError {
 // Detect a same-size rewrite or pathname replacement during object hashing.
 // This is defense in depth, not a substitute for exclusive ownership of the
 // private staging tree: metadata checks cannot eliminate adversarial races.
-fn same_file_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
+pub(crate) fn same_file_snapshot(before: &fs::Metadata, after: &fs::Metadata) -> bool {
     if !before.is_file() || !after.is_file() || before.len() != after.len() {
         return false;
     }

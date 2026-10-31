@@ -9,7 +9,7 @@ use crate::manifest::{
     Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES,
     MAX_PACK_OBJECTS,
 };
-use crate::objects::{verify_manifest_directory, ObjectVerifyError};
+use crate::objects::{same_file_snapshot, verify_manifest_directory, ObjectVerifyError};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
@@ -58,6 +58,15 @@ fn private_root(root: &Path) -> Result<(), ExportError> {
 }
 
 fn hash_object(path: &Path) -> Result<(u64, String), ExportError> {
+    hash_object_with_after_read(path, || {})
+}
+
+// The injection seam makes a replacement *after* all bytes were read
+// reproducible in tests, without scheduling an unreliable racing thread.
+fn hash_object_with_after_read(
+    path: &Path,
+    after_read: impl FnOnce(),
+) -> Result<(u64, String), ExportError> {
     let before = fs::symlink_metadata(path)?;
     if !before.is_file() || before.file_type().is_symlink() {
         return Err(ExportError::InvalidTree);
@@ -74,14 +83,7 @@ fn hash_object(path: &Path) -> Result<(u64, String), ExportError> {
     }
     let mut file = File::open(path)?;
     let opened = file.metadata()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if before.ino() != opened.ino() || before.dev() != opened.dev() || opened.nlink() != 1 {
-            return Err(ExportError::InvalidTree);
-        }
-    }
-    if opened.len() != before.len() {
+    if !same_file_snapshot(&before, &opened) {
         return Err(ExportError::InvalidTree);
     }
     let mut hash = Sha256::new();
@@ -104,7 +106,14 @@ fn hash_object(path: &Path) -> Result<(u64, String), ExportError> {
         }
         hash.update(&buffer[..n]);
     }
-    if total != before.len() || file.metadata()?.len() != total {
+    after_read();
+    let after = file.metadata()?;
+    let path_after = fs::symlink_metadata(path)?;
+    if total != before.len()
+        || !same_file_snapshot(&opened, &after)
+        || path_after.file_type().is_symlink()
+        || !same_file_snapshot(&after, &path_after)
+    {
         return Err(ExportError::InvalidTree);
     }
     Ok((total, format!("{:x}", hash.finalize())))
@@ -246,8 +255,24 @@ pub fn write_custom_tree<W: Write>(
     verify_manifest_directory(manifest, root).map_err(ExportError::Verify)?;
     write_container(output, manifest, |object, writer| {
         let path = root.join(&object.path);
-        let mut source = File::open(path)?;
+        let before = fs::symlink_metadata(&path)?;
+        if !before.is_file() || before.file_type().is_symlink() {
+            return Err(io::Error::other("export source is not a regular file"));
+        }
+        let mut source = File::open(&path)?;
+        let opened = source.metadata()?;
+        if !same_file_snapshot(&before, &opened) {
+            return Err(io::Error::other("export source changed before reading"));
+        }
         io::copy(&mut source, writer)?;
+        let after = source.metadata()?;
+        let path_after = fs::symlink_metadata(&path)?;
+        if path_after.file_type().is_symlink()
+            || !same_file_snapshot(&opened, &after)
+            || !same_file_snapshot(&after, &path_after)
+        {
+            return Err(io::Error::other("export source changed while reading"));
+        }
         Ok(())
     })?;
     Ok(())
@@ -312,6 +337,62 @@ mod tests {
             write_custom_tree(&root, &manifest, &mut Vec::new()),
             Err(ExportError::Verify(ObjectVerifyError::HashMismatch(_)))
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inventory_rejects_same_size_replacement_after_complete_read() {
+        let root = root();
+        let object = root.join("article.cbor");
+        let replacement = root.join("old-object");
+        fs::write(&object, b"same bytes").unwrap();
+        let result = hash_object_with_after_read(&object, || {
+            fs::rename(&object, &replacement).unwrap();
+            fs::write(&object, b"same bytes").unwrap();
+        });
+        assert!(matches!(result, Err(ExportError::InvalidTree)));
+        assert_eq!(fs::read(&object).unwrap(), b"same bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_rejects_same_digest_source_replacement_during_stream() {
+        struct ReplacingWriter {
+            payload: Vec<u8>,
+            source: PathBuf,
+            replaced: bool,
+        }
+        impl Write for ReplacingWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.payload.extend_from_slice(bytes);
+                if bytes == b"same bytes" && !self.replaced {
+                    self.replaced = true;
+                    fs::rename(&self.source, self.source.with_extension("old")).unwrap();
+                    fs::write(&self.source, b"same bytes").unwrap();
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let root = root();
+        let object = root.join("article.cbor");
+        fs::write(&object, b"same bytes").unwrap();
+        let manifest =
+            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math").unwrap();
+        let mut output = ReplacingWriter {
+            payload: Vec::new(),
+            source: object,
+            replaced: false,
+        };
+        assert!(matches!(
+            write_custom_tree(&root, &manifest, &mut output),
+            Err(ExportError::Envelope(ContainerError::Io(_)))
+        ));
+        assert!(output.replaced, "the test must replace the source after writing its bytes");
         fs::remove_dir_all(root).unwrap();
     }
 
