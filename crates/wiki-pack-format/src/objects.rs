@@ -244,7 +244,10 @@ mod tests {
         let path = root.join("record.pack");
         fs::write(&path, b"AAAA").unwrap();
         let before = fs::symlink_metadata(&path).unwrap();
-        assert!(same_file_snapshot(&before, &fs::symlink_metadata(&path).unwrap()));
+        assert!(same_file_snapshot(
+            &before,
+            &fs::symlink_metadata(&path).unwrap()
+        ));
 
         std::thread::sleep(std::time::Duration::from_millis(5));
         fs::write(&path, b"BBBB").unwrap();
