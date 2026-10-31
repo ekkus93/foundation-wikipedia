@@ -9,8 +9,8 @@ use crate::local_endpoint::{EndpointError, LocalEndpoint};
 use crate::local_http::LocalOpenAiProvider;
 use crate::ollama::LocalOllamaProvider;
 use crate::{
-    stream_selected, CancellationToken, LlmProvider, Locality, Message, ModelInfo, OutboundPolicy,
-    ProviderError, StreamEvent, GenerateRequest,
+    stream_selected, CancellationToken, GenerateRequest, LlmProvider, Locality, Message, ModelInfo,
+    OutboundPolicy, ProviderError, StreamEvent,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,7 +155,9 @@ mod tests {
             let mut seen = Vec::new();
             for response in responses {
                 let (mut socket, _) = listener.accept().unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
                 let mut data = Vec::new();
                 loop {
                     let mut buffer = [0; 4096];
@@ -166,7 +168,8 @@ mod tests {
                         continue;
                     };
                     let header = std::str::from_utf8(&data[..split]).unwrap();
-                    let length = header.lines()
+                    let length = header
+                        .lines()
                         .find_map(|line| line.strip_prefix("Content-Length: "))
                         .map(|number| number.trim().parse::<usize>().unwrap())
                         .unwrap_or(0);
@@ -186,7 +189,8 @@ mod tests {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
-        ).into_bytes()
+        )
+        .into_bytes()
     }
 
     fn messages() -> Vec<Message> {
@@ -213,22 +217,27 @@ mod tests {
         assert_eq!(inventory.protocol(), LocalProtocol::Ollama);
         assert_eq!(inventory.endpoint(), url);
         assert_eq!(inventory.models().len(), 2);
-        assert_eq!(inventory.select("Qwen3:8b").unwrap_err(), SelectionError::UnknownModel);
+        assert_eq!(
+            inventory.select("Qwen3:8b").unwrap_err(),
+            SelectionError::UnknownModel
+        );
         let selected = inventory.select("qwen3:8b").unwrap();
         assert_eq!(selected.model(), "qwen3:8b");
         assert_eq!(selected.endpoint(), url);
         assert_eq!(selected.protocol(), LocalProtocol::Ollama);
         let mut events = Vec::new();
-        selected.stream(
-            &messages(),
-            64,
-            &CancellationToken::default(),
-            OutboundPolicy::AllowLocalEndpoints,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
-        ).unwrap();
+        selected
+            .stream(
+                &messages(),
+                64,
+                &CancellationToken::default(),
+                OutboundPolicy::AllowLocalEndpoints,
+                &mut |event| {
+                    events.push(event);
+                    Ok(())
+                },
+            )
+            .unwrap();
         assert_eq!(events[0], StreamEvent::TextDelta("Gravity".into()));
         assert!(matches!(events[1], StreamEvent::Completed { .. }));
         let requests = server.join().unwrap();
@@ -248,7 +257,10 @@ mod tests {
         assert_eq!(inventory.protocol(), LocalProtocol::OpenAiCompatible);
         assert_eq!(inventory.models()[0].context_window, Some(8192));
         assert_eq!(inventory.select("modèle-1").unwrap().model(), "modèle-1");
-        assert_eq!(inventory.select("fallback-cloud"), Err(SelectionError::UnknownModel));
+        assert_eq!(
+            inventory.select("fallback-cloud"),
+            Err(SelectionError::UnknownModel)
+        );
         let selected = inventory.select("modèle-1").unwrap();
         assert_eq!(
             selected.stream(
@@ -267,11 +279,15 @@ mod tests {
     fn endpoint_rejection_and_https_unsupported_never_trigger_cloud_fallback() {
         assert!(matches!(
             discover_local_models(LocalProtocol::Ollama, "https://api.openai.com/v1"),
-            Err(SelectionError::InvalidEndpoint(EndpointError::UnapprovedHost))
+            Err(SelectionError::InvalidEndpoint(
+                EndpointError::UnapprovedHost
+            ))
         ));
         assert!(matches!(
             discover_local_models(LocalProtocol::Ollama, "http://example.com"),
-            Err(SelectionError::InvalidEndpoint(EndpointError::UnapprovedHost))
+            Err(SelectionError::InvalidEndpoint(
+                EndpointError::UnapprovedHost
+            ))
         ));
         assert!(matches!(
             discover_local_models(LocalProtocol::Ollama, "https://127.0.0.1:11434"),
