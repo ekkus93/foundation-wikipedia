@@ -24,6 +24,11 @@ pub enum ActivationError {
     InvalidSnapshotId,
     CandidateNotStaged,
     CorruptCurrentPointer,
+    /// The new selector was published but rollback durability is uncertain.
+    RollbackFailed {
+        commit_error: io::Error,
+        rollback_error: io::Error,
+    },
 }
 
 impl From<io::Error> for ActivationError {
@@ -229,6 +234,16 @@ impl ActiveSnapshotStore {
         id: &str,
         precommit: impl FnOnce() -> Result<(), ActivationError>,
     ) -> Result<(), ActivationError> {
+        self.switch_with_precommit_and_sync(id, precommit, |root| File::open(root)?.sync_all())
+    }
+
+    // Injectable durability boundary for deterministic post-rename failure tests.
+    fn switch_with_precommit_and_sync(
+        &self,
+        id: &str,
+        precommit: impl FnOnce() -> Result<(), ActivationError>,
+        mut sync_parent: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), ActivationError> {
         if !safe_id(id) {
             return Err(ActivationError::InvalidSnapshotId);
         }
@@ -236,6 +251,8 @@ impl ActiveSnapshotStore {
         if !self.candidate_is_staged(id)? {
             return Err(ActivationError::CandidateNotStaged);
         }
+        // Never replace a corrupt selector: its previous state cannot be restored.
+        let previous = self.current()?;
         // A previous crash may leave a private temporary path behind.
         // Never truncate or adopt it: pick a fresh create_new name instead.
         let (temp, mut file) = loop {
@@ -254,16 +271,60 @@ impl ActiveSnapshotStore {
                 Err(error) => return Err(ActivationError::Io(error)),
             }
         };
+        let mut rollback_temp = None;
         let result = (|| -> Result<(), ActivationError> {
             file.write_all(id.as_bytes())?;
             file.write_all(b"\n")?;
             file.sync_all()?;
             drop(file);
+
+            // Keep a synced copy of the old selector so an unsuccessful
+            // directory sync cannot silently leave the new selector active.
+            if let Some(previous) = &previous {
+                let (path, mut backup) = loop {
+                    let candidate = self.root.join(format!(
+                        ".previous.{}.{}.tmp",
+                        std::process::id(),
+                        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+                    ));
+                    match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+                        Ok(file) => break (candidate, file),
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                        Err(error) => return Err(ActivationError::Io(error)),
+                    }
+                };
+                rollback_temp = Some(path);
+                backup.write_all(previous.as_bytes())?;
+                backup.write_all(b"\n")?;
+                backup.sync_all()?;
+                drop(backup);
+                sync_parent(&self.root)?;
+            }
+
             precommit()?;
-            fs::rename(&temp, self.root.join("current"))?;
-            File::open(&self.root)?.sync_all()?;
+            let current = self.root.join("current");
+            fs::rename(&temp, &current)?;
+            if let Err(commit_error) = sync_parent(&self.root) {
+                let restore = match &rollback_temp {
+                    Some(path) => fs::rename(path, &current),
+                    None => fs::remove_file(&current),
+                };
+                let restore = restore.and_then(|()| sync_parent(&self.root));
+                return match restore {
+                    Ok(()) => Err(ActivationError::Io(commit_error)),
+                    Err(rollback_error) => Err(ActivationError::RollbackFailed {
+                        commit_error,
+                        rollback_error,
+                    }),
+                };
+            }
             Ok(())
         })();
+        // An orphan rollback file is never an active selector. Cleanup is
+        // best-effort; durability of the active selector is already checked.
+        if let Some(path) = rollback_temp {
+            let _ = fs::remove_file(path);
+        }
         if result.is_err() {
             let _ = fs::remove_file(temp);
         }
@@ -662,6 +723,101 @@ mod interruption_tests {
             .count();
         assert_eq!(leftovers, 0);
         assert!(root.join("snapshots/new/manifest.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn post_rename_sync_failure_restores_old_or_absent_selector() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        for had_previous in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "wiki-selector-rollback-{}-{stamp}-{had_previous}",
+                std::process::id()
+            ));
+            for id in ["old", "new"] {
+                let path = root.join("snapshots").join(id);
+                fs::create_dir_all(&path).unwrap();
+                fs::write(path.join("manifest.json"), "{}").unwrap();
+            }
+            let store = ActiveSnapshotStore::new(&root);
+            if had_previous {
+                store.switch_to_prevalidated("old").unwrap();
+            }
+            let mut calls = 0;
+            let fail_at = if had_previous { 2 } else { 1 };
+            let result = store.switch_with_precommit_and_sync("new", || Ok(()), |path| {
+                calls += 1;
+                if calls == fail_at {
+                    Err(io::Error::other("injected post-rename fsync failure"))
+                } else {
+                    File::open(path)?.sync_all()
+                }
+            });
+            assert!(matches!(result, Err(ActivationError::Io(_))));
+            assert_eq!(calls, fail_at + 1);
+            assert_eq!(store.current().unwrap(), had_previous.then(|| "old".to_owned()));
+            assert_eq!(root.join("current").exists(), had_previous);
+            assert_eq!(
+                fs::read_dir(&root)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        let name = entry.file_name();
+                        let name = name.to_string_lossy();
+                        name.starts_with(".current.") || name.starts_with(".previous.")
+                    })
+                    .count(),
+                0
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_rollback_sync_reports_uncertain_durability() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-selector-uncertain-{}-{stamp}", std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let path = root.join("snapshots").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("manifest.json"), "{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let mut calls = 0;
+        let result = store.switch_with_precommit_and_sync("new", || Ok(()), |path| {
+            calls += 1;
+            if calls >= 2 {
+                Err(io::Error::other("injected directory durability failure"))
+            } else {
+                File::open(path)?.sync_all()
+            }
+        });
+        assert!(matches!(result, Err(ActivationError::RollbackFailed { .. })));
+        assert_eq!(calls, 3);
+        // Logical rollback succeeded, but power-loss survival is not proven.
+        assert_eq!(store.current().unwrap(), Some("old".into()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_selector_is_not_overwritten_without_explicit_recovery() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-selector-corrupt-{}-{stamp}", std::process::id()
+        ));
+        let path = root.join("snapshots/new");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("manifest.json"), "{}").unwrap();
+        fs::write(root.join("current"), b"../unsafe\n").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        assert!(matches!(
+            store.switch_to_prevalidated("new"),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        assert_eq!(fs::read(root.join("current")).unwrap(), b"../unsafe\n");
         fs::remove_dir_all(root).unwrap();
     }
 
