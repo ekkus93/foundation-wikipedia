@@ -23,6 +23,7 @@ use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, wri
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Origin};
+use wiki_pack_builder::wiki_pack_format::objects::verify_manifest_directory;
 use wiki_pack_builder::wiki_pack_format::stage::{
     stage_container, stage_container_stream_with_budget, stage_container_with_budget,
 };
@@ -30,6 +31,7 @@ use wiki_pack_builder::wiki_pack_format::stage::{
 fn usage() {
     println!("Foundation Wikipedia pack CLI (provisional)");
     println!("Usage: wiki-pack verify [--json] <file.wpack> [max-input-bytes]");
+    println!("       wiki-pack verify-staged [--json] <file.wpack> <staged-directory> [max-input-bytes]");
     println!("       wiki-pack inspect [--json] <file.wpack> [max-input-bytes]");
     println!("       wiki-pack media-maintenance <--audit-unbound|--bind-registry|--dry-run|--confirm-delete> <media-root> <existing-registry.sqlite> <max-registered> <max-scanned>");
     println!("       wiki-pack media-maintenance --run-if-due <media-root> <existing-registry.sqlite> <max-registered> <max-scanned> <interval-seconds>");
@@ -144,6 +146,64 @@ fn inspect_file(
     }
     .map_err(|error| format!("envelope integrity verification failed: {error:?}"))?;
     print_inspection(manifest, detailed, json_output);
+    Ok(())
+}
+
+/// Reverify a private staged object tree against a fresh validated archive.
+/// The caller must ensure that the staging tree is not concurrently mutable.
+/// This does NOT install packs, authenticate publishers or qualify offline media.
+fn verify_staged_archive(
+    archive: PathBuf,
+    staged: PathBuf,
+    max_input_bytes: Option<u64>,
+    json_output: bool,
+) -> Result<(), String> {
+    if json_output && staged.to_str().is_none() {
+        return Err("JSON staged directory path must be UTF-8".into());
+    }
+    let file = File::open(archive).map_err(|error| format!("cannot open input: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let manifest = match max_input_bytes {
+        Some(limit) => verify_container_with_budget(&mut reader, limit),
+        None => verify_container(&mut reader),
+    }
+    .map_err(|error| format!("archive integrity verification failed: {error:?}"))?;
+    let measured = verify_manifest_directory(&manifest, &staged)
+        .map_err(|error| format!("staged object verification failed: {error:?}"))?;
+    if json_output {
+        let (origin, identity) = match &manifest.origin {
+            Origin::Custom { definition_id } => ("custom", definition_id.as_str()),
+            Origin::Official { publisher } => ("official", publisher.as_str()),
+        };
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": 1,
+                "status": "untrusted_staged_tree_verification",
+                "manifest_sha256": manifest_transcript_sha256(&manifest),
+                "staging_path": staged.to_str().expect("validated UTF-8 staged path"),
+                "integrity_verified": true,
+                "staged_tree_verified": true,
+                "publisher_signature_verified": false,
+                "offline_media_complete": false,
+                "installed": false,
+                "pack_id": manifest.pack_id,
+                "project": manifest.project,
+                "snapshot": manifest.snapshot,
+                "object_count": manifest.objects.len(),
+                "measured_payload_bytes": measured,
+                "claimed_origin": origin,
+                "claimed_origin_identity": identity,
+            })
+        );
+    } else {
+        println!(
+            "Archive and staged object integrity verified: {} objects, {measured} bytes",
+            manifest.objects.len()
+        );
+        println!("Status: UNTRUSTED STAGING ONLY; pack NOT INSTALLED");
+        println!("Publisher signature: NOT VERIFIED; required offline media: NOT VERIFIED");
+    }
     Ok(())
 }
 
@@ -1013,6 +1073,45 @@ fn main() {
                 identity[2],
                 identity[3],
                 PathBuf::from(&fields[5]),
+                json_output,
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("verify-staged") => {
+            let fields: Vec<OsString> = args.collect();
+            let json_output = fields
+                .first()
+                .is_some_and(|field| field.as_os_str() == OsStr::new("--json"));
+            let values = if json_output {
+                &fields[1..]
+            } else {
+                &fields[..]
+            };
+            if values.len() != 2 && values.len() != 3 {
+                eprintln!("verify-staged requires an archive, staged directory, and optional decimal byte budget");
+                if !json_output {
+                    usage();
+                }
+                std::process::exit(2);
+            }
+            let max_input_bytes = if values.len() == 3 {
+                let Some(limit) = values[2]
+                    .to_str()
+                    .and_then(|value| value.parse::<u64>().ok())
+                else {
+                    eprintln!("Input byte budget must be a decimal integer");
+                    std::process::exit(2);
+                };
+                Some(limit)
+            } else {
+                None
+            };
+            if let Err(error) = verify_staged_archive(
+                PathBuf::from(&values[0]),
+                PathBuf::from(&values[1]),
+                max_input_bytes,
                 json_output,
             ) {
                 eprintln!("{error}");
