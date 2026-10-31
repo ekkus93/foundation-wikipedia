@@ -116,7 +116,9 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let handle = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
             let mut request = [0u8; 4096];
             let len = socket.read(&mut request).unwrap();
             socket.write_all(&response).unwrap();
@@ -152,7 +154,10 @@ mod tests {
                 }
             ]
         );
-        assert!(handle.join().unwrap().starts_with("GET /api/tags HTTP/1.1\r\n"));
+        assert!(handle
+            .join()
+            .unwrap()
+            .starts_with("GET /api/tags HTTP/1.1\r\n"));
     }
 
     #[test]
@@ -167,7 +172,11 @@ mod tests {
             r#"{"models":[{"name":""}]}"#,
         ] {
             let value: Value = serde_json::from_str(json).unwrap();
-            assert_eq!(parse_tags(&value), Err(ProviderError::InvalidResponse), "{json}");
+            assert_eq!(
+                parse_tags(&value),
+                Err(ProviderError::InvalidResponse),
+                "{json}"
+            );
         }
         let large = serde_json::json!({
             "models": (0..=MAX_MODELS).map(|i| serde_json::json!({"name": format!("model-{i}")})).collect::<Vec<_>>()
@@ -220,9 +229,8 @@ mod tests {
     #[test]
     fn native_ollama_never_downgrades_https_or_public_hosts() {
         assert!(LocalEndpoint::parse("http://api.ollama.com").is_err());
-        let provider = LocalOllamaProvider::new(
-            LocalEndpoint::parse("https://127.0.0.1:443").unwrap(),
-        );
+        let provider =
+            LocalOllamaProvider::new(LocalEndpoint::parse("https://127.0.0.1:443").unwrap());
         assert!(!provider.capabilities().discover_models);
         assert_eq!(provider.list_models(), Err(ProviderError::Unsupported));
     }
