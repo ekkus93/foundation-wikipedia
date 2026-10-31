@@ -485,7 +485,8 @@ mod tests {
             fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
                 if self.seeks > 1 {
                     let remaining = self.limit.saturating_sub(self.input.position() as usize);
-                    return self.input.read(&mut bytes[..bytes.len().min(remaining)]);
+                    let count = bytes.len().min(remaining);
+                    return self.input.read(&mut bytes[..count]);
                 }
                 self.input.read(bytes)
             }
@@ -512,10 +513,8 @@ mod tests {
             }],
         };
         let mut bytes = Vec::new();
-        crate::container::write_container(&mut bytes, &manifest, |_, out| {
-            out.write_all(payload)
-        })
-        .unwrap();
+        crate::container::write_container(&mut bytes, &manifest, |_, out| out.write_all(payload))
+            .unwrap();
         let header_end = 12 + manifest.identity_transcript().unwrap().len();
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -553,12 +552,10 @@ mod tests {
         let root = parent.join("incomplete");
         create_private_dir(&root).unwrap();
         fs::write(root.join("partial"), b"partial").unwrap();
-        let error = rollback_incomplete_stage(
-            &parent,
-            &root,
-            ContainerError::InvalidTranscript,
-            |_| Err(io::Error::other("injected parent sync failure")),
-        );
+        let error =
+            rollback_incomplete_stage(&parent, &root, ContainerError::InvalidTranscript, |_| {
+                Err(io::Error::other("injected parent sync failure"))
+            });
         match error {
             ContainerError::Io(error) => {
                 let message = error.to_string();
