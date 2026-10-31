@@ -168,7 +168,7 @@ mod tests {
             r#"{"models":[{"name":"a"},{"name":"a"}]}"#,
             r#"{"models":[{"name":"a","model":"b"}]}"#,
             r#"{"models":[{"name":" a"}]}"#,
-            r#"{"models":[{"name":"a\\nb"}]}"#,
+            r#"{"models":[{"name":"a\nb"}]}"#,
             r#"{"models":[{"name":""}]}"#,
         ] {
             let value: Value = serde_json::from_str(json).unwrap();
