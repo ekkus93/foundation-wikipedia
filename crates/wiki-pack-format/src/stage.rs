@@ -87,6 +87,29 @@ fn finalize_staged_tree(
     Ok(())
 }
 
+// A failed second pass may have created and synced some object files. Make
+// removal of that incomplete staging tree durable before returning the
+// original verification/copy error. Never report ordinary input failure while
+// knowingly leaving a discoverable incomplete stage after a crash.
+fn rollback_incomplete_stage(
+    parent: &Path,
+    root: &Path,
+    cause: ContainerError,
+    mut sync_parent: impl FnMut(&Path) -> io::Result<()>,
+) -> ContainerError {
+    if let Err(error) = fs::remove_dir_all(root) {
+        return ContainerError::Io(io::Error::other(format!(
+            "staging failed: {cause:?}; rollback removal failed: {error}"
+        )));
+    }
+    if let Err(error) = sync_parent(parent) {
+        return ContainerError::Io(io::Error::other(format!(
+            "staging failed: {cause:?}; rollback sync failed: {error}"
+        )));
+    }
+    cause
+}
+
 /// Verify the entire input first, then stage into a newly created private
 /// directory. A second complete directory digest check prevents a changed
 /// input between passes from being accepted. No existing files are overwritten.
@@ -201,8 +224,9 @@ fn stage_container_impl<R: Read + Seek>(
         Ok(())
     })();
     if let Err(error) = result {
-        fs::remove_dir_all(&root)?;
-        return Err(error);
+        return Err(rollback_incomplete_stage(parent, &root, error, |path| {
+            File::open(path)?.sync_all()
+        }));
     }
     finalize_staged_tree(parent, &root, |path| File::open(path)?.sync_all())?;
     Ok((manifest, root))
@@ -304,7 +328,12 @@ pub fn stage_container_stream_with_budget<R: Read>(
     // rather than reporting an error while leaving an apparently usable pack.
     if let Err(error) = fs::remove_file(spool_path) {
         if let Ok((_, root)) = &result {
-            fs::remove_dir_all(root)?;
+            return Err(rollback_incomplete_stage(
+                parent,
+                root,
+                ContainerError::Io(error),
+                |path| File::open(path)?.sync_all(),
+            ));
         }
         return Err(ContainerError::Io(error));
     }
@@ -442,6 +471,103 @@ mod tests {
         ));
         assert!(!parent.join("swapped").exists());
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn failed_second_pass_removes_partial_stage_and_preserves_error() {
+        struct TruncatingSecondPass {
+            input: io::Cursor<Vec<u8>>,
+            seeks: usize,
+            limit: usize,
+        }
+        impl Read for TruncatingSecondPass {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                if self.seeks > 1 {
+                    let remaining = self.limit.saturating_sub(self.input.position() as usize);
+                    return self.input.read(&mut bytes[..bytes.len().min(remaining)]);
+                }
+                self.input.read(bytes)
+            }
+        }
+        impl Seek for TruncatingSecondPass {
+            fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+                self.seeks += 1;
+                self.input.seek(pos)
+            }
+        }
+        let payload = b"offline mandatory figure";
+        let manifest = Manifest {
+            version: FORMAT_VERSION,
+            pack_id: "rollback".into(),
+            project: "enwiki".into(),
+            snapshot: "20261031".into(),
+            origin: Origin::Custom {
+                definition_id: "topic".into(),
+            },
+            objects: vec![Object {
+                path: "media/figure.svg".into(),
+                sha256: crate::sha256_hex(payload),
+                bytes: payload.len() as u64,
+            }],
+        };
+        let mut bytes = Vec::new();
+        crate::container::write_container(&mut bytes, &manifest, |_, out| {
+            out.write_all(payload)
+        })
+        .unwrap();
+        let header_end = 12 + manifest.identity_transcript().unwrap().len();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stage-second-pass-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let mut input = TruncatingSecondPass {
+            input: io::Cursor::new(bytes),
+            seeks: 0,
+            limit: header_end + 1,
+        };
+        assert!(matches!(
+            stage_container(&mut input, &parent, "incomplete"),
+            Err(ContainerError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof
+        ));
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn rollback_sync_failure_reports_both_errors_after_removing_stage() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "wiki-stage-rollback-sync-{}-{stamp}",
+            std::process::id()
+        ));
+        create_private_dir(&parent).unwrap();
+        let root = parent.join("incomplete");
+        create_private_dir(&root).unwrap();
+        fs::write(root.join("partial"), b"partial").unwrap();
+        let error = rollback_incomplete_stage(
+            &parent,
+            &root,
+            ContainerError::InvalidTranscript,
+            |_| Err(io::Error::other("injected parent sync failure")),
+        );
+        match error {
+            ContainerError::Io(error) => {
+                let message = error.to_string();
+                assert!(message.contains("InvalidTranscript"));
+                assert!(message.contains("injected parent sync failure"));
+            }
+            other => panic!("expected rollback sync error: {other:?}"),
+        }
+        assert!(!root.exists());
         fs::remove_dir_all(parent).unwrap();
     }
 
