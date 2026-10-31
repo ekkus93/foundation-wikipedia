@@ -58,13 +58,34 @@ pub struct GenerateRequest {
     pub max_output_tokens: u32,
 }
 
+/// Validate a user-visible model identifier at both the discovery and
+/// invocation boundaries. Bidi controls and invisible formatting characters
+/// can make the selected model look different from the model sent on the wire.
+pub(crate) fn valid_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.trim() == id
+        && id.len() <= 256
+        && !id.chars().any(|c| {
+            c.is_control()
+                || matches!(
+                    c,
+                    '\u{00ad}'
+                        | '\u{034f}'
+                        | '\u{061c}'
+                        | '\u{180e}'
+                        | '\u{200b}'..='\u{200f}'
+                        | '\u{2028}'..='\u{202e}'
+                        | '\u{2060}'..='\u{206f}'
+                        | '\u{fe00}'..='\u{fe0f}'
+                        | '\u{feff}'
+                        | '\u{e0100}'..='\u{e01ef}'
+                )
+        })
+}
+
 impl GenerateRequest {
     pub fn validate(&self) -> Result<(), ProviderError> {
-        if self.model.is_empty()
-            || self.model.trim() != self.model
-            || self.model.len() > 256
-            || self.model.chars().any(char::is_control)
-            || self.messages.is_empty()
+        if !valid_model_id(&self.model) || self.messages.is_empty()
             || self.max_output_tokens == 0
             || self
                 .messages
@@ -504,6 +525,27 @@ mod tests {
             Err(ProviderError::InvalidResponse)
         );
         assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn model_ids_reject_invisible_and_directional_spoofing_at_invocation() {
+        for id in [
+            "qwen\u{202e}3:8b",
+            "qwen\u{200b}3:8b",
+            "qwen\u{2066}3:8b\u{2069}",
+            "qwen\u{2028}3:8b",
+            "qwen\u{fe0f}3:8b",
+            "qwen\u{e0100}3:8b",
+        ] {
+            let mut request = request();
+            request.model = id.into();
+            assert_eq!(request.validate(), Err(ProviderError::InvalidRequest), "{id:?}");
+        }
+        for id in ["qwen3:8b", "org/model:Q4_K_M", "modèle-1"] {
+            let mut request = request();
+            request.model = id.into();
+            assert_eq!(request.validate(), Ok(()), "{id:?}");
+        }
     }
 
     #[test]

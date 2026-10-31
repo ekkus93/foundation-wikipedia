@@ -11,8 +11,8 @@ use serde_json::Value;
 use crate::local_endpoint::LocalEndpoint;
 use crate::local_http::fetch_local_json;
 use crate::{
-    CancellationToken, GenerateRequest, LlmProvider, Locality, ModelInfo, ProviderCapabilities,
-    ProviderError, StreamEvent,
+    valid_model_id, CancellationToken, GenerateRequest, LlmProvider, Locality, ModelInfo,
+    ProviderCapabilities, ProviderError, StreamEvent,
 };
 
 const MAX_MODELS: usize = 256;
@@ -83,11 +83,7 @@ fn parse_tags(json: &Value) -> Result<Vec<ModelInfo>, ProviderError> {
             .get("name")
             .and_then(Value::as_str)
             .ok_or(ProviderError::InvalidResponse)?;
-        if name.is_empty()
-            || name.trim() != name
-            || name.len() > 256
-            || name.bytes().any(|b| b.is_ascii_control())
-            || !seen.insert(name)
+        if !valid_model_id(name) || !seen.insert(name)
         {
             return Err(ProviderError::InvalidResponse);
         }
@@ -182,6 +178,16 @@ mod tests {
             "models": (0..=MAX_MODELS).map(|i| serde_json::json!({"name": format!("model-{i}")})).collect::<Vec<_>>()
         });
         assert_eq!(parse_tags(&large), Err(ProviderError::InvalidResponse));
+    }
+
+    #[test]
+    fn native_tags_reject_invisible_and_directional_model_aliases() {
+        for name in ["qwen\u{202e}3:8b", "qwen\u{200b}3:8b", "qwen\u{2066}3:8b"] {
+            let value = serde_json::json!({"models": [{"name": name}]});
+            assert_eq!(parse_tags(&value), Err(ProviderError::InvalidResponse), "{name:?}");
+        }
+        let valid = serde_json::json!({"models": [{"name": "modèle-1"}]});
+        assert_eq!(parse_tags(&valid).unwrap()[0].id, "modèle-1");
     }
 
     #[test]

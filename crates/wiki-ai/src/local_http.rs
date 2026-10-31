@@ -14,8 +14,8 @@ use serde_json::Value;
 
 use crate::local_endpoint::LocalEndpoint;
 use crate::{
-    CancellationToken, GenerateRequest, LlmProvider, Locality, ModelInfo, ProviderCapabilities,
-    ProviderError, StreamEvent,
+    valid_model_id, CancellationToken, GenerateRequest, LlmProvider, Locality, ModelInfo,
+    ProviderCapabilities, ProviderError, StreamEvent,
 };
 
 const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -115,11 +115,7 @@ fn parse_openai_models(json: &Value) -> Result<Vec<ModelInfo>, ProviderError> {
             .get("id")
             .and_then(Value::as_str)
             .ok_or(ProviderError::InvalidResponse)?;
-        if id.trim() != id
-            || id.is_empty()
-            || id.len() > 256
-            || id.bytes().any(|b| b.is_ascii_control())
-            || !seen.insert(id)
+        if !valid_model_id(id) || !seen.insert(id)
         {
             return Err(ProviderError::InvalidResponse);
         }
@@ -329,6 +325,20 @@ mod tests {
             read_bounded_response(&mut valid, Instant::now() + TIMEOUT),
             Ok(b"response".to_vec())
         );
+    }
+
+    #[test]
+    fn openai_inventory_rejects_invisible_and_bidi_model_aliases() {
+        for id in ["qwen\u{202e}3", "qwen\u{200b}3", "qwen\u{2066}3"] {
+            let value = serde_json::json!({"data": [{"id": id}]});
+            assert_eq!(
+                parse_openai_models(&value),
+                Err(ProviderError::InvalidResponse),
+                "{id:?}"
+            );
+        }
+        let valid = serde_json::json!({"data": [{"id": "modèle-1"}]});
+        assert_eq!(parse_openai_models(&valid).unwrap()[0].id, "modèle-1");
     }
 
     #[test]
