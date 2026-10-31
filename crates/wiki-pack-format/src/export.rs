@@ -392,7 +392,10 @@ mod tests {
             write_custom_tree(&root, &manifest, &mut output),
             Err(ExportError::Envelope(ContainerError::Io(_)))
         ));
-        assert!(output.replaced, "the test must replace the source after writing its bytes");
+        assert!(
+            output.replaced,
+            "the test must replace the source after writing its bytes"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
