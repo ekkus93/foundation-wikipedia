@@ -126,11 +126,8 @@ pub(crate) fn fetch_local_json_cancellable(
     }
     // A peer that drips one byte before every socket timeout must not
     // keep model discovery alive indefinitely.
-    let response = read_bounded_response_cancellable(
-        &mut socket,
-        Instant::now() + TIMEOUT,
-        cancellation,
-    )?;
+    let response =
+        read_bounded_response_cancellable(&mut socket, Instant::now() + TIMEOUT, cancellation)?;
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
@@ -180,6 +177,7 @@ fn parse_openai_models(json: &Value) -> Result<Vec<ModelInfo>, ProviderError> {
 /// Enforce both an absolute response deadline and an aggregate byte cap.
 /// Callers configure a short read timeout so a stalled socket can recheck
 /// the deadline instead of blocking past it indefinitely.
+#[cfg(test)]
 fn read_bounded_response<R: Read>(
     reader: &mut R,
     deadline: Instant,
@@ -207,7 +205,7 @@ fn read_bounded_response_cancellable<R: Read>(
                     return Err(ProviderError::Cancelled);
                 }
                 return Ok(response);
-            },
+            }
             Ok(n) => {
                 if response
                     .len()
@@ -371,9 +369,11 @@ mod tests {
     fn cancellable_discovery_aborts_a_stalled_inventory_get() {
         use std::sync::mpsc;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = LocalEndpoint::parse(
-            &format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port())
-        ).unwrap();
+        let endpoint = LocalEndpoint::parse(&format!(
+            "http://127.0.0.1:{}",
+            listener.local_addr().unwrap().port()
+        ))
+        .unwrap();
         let (ready_tx, ready_rx) = mpsc::channel();
         let server = thread::spawn(move || {
             use std::io::Read;
@@ -381,7 +381,9 @@ mod tests {
             socket.set_read_timeout(Some(TIMEOUT)).unwrap();
             let mut request = [0u8; 512];
             let count = socket.read(&mut request).unwrap();
-            ready_tx.send(String::from_utf8_lossy(&request[..count]).into_owned()).unwrap();
+            ready_tx
+                .send(String::from_utf8_lossy(&request[..count]).into_owned())
+                .unwrap();
             // Keep the connection open without completing the HTTP response.
             thread::sleep(Duration::from_millis(800));
         });

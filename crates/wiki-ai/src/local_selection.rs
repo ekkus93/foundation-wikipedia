@@ -69,9 +69,14 @@ pub fn discover_local_models_cancellable(
         return Err(SelectionError::Provider(ProviderError::Cancelled));
     }
     let models = match protocol {
-        LocalProtocol::Ollama => crate::ollama::discover_ollama_models_cancellable(&endpoint, cancellation),
-        LocalProtocol::OpenAiCompatible => crate::local_http::discover_models_cancellable(&endpoint, cancellation),
-    }.map_err(SelectionError::Provider)?;
+        LocalProtocol::Ollama => {
+            crate::ollama::discover_ollama_models_cancellable(&endpoint, cancellation)
+        }
+        LocalProtocol::OpenAiCompatible => {
+            crate::local_http::discover_models_cancellable(&endpoint, cancellation)
+        }
+    }
+    .map_err(SelectionError::Provider)?;
     if cancellation.is_cancelled() {
         return Err(SelectionError::Provider(ProviderError::Cancelled));
     }
