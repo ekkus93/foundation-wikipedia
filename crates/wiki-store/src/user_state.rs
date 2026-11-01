@@ -1644,6 +1644,38 @@ impl UserState {
         Ok(())
     }
 
+    /// Replace a non-secret preference only if its last observed value is
+    /// still current. None requires an absent row. The SQL statement is atomic
+    /// across independent SQLite/WAL handles; a conflicting write changes nothing.
+    pub fn compare_and_swap_setting(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: &str,
+    ) -> Result<bool, UserStateError> {
+        if key == PERSONAL_GENERATION_KEY
+            || key.is_empty()
+            || key.len() > 128
+            || !key.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+            })
+            || value.len() > 4096
+            || value.contains('\0')
+            || expected.is_some_and(|old| old.len() > 4096 || old.contains('\0'))
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        let updated = self.conn.execute(
+            "INSERT INTO settings(key,value)
+             SELECT ?1,?3
+             WHERE (SELECT value FROM settings WHERE key=?1) IS ?2
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value
+             WHERE settings.value IS ?2",
+            params![key, expected, value],
+        )?;
+        Ok(updated != 0)
+    }
+
     pub fn delete_setting(&self, key: &str) -> Result<bool, UserStateError> {
         if key == PERSONAL_GENERATION_KEY
             || key.is_empty()
@@ -1687,6 +1719,50 @@ mod tests {
             project: "enwiki".into(),
             page_id: 42,
         }
+    }
+
+    #[test]
+    fn non_secret_setting_compare_and_swap_rejects_stale_cross_process_writes() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-setting-cas-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.sqlite");
+        let first = UserState::open(&path).unwrap();
+        let second = UserState::open(&path).unwrap();
+        assert!(first
+            .compare_and_swap_setting("ai.local_profiles.v2", None, "first")
+            .unwrap());
+        assert!(!second
+            .compare_and_swap_setting("ai.local_profiles.v2", None, "stale")
+            .unwrap());
+        let old = second.setting("ai.local_profiles.v2").unwrap();
+        assert_eq!(old.as_deref(), Some("first"));
+        assert!(first
+            .compare_and_swap_setting("ai.local_profiles.v2", old.as_deref(), "second")
+            .unwrap());
+        assert!(!second
+            .compare_and_swap_setting("ai.local_profiles.v2", old.as_deref(), "lost")
+            .unwrap());
+        assert_eq!(
+            first.setting("ai.local_profiles.v2").unwrap().as_deref(),
+            Some("second")
+        );
+        assert!(second
+            .compare_and_swap_setting("ai.local_profiles.v2", Some("second"), "third")
+            .unwrap());
+        assert!(matches!(
+            second.compare_and_swap_setting(PERSONAL_GENERATION_KEY, None, "7"),
+            Err(UserStateError::InvalidValue)
+        ));
+        drop(first);
+        drop(second);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
