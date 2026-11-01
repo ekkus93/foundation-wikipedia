@@ -438,7 +438,7 @@ mod citation_parser_tests {
             .unwrap()
             .unwrap();
         assert!(preview.user_message.len() <= MAX_CONTEXT_BYTES);
-        assert!(preview.evidence.len() > 0 && preview.evidence.len() < 15);
+        assert!(!preview.evidence.is_empty() && preview.evidence.len() < 15);
         assert!(!preview
             .evidence
             .iter()
