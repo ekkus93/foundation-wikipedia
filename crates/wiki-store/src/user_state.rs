@@ -49,6 +49,13 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+/// One complete, chronologically ordered question and validated answer.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ChatExchange {
+    pub question: ChatMessage,
+    pub answer: ChatMessage,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuilderJob {
     pub id: String,
@@ -1573,6 +1580,36 @@ impl UserState {
         Ok(messages)
     }
 
+    /// Return only complete, recent user/assistant pairs for chat replay.
+    ///
+    /// A message-count window can begin at an assistant response when the
+    /// caller requests an odd number of rows. Never present such a fragment
+    /// as a complete conversation turn. Legacy individually inserted rows
+    /// and corrupted role order fail closed rather than being paired by guess.
+    /// At most 500 exchanges (1000 validated messages) are returned.
+    pub fn recent_chat_exchanges(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        limit: usize,
+    ) -> Result<Vec<ChatExchange>, UserStateError> {
+        if limit > 500 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let messages = self.recent_chat_messages(key, revision_id, thread_id, limit * 2)?;
+        let mut rows = messages.into_iter();
+        let mut exchanges = Vec::with_capacity(limit);
+        while let Some(question) = rows.next() {
+            let answer = rows.next().ok_or(UserStateError::InvalidValue)?;
+            if question.role != "user" || answer.role != "assistant" {
+                return Err(UserStateError::InvalidValue);
+            }
+            exchanges.push(ChatExchange { question, answer });
+        }
+        Ok(exchanges)
+    }
+
     /// Deletion cascades to every message of this exact article-scoped thread.
     pub fn delete_chat_thread(
         &self,
@@ -2250,6 +2287,76 @@ mod tests {
             .unwrap();
         assert!(matches!(
             user.recent_chat_messages(&key(), 123, thread, 3),
+            Err(UserStateError::InvalidValue)
+        ));
+    }
+
+    #[test]
+    fn recent_chat_exchanges_replays_complete_tail_and_rejects_orphans() {
+        let mut user = UserState::in_memory().unwrap();
+        let generation = user.personal_generation().unwrap();
+        let thread = user
+            .create_chat_thread_for_generation(generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        for index in 0..4 {
+            user.append_chat_exchange_for_generation(
+                generation,
+                &key(),
+                123,
+                thread,
+                &format!("Question {index}"),
+                &format!("Answer {index}"),
+            )
+            .unwrap()
+            .unwrap();
+        }
+        let tail = user.recent_chat_exchanges(&key(), 123, thread, 2).unwrap();
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].question.content, "Question 2");
+        assert_eq!(tail[0].answer.content, "Answer 2");
+        assert_eq!(tail[1].question.content, "Question 3");
+        assert_eq!(tail[1].answer.content, "Answer 3");
+        assert!(tail[0].question.id < tail[0].answer.id);
+        assert!(tail[0].answer.id < tail[1].question.id);
+        assert!(user
+            .recent_chat_exchanges(&key(), 123, thread, 0)
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            user.recent_chat_exchanges(&key(), 123, thread, 501),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.recent_chat_exchanges(&key(), 124, thread, 1),
+            Err(UserStateError::InvalidValue)
+        ));
+
+        // A legacy single-message write must not be interpreted as a pair.
+        user.append_chat_message(&key(), 123, thread, "user", "Unanswered")
+            .unwrap();
+        assert!(matches!(
+            user.recent_chat_exchanges(&key(), 123, thread, 1),
+            Err(UserStateError::InvalidValue)
+        ));
+        let answer_id = user
+            .append_chat_message(&key(), 123, thread, "assistant", "Completed")
+            .unwrap();
+        assert_eq!(
+            user.recent_chat_exchanges(&key(), 123, thread, 1)
+                .unwrap()[0]
+                .answer
+                .content,
+            "Completed"
+        );
+        user.conn
+            .execute(
+                "UPDATE chat_messages SET role='user' WHERE id=?1",
+                params![answer_id],
+            )
+            .unwrap();
+        assert!(matches!(
+            user.recent_chat_exchanges(&key(), 123, thread, 1),
             Err(UserStateError::InvalidValue)
         ));
     }
