@@ -2020,20 +2020,38 @@ mod tests {
             .unwrap();
         assert!(matches!(
             user.append_chat_exchange_for_generation(
-                generation, &key(), 123, thread, "Question?", ""
+                generation,
+                &key(),
+                123,
+                thread,
+                "Question?",
+                ""
             ),
             Err(UserStateError::InvalidValue)
         ));
         assert!(matches!(
             user.append_chat_exchange_for_generation(
-                generation, &key(), 124, thread, "Question?", "Answer."
+                generation,
+                &key(),
+                124,
+                thread,
+                "Question?",
+                "Answer."
             ),
             Err(UserStateError::InvalidValue)
         ));
-        assert!(user.chat_messages(&key(), 123, thread, 10).unwrap().is_empty());
+        assert!(user
+            .chat_messages(&key(), 123, thread, 10)
+            .unwrap()
+            .is_empty());
         let (question_id, answer_id) = user
             .append_chat_exchange_for_generation(
-                generation, &key(), 123, thread, "Question?", "Verified [[cite:block]]"
+                generation,
+                &key(),
+                123,
+                thread,
+                "Question?",
+                "Verified [[cite:block]]",
             )
             .unwrap()
             .unwrap();
@@ -2048,8 +2066,14 @@ mod tests {
         user.clear_personal_reading_data().unwrap();
         assert_eq!(
             user.append_chat_exchange_for_generation(
-                generation, &key(), 123, thread, "Stale", "Stale answer"
-            ).unwrap(),
+                generation,
+                &key(),
+                123,
+                thread,
+                "Stale",
+                "Stale answer"
+            )
+            .unwrap(),
             None
         );
         assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
@@ -2060,11 +2084,20 @@ mod tests {
             .unwrap();
         assert_eq!(
             user.append_chat_exchange_for_generation(
-                generation, &key(), 123, new_thread, "Stale", "Stale answer"
-            ).unwrap(),
+                generation,
+                &key(),
+                123,
+                new_thread,
+                "Stale",
+                "Stale answer"
+            )
+            .unwrap(),
             None
         );
-        assert!(user.chat_messages(&key(), 123, new_thread, 10).unwrap().is_empty());
+        assert!(user
+            .chat_messages(&key(), 123, new_thread, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -2073,10 +2106,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-chat-exchange-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-chat-exchange-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let db = root.join("user-state.sqlite");
         let mut writer = UserState::open(&db).unwrap();
@@ -2088,12 +2119,22 @@ mod tests {
             .unwrap();
         resetter.clear_personal_reading_data().unwrap();
         assert_eq!(
-            writer.append_chat_exchange_for_generation(
-                generation, &key(), 123, thread, "Old question", "Old answer"
-            ).unwrap(),
+            writer
+                .append_chat_exchange_for_generation(
+                    generation,
+                    &key(),
+                    123,
+                    thread,
+                    "Old question",
+                    "Old answer"
+                )
+                .unwrap(),
             None
         );
-        assert!(writer.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        assert!(writer
+            .list_chat_threads(&key(), 123, 10)
+            .unwrap()
+            .is_empty());
         let new_generation = writer.personal_generation().unwrap();
         let new_thread = writer
             .create_chat_thread_for_generation(new_generation, &key(), 123)
@@ -2101,11 +2142,22 @@ mod tests {
             .unwrap();
         writer
             .append_chat_exchange_for_generation(
-                new_generation, &key(), 123, new_thread, "New question", "New answer"
+                new_generation,
+                &key(),
+                123,
+                new_thread,
+                "New question",
+                "New answer",
             )
             .unwrap()
             .unwrap();
-        assert_eq!(resetter.chat_messages(&key(), 123, new_thread, 10).unwrap().len(), 2);
+        assert_eq!(
+            resetter
+                .chat_messages(&key(), 123, new_thread, 10)
+                .unwrap()
+                .len(),
+            2
+        );
         drop(writer);
         drop(resetter);
         std::fs::remove_dir_all(root).unwrap();
