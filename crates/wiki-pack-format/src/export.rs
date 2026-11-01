@@ -283,16 +283,28 @@ mod tests {
     use super::*;
     use crate::container::verify_container;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
 
     fn root() -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("wiki-export-{}-{stamp}", std::process::id()));
-        fs::create_dir(&root).unwrap();
-        root
+        loop {
+            let nonce = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "wiki-export-{}-{stamp}-{nonce}",
+                std::process::id()
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => return root,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("failed to create export test directory: {error}"),
+            }
+        }
     }
 
     #[test]
