@@ -157,6 +157,7 @@ pub fn answer_article(
 
     let mut result = String::new();
     let mut completed = false;
+    let mut exceeded_response_limit = false;
     stream_selected(
         provider,
         &request,
@@ -169,6 +170,7 @@ pub fn answer_article(
             match event {
                 StreamEvent::TextDelta(delta) => {
                     if result.len().saturating_add(delta.len()) > MAX_RESPONSE_BYTES {
+                        exceeded_response_limit = true;
                         return Err(ProviderError::Rejected);
                     }
                     result.push_str(&delta);
@@ -179,7 +181,7 @@ pub fn answer_article(
         },
     )
     .map_err(|error| {
-        if error == ProviderError::Rejected {
+        if exceeded_response_limit && error == ProviderError::Rejected {
             RagError::ResponseTooLarge
         } else {
             RagError::Provider(error)
@@ -326,6 +328,99 @@ mod citation_parser_tests {
             ),
             Ok(GroundedAnswer::InsufficientEvidence)
         );
+    }
+
+    #[test]
+    fn distinguishes_provider_rejection_from_oversized_model_output() {
+        use crate::{Locality, ModelInfo, ProviderCapabilities};
+        use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+
+        struct RejectingProvider {
+            oversized: bool,
+        }
+        impl LlmProvider for RejectingProvider {
+            fn locality(&self) -> Locality {
+                Locality::Localhost
+            }
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    discover_models: false,
+                    streaming: true,
+                    cancellable: true,
+                }
+            }
+            fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+                Err(ProviderError::Unsupported)
+            }
+            fn test_connection(&self) -> Result<(), ProviderError> {
+                Err(ProviderError::Unsupported)
+            }
+            fn stream(
+                &self,
+                _request: &GenerateRequest,
+                _cancellation: &CancellationToken,
+                on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+            ) -> Result<(), ProviderError> {
+                if self.oversized {
+                    on_event(StreamEvent::TextDelta("x".repeat(MAX_RESPONSE_BYTES + 1)))?;
+                    Ok(())
+                } else {
+                    Err(ProviderError::Rejected)
+                }
+            }
+        }
+
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
+            revision: Revision {
+                revision_id: 12,
+                timestamp: "2026-10-12T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Gravity".into(),
+            display_title: "Gravity".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: Vec::new(),
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravity attracts masses.".into()),
+            }],
+            sections: Vec::new(),
+            references: Vec::new(),
+            links: Vec::new(),
+            media: Vec::new(),
+            rendered_html: "<article/>".into(),
+            is_disambiguation: false,
+        };
+        let question = ArticleQuestion {
+            question: "gravity",
+            model: "local-model",
+            passage_limit: 1,
+            context_word_budget: 32,
+            selected_evidence: None,
+            max_output_tokens: 32,
+            outbound_policy: OutboundPolicy::AllowLocalEndpoints,
+        };
+        for (oversized, expected) in [
+            (false, RagError::Provider(ProviderError::Rejected)),
+            (true, RagError::ResponseTooLarge),
+        ] {
+            assert_eq!(
+                answer_article(
+                    &article,
+                    &RejectingProvider { oversized },
+                    &question,
+                    &CancellationToken::default(),
+                ),
+                Err(expected)
+            );
+        }
     }
 
     #[test]
