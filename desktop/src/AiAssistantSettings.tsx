@@ -1,10 +1,10 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfile } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
-/** A UI-only, session-scoped selection; chat/profile persistence is a separate task. */
+/** Saved model IDs remain untrusted until the user explicitly rediscovers them. */
 export default function AiAssistantSettings({ offlineMode }: { offlineMode: ReaderOfflineMode }) {
   const id = useId();
   const [protocol, setProtocol] = useState<AiLocalProtocol>("ollama");
@@ -12,11 +12,29 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   const [inventory, setInventory] = useState<AiLocalInventory | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [savedModelHint, setSavedModelHint] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const editRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(new RequestEpoch());
   const offline = useSyncExternalStore(offlineMode.subscribe, offlineMode.getSnapshot, offlineMode.getSnapshot);
 
   useEffect(() => () => { epoch.current.invalidate(); }, []);
+  useEffect(() => {
+    let active = true;
+    const revision = editRevision.current;
+    void invoke<unknown>("read_local_ai_profile").then(parseAiSavedLocalProfile).then((profile) => {
+      if (!active || revision !== editRevision.current || !profile) return;
+      setProtocol(profile.protocol);
+      setEndpoint(profile.endpoint);
+      setSavedModelHint(profile.model);
+      setSavedNotice("Saved local profile loaded. Discover models again to verify availability.");
+    }).catch(() => {
+      if (active && revision === editRevision.current) setSavedNotice("Could not restore the saved local profile.");
+    });
+    return () => { active = false; };
+  }, []);
   // Network permission may be withdrawn during an in-flight discovery.
   useEffect(() => offlineMode.subscribe(() => {
     if (offlineMode.getSnapshot()) {
@@ -28,18 +46,21 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
   }), [offlineMode]);
 
-  function invalidate() {
+  function invalidate(preserveSavedHint = false) {
     epoch.current.invalidate();
     setBusy(false);
     setError(null);
     setInventory(null);
     setSelectedModel("");
+    if (!preserveSavedHint) setSavedModelHint("");
+    setSavedNotice(null);
+    editRevision.current += 1;
   }
 
   async function discover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || offlineMode.getSnapshot()) return;
-    invalidate();
+    invalidate(true);
     if (!endpoint || endpoint.length > 512 || endpoint.trim() !== endpoint) {
       setError("Enter an exact localhost or private-IP URL without spaces.");
       return;
@@ -52,6 +73,11 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       const parsed = parseAiLocalInventory(response, protocol, endpoint);
       if (epoch.current.matches(request) && !offlineMode.getSnapshot()) {
         setInventory(parsed);
+        if (savedModelHint && parsed.models.some((model) => model.id === savedModelHint)) {
+          setSelectedModel(savedModelHint);
+        } else if (savedModelHint) {
+          setError("Saved model is no longer advertised by this server. Choose another model.");
+        }
         if (!parsed.models.length) setError("The selected server has no available models.");
       }
     } catch {
@@ -61,6 +87,25 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       }
     } finally {
       if (epoch.current.matches(request)) setBusy(false);
+    }
+  }
+
+  async function saveChoice() {
+    if (saving || !inventory || !selectedModel || offlineMode.getSnapshot()) return;
+    const requested = { protocol, endpoint, model: selectedModel };
+    const revision = editRevision.current;
+    setSaving(true);
+    setSavedNotice(null);
+    try {
+      await invoke<void>("save_local_ai_profile", { profile: requested });
+      if (revision === editRevision.current && !offlineMode.getSnapshot()) {
+        setSavedModelHint(selectedModel);
+        setSavedNotice("Saved local profile. It will be revalidated on the next discovery.");
+      }
+    } catch {
+      if (revision === editRevision.current) setSavedNotice("Could not save local AI preference.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -86,6 +131,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     </form>
     {offline && <p role="status">Work offline is enabled. Localhost and LAN connections are disabled.</p>}
     {error && !offline && <p role="alert">{error}</p>}
+    {savedNotice && <p role="status">{savedNotice}</p>}
     {inventory && !offline && <div className="ai-local-inventory">
       <p role="status">Discovered {inventory.models.length} model(s) at <code>{inventory.endpoint}</code>.</p>
       <p>{aiLocalityDisclosure(inventory.locality)}</p>
@@ -97,8 +143,9 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
           {model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString()} context tokens` : ""}
         </option>)}
       </select>
-      {selectedModel && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. The choice is session-only; chat integration and saved profiles are not available yet.</p>}
+      {selectedModel && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
+      {selectedModel && <button type="button" disabled={saving || offline} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
     </div>}
-    <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, credentials, saved profiles, and model inference are not wired to the reader yet.</p>
+    <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, credentials, multi-profile management and model inference are not wired to the reader yet.</p>
   </section>;
 }

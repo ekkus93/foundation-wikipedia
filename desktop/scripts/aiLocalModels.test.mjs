@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -42,4 +42,19 @@ test("rejects duplicate, spoofed and malformed model names and out-of-range cont
   assert.equal(validAiLocalModelId("a\udc00b"), false);
   assert.equal(validAiLocalModelId("a🐈"), true);
   assert.equal(validAiLocalModelId("a".repeat(257)), false);
+});
+
+
+test("saved profile shape is non-secret and preserves exact model hint", () => {
+  const profile = { protocol: "ollama", endpoint, model: "qwen3:8b" };
+  assert.deepEqual(parseAiSavedLocalProfile(profile), profile);
+  assert.equal(parseAiSavedLocalProfile(null), null);
+  for (const bad of [
+    {}, { ...profile, apiKey: "secret" },
+    { ...profile, protocol: "cloud" },
+    { ...profile, endpoint: "https://127.0.0.1:11434" },
+    { ...profile, endpoint: "http://user:secret@127.0.0.1" },
+    { ...profile, model: "bad\u202emodel" },
+    { ...profile, model: "" },
+  ]) assert.throws(() => parseAiSavedLocalProfile(bad), /Invalid saved AI profile/);
 });

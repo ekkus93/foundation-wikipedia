@@ -67,3 +67,24 @@ export function aiLocalityDisclosure(locality: AiLocality): string {
     ? "Localhost server — connected over TCP/IP; not an embedded on-device model."
     : "Local network server — sends selected conversation text over your LAN; unavailable offline.";
 }
+/** A saved profile is a hint, not permission to connect or invoke inference. */
+export interface AiSavedLocalProfile {
+  protocol: AiLocalProtocol;
+  endpoint: string;
+  model: string;
+}
+
+export function parseAiSavedLocalProfile(input: unknown): AiSavedLocalProfile | null {
+  if (input === null) return null;
+  if (typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid saved AI profile");
+  const row = input as Record<string, unknown>;
+  if (Object.keys(row).sort().join(",") !== "endpoint,model,protocol" ||
+      !(row.protocol === "ollama" || row.protocol === "openai-compatible") ||
+      typeof row.endpoint !== "string" || !row.endpoint.startsWith("http://") ||
+      row.endpoint.trim() !== row.endpoint || row.endpoint.length > 512 ||
+      /[\s\u0000-\u001f\u007f-\u009f@?#\\]/u.test(row.endpoint) ||
+      !validAiLocalModelId(row.model)) {
+    throw new Error("Invalid saved AI profile");
+  }
+  return { protocol: row.protocol, endpoint: row.endpoint, model: row.model };
+}
