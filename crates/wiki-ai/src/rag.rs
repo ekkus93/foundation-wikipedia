@@ -401,7 +401,9 @@ mod citation_parser_tests {
         // A byte-aware retriever retains the highest-ranked fitting passages
         // rather than rejecting an otherwise answerable question because all
         // fifteen hits together would exceed the provider message limit.
-        struct BudgetCaptureProvider;
+        struct BudgetCaptureProvider {
+            citation: Option<String>,
+        }
         impl LlmProvider for BudgetCaptureProvider {
             fn locality(&self) -> Locality {
                 Locality::OnDevice
@@ -430,7 +432,11 @@ mod citation_parser_tests {
                 assert!(sent.contains("Question (JSON string):"));
                 let supplied = sent.matches("\nEvidence ID: ").count();
                 assert!(supplied > 0 && supplied < 15);
-                on_event(StreamEvent::TextDelta("[NO_EVIDENCE]".into()))?;
+                let response = match &self.citation {
+                    Some(id) => format!("Claim [[cite:{id}]]"),
+                    None => "[NO_EVIDENCE]".to_owned(),
+                };
+                on_event(StreamEvent::TextDelta(response))?;
                 on_event(StreamEvent::Completed {
                     input_tokens: None,
                     output_tokens: None,
@@ -440,12 +446,47 @@ mod citation_parser_tests {
         assert_eq!(
             answer_article(
                 &large,
-                &BudgetCaptureProvider,
+                &BudgetCaptureProvider { citation: None },
                 &long_request,
                 &CancellationToken::default(),
             ),
             Ok(GroundedAnswer::InsufficientEvidence)
         );
+        // A model cannot cite a relevant block that was dropped from its
+        // actual prompt by the byte cap.
+        let dropped = hits.last().unwrap().block_id.clone();
+        assert_eq!(
+            answer_article(
+                &large,
+                &BudgetCaptureProvider {
+                    citation: Some(dropped.clone()),
+                },
+                &long_request,
+                &CancellationToken::default(),
+            ),
+            Err(RagError::Citation(CitationError::UnretrievedCitation(
+                dropped
+            )))
+        );
+        // Explicitly selected evidence is included first, even when it would
+        // not fit at the tail of the ordinary ranked passage list.
+        let selected = hits.last().unwrap();
+        let selected_request = ArticleQuestion {
+            selected_evidence: Some(selected),
+            passage_limit: 1,
+            ..long_request
+        };
+        assert!(matches!(
+            answer_article(
+                &large,
+                &BudgetCaptureProvider {
+                    citation: Some(selected.block_id.clone()),
+                },
+                &selected_request,
+                &CancellationToken::default(),
+            ),
+            Ok(GroundedAnswer::Supported { .. })
+        ));
     }
 
     #[test]
