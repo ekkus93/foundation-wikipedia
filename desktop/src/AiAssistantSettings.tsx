@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -21,6 +21,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   // A refreshed CAS snapshot must not silently authorize an old draft to
   // overwrite changes made in another window.
   const [needsReview, setNeedsReview] = useState(false);
+  const [deletePending, setDeletePending] = useState<string | null>(null);
   const editRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(new RequestEpoch());
@@ -66,6 +67,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         if (!active || !profileReads.current.matches(request) || revision !== editRevision.current) return;
         if (!sameAiSavedLocalProfiles(current, savedProfiles)) {
           setSavedProfiles(current);
+          setDeletePending(null);
           setNeedsReview((pending) => needsAiProfileReview(savedProfiles, current, pending));
           setSavedNotice("Saved profiles changed in another window. Your draft was kept; acknowledge the new saved state before saving.");
         }
@@ -122,6 +124,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     setSelectedModel("");
     if (!preserveSavedHint) setSavedModelHint("");
     setSavedNotice(null);
+    setDeletePending(null);
     editRevision.current += 1;
   }
 
@@ -166,6 +169,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       const current = parseAiSavedLocalProfiles(await invoke<unknown>("read_local_ai_profiles"));
       if (profileReads.current.matches(request) && revision === editRevision.current) {
         setNeedsReview(true);
+        setDeletePending(null);
         setSavedProfiles(current);
       }
     } catch {
@@ -211,7 +215,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   }
 
   async function removeProfile() {
-    if (saving || !savedProfiles.profiles.some((item) => item.name === profileName)) return;
+    if (saving || !canConfirmAiLocalProfileDelete(deletePending, profileName, savedProfiles, needsReview)) return;
     const name = profileName;
     invalidate();
     const revision = editRevision.current;
@@ -283,8 +287,14 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         </option>)}
       </select>
       <button type="button" disabled={saving} onClick={newProfile}>New profile</button>
-      <button type="button" disabled={saving || !savedProfiles.profiles.some((p) => p.name === profileName)}
-        onClick={() => void removeProfile()}>Delete saved profile</button>
+      <button type="button" disabled={saving || needsReview || !savedProfiles.profiles.some((p) => p.name === profileName)}
+        onClick={() => setDeletePending(profileName)}>Delete saved profile…</button>
+      {deletePending !== null && <div role="alert" className="ai-local-inventory">
+        <p>Delete saved profile <strong>{deletePending}</strong>? This removes its saved server and model selection, not the installed model.</p>
+        <button type="button" disabled={saving || !canConfirmAiLocalProfileDelete(deletePending, profileName, savedProfiles, needsReview)}
+          onClick={() => void removeProfile()}>Confirm delete profile</button>
+        <button type="button" disabled={saving} onClick={() => setDeletePending(null)}>Cancel deletion</button>
+      </div>}
       <label htmlFor={`${id}-profile-name`}>Profile name</label>
       <input id={`${id}-profile-name`} value={profileName} maxLength={40}
         disabled={saving} autoComplete="off" onChange={(event) => { invalidate(); setProfileName(event.target.value); }} />

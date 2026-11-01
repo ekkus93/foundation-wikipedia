@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -179,4 +179,18 @@ test("saved local choice must match the exact discovered server and advertised m
   assert.equal(canSaveAiLocalChoice(inventory, protocol, "http://127.0.0.1:11435", "qwen3:8b"), false);
   assert.equal(canSaveAiLocalChoice(inventory, protocol, "http://8.8.8.8", "qwen3:8b"), false);
   assert.equal(canSaveAiLocalChoice({ ...inventory, locality: "local-network" }, protocol, endpoint, "qwen3:8b"), false);
+});
+
+
+test("saved profile deletion requires a fresh explicit confirmation for the selected name", () => {
+  const saved = parseAiSavedLocalProfiles({
+    revision: 9, active: "Desktop",
+    profiles: [{ name: "Desktop", protocol, endpoint, model: "qwen3:8b" }],
+  });
+  assert.equal(canConfirmAiLocalProfileDelete(null, "Desktop", saved, false), false);
+  assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Desktop", saved, false), true);
+  assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Other", saved, false), false);
+  assert.equal(canConfirmAiLocalProfileDelete("Other", "Other", saved, false), false);
+  assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Desktop", saved, true), false);
+  assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Desktop", { ...saved, profiles: [] }, false), false);
 });

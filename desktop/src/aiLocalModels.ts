@@ -216,6 +216,17 @@ export function needsAiProfileReview(previous: AiSavedLocalProfiles, current: Ai
   return pending || !sameAiSavedLocalProfiles(previous, current);
 }
 
+/** Deleting a saved profile requires an explicit, still-current selection. */
+export function canConfirmAiLocalProfileDelete(
+  pendingName: string | null,
+  selectedName: string,
+  saved: AiSavedLocalProfiles,
+  needsReview: boolean,
+): boolean {
+  return pendingName !== null && pendingName === selectedName && !needsReview &&
+    saved.profiles.some((profile) => profile.name === selectedName);
+}
+
 /** A visible but unfocused window must eventually observe other processes. */
 export function shouldPollAiProfiles(visibilityState: string): boolean {
   return visibilityState === "visible";
