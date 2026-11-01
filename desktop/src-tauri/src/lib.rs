@@ -373,6 +373,84 @@ fn read_personal_data_for_generation<T>(
     Ok(result)
 }
 
+/// Read only private chat thread IDs for this exact article revision.
+/// Capture the durable privacy generation before scheduling any worker.
+fn reader_chat_thread_rows(
+    state: &UserState,
+    key: &ArticleKey,
+    revision_id: u64,
+    generation: u64,
+) -> Result<Vec<i64>, UserStateError> {
+    read_personal_data_for_generation(state, generation, || {
+        state.list_chat_threads(key, revision_id, 50)
+    })
+}
+
+/// Return validated complete pairs, never a fragment or untrusted citation DTO.
+/// Saved text is plain text; the UI must not infer citation authority from it.
+fn reader_chat_exchange_rows(
+    state: &UserState,
+    key: &ArticleKey,
+    revision_id: u64,
+    thread_id: i64,
+    generation: u64,
+) -> Result<Vec<(i64, i64, String, String)>, UserStateError> {
+    read_personal_data_for_generation(state, generation, || {
+        state
+            .recent_chat_exchanges(key, revision_id, thread_id, 20)
+            .map(|exchanges| {
+                exchanges
+                    .into_iter()
+                    .map(|exchange| {
+                        (
+                            exchange.question.id,
+                            exchange.answer.id,
+                            exchange.question.content,
+                            exchange.answer.content,
+                        )
+                    })
+                    .collect()
+            })
+    })
+}
+
+#[tauri::command]
+async fn list_reader_chat_threads(
+    app: tauri::AppHandle,
+    project: String,
+    page_id: u64,
+    revision_id: u64,
+) -> Result<Vec<i64>, String> {
+    let generation = capture_persistent_generation(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        let key = ArticleKey { project, page_id };
+        reader_chat_thread_rows(&state, &key, revision_id, generation)
+            .map_err(|_| "Cannot read revision-scoped chat threads".to_owned())
+    })
+    .await
+    .map_err(|_| "Chat history worker stopped".to_owned())?
+}
+
+#[tauri::command]
+async fn read_reader_chat_exchanges(
+    app: tauri::AppHandle,
+    project: String,
+    page_id: u64,
+    revision_id: u64,
+    thread_id: i64,
+) -> Result<Vec<(i64, i64, String, String)>, String> {
+    let generation = capture_persistent_generation(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = open_private_bookmark_store(&app)?;
+        let key = ArticleKey { project, page_id };
+        reader_chat_exchange_rows(&state, &key, revision_id, thread_id, generation)
+            .map_err(|_| "Cannot read complete revision-scoped chat exchanges".to_owned())
+    })
+    .await
+    .map_err(|_| "Chat history worker stopped".to_owned())?
+}
+
 fn toggle_saved_bookmark(
     state: &UserState,
     key: &ArticleKey,
@@ -961,6 +1039,60 @@ mod bookmark_tests {
     use super::*;
 
     #[test]
+    fn desktop_chat_history_reads_are_revision_scoped_and_privacy_fenced() {
+        let mut state = UserState::in_memory().unwrap();
+        let key = ArticleKey {
+            project: "enwiki".to_owned(),
+            page_id: 42,
+        };
+        let generation = state.personal_generation().unwrap();
+        let thread = state
+            .create_chat_thread_for_generation(generation, &key, 333)
+            .unwrap()
+            .unwrap();
+        let (question_id, answer_id) = state
+            .append_chat_exchange_for_generation(
+                generation,
+                &key,
+                333,
+                thread,
+                "What is gravity?",
+                "Gravity attracts mass.",
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reader_chat_thread_rows(&state, &key, 333, generation).unwrap(),
+            vec![thread]
+        );
+        assert_eq!(
+            reader_chat_exchange_rows(&state, &key, 333, thread, generation).unwrap(),
+            vec![(
+                question_id,
+                answer_id,
+                "What is gravity?".to_owned(),
+                "Gravity attracts mass.".to_owned(),
+            )]
+        );
+        assert!(reader_chat_thread_rows(&state, &key, 334, generation)
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            reader_chat_exchange_rows(&state, &key, 334, thread, generation),
+            Err(UserStateError::InvalidValue)
+        ));
+        state.clear_personal_reading_data().unwrap();
+        assert!(matches!(
+            reader_chat_thread_rows(&state, &key, 333, generation),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            reader_chat_exchange_rows(&state, &key, 333, thread, generation),
+            Err(UserStateError::InvalidValue)
+        ));
+    }
+
+    #[test]
     fn visit_history_is_opt_in_bounded_and_independent_of_bookmarks() {
         let state = UserState::in_memory().unwrap();
         let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
@@ -1428,6 +1560,8 @@ pub fn run() {
             set_reader_history_enabled,
             list_reader_history,
             read_reader_saved_panel,
+            list_reader_chat_threads,
+            read_reader_chat_exchanges,
             clear_reader_history,
             read_reader_theme,
             set_reader_theme,
