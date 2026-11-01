@@ -149,6 +149,43 @@ fn write_profiles(
     Ok(())
 }
 
+// A desktop editor must not apply an old form to a newer collection from
+// another window. The subsequent SQLite CAS also protects the read/write gap.
+fn require_current_profiles(state: &UserState, expected: &LocalProfiles) -> Result<(), String> {
+    validate_profiles(expected)?;
+    if read_profiles(state)? != *expected {
+        return Err("Local AI profiles changed in another window; reload and retry".to_owned());
+    }
+    Ok(())
+}
+
+fn upsert_if_current(
+    state: &UserState,
+    incoming: LocalProfile,
+    expected: &LocalProfiles,
+) -> Result<LocalProfiles, String> {
+    require_current_profiles(state, expected)?;
+    upsert(state, incoming)
+}
+
+fn activate_if_current(
+    state: &UserState,
+    name: &str,
+    expected: &LocalProfiles,
+) -> Result<LocalProfiles, String> {
+    require_current_profiles(state, expected)?;
+    activate(state, name)
+}
+
+fn remove_if_current(
+    state: &UserState,
+    name: &str,
+    expected: &LocalProfiles,
+) -> Result<LocalProfiles, String> {
+    require_current_profiles(state, expected)?;
+    remove(state, name)
+}
+
 fn upsert(state: &UserState, incoming: LocalProfile) -> Result<LocalProfiles, String> {
     validate_profile(&incoming)?;
     let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
@@ -209,10 +246,12 @@ pub async fn read_local_ai_profiles(app: tauri::AppHandle) -> Result<LocalProfil
 pub async fn upsert_local_ai_profile(
     app: tauri::AppHandle,
     profile: LocalProfile,
+    expected_profiles: LocalProfiles,
 ) -> Result<LocalProfiles, String> {
     validate_profile(&profile)?;
+    validate_profiles(&expected_profiles)?;
     tauri::async_runtime::spawn_blocking(move || {
-        upsert(&open_private_bookmark_store(&app)?, profile)
+        upsert_if_current(&open_private_bookmark_store(&app)?, profile, &expected_profiles)
     })
     .await
     .map_err(|_| "Local AI profile worker stopped".to_owned())?
@@ -222,9 +261,11 @@ pub async fn upsert_local_ai_profile(
 pub async fn activate_local_ai_profile(
     app: tauri::AppHandle,
     name: String,
+    expected_profiles: LocalProfiles,
 ) -> Result<LocalProfiles, String> {
+    validate_profiles(&expected_profiles)?;
     tauri::async_runtime::spawn_blocking(move || {
-        activate(&open_private_bookmark_store(&app)?, &name)
+        activate_if_current(&open_private_bookmark_store(&app)?, &name, &expected_profiles)
     })
     .await
     .map_err(|_| "Local AI profile worker stopped".to_owned())?
@@ -234,9 +275,11 @@ pub async fn activate_local_ai_profile(
 pub async fn remove_local_ai_profile(
     app: tauri::AppHandle,
     name: String,
+    expected_profiles: LocalProfiles,
 ) -> Result<LocalProfiles, String> {
+    validate_profiles(&expected_profiles)?;
     tauri::async_runtime::spawn_blocking(move || {
-        remove(&open_private_bookmark_store(&app)?, &name)
+        remove_if_current(&open_private_bookmark_store(&app)?, &name, &expected_profiles)
     })
     .await
     .map_err(|_| "Local AI profile worker stopped".to_owned())?
@@ -341,6 +384,53 @@ mod tests {
         let after = read_profiles(&state).unwrap();
         assert_eq!(after.profiles.len(), 2);
         assert_eq!(after.active.as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn stale_editor_cannot_override_newer_profiles_across_sqlite_handles() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-profile-editor-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.sqlite");
+        let first = UserState::open(&path).unwrap();
+        let second = UserState::open(&path).unwrap();
+        let stale_empty = read_profiles(&first).unwrap();
+        let saved = upsert(
+            &second,
+            profile("Work", "http://127.0.0.1:11434", "model-a"),
+        )
+        .unwrap();
+        assert!(upsert_if_current(
+            &first,
+            profile("Stale", "http://127.0.0.1:11434", "model-b"),
+            &stale_empty
+        )
+        .is_err());
+        assert_eq!(read_profiles(&first).unwrap(), saved);
+        let refreshed = read_profiles(&first).unwrap();
+        let updated = upsert_if_current(
+            &first,
+            profile("Other", "http://127.0.0.1:11434", "model-c"),
+            &refreshed,
+        )
+        .unwrap();
+        assert_eq!(updated.profiles.len(), 2);
+        let stale_editor = read_profiles(&second).unwrap();
+        activate(&first, "Work").unwrap();
+        assert!(activate_if_current(&second, "Other", &stale_editor).is_err());
+        assert!(remove_if_current(&second, "Work", &stale_editor).is_err());
+        assert_eq!(read_profiles(&second).unwrap().active.as_deref(), Some("Work"));
+        let fresh = read_profiles(&second).unwrap();
+        assert_eq!(remove_if_current(&second, "Other", &fresh).unwrap().profiles.len(), 1);
+        drop(first);
+        drop(second);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

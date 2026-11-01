@@ -96,6 +96,17 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
   }
 
+  // Refresh only the saved list after a failed mutation. Never overwrite
+  // unsaved endpoint/model edits with another window's values.
+  async function refreshSavedProfiles(revision: number) {
+    try {
+      const current = parseAiSavedLocalProfiles(await invoke<unknown>("read_local_ai_profiles"));
+      if (revision === editRevision.current) setSavedProfiles(current);
+    } catch {
+      // Keep the user's draft if the native store is unavailable.
+    }
+  }
+
   async function activateProfile(name: string) {
     if (saving) return;
     const saved = savedProfiles.profiles.find((item) => item.name === name);
@@ -108,13 +119,16 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     const revision = editRevision.current;
     setSaving(true);
     try {
-      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("activate_local_ai_profile", { name }));
+      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("activate_local_ai_profile", { name, expectedProfiles: savedProfiles }));
       if (revision === editRevision.current) {
         setSavedProfiles(updated);
         setSavedNotice("Profile selected. Discover models to verify the server and model.");
       }
     } catch {
-      if (revision === editRevision.current) setSavedNotice("Could not activate the saved profile.");
+      if (revision === editRevision.current) {
+        await refreshSavedProfiles(revision);
+        setSavedNotice("Could not activate profile. Saved profiles were refreshed if available; review and retry.");
+      }
     } finally {
       setSaving(false);
     }
@@ -136,7 +150,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     const revision = editRevision.current;
     setSaving(true);
     try {
-      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("remove_local_ai_profile", { name }));
+      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("remove_local_ai_profile", { name, expectedProfiles: savedProfiles }));
       if (revision === editRevision.current) {
         setSavedProfiles(updated);
         const replacement = updated.profiles.find((item) => item.name === updated.active);
@@ -147,7 +161,10 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         setSavedNotice("Saved profile deleted. Any remaining model must be rediscovered.");
       }
     } catch {
-      if (revision === editRevision.current) setSavedNotice("Could not delete the saved profile.");
+      if (revision === editRevision.current) {
+        await refreshSavedProfiles(revision);
+        setSavedNotice("Could not delete profile. Saved profiles were refreshed if available; review and retry.");
+      }
     } finally {
       setSaving(false);
     }
@@ -164,14 +181,17 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     setSaving(true);
     setSavedNotice(null);
     try {
-      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("upsert_local_ai_profile", { profile: requested }));
+      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("upsert_local_ai_profile", { profile: requested, expectedProfiles: savedProfiles }));
       if (revision === editRevision.current && !offlineMode.getSnapshot()) {
         setSavedProfiles(updated);
         setSavedModelHint(selectedModel);
         setSavedNotice("Saved local profile. It will be revalidated on the next discovery.");
       }
     } catch {
-      if (revision === editRevision.current) setSavedNotice("Could not save local AI preference.");
+      if (revision === editRevision.current) {
+        await refreshSavedProfiles(revision);
+        setSavedNotice("Could not save profile. Saved profiles were refreshed if available; review and retry.");
+      }
     } finally {
       setSaving(false);
     }
