@@ -23,6 +23,15 @@ Initial source `cc060b265fb4b607c934d6702ac69718dc9965e1` required test-fixture 
 - [Platform shells — 41328137807](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41328137807)
 - [Android Rust ABI — 41328137829](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41328137829)
 
+## Follow-up: complete outbound message budget regression
+
+Added a second no-network regression at source SHA `584a74689c25d2bf8109e44716c66b11784a5c4b`. It constructs a valid article with fifteen lexical matches and a bounded 8,000-byte user question. The test explicitly verifies that the JSON-framed evidence context alone is below 65,536 bytes while the combined question plus context exceeds the limit, then confirms that RAG returns `ContextTooLarge` **without invoking a provider**. This exercises the newly added whole-message check rather than relying on the older evidence-only cap.
+
+Exact source CI passed:
+- [Rust workspace — 41328852249](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41328852249)
+- [Platform shells — 41328852272](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41328852272)
+- [Android Rust ABI — 41328852255](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41328852255)
+
 ## Limitations and next work
 
 JSON escaping prevents a passage from creating additional *syntactic* prompt records. It does not prevent semantic prompt injection, guarantee factual entailment, or establish that an LLM will follow system instructions. Existing citation validation proves that cited IDs were supplied from the exact revision, not that each claim is factually supported. No desktop or Android chat inference UI uses this core path yet. The next high-value integration remains canonical article evidence acquisition, explicit per-request passage-sharing consent, selected-provider disclosure, cancellable generation, and validated citation rendering. Live Ollama/llama-server LAN and physical-device acceptance are still outstanding.
