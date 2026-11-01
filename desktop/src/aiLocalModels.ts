@@ -217,8 +217,8 @@ export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles 
     }
     profiles.push({ name, protocol: protocol as AiLocalProtocol, endpoint: endpoint as string, model: model as string });
   }
-  if (profiles.length === 0 ? raw.active !== null :
-      typeof raw.active !== "string" || !profiles.some((p) => p.name === raw.active)) {
+  if (raw.active !== null &&
+      (typeof raw.active !== "string" || !profiles.some((p) => p.name === raw.active))) {
     throw new Error("Invalid saved AI profiles");
   }
   if (new TextEncoder().encode(JSON.stringify(input)).length > 4096) {

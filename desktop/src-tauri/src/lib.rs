@@ -1407,6 +1407,7 @@ pub fn run() {
             local_ai_profiles::read_local_ai_profiles,
             local_ai_profiles::upsert_local_ai_profile,
             local_ai_profiles::activate_local_ai_profile,
+            local_ai_profiles::deactivate_local_ai_profile,
             local_ai_profiles::remove_local_ai_profile,
             open_wikipedia_title,
             open_wikipedia_page,

@@ -94,7 +94,7 @@ fn validate_profiles(value: &LocalProfiles) -> Result<(), String> {
     }
     if value.active.as_ref().is_some_and(|name| {
         !value.profiles.iter().any(|profile| &profile.name == name)
-    }) || (value.active.is_none() && !value.profiles.is_empty())
+    })
     {
         return Err("Invalid active local AI profile".to_owned());
     }
@@ -189,6 +189,14 @@ fn activate_if_current(
     activate(state, name)
 }
 
+fn deactivate_if_current(
+    state: &UserState,
+    expected: &LocalProfiles,
+) -> Result<LocalProfiles, String> {
+    require_current_profiles(state, expected)?;
+    deactivate(state)
+}
+
 fn remove_if_current(
     state: &UserState,
     name: &str,
@@ -235,6 +243,20 @@ fn activate(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
         return Err("Unknown local AI profile".to_owned());
     }
     current.active = Some(name.to_owned());
+    bump_revision(&mut current)?;
+    write_profiles(state, previous.as_deref(), &current)?;
+    Ok(current)
+}
+
+// Disabling the provider keeps all saved non-secret profiles available for
+// later explicit reactivation, but leaves no active destination.
+fn deactivate(state: &UserState) -> Result<LocalProfiles, String> {
+    let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
+    let mut current = read_profiles(state)?;
+    if current.active.is_none() {
+        return Err("No active local AI profile".to_owned());
+    }
+    current.active = None;
     bump_revision(&mut current)?;
     write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
@@ -299,6 +321,22 @@ pub async fn activate_local_ai_profile(
     .map_err(|_| "Local AI profile worker stopped".to_owned())??;
     // Only broadcast after a successful durable CAS. Never include endpoints,
     // model IDs or any profile contents in the event payload.
+    let _ = notify.emit(PROFILES_CHANGED_EVENT, ());
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn deactivate_local_ai_profile(
+    app: tauri::AppHandle,
+    expected_profiles: LocalProfiles,
+) -> Result<LocalProfiles, String> {
+    validate_profiles(&expected_profiles)?;
+    let notify = app.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        deactivate_if_current(&open_private_bookmark_store(&app)?, &expected_profiles)
+    })
+    .await
+    .map_err(|_| "Local AI profile worker stopped".to_owned())??;
     let _ = notify.emit(PROFILES_CHANGED_EVENT, ());
     Ok(saved)
 }
@@ -509,6 +547,26 @@ mod tests {
         let updated = activate_if_current(&state, "Desktop", &legacy).unwrap();
         assert_eq!(updated.revision, 1);
         assert!(activate_if_current(&state, "Desktop", &legacy).is_err());
+    }
+
+    #[test]
+    fn disabling_active_profile_preserves_choices_and_rejects_stale_reactivation() {
+        let state = UserState::in_memory().unwrap();
+        let original = upsert(&state, profile("Desktop", "http://127.0.0.1:11434", "model-a")).unwrap();
+        let disabled = deactivate_if_current(&state, &original).unwrap();
+        assert_eq!(disabled.active, None);
+        assert_eq!(disabled.profiles, original.profiles);
+        assert_eq!(disabled.revision, original.revision + 1);
+        assert_eq!(read_profiles(&state).unwrap(), disabled);
+        assert!(deactivate_if_current(&state, &disabled).is_err());
+        assert!(activate_if_current(&state, "Desktop", &original).is_err());
+        let reenabled = activate_if_current(&state, "Desktop", &disabled).unwrap();
+        assert_eq!(reenabled.active.as_deref(), Some("Desktop"));
+        assert_eq!(reenabled.revision, disabled.revision + 1);
+        let disabled_again = deactivate_if_current(&state, &reenabled).unwrap();
+        let empty = remove_if_current(&state, "Desktop", &disabled_again).unwrap();
+        assert!(empty.profiles.is_empty());
+        assert_eq!(empty.active, None);
     }
 
     #[test]

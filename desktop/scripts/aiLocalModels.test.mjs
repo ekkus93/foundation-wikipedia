@@ -66,13 +66,16 @@ test("bounded named local profiles reject secret-bearing rows and duplicate name
   assert.deepEqual(parseAiSavedLocalProfiles(collection), { ...collection, revision: 0 });
   assert.deepEqual(parseAiSavedLocalProfiles({ ...collection, revision: 7 }), { ...collection, revision: 7 });
   assert.deepEqual(parseAiSavedLocalProfiles({ active: null, profiles: [] }), { revision: 0, active: null, profiles: [] });
+  assert.deepEqual(parseAiSavedLocalProfiles({ active: null, profiles: [profile], revision: 4 }), {
+    active: null, profiles: [profile], revision: 4,
+  }, "saved profiles may be present while the provider is disabled");
   assert.ok(validAiLocalProfileName("LAN Office"));
   for (const name of ["", " space", "bad/name", "bad\u202e", "a".repeat(41)]) {
     assert.equal(validAiLocalProfileName(name), false);
   }
   for (const invalid of [
     null, {}, { active: "Missing", profiles: [profile] },
-    { active: null, profiles: [profile] },
+    { active: "unknown", profiles: [profile] },
     { active: "Desktop", profiles: [{ ...profile, apiKey: "secret" }] },
     { active: "Desktop", profiles: [profile, { ...profile, name: "desktop" }] },
     { active: null, profiles: Array(9).fill(profile) },
@@ -236,4 +239,15 @@ test("saved active AI destination is disclosed independently of an unsaved draft
   assert.equal(activeAiLocalProfileDestination({
     ...saved, profiles: [{ ...saved.profiles[1], endpoint: "https://public.example" }],
   }), null, "invalid persisted destination is never presented as a trusted locality");
+});
+
+test("disabled local provider retains profiles but discloses no active destination", () => {
+  const disabled = parseAiSavedLocalProfiles({
+    revision: 8, active: null,
+    profiles: [{ name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.20:8080/v1", model: "model-a" }],
+  });
+  assert.equal(activeAiLocalProfileDestination(disabled), null);
+  assert.equal(latestAiSavedLocalDraft(disabled, "LAN").modelHint, "model-a");
+  assert.equal(sameAiSavedLocalProfiles(disabled, { ...disabled, active: "LAN" }), false);
+  assert.equal(needsAiProfileReview(disabled, { ...disabled, active: "LAN" }), true);
 });

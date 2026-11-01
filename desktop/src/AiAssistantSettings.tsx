@@ -205,6 +205,30 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
   }
 
+  async function disableActiveProfile() {
+    if (saving || needsReview || savedProfiles.active === null) return;
+    // Preserve the editor's draft, but do not retain a live model selection
+    // after explicitly disabling the persisted active provider.
+    invalidate(true);
+    const revision = editRevision.current;
+    setSaving(true);
+    try {
+      const updated = parseAiSavedLocalProfiles(await invoke<unknown>("deactivate_local_ai_profile", { expectedProfiles: savedProfiles }));
+      if (revision === editRevision.current) {
+        setSavedProfiles(updated);
+        setNeedsReview(false);
+        setSavedNotice("Active local AI profile disabled. Saved profiles remain available for explicit reactivation.");
+      }
+    } catch {
+      if (revision === editRevision.current) {
+        await refreshSavedProfiles(revision);
+        setSavedNotice("Could not disable the active profile. Saved profiles were refreshed if available; review and retry.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function newProfile() {
     if (saving) return;
     invalidate();
@@ -305,6 +329,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
           {item.name}{item.name === savedProfiles.active ? " · active" : ""}
         </option>)}
       </select>
+      <button type="button" disabled={saving || needsReview || savedProfiles.active === null}
+        onClick={() => void disableActiveProfile()}>Disable active local profile</button>
       <button type="button" disabled={saving} onClick={newProfile}>New profile</button>
       <button type="button" disabled={saving || needsReview || !savedProfiles.profiles.some((p) => p.name === profileName)}
         onClick={() => setDeletePending(profileName)}>Delete saved profile…</button>
@@ -317,7 +343,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       <label htmlFor={`${id}-profile-name`}>Profile name</label>
       <input id={`${id}-profile-name`} value={profileName} maxLength={40}
         disabled={saving} autoComplete="off" onChange={(event) => { invalidate(); setProfileName(event.target.value); }} />
-      <p>Up to eight named local profiles. Switching or restoring a profile never contacts its server. Delete removes saved configuration, not installed models.</p>
+      <p>Up to eight named local profiles. Disable leaves saved profiles intact but selects no active provider; selecting a saved profile reactivates it. Switching or restoring never contacts its server. Delete removes saved configuration, not installed models.</p>
     </div>
     <div className="ai-local-inventory" aria-label="Saved AI destination disclosure">
       {activeDestination ? <>
