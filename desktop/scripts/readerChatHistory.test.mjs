@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderChatThreads, parseReaderChatExchanges, ReaderChatDeleteFence } from "../src/readerChatHistory.ts";
+import { parseReaderChatThreads, parseReaderChatExchanges, ReaderChatDeleteFence, ReaderChatExchangeReadFence } from "../src/readerChatHistory.ts";
 
 test("thread IDs must be unique, bounded and exactly representable", () => {
   assert.deepEqual(parseReaderChatThreads([2, 1]), [2, 1]);
@@ -52,4 +52,21 @@ test("a delayed deletion cannot mutate a new article, a reused thread ID, or a r
   assert.equal(fence.isCurrent(replacement, first, 5), true);
   fence.invalidate();
   assert.equal(fence.isCurrent(replacement, first, 5), false);
+});
+
+test("late transcript reads cannot display a previous thread after a new selection", () => {
+  const fence = new ReaderChatExchangeReadFence();
+  const article = { project: "enwiki", pageId: 42, revisionId: 7 };
+  const old = fence.begin(article, 11);
+  assert.equal(fence.isCurrent(old, article, 11), true);
+  assert.equal(fence.isCurrent(old, article, 12), false);
+  assert.equal(fence.isCurrent(old, { ...article, revisionId: 8 }, 11), false);
+  const newer = fence.begin(article, 12);
+  assert.equal(fence.isCurrent(old, article, 11), false);
+  assert.equal(fence.isCurrent(newer, article, 12), true);
+  fence.invalidate();
+  assert.equal(fence.isCurrent(newer, article, 12), false);
+  const repeated = fence.begin(article, 12);
+  assert.equal(fence.isCurrent(newer, article, 12), false);
+  assert.equal(fence.isCurrent(repeated, article, 12), true);
 });

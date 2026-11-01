@@ -52,7 +52,7 @@ export function parseReaderChatExchanges(value: unknown): ReaderChatExchange[] {
 /** A delete response belongs only to the article and thread that initiated it.
  * Invalidate on navigation or unmount so an old IPC completion cannot erase
  * or overwrite the next article's conversation list (even if IDs repeat). */
-export class ReaderChatDeleteFence {
+class ReaderChatIdentityFence {
   private epoch = 0;
   private active: { epoch: number; identity: string; threadId: number } | null = null;
 
@@ -72,3 +72,8 @@ export class ReaderChatDeleteFence {
     this.active = null;
   }
 }
+
+/** Independent identity generations for native deletes and transcript reads.
+ * A new thread selection invalidates older exchange reads before effect cleanup. */
+export class ReaderChatDeleteFence extends ReaderChatIdentityFence {}
+export class ReaderChatExchangeReadFence extends ReaderChatIdentityFence {}

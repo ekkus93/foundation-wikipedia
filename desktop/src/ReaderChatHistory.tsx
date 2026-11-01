@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
 import type { ReaderArticleContext } from "./OnlineReader";
-import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, type ReaderChatExchange } from "./readerChatHistory";
+import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, type ReaderChatExchange } from "./readerChatHistory";
 
 /** Read-only historical transcript: an online HTML preview is not canonical RAG
  * evidence, so this component never generates, transmits or certifies citations. */
@@ -13,6 +13,7 @@ export default function ReaderChatHistory({ article, onClose }: {
   const [threads, setThreads] = useState<number[]>([]);
   const [selectedThread, setSelectedThread] = useState<number | null>(null);
   const [exchanges, setExchanges] = useState<ReaderChatExchange[]>([]);
+  const [loadedThread, setLoadedThread] = useState<number | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [loadingExchanges, setLoadingExchanges] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,10 +24,13 @@ export default function ReaderChatHistory({ article, onClose }: {
   const [position, setPosition] = useState<ReaderChatPosition | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const deleteFenceRef = useRef(new ReaderChatDeleteFence());
+  const exchangeReadFenceRef = useRef(new ReaderChatExchangeReadFence());
   // Updated during render, not in an effect: a pending IPC may settle before
   // the old article's effect cleanup runs after a navigation.
   const currentArticleRef = useRef(article);
   currentArticleRef.current = article;
+  const currentThreadRef = useRef(selectedThread);
+  currentThreadRef.current = selectedThread;
   const dragRef = useRef<{
     pointerId: number; startX: number; startY: number; left: number; top: number;
   } | null>(null);
@@ -104,10 +108,12 @@ export default function ReaderChatHistory({ article, onClose }: {
   useEffect(() => {
     let active = true;
     deleteFenceRef.current.invalidate();
+    exchangeReadFenceRef.current.invalidate();
     setDeleting(false);
     setThreads([]);
     setSelectedThread(null);
     setExchanges([]);
+    setLoadedThread(null);
     setError(null);
     setConfirmDelete(null);
     setDeleteNotice(null);
@@ -121,27 +127,41 @@ export default function ReaderChatHistory({ article, onClose }: {
     }).catch(() => {
       if (active) setError("Saved conversations could not be loaded.");
     }).finally(() => { if (active) setLoadingThreads(false); });
-    return () => { active = false; deleteFenceRef.current.invalidate(); };
+    return () => {
+      active = false;
+      deleteFenceRef.current.invalidate();
+      exchangeReadFenceRef.current.invalidate();
+    };
   }, [article.project, article.pageId, article.revisionId]);
 
   useEffect(() => {
+    const fence = exchangeReadFenceRef.current;
     if (selectedThread === null) {
+      fence.invalidate();
       setExchanges([]);
+      setLoadedThread(null);
       return;
     }
-    let active = true;
+    const token = fence.begin(article, selectedThread);
+    const isCurrent = () => fence.isCurrent(
+      token, currentArticleRef.current, currentThreadRef.current ?? -1,
+    );
     setExchanges([]);
+    setLoadedThread(null);
     setError(null);
     setLoadingExchanges(true);
     void invoke<unknown>("read_reader_chat_exchanges", {
       project: article.project, pageId: article.pageId, revisionId: article.revisionId,
       threadId: selectedThread,
     }).then(parseReaderChatExchanges).then((rows) => {
-      if (active) setExchanges(rows);
+      if (isCurrent()) {
+        setExchanges(rows);
+        setLoadedThread(selectedThread);
+      }
     }).catch(() => {
-      if (active) setError("This saved conversation could not be read.");
-    }).finally(() => { if (active) setLoadingExchanges(false); });
-    return () => { active = false; };
+      if (isCurrent()) setError("This saved conversation could not be read.");
+    }).finally(() => { if (isCurrent()) setLoadingExchanges(false); });
+    return () => { fence.invalidate(); };
   }, [article.project, article.pageId, article.revisionId, selectedThread]);
 
   async function deleteSelectedThread() {
@@ -161,8 +181,10 @@ export default function ReaderChatHistory({ article, onClose }: {
       if (!removed) throw new Error("Thread was not removed");
       const remaining = threads.filter((thread) => thread !== id);
       setThreads(remaining);
+      exchangeReadFenceRef.current.invalidate();
       setSelectedThread(remaining[0] ?? null);
       setExchanges([]);
+      setLoadedThread(null);
       setDeleteNotice("Conversation deleted from private local storage.");
     } catch {
       if (fence.isCurrent(token, currentArticleRef.current, id)) {
@@ -204,6 +226,9 @@ export default function ReaderChatHistory({ article, onClose }: {
     {!loadingThreads && !error && threads.length === 0 && <p>No saved conversations for this exact revision.</p>}
     {threads.length > 0 && <label>Conversation
       <select value={selectedThread ?? ""} disabled={deleting} onChange={(event) => {
+        exchangeReadFenceRef.current.invalidate();
+        setLoadedThread(null);
+        setExchanges([]);
         setConfirmDelete(null);
         setSelectedThread(Number(event.target.value));
       }}>
@@ -219,8 +244,8 @@ export default function ReaderChatHistory({ article, onClose }: {
       <button type="button" disabled={deleting} onClick={() => setConfirmDelete(null)}>Cancel</button>
     </div>)}
     {loadingExchanges && <p role="status">Loading conversation…</p>}
-    {!loadingExchanges && !error && selectedThread !== null && exchanges.length === 0 && <p>No complete exchanges in this conversation.</p>}
-    <ol className="reader-chat-exchanges">{exchanges.map(([questionId, answerId, question, answer]) =>
+    {!loadingExchanges && !error && selectedThread !== null && loadedThread === selectedThread && exchanges.length === 0 && <p>No complete exchanges in this conversation.</p>}
+    <ol className="reader-chat-exchanges">{(loadedThread === selectedThread ? exchanges : []).map(([questionId, answerId, question, answer]) =>
       <li key={questionId + ":" + answerId}>
         <p><strong>Question</strong></p><p className="reader-chat-text">{question}</p>
         <p><strong>Saved answer (unverified)</strong></p><p className="reader-chat-text">{answer}</p>
