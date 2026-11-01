@@ -1426,6 +1426,73 @@ impl UserState {
         Ok((changed != 0).then(|| self.conn.last_insert_rowid()))
     }
 
+    /// Persist a completed, externally validated Q&A turn as one transaction.
+    /// The caller must verify model citations before calling this method:
+    /// neither a user prompt nor an unvalidated partial model stream belongs
+    /// in durable chat history. Both rows commit together or neither does.
+    ///
+    /// An IMMEDIATE SQLite transaction serializes the generation check,
+    /// revision/thread identity check, and both inserts with cross-process
+    /// privacy resets. A stale generation returns None without writing.
+    pub fn append_chat_exchange_for_generation(
+        &mut self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        question: &str,
+        validated_answer: &str,
+    ) -> Result<Option<(i64, i64)>, UserStateError> {
+        let (page, revision) = Self::ids(key, revision_id)?;
+        if generation > i64::MAX as u64
+            || thread_id <= 0
+            || question.is_empty()
+            || question.len() > 65536
+            || question.contains('\0')
+            || validated_answer.is_empty()
+            || validated_answer.len() > 65536
+            || validated_answer.contains('\0')
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_generation: String = tx.query_row(
+            "SELECT COALESCE(
+                (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        if current_generation != generation.to_string() {
+            return Ok(None);
+        }
+        let exists: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM chat_threads
+             WHERE id=?1 AND project=?2 AND page_id=?3 AND revision_id=?4)",
+            params![thread_id, key.project, page, revision],
+            |row| row.get(0),
+        )?;
+        if exists != 1 {
+            return Err(UserStateError::InvalidValue);
+        }
+        tx.execute(
+            "INSERT INTO chat_messages (thread_id,role,content)
+             VALUES (?1,'user',?2)",
+            params![thread_id, question],
+        )?;
+        let question_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO chat_messages (thread_id,role,content)
+             VALUES (?1,'assistant',?2)",
+            params![thread_id, validated_answer],
+        )?;
+        let answer_id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(Some((question_id, answer_id)))
+    }
+
     pub fn chat_messages(
         &self,
         key: &ArticleKey,
@@ -1941,6 +2008,107 @@ mod tests {
             user.chat_messages(&key(), 123, thread, 10),
             Err(UserStateError::InvalidValue)
         ));
+    }
+
+    #[test]
+    fn chat_exchange_commits_both_turns_or_neither_and_rejects_stale_generation() {
+        let mut user = UserState::in_memory().unwrap();
+        let generation = user.personal_generation().unwrap();
+        let thread = user
+            .create_chat_thread_for_generation(generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            user.append_chat_exchange_for_generation(
+                generation, &key(), 123, thread, "Question?", ""
+            ),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.append_chat_exchange_for_generation(
+                generation, &key(), 124, thread, "Question?", "Answer."
+            ),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(user.chat_messages(&key(), 123, thread, 10).unwrap().is_empty());
+        let (question_id, answer_id) = user
+            .append_chat_exchange_for_generation(
+                generation, &key(), 123, thread, "Question?", "Verified [[cite:block]]"
+            )
+            .unwrap()
+            .unwrap();
+        assert!(answer_id > question_id);
+        let messages = user.chat_messages(&key(), 123, thread, 10).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "Question?");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "Verified [[cite:block]]");
+
+        user.clear_personal_reading_data().unwrap();
+        assert_eq!(
+            user.append_chat_exchange_for_generation(
+                generation, &key(), 123, thread, "Stale", "Stale answer"
+            ).unwrap(),
+            None
+        );
+        assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        let new_generation = user.personal_generation().unwrap();
+        let new_thread = user
+            .create_chat_thread_for_generation(new_generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            user.append_chat_exchange_for_generation(
+                generation, &key(), 123, new_thread, "Stale", "Stale answer"
+            ).unwrap(),
+            None
+        );
+        assert!(user.chat_messages(&key(), 123, new_thread, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn chat_exchange_rejects_cross_process_privacy_reset_without_partial_turn() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-chat-exchange-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("user-state.sqlite");
+        let mut writer = UserState::open(&db).unwrap();
+        let mut resetter = UserState::open(&db).unwrap();
+        let generation = writer.personal_generation().unwrap();
+        let thread = writer
+            .create_chat_thread_for_generation(generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        resetter.clear_personal_reading_data().unwrap();
+        assert_eq!(
+            writer.append_chat_exchange_for_generation(
+                generation, &key(), 123, thread, "Old question", "Old answer"
+            ).unwrap(),
+            None
+        );
+        assert!(writer.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        let new_generation = writer.personal_generation().unwrap();
+        let new_thread = writer
+            .create_chat_thread_for_generation(new_generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        writer
+            .append_chat_exchange_for_generation(
+                new_generation, &key(), 123, new_thread, "New question", "New answer"
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(resetter.chat_messages(&key(), 123, new_thread, 10).unwrap().len(), 2);
+        drop(writer);
+        drop(resetter);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
