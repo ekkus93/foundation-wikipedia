@@ -120,6 +120,18 @@ export function canSaveAiLocalChoice(
     inventory.models.some((model) => model.id === selectedModel);
 }
 
+/** Test inference only after explicit fresh model discovery, never offline. */
+export function canTestAiLocalChoice(
+  inventory: AiLocalInventory | null,
+  protocol: AiLocalProtocol,
+  endpoint: string,
+  selectedModel: string,
+  offline: boolean,
+  pending: boolean,
+): boolean {
+  return !offline && !pending && canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel);
+}
+
 export function aiLocalityDisclosure(locality: AiLocality): string {
   return locality === "localhost"
     ? "Localhost server — connected over TCP/IP; not an embedded on-device model."

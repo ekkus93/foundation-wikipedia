@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, classifyAiLocalEndpoint, activeAiLocalProfileDestination } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canTestAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, classifyAiLocalEndpoint, activeAiLocalProfileDestination } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -13,6 +13,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   const [inventory, setInventory] = useState<AiLocalInventory | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [savedModelHint, setSavedModelHint] = useState("");
   const [profileName, setProfileName] = useState("Default");
   const [savedProfiles, setSavedProfiles] = useState<AiSavedLocalProfiles>({ revision: 0, active: null, profiles: [] });
@@ -109,6 +111,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     if (offlineMode.getSnapshot()) {
       epoch.current.invalidate();
       setBusy(false);
+      setTesting(false);
+      setTestResult(null);
       setInventory(null);
       setSelectedModel("");
       setError(null);
@@ -119,6 +123,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     epoch.current.invalidate();
     profileReads.current.invalidate();
     setBusy(false);
+    setTesting(false);
+    setTestResult(null);
     setError(null);
     setInventory(null);
     setSelectedModel("");
@@ -130,7 +136,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
 
   async function discover(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || offlineMode.getSnapshot()) return;
+    if (busy || testing || offlineMode.getSnapshot()) return;
     invalidate(true);
     if (!endpoint || endpoint.length > 512 || endpoint.trim() !== endpoint) {
       setError("Enter an exact localhost or private-IP URL without spaces.");
@@ -158,6 +164,30 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       }
     } finally {
       if (epoch.current.matches(request)) setBusy(false);
+    }
+  }
+
+  async function testSelectedModel() {
+    if (!canTestAiLocalChoice(inventory, protocol, endpoint, selectedModel,
+      offlineMode.getSnapshot(), saving || busy || testing)) return;
+    // Ignore late results if the user edits the selection or enables offline mode.
+    epoch.current.invalidate();
+    const request = epoch.current.begin();
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // Rust independently rediscovers the model and sends a fixed, non-article
+      // diagnostic. Model output never crosses the IPC boundary.
+      await invoke<void>("test_local_ai_model", { protocol, endpoint, model: selectedModel });
+      if (epoch.current.matches(request) && !offlineMode.getSnapshot()) {
+        setTestResult({ ok: true, message: "Local model responded to the fixed test prompt. This does not enable article chat." });
+      }
+    } catch {
+      if (epoch.current.matches(request) && !offlineMode.getSnapshot()) {
+        setTestResult({ ok: false, message: "Local inference test failed. Check that this model can generate responses on the selected server." });
+      }
+    } finally {
+      if (epoch.current.matches(request)) setTesting(false);
     }
   }
 
@@ -284,7 +314,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   }
 
   async function saveChoice() {
-    if (saving || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) || offlineMode.getSnapshot()) return;
+    if (saving || testing || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) || offlineMode.getSnapshot()) return;
     if (needsReview) {
       setSavedNotice("Review and acknowledge the newer saved profiles before saving your draft.");
       return;
@@ -371,7 +401,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
           setEndpoint(event.target.value);
         }} />
       <p className="ai-local-note">Use an explicit private-LAN IP address to connect to a model running on another machine. LAN traffic is network traffic, not offline inference. This preview supports HTTP only; do not send sensitive content over untrusted networks.</p>
-      <button type="submit" disabled={saving || busy || offline}>{busy ? "Discovering models…" : "Discover models"}</button>
+      <button type="submit" disabled={saving || busy || testing || offline}>{busy ? "Discovering models…" : "Discover models"}</button>
     </form>
     {offline && <p role="status">Work offline is enabled. Localhost and LAN connections are disabled.</p>}
     {error && !offline && <p role="alert">{error}</p>}
@@ -395,14 +425,25 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       <p>{aiLocalityDisclosure(inventory.locality)}</p>
       <label htmlFor={`${id}-model`}>Selected model</label>
       <select id={`${id}-model`} value={selectedModel} disabled={saving || !inventory.models.length}
-        onChange={(event) => setSelectedModel(event.target.value)}>
+        onChange={(event) => {
+          epoch.current.invalidate();
+          setTesting(false);
+          setTestResult(null);
+          setSelectedModel(event.target.value);
+        }}>
         <option value="">Choose a discovered model…</option>
         {inventory.models.map((model) => <option key={model.id} value={model.id}>
           {model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString()} context tokens` : ""}
         </option>)}
       </select>
+      {selectedModel && <>
+        <p>Test selected model sends only the fixed text <strong>Reply OK.</strong> to this localhost/LAN server. No article text, bookmarks or credentials are sent. It does not save or enable a profile and may take up to two minutes.</p>
+        <button type="button" disabled={!canTestAiLocalChoice(inventory, protocol, endpoint, selectedModel, offline, saving || busy || testing)}
+          onClick={() => void testSelectedModel()}>{testing ? "Testing local model…" : "Test selected model"}</button>
+      </>}
+      {testResult && <p role={testResult.ok ? "status" : "alert"}>{testResult.message}</p>}
       {selectedModel && canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
-      {selectedModel && <button type="button" disabled={saving || offline || needsReview || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel)} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
+      {selectedModel && <button type="button" disabled={saving || testing || offline || needsReview || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel)} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
     </div>}
     <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, remote credentials and model inference are not wired to the reader yet.</p>
   </section>;

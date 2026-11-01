@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, activeAiLocalProfileDestination } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canTestAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, activeAiLocalProfileDestination } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -250,4 +250,15 @@ test("disabled local provider retains profiles but discloses no active destinati
   assert.equal(latestAiSavedLocalDraft(disabled, "LAN").modelHint, "model-a");
   assert.equal(sameAiSavedLocalProfiles(disabled, { ...disabled, active: "LAN" }), false);
   assert.equal(needsAiProfileReview(disabled, { ...disabled, active: "LAN" }), true);
+});
+
+test("explicit inference test requires fresh exact model, network permission and no pending action", () => {
+  const inventory = parseAiLocalInventory(response(), protocol, endpoint);
+  assert.equal(canTestAiLocalChoice(inventory, protocol, endpoint, "qwen3:8b", false, false), true);
+  assert.equal(canTestAiLocalChoice(null, protocol, endpoint, "qwen3:8b", false, false), false);
+  assert.equal(canTestAiLocalChoice(inventory, protocol, endpoint, "qwen3:8b", true, false), false);
+  assert.equal(canTestAiLocalChoice(inventory, protocol, endpoint, "qwen3:8b", false, true), false);
+  assert.equal(canTestAiLocalChoice(inventory, protocol, endpoint, "unadvertised", false, false), false);
+  assert.equal(canTestAiLocalChoice(inventory, "openai-compatible", endpoint, "qwen3:8b", false, false), false);
+  assert.equal(canTestAiLocalChoice(inventory, protocol, "http://192.168.1.2:11434", "qwen3:8b", false, false), false);
 });
