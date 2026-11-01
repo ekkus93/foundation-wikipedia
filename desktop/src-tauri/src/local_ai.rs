@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 use wiki_ai::local_endpoint::LocalEndpoint;
 use wiki_ai::{CancellationToken, GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
 use wiki_store::user_state::UserState;
