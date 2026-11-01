@@ -374,7 +374,7 @@ mod tests {
         assert!(empty.profiles.is_empty());
         assert_eq!(empty.revision, 6);
         state.set_setting(LEGACY_KEY, "ignored").unwrap();
-        assert_eq!(read_profiles(&state).unwrap(), LocalProfiles::default());
+        assert_eq!(read_profiles(&state).unwrap(), empty);
     }
 
     #[test]
