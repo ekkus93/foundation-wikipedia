@@ -127,10 +127,9 @@ pub fn answer_article(
     // containing newlines or labels such as "Evidence ID:" must not be able
     // to impersonate another record in the outbound prompt.
     for hit in &evidence {
-        let headings = serde_json::to_string(&hit.heading_path)
-            .map_err(|_| RagError::ContextTooLarge)?;
-        let excerpt = serde_json::to_string(&hit.excerpt)
-            .map_err(|_| RagError::ContextTooLarge)?;
+        let headings =
+            serde_json::to_string(&hit.heading_path).map_err(|_| RagError::ContextTooLarge)?;
+        let excerpt = serde_json::to_string(&hit.excerpt).map_err(|_| RagError::ContextTooLarge)?;
         context.push_str(&format!(
             "\nEvidence ID: {}\nHeadings (JSON): {}\nExcerpt (JSON): {}\n",
             hit.block_id, headings, excerpt
