@@ -88,7 +88,6 @@ export default function App() {
         try {
           tabScrollRef.current.clear();
           tabArticleRef.current.clear();
-      setChatOpen(false);
           setChatOpen(false);
           setBookmarkOpen(null);
           setReaderTabs(initialReaderTabs());
@@ -598,13 +597,3 @@ export default function App() {
       {destination === "article" && <div className="hub" ref={hubRef}>
         {expanded && <div className="speed-dial" role="group" aria-label="Reader actions" id="reader-action-menu">
           {READER_ACTIONS.map((action, index) => <button key={action} ref={index === 0 ? firstActionRef : undefined} onClick={() => activate(action)}>{action}</button>)}
-        </div>}
-        <button className="fab" ref={mainActionRef}
-          aria-label={expanded ? "Close reader actions" : "Open reader actions"}
-          aria-expanded={expanded}
-          aria-controls={expanded ? "reader-action-menu" : undefined}
-          onClick={() => setExpanded(!expanded)}>{expanded ? "×" : "✦"}</button>
-      </div>}
-    </div>
-  );
-}
