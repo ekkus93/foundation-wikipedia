@@ -120,7 +120,7 @@ export function parseAiSavedLocalProfile(input: unknown): AiSavedLocalProfile | 
   const row = input as Record<string, unknown>;
   if (Object.keys(row).sort().join(",") !== "endpoint,model,protocol" ||
       !(row.protocol === "ollama" || row.protocol === "openai-compatible") ||
-      classifyAiLocalEndpoint(row.endpoint) === null ||
+      typeof row.endpoint !== "string" || classifyAiLocalEndpoint(row.endpoint) === null ||
       !validAiLocalModelId(row.model)) {
     throw new Error("Invalid saved AI profile");
   }
