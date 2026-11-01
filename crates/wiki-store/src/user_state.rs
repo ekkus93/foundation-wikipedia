@@ -2230,7 +2230,10 @@ mod tests {
         assert_eq!(recent[0].content, "Answer 1");
         assert_eq!(recent[1].content, "Question 2");
         assert_eq!(recent[2].content, "Answer 2");
-        assert!(user.recent_chat_messages(&key(), 123, thread, 0).unwrap().is_empty());
+        assert!(user
+            .recent_chat_messages(&key(), 123, thread, 0)
+            .unwrap()
+            .is_empty());
         assert!(matches!(
             user.recent_chat_messages(&key(), 124, thread, 3),
             Err(UserStateError::InvalidValue)
