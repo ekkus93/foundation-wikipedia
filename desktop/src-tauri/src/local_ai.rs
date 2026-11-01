@@ -2,7 +2,7 @@
 //! Source of authority is wiki-ai's pinned-address transport, not web fetch.
 use serde::{Deserialize, Serialize};
 use wiki_ai::local_endpoint::LocalEndpoint;
-use wiki_ai::{GenerateRequest, Message, MessageRole};
+use wiki_ai::{CancellationToken, GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
 use wiki_store::user_state::UserState;
 use crate::open_private_bookmark_store;
 use wiki_ai::local_selection::{discover_local_models, LocalProtocol, SelectionError};
@@ -29,11 +29,7 @@ pub async fn discover_local_ai_models(
     protocol: String,
     endpoint: String,
 ) -> Result<DesktopAiInventory, String> {
-    let selected = match protocol.as_str() {
-        "ollama" => LocalProtocol::Ollama,
-        "openai-compatible" => LocalProtocol::OpenAiCompatible,
-        _ => return Err("Unsupported local AI protocol".to_owned()),
-    };
+    let selected = parse_local_protocol(&protocol)?;
     if endpoint.len() > 512 {
         return Err("Invalid local endpoint".to_owned());
     }
@@ -66,6 +62,68 @@ pub async fn discover_local_ai_models(
         })
     }).await.map_err(|_| "Local model discovery worker stopped".to_owned())?
 }
+
+fn parse_local_protocol(protocol: &str) -> Result<LocalProtocol, String> {
+    match protocol {
+        "ollama" => Ok(LocalProtocol::Ollama),
+        "openai-compatible" => Ok(LocalProtocol::OpenAiCompatible),
+        _ => Err("Unsupported local AI protocol".to_owned()),
+    }
+}
+
+// This explicit diagnostic never receives article text, user prompts,
+// bookmarks, history, or credentials. No generated text leaves native Rust.
+const LOCAL_TEST_PROMPT: &str = "Reply OK.";
+
+fn probe_local_model(protocol: LocalProtocol, endpoint: &str, model: &str) -> Result<(), String> {
+    if endpoint.len() > 512 || model.len() > 256 {
+        return Err("Invalid local model test selection".to_owned());
+    }
+    // Re-discover on the native side: a stale or forged UI inventory cannot
+    // authorize inference using a model the server no longer advertises.
+    let inventory = discover_local_models(protocol, endpoint)
+        .map_err(|_| "Could not verify the selected local model".to_owned())?;
+    let selected = inventory.select(model)
+        .map_err(|_| "Selected model is no longer advertised by this server".to_owned())?;
+    let mut saw_text = false;
+    selected
+        .stream(
+            &[Message {
+                role: MessageRole::User,
+                content: LOCAL_TEST_PROMPT.to_owned(),
+            }],
+            8,
+            &CancellationToken::default(),
+            OutboundPolicy::AllowLocalEndpoints,
+            &mut |event| {
+                if let StreamEvent::TextDelta(text) = event {
+                    saw_text |= !text.trim().is_empty();
+                }
+                Ok(())
+            },
+        )
+        .map_err(|_| "Local model inference test failed".to_owned())?;
+    if !saw_text {
+        return Err("Local model returned no assistant text".to_owned());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn test_local_ai_model(
+    protocol: String,
+    endpoint: String,
+    model: String,
+) -> Result<(), String> {
+    let selected = parse_local_protocol(&protocol)?;
+    if endpoint.len() > 512 || model.len() > 256 {
+        return Err("Invalid local model test selection".to_owned());
+    }
+    tauri::async_runtime::spawn_blocking(move || probe_local_model(selected, &endpoint, &model))
+        .await
+        .map_err(|_| "Local model test worker stopped".to_owned())?
+}
+
 /// One non-secret local profile in the private SQLite preferences. A restored
 /// model ID is untrusted until explicitly rediscovered from its server.
 const LOCAL_PROFILE_KEY: &str = "ai.local_profile.v1";
@@ -152,6 +210,86 @@ mod local_profile_tests {
             endpoint: endpoint.to_owned(),
             model: model.to_owned(),
         }
+    }
+
+
+    fn serve_probe_fixture(
+        responses: Vec<(&'static str, &'static str)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (body, media_type) in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut buffer = [0; 4096];
+                    let count = socket.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                    let Some(split) = bytes.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let header = String::from_utf8_lossy(&bytes[..split]);
+                    let length = header.lines()
+                        .find_map(|line| line.strip_prefix("Content-Length: "))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if bytes.len() >= split + 4 + length {
+                        break;
+                    }
+                }
+                requests.push(String::from_utf8(bytes).unwrap());
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(reply.as_bytes()).unwrap();
+            }
+            requests
+        });
+        (endpoint, worker)
+    }
+
+    #[test]
+    fn explicit_local_inference_probe_sends_only_fixed_prompt_and_discards_output() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let (endpoint, worker) = serve_probe_fixture(vec![
+            (r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
+            (sse, "text/event-stream"),
+        ]);
+        probe_local_model(LocalProtocol::Ollama, &endpoint, "qwen3:8b").unwrap();
+        let requests = worker.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /api/tags HTTP/1.1"));
+        assert!(requests[1].starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(requests[1].contains(r#""content":"Reply OK.""#));
+        assert!(requests[1].contains(r#""model":"qwen3:8b""#));
+        assert!(!requests[1].contains("article"));
+    }
+
+    #[test]
+    fn local_inference_probe_rejects_unknown_model_before_post_and_public_hosts() {
+        let (endpoint, worker) = serve_probe_fixture(vec![
+            (r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
+        ]);
+        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, "unadvertised").is_err());
+        let requests = worker.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/tags HTTP/1.1"));
+        assert!(probe_local_model(LocalProtocol::Ollama, "http://8.8.8.8", "qwen3:8b").is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, "http://user:secret@127.0.0.1", "qwen3:8b").is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, &"x".repeat(257)).is_err());
     }
 
     #[test]
