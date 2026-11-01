@@ -466,7 +466,10 @@ mod tests {
             assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
             assert!(request.contains(r#""model":"qwen3:8b""#));
             assert!(request.contains("Gravity is the attraction between masses."));
-            assert!(request.contains(&format!("Evidence ID: {}", article.key.block_id(12, &[], 0))));
+            assert!(request.contains(&format!(
+                "Evidence ID: {}",
+                article.key.block_id(12, &[], 0)
+            )));
         }
     }
 
