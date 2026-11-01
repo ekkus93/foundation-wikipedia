@@ -357,7 +357,7 @@ mod citation_parser_tests {
             .search(&long_question, 100);
         assert_eq!(hits.len(), 15);
         let context_bytes = format!(
-            "Wikipedia project: {}, page: {}, revision: {}\\n",
+            "Wikipedia project: {}, page: {}, revision: {}\n",
             large.key.project, large.key.page_id, large.revision.revision_id
         )
         .len()
@@ -365,7 +365,7 @@ mod citation_parser_tests {
                 .iter()
                 .map(|hit| {
                     format!(
-                        "\\nEvidence ID: {}\\nHeadings (JSON): {}\\nExcerpt (JSON): {}\\n",
+                        "\nEvidence ID: {}\nHeadings (JSON): {}\nExcerpt (JSON): {}\n",
                         hit.block_id,
                         serde_json::to_string(&hit.heading_path).unwrap(),
                         serde_json::to_string(&hit.excerpt).unwrap()
