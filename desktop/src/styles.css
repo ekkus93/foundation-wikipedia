@@ -82,3 +82,15 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .ai-local-note { font-size: 13px; color: var(--reader-muted); }
 .ai-local-inventory { margin: 18px 0; padding: 16px; border: 1px solid var(--reader-border); border-radius: 12px; overflow-wrap: anywhere; }
 .ai-local-settings [role="alert"] { border-left: 4px solid #b32424; padding: 12px; }
+
+/* Read-only chat replay: saved model output is always rendered as text. */
+.reader-chat-history { position: fixed; z-index: 3; right: 24px; top: 96px; width: min(440px, calc(100vw - 48px)); max-height: calc(100vh - 180px); overflow: auto; padding: 18px; border: 1px solid var(--reader-border); border-radius: 18px; background: var(--reader-bg); color: var(--reader-text); box-shadow: 0 10px 36px #0003; font: 14px/1.5 system-ui, sans-serif; }
+.reader-chat-history header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reader-chat-history button, .reader-chat-history select { background: var(--reader-surface); color: var(--reader-text); border: 1px solid var(--reader-muted); border-radius: 6px; padding: 7px 10px; }
+.reader-chat-history label { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.reader-chat-history :is(button,select):focus-visible { outline: 3px solid var(--reader-link); outline-offset: 3px; }
+.reader-chat-disclaimer { color: var(--reader-muted); }
+.reader-chat-exchanges { padding-left: 24px; }
+.reader-chat-exchanges li { border-top: 1px solid var(--reader-border); padding: 10px 0; overflow-wrap: anywhere; }
+.reader-chat-exchanges li p { margin: 6px 0; }
+.reader-chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }

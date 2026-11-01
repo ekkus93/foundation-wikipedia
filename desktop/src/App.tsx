@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AiAssistantSettings from "./AiAssistantSettings";
+import ReaderChatHistory from "./ReaderChatHistory";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
@@ -16,6 +17,8 @@ import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 
 export default function App() {
   const [expanded, setExpanded] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [, setArticleVersion] = useState(0);
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [readerSessionId, setReaderSessionId] = useState(0);
   // A single offline switch is shared by every existing and future tab.
@@ -85,6 +88,8 @@ export default function App() {
         try {
           tabScrollRef.current.clear();
           tabArticleRef.current.clear();
+      setChatOpen(false);
+          setChatOpen(false);
           setBookmarkOpen(null);
           setReaderTabs(initialReaderTabs());
           setReaderSessionId((id) => id + 1);
@@ -386,6 +391,7 @@ export default function App() {
     rememberTabScroll();
     tabScrollRef.current.delete(id);
     tabArticleRef.current.delete(id);
+    if (id === readerTabs.activeId) setChatOpen(false);
     setReaderTabs((state) => closeReaderTab(state, id));
   }
 
@@ -403,7 +409,14 @@ export default function App() {
   function activate(action: ReaderAction) {
     setExpanded(false);
     mainActionRef.current?.focus();
-    if (action === "Settings") {
+    if (action === "Chat") {
+      if (!tabArticleRef.current.has(readerTabs.activeId)) {
+        setMessage("Open a Wikipedia article to view saved conversations for its exact revision.");
+      } else {
+        setMessage(null);
+        setChatOpen(true);
+      }
+    } else if (action === "Settings") {
       rememberTabScroll();
       setSettingsSection(null);
       setDestination("settings");
@@ -472,8 +485,11 @@ export default function App() {
             <section key={`${readerSessionId}:${tab.id}`} aria-label={`Article tab ${tab.id}`}
               hidden={readerTabs.activeId !== tab.id}>
               <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
+                const previous = tabArticleRef.current.get(tab.id);
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
+                if (previous?.project !== context?.project || previous?.pageId !== context?.pageId ||
+                    previous?.revisionId !== context?.revisionId) setArticleVersion((value) => value + 1);
                 setReaderTabs((state) => titleReaderTab(state, tab.id, title));
               }} />
             </section>
@@ -570,6 +586,12 @@ export default function App() {
         </section> : settingsSection === "AI Assistant" ? <AiAssistantSettings offlineMode={offlineMode} />
         : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
+      {destination === "article" && chatOpen && (() => {
+        const article = tabArticleRef.current.get(readerTabs.activeId);
+        return article ? <ReaderChatHistory
+          key={`${readerSessionId}:${readerTabs.activeId}:${article.project}:${article.pageId}:${article.revisionId}`}
+          article={article} onClose={() => setChatOpen(false)} /> : null;
+      })()}
       {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>
       </div>}
