@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderChatThreads, parseReaderChatExchanges } from "../src/readerChatHistory.ts";
+import { parseReaderChatThreads, parseReaderChatExchanges, ReaderChatDeleteFence } from "../src/readerChatHistory.ts";
 
 test("thread IDs must be unique, bounded and exactly representable", () => {
   assert.deepEqual(parseReaderChatThreads([2, 1]), [2, 1]);
@@ -33,4 +33,23 @@ test("plain text including markup is preserved, never interpreted as verified ci
   const rows = [[1, 2, "What is <b>math</b>?", "<img src=x onerror=alert(1)> [fabricated citation]"]];
   assert.deepEqual(parseReaderChatExchanges(rows), rows);
   assert.deepEqual(parseReaderChatExchanges([[1, 2, "質問", "日本語の回答"]]), [[1, 2, "質問", "日本語の回答"]]);
+});
+
+test("a delayed deletion cannot mutate a new article, a reused thread ID, or a remounted panel", () => {
+  const fence = new ReaderChatDeleteFence();
+  const first = { project: "enwiki", pageId: 42, revisionId: 7 };
+  const nextRevision = { ...first, revisionId: 8 };
+  const otherProject = { ...first, project: "frwiki" };
+  const pending = fence.begin(first, 5);
+  assert.equal(fence.isCurrent(pending, first, 5), true);
+  assert.equal(fence.isCurrent(pending, first, 6), false);
+  assert.equal(fence.isCurrent(pending, nextRevision, 5), false);
+  assert.equal(fence.isCurrent(pending, otherProject, 5), false);
+  fence.invalidate();
+  assert.equal(fence.isCurrent(pending, first, 5), false);
+  const replacement = fence.begin(first, 5);
+  assert.equal(fence.isCurrent(pending, first, 5), false);
+  assert.equal(fence.isCurrent(replacement, first, 5), true);
+  fence.invalidate();
+  assert.equal(fence.isCurrent(replacement, first, 5), false);
 });

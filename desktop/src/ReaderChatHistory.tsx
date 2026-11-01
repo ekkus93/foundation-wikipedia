@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
 import type { ReaderArticleContext } from "./OnlineReader";
-import { parseReaderChatExchanges, parseReaderChatThreads, type ReaderChatExchange } from "./readerChatHistory";
+import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, type ReaderChatExchange } from "./readerChatHistory";
 
 /** Read-only historical transcript: an online HTML preview is not canonical RAG
  * evidence, so this component never generates, transmits or certifies citations. */
@@ -22,6 +22,11 @@ export default function ReaderChatHistory({ article, onClose }: {
   const [minimized, setMinimized] = useState(false);
   const [position, setPosition] = useState<ReaderChatPosition | null>(null);
   const panelRef = useRef<HTMLElement>(null);
+  const deleteFenceRef = useRef(new ReaderChatDeleteFence());
+  // Updated during render, not in an effect: a pending IPC may settle before
+  // the old article's effect cleanup runs after a navigation.
+  const currentArticleRef = useRef(article);
+  currentArticleRef.current = article;
   const dragRef = useRef<{
     pointerId: number; startX: number; startY: number; left: number; top: number;
   } | null>(null);
@@ -98,6 +103,8 @@ export default function ReaderChatHistory({ article, onClose }: {
 
   useEffect(() => {
     let active = true;
+    deleteFenceRef.current.invalidate();
+    setDeleting(false);
     setThreads([]);
     setSelectedThread(null);
     setExchanges([]);
@@ -114,7 +121,7 @@ export default function ReaderChatHistory({ article, onClose }: {
     }).catch(() => {
       if (active) setError("Saved conversations could not be loaded.");
     }).finally(() => { if (active) setLoadingThreads(false); });
-    return () => { active = false; };
+    return () => { active = false; deleteFenceRef.current.invalidate(); };
   }, [article.project, article.pageId, article.revisionId]);
 
   useEffect(() => {
@@ -140,6 +147,8 @@ export default function ReaderChatHistory({ article, onClose }: {
   async function deleteSelectedThread() {
     const id = selectedThread;
     if (id === null || confirmDelete !== id || deleting || !threads.includes(id)) return;
+    const fence = deleteFenceRef.current;
+    const token = fence.begin(article, id);
     setDeleting(true);
     setError(null);
     setDeleteNotice(null);
@@ -148,6 +157,7 @@ export default function ReaderChatHistory({ article, onClose }: {
         project: article.project, pageId: article.pageId, revisionId: article.revisionId,
         threadId: id,
       });
+      if (!fence.isCurrent(token, currentArticleRef.current, id)) return;
       if (!removed) throw new Error("Thread was not removed");
       const remaining = threads.filter((thread) => thread !== id);
       setThreads(remaining);
@@ -155,10 +165,15 @@ export default function ReaderChatHistory({ article, onClose }: {
       setExchanges([]);
       setDeleteNotice("Conversation deleted from private local storage.");
     } catch {
-      setError("Conversation could not be deleted; refresh the history before trying again.");
+      if (fence.isCurrent(token, currentArticleRef.current, id)) {
+        setError("Conversation could not be deleted; refresh the history before trying again.");
+      }
     } finally {
-      setConfirmDelete(null);
-      setDeleting(false);
+      if (fence.isCurrent(token, currentArticleRef.current, id)) {
+        fence.invalidate();
+        setConfirmDelete(null);
+        setDeleting(false);
+      }
     }
   }
 

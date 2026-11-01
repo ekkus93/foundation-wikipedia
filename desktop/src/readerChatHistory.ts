@@ -48,3 +48,27 @@ export function parseReaderChatExchanges(value: unknown): ReaderChatExchange[] {
     return [row[0], row[1], row[2], row[3]];
   });
 }
+
+/** A delete response belongs only to the article and thread that initiated it.
+ * Invalidate on navigation or unmount so an old IPC completion cannot erase
+ * or overwrite the next article's conversation list (even if IDs repeat). */
+export class ReaderChatDeleteFence {
+  private epoch = 0;
+  private active: { epoch: number; identity: string; threadId: number } | null = null;
+
+  begin(article: { project: string; pageId: number; revisionId: number }, threadId: number): number {
+    const epoch = ++this.epoch;
+    this.active = { epoch, identity: JSON.stringify([article.project, article.pageId, article.revisionId]), threadId };
+    return epoch;
+  }
+
+  isCurrent(epoch: number, article: { project: string; pageId: number; revisionId: number }, threadId: number): boolean {
+    return this.active?.epoch === epoch && this.active.threadId === threadId &&
+      this.active.identity === JSON.stringify([article.project, article.pageId, article.revisionId]);
+  }
+
+  invalidate(): void {
+    this.epoch += 1;
+    this.active = null;
+  }
+}
