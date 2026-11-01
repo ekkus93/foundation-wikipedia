@@ -87,8 +87,31 @@ pub fn answer_article(
         return Err(RagError::InvalidQuestion);
     }
     let index = ArticleLexicalIndex::build(article).map_err(RagError::InvalidArticle)?;
+    // Reserve the encoded question and article identity before selecting any
+    // evidence. Word budgets alone cannot bound JSON-escaped UTF-8 bytes.
+    let encoded_question =
+        serde_json::to_string(question.question).map_err(|_| RagError::InvalidQuestion)?;
+    let mut user_message = format!(
+        "Question (JSON string): {encoded_question}\\n\\nWikipedia project: {}, page: {}, revision: {}\\n",
+        article.key.project, article.key.page_id, article.revision.revision_id
+    );
+    if user_message.len() > MAX_CONTEXT_BYTES {
+        return Err(RagError::ContextTooLarge);
+    }
+    let format_evidence = |hit: &EvidenceHit| -> Result<String, RagError> {
+        // Untrusted headings and excerpts cannot forge new evidence records.
+        let headings =
+            serde_json::to_string(&hit.heading_path).map_err(|_| RagError::ContextTooLarge)?;
+        let excerpt = serde_json::to_string(&hit.excerpt).map_err(|_| RagError::ContextTooLarge)?;
+        Ok(format!(
+            "\\nEvidence ID: {}\\nHeadings (JSON): {}\\nExcerpt (JSON): {}\\n",
+            hit.block_id, headings, excerpt
+        ))
+    };
+
     let mut evidence = Vec::new();
     let mut used_words = 0;
+    let mut skipped_for_bytes = false;
     if let Some(selected) = question.selected_evidence {
         if !index.contains_evidence(selected) {
             return Err(RagError::InvalidSelection);
@@ -97,6 +120,12 @@ pub fn answer_article(
         if used_words > question.context_word_budget {
             return Err(RagError::SelectionTooLarge);
         }
+        // Explicitly selected context is mandatory, never silently dropped.
+        let record = format_evidence(selected)?;
+        if user_message.len().saturating_add(record.len()) > MAX_CONTEXT_BYTES {
+            return Err(RagError::SelectionTooLarge);
+        }
+        user_message.push_str(&record);
         evidence.push(selected.clone());
     }
     for hit in index.search(question.question, 100) {
@@ -110,42 +139,27 @@ pub fn answer_article(
             continue;
         }
         let words = evidence_word_cost(&hit.excerpt);
-        if words <= question.context_word_budget.saturating_sub(used_words) {
-            used_words += words;
-            evidence.push(hit);
+        if words > question.context_word_budget.saturating_sub(used_words) {
+            continue;
         }
+        let record = format_evidence(&hit)?;
+        if user_message.len().saturating_add(record.len()) > MAX_CONTEXT_BYTES {
+            // A large passage must not crowd out a later smaller candidate.
+            skipped_for_bytes = true;
+            continue;
+        }
+        used_words += words;
+        user_message.push_str(&record);
+        evidence.push(hit);
     }
     if evidence.is_empty() {
-        return Ok(GroundedAnswer::InsufficientEvidence);
+        return if skipped_for_bytes {
+            Err(RagError::ContextTooLarge)
+        } else {
+            Ok(GroundedAnswer::InsufficientEvidence)
+        };
     }
 
-    let mut context = format!(
-        "Wikipedia project: {}, page: {}, revision: {}\n",
-        article.key.project, article.key.page_id, article.revision.revision_id
-    );
-    // Serialize untrusted headings and excerpts as JSON strings. A passage
-    // containing newlines or labels such as "Evidence ID:" must not be able
-    // to impersonate another record in the outbound prompt.
-    for hit in &evidence {
-        let headings =
-            serde_json::to_string(&hit.heading_path).map_err(|_| RagError::ContextTooLarge)?;
-        let excerpt = serde_json::to_string(&hit.excerpt).map_err(|_| RagError::ContextTooLarge)?;
-        context.push_str(&format!(
-            "\nEvidence ID: {}\nHeadings (JSON): {}\nExcerpt (JSON): {}\n",
-            hit.block_id, headings, excerpt
-        ));
-        if context.len() > MAX_CONTEXT_BYTES {
-            return Err(RagError::ContextTooLarge);
-        }
-    }
-    // The question is also untrusted text; it must not create fake evidence
-    // boundaries. Bound the entire outbound user message, not only passages.
-    let encoded_question =
-        serde_json::to_string(question.question).map_err(|_| RagError::InvalidQuestion)?;
-    let user_message = format!("Question (JSON string): {encoded_question}\n\n{context}");
-    if user_message.len() > MAX_CONTEXT_BYTES {
-        return Err(RagError::ContextTooLarge);
-    }
     let request = GenerateRequest {
         model: question.model.to_string(),
         messages: vec![
@@ -341,8 +355,8 @@ mod citation_parser_tests {
             Ok(GroundedAnswer::InsufficientEvidence)
         );
 
-        // The evidence-only context fits, but the combined outbound message
-        // must still reject an additional bounded, long user question.
+        // The evidence-only context fits, but the question plus all ranked
+        // passages exceeds the provider's total message-byte budget.
         let mut large = cjk;
         large.lead = (0..15)
             .map(|ordinal| Block {
@@ -384,14 +398,53 @@ mod citation_parser_tests {
             max_output_tokens: 16,
             outbound_policy: OutboundPolicy::OnDeviceOnly,
         };
+        // A byte-aware retriever retains the highest-ranked fitting passages
+        // rather than rejecting an otherwise answerable question because all
+        // fifteen hits together would exceed the provider message limit.
+        struct BudgetCaptureProvider;
+        impl LlmProvider for BudgetCaptureProvider {
+            fn locality(&self) -> Locality {
+                Locality::OnDevice
+            }
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities {
+                    discover_models: false,
+                    streaming: true,
+                    cancellable: true,
+                }
+            }
+            fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+                Err(ProviderError::Unsupported)
+            }
+            fn test_connection(&self) -> Result<(), ProviderError> {
+                Err(ProviderError::Unsupported)
+            }
+            fn stream(
+                &self,
+                request: &GenerateRequest,
+                _cancellation: &CancellationToken,
+                on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+            ) -> Result<(), ProviderError> {
+                let sent = &request.messages[1].content;
+                assert!(sent.len() <= MAX_CONTEXT_BYTES);
+                assert!(sent.contains("Question (JSON string):"));
+                let supplied = sent.matches("\\nEvidence ID: ").count();
+                assert!(supplied > 0 && supplied < 15);
+                on_event(StreamEvent::TextDelta("[NO_EVIDENCE]".into()))?;
+                on_event(StreamEvent::Completed {
+                    input_tokens: None,
+                    output_tokens: None,
+                })
+            }
+        }
         assert_eq!(
             answer_article(
                 &large,
-                &MustNotCallProvider,
+                &BudgetCaptureProvider,
                 &long_request,
                 &CancellationToken::default(),
             ),
-            Err(RagError::ContextTooLarge)
+            Ok(GroundedAnswer::InsufficientEvidence)
         );
     }
 
