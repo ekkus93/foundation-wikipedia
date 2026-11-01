@@ -451,6 +451,41 @@ async fn read_reader_chat_exchanges(
     .map_err(|_| "Chat history worker stopped".to_owned())?
 }
 
+/// Delete only the requested exact-revision thread and its cascading messages.
+fn delete_reader_chat_thread_row(
+    state: &UserState,
+    key: &ArticleKey,
+    revision_id: u64,
+    thread_id: i64,
+    generation: u64,
+) -> Result<bool, UserStateError> {
+    state.delete_chat_thread_for_generation(generation, key, revision_id, thread_id)
+}
+
+#[tauri::command]
+async fn delete_reader_chat_thread(
+    app: tauri::AppHandle,
+    gate: tauri::State<'_, DesktopPersonalDataGate>,
+    project: String,
+    page_id: u64,
+    revision_id: u64,
+    thread_id: i64,
+) -> Result<bool, String> {
+    let generation = gate.generation();
+    let persistent_generation = capture_persistent_generation(&app)?;
+    let gate = gate.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        gate.write(generation, || {
+            let state = open_private_bookmark_store(&app)?;
+            let key = ArticleKey { project, page_id };
+            delete_reader_chat_thread_row(&state, &key, revision_id, thread_id, persistent_generation)
+                .map_err(|_| "Cannot delete exact-revision chat thread".to_owned())
+        })
+    })
+    .await
+    .map_err(|_| "Chat deletion worker stopped".to_owned())?
+}
+
 fn toggle_saved_bookmark(
     state: &UserState,
     key: &ArticleKey,
@@ -1093,6 +1128,29 @@ mod bookmark_tests {
     }
 
     #[test]
+    fn desktop_chat_thread_delete_is_exact_revision_and_generation_scoped() {
+        let mut state = UserState::in_memory().unwrap();
+        let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
+        let other = ArticleKey { project: "enwiki".to_owned(), page_id: 43 };
+        let generation = state.personal_generation().unwrap();
+        let target = state.create_chat_thread_for_generation(generation, &key, 333).unwrap().unwrap();
+        let kept = state.create_chat_thread_for_generation(generation, &other, 333).unwrap().unwrap();
+        state.append_chat_exchange_for_generation(generation, &key, 333, target, "Question", "Answer").unwrap();
+        assert!(!delete_reader_chat_thread_row(&state, &key, 334, target, generation).unwrap());
+        assert!(!delete_reader_chat_thread_row(&state, &other, 333, target, generation).unwrap());
+        assert!(delete_reader_chat_thread_row(&state, &key, 333, target, generation).unwrap());
+        assert!(!delete_reader_chat_thread_row(&state, &key, 333, target, generation).unwrap());
+        assert!(reader_chat_thread_rows(&state, &key, 333, generation).unwrap().is_empty());
+        assert_eq!(reader_chat_thread_rows(&state, &other, 333, generation).unwrap(), vec![kept]);
+        state.clear_personal_reading_data().unwrap();
+        assert!(!delete_reader_chat_thread_row(&state, &key, 333, target, generation).unwrap());
+        let new_generation = state.personal_generation().unwrap();
+        let newer = state.create_chat_thread_for_generation(new_generation, &key, 333).unwrap().unwrap();
+        assert!(!delete_reader_chat_thread_row(&state, &key, 333, newer, generation).unwrap());
+        assert_eq!(reader_chat_thread_rows(&state, &key, 333, new_generation).unwrap(), vec![newer]);
+    }
+
+    #[test]
     fn visit_history_is_opt_in_bounded_and_independent_of_bookmarks() {
         let state = UserState::in_memory().unwrap();
         let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
@@ -1562,6 +1620,7 @@ pub fn run() {
             read_reader_saved_panel,
             list_reader_chat_threads,
             read_reader_chat_exchanges,
+            delete_reader_chat_thread,
             clear_reader_history,
             read_reader_theme,
             set_reader_theme,
