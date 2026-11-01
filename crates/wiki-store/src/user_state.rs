@@ -1531,6 +1531,48 @@ impl UserState {
         Ok(messages)
     }
 
+    /// Return the most recent bounded turns in chronological order.
+    /// The legacy chat_messages reader returns the earliest N messages;
+    /// a resumed chat instead needs the latest context without reordering it.
+    /// All rows are validated before any are returned to a caller.
+    pub fn recent_chat_messages(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        limit: usize,
+    ) -> Result<Vec<ChatMessage>, UserStateError> {
+        if limit > 1000 {
+            return Err(UserStateError::InvalidValue);
+        }
+        self.check_chat_thread(key, revision_id, thread_id)?;
+        let mut statement = self.conn.prepare(
+            "SELECT id,role,content FROM (
+               SELECT id,role,content FROM chat_messages
+               WHERE thread_id=?1 ORDER BY id DESC LIMIT ?2
+             ) ORDER BY id ASC",
+        )?;
+        let rows = statement.query_map(params![thread_id, limit as i64], |row| {
+            Ok(ChatMessage {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                content: row.get(2)?,
+            })
+        })?;
+        let messages = rows.collect::<Result<Vec<_>, _>>()?;
+        for message in &messages {
+            if message.id <= 0
+                || !matches!(message.role.as_str(), "user" | "assistant")
+                || message.content.is_empty()
+                || message.content.len() > 65536
+                || message.content.contains('\0')
+            {
+                return Err(UserStateError::InvalidValue);
+            }
+        }
+        Ok(messages)
+    }
+
     /// Deletion cascades to every message of this exact article-scoped thread.
     pub fn delete_chat_thread(
         &self,
@@ -2161,6 +2203,52 @@ mod tests {
         drop(writer);
         drop(resetter);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recent_chat_context_returns_last_turns_in_order_and_rejects_bad_rows() {
+        let mut user = UserState::in_memory().unwrap();
+        let generation = user.personal_generation().unwrap();
+        let thread = user
+            .create_chat_thread_for_generation(generation, &key(), 123)
+            .unwrap()
+            .unwrap();
+        for index in 0..3 {
+            user.append_chat_exchange_for_generation(
+                generation,
+                &key(),
+                123,
+                thread,
+                &format!("Question {index}"),
+                &format!("Answer {index}"),
+            )
+            .unwrap()
+            .unwrap();
+        }
+        let recent = user.recent_chat_messages(&key(), 123, thread, 3).unwrap();
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].content, "Answer 1");
+        assert_eq!(recent[1].content, "Question 2");
+        assert_eq!(recent[2].content, "Answer 2");
+        assert!(user.recent_chat_messages(&key(), 123, thread, 0).unwrap().is_empty());
+        assert!(matches!(
+            user.recent_chat_messages(&key(), 124, thread, 3),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(matches!(
+            user.recent_chat_messages(&key(), 123, thread, 1001),
+            Err(UserStateError::InvalidValue)
+        ));
+        user.conn
+            .execute(
+                "UPDATE chat_messages SET role='system' WHERE id=?1",
+                params![recent[2].id],
+            )
+            .unwrap();
+        assert!(matches!(
+            user.recent_chat_messages(&key(), 123, thread, 3),
+            Err(UserStateError::InvalidValue)
+        ));
     }
 
     #[test]
