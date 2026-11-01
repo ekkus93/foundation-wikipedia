@@ -897,13 +897,41 @@ mod citation_parser_tests {
             ..hit.clone()
         };
         for (text, citations, error) in [
-            ("No citation", vec![hit.clone()], AnswerDisplayError::CitationMismatch),
-            ("[[cite:forged]]", vec![hit.clone()], AnswerDisplayError::CitationMismatch),
-            ("[[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), other.clone()], AnswerDisplayError::CitationMismatch),
-            ("[[cite:wkb:enwiki:9:12:b1]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), other.clone()], AnswerDisplayError::CitationMismatch),
-            ("[[cite:wkb:enwiki:9:12:b0]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), hit.clone()], AnswerDisplayError::CitationMismatch),
-            ("[[cite:unfinished", vec![hit.clone()], AnswerDisplayError::MalformedCitation),
-            ("[[cite-id]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone()], AnswerDisplayError::MalformedCitation),
+            (
+                "No citation",
+                vec![hit.clone()],
+                AnswerDisplayError::CitationMismatch,
+            ),
+            (
+                "[[cite:forged]]",
+                vec![hit.clone()],
+                AnswerDisplayError::CitationMismatch,
+            ),
+            (
+                "[[cite:wkb:enwiki:9:12:b0]]",
+                vec![hit.clone(), other.clone()],
+                AnswerDisplayError::CitationMismatch,
+            ),
+            (
+                "[[cite:wkb:enwiki:9:12:b1]] [[cite:wkb:enwiki:9:12:b0]]",
+                vec![hit.clone(), other.clone()],
+                AnswerDisplayError::CitationMismatch,
+            ),
+            (
+                "[[cite:wkb:enwiki:9:12:b0]] [[cite:wkb:enwiki:9:12:b0]]",
+                vec![hit.clone(), hit.clone()],
+                AnswerDisplayError::CitationMismatch,
+            ),
+            (
+                "[[cite:unfinished",
+                vec![hit.clone()],
+                AnswerDisplayError::MalformedCitation,
+            ),
+            (
+                "[[cite-id]] [[cite:wkb:enwiki:9:12:b0]]",
+                vec![hit.clone()],
+                AnswerDisplayError::MalformedCitation,
+            ),
         ] {
             assert_eq!(
                 answer_display_parts(&GroundedAnswer::Supported {
@@ -915,5 +943,4 @@ mod citation_parser_tests {
             );
         }
     }
-
 }
