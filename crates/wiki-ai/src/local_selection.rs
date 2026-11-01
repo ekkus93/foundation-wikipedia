@@ -13,7 +13,7 @@ use crate::{
     OutboundPolicy, ProviderError, StreamEvent,
 };
 use wiki_model::Article;
-use wiki_search::GroundedAnswer;
+use wiki_search::{EvidenceHit, GroundedAnswer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalProtocol {
@@ -32,6 +32,7 @@ pub enum SelectionError {
 pub enum LocalArticleError {
     PassageConsentRequired,
     ModelMismatch,
+    PreviewMismatch,
     Rag(crate::rag::RagError),
 }
 
@@ -47,6 +48,36 @@ pub struct SelectedLocalModel {
     protocol: LocalProtocol,
     endpoint: LocalEndpoint,
     model: String,
+}
+
+/// Exact evidence and selected destination disclosed before consent. A preview
+/// does not grant network permission; it is bound to one model and endpoint.
+#[derive(Clone, Debug)]
+pub struct LocalArticlePreview {
+    selected: SelectedLocalModel,
+    context: crate::rag::PreparedArticleContext,
+}
+
+impl LocalArticlePreview {
+    pub fn endpoint(&self) -> &str {
+        self.selected.endpoint()
+    }
+
+    pub fn model(&self) -> &str {
+        self.selected.model()
+    }
+
+    pub fn locality(&self) -> Locality {
+        self.selected.locality()
+    }
+
+    pub fn passages(&self) -> &[EvidenceHit] {
+        &self.context.evidence
+    }
+
+    pub fn user_message(&self) -> &str {
+        &self.context.user_message
+    }
 }
 
 fn provider(protocol: LocalProtocol, endpoint: LocalEndpoint) -> Box<dyn LlmProvider> {
@@ -167,6 +198,57 @@ impl SelectedLocalModel {
             policy,
             on_event,
         )
+    }
+
+    /// Prepare a no-network disclosure of the exact passages and destination.
+    /// A later invocation must recheck the article, question, endpoint and
+    /// selected model; a preview alone is never passage-sharing consent.
+    pub fn prepare_article_preview(
+        &self,
+        article: &Article,
+        question: &crate::rag::ArticleQuestion<'_>,
+    ) -> Result<Option<LocalArticlePreview>, LocalArticleError> {
+        if question.model != self.model {
+            return Err(LocalArticleError::ModelMismatch);
+        }
+        crate::rag::prepare_article_context(article, question)
+            .map(|context| {
+                context.map(|context| LocalArticlePreview {
+                    selected: self.clone(),
+                    context,
+                })
+            })
+            .map_err(LocalArticleError::Rag)
+    }
+
+    /// Infer only if the affirmative decision applies to the exact preview.
+    /// Any changed question, revision, selected endpoint/model or packed
+    /// evidence invalidates the preview before provider I/O.
+    pub fn answer_article_with_preview(
+        &self,
+        article: &Article,
+        question: &crate::rag::ArticleQuestion<'_>,
+        preview: &LocalArticlePreview,
+        share_article_passages: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<GroundedAnswer, LocalArticleError> {
+        if !share_article_passages {
+            return Err(LocalArticleError::PassageConsentRequired);
+        }
+        if question.model != self.model {
+            return Err(LocalArticleError::ModelMismatch);
+        }
+        if self != &preview.selected {
+            return Err(LocalArticleError::PreviewMismatch);
+        }
+        let current = self.prepare_article_preview(article, question)?;
+        if !current.is_some_and(|current| {
+            current.context.user_message == preview.context.user_message
+                && current.context.evidence == preview.context.evidence
+        }) {
+            return Err(LocalArticleError::PreviewMismatch);
+        }
+        self.answer_article(article, question, true, cancellation)
     }
 
     /// Use this exact discovered local model for revision-scoped RAG.
@@ -414,6 +496,41 @@ mod tests {
             outbound_policy: OutboundPolicy::AllowLocalEndpoints,
         };
         let cancellation = CancellationToken::default();
+        let preview = selected
+            .prepare_article_preview(&article, &question)
+            .unwrap()
+            .unwrap();
+        assert_eq!(preview.endpoint(), url);
+        assert_eq!(preview.model(), "qwen3:8b");
+        assert_eq!(preview.locality(), Locality::Localhost);
+        assert_eq!(preview.passages(), &[hit.clone()]);
+        assert!(preview.user_message().contains("Gravity is the attraction"));
+        let mut changed_article = article.clone();
+        changed_article.revision.revision_id += 1;
+        assert_eq!(
+            selected.answer_article_with_preview(&changed_article, &question, &preview, true, &cancellation),
+            Err(LocalArticleError::PreviewMismatch)
+        );
+        let changed_question = ArticleQuestion {
+            question: "What is gravity?",
+            ..question.clone()
+        };
+        assert_eq!(
+            selected.answer_article_with_preview(&article, &changed_question, &preview, true, &cancellation),
+            Err(LocalArticleError::PreviewMismatch)
+        );
+        let different_endpoint = SelectedLocalModel {
+            endpoint: LocalEndpoint::parse("http://127.0.0.1:11434").unwrap(),
+            ..selected.clone()
+        };
+        assert_eq!(
+            different_endpoint.answer_article_with_preview(&article, &question, &preview, true, &cancellation),
+            Err(LocalArticleError::PreviewMismatch)
+        );
+        assert_eq!(
+            selected.answer_article_with_preview(&article, &question, &preview, false, &cancellation),
+            Err(LocalArticleError::PassageConsentRequired)
+        );
 
         assert_eq!(
             selected.answer_article(&article, &question, false, &cancellation),
@@ -446,7 +563,7 @@ mod tests {
             )))
         );
         assert_eq!(
-            selected.answer_article(&article, &question, true, &cancellation),
+            selected.answer_article_with_preview(&article, &question, &preview, true, &cancellation),
             Ok(GroundedAnswer::Supported {
                 text: answer,
                 citations: vec![hit],
