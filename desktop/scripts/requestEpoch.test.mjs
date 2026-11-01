@@ -34,3 +34,16 @@ test("manual offline transition cancels pending search or article results", () =
   requests.invalidate(); // Disconnect or another explicit offline transition.
   assert.equal(requests.matches(article), false);
 });
+
+test("AI profile reads share one epoch across initial load, event refresh and conflict recovery", () => {
+  const reads = new RequestEpoch();
+  const initialLoad = reads.begin();
+  const crossWindowEvent = reads.begin();
+  assert.equal(reads.matches(initialLoad), false);
+  assert.equal(reads.matches(crossWindowEvent), true);
+  const conflictRefresh = reads.begin();
+  assert.equal(reads.matches(crossWindowEvent), false);
+  assert.equal(reads.matches(conflictRefresh), true);
+  reads.invalidate(); // Local draft edit, save, or Settings unmount.
+  assert.equal(reads.matches(conflictRefresh), false);
+});

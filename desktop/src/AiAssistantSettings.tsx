@@ -21,14 +21,18 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   const editRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(new RequestEpoch());
+  // One generation for initial load, focus/event refresh and conflict recovery.
+  // Otherwise a slow initial read can overwrite a newer window notification.
+  const profileReads = useRef(new RequestEpoch());
   const offline = useSyncExternalStore(offlineMode.subscribe, offlineMode.getSnapshot, offlineMode.getSnapshot);
 
-  useEffect(() => () => { epoch.current.invalidate(); }, []);
+  useEffect(() => () => { epoch.current.invalidate(); profileReads.current.invalidate(); }, []);
   useEffect(() => {
     let active = true;
     const revision = editRevision.current;
+    const request = profileReads.current.begin();
     void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((saved) => {
-      if (!active || revision !== editRevision.current) return;
+      if (!active || !profileReads.current.matches(request) || revision !== editRevision.current) return;
       setSavedProfiles(saved);
       const profile = saved.profiles.find((item) => item.name === saved.active);
       if (!profile) return;
@@ -38,7 +42,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       setProfileName(profile.name);
       setSavedNotice("Saved local profile loaded. Discover models again to verify availability.");
     }).catch(() => {
-      if (active && revision === editRevision.current) setSavedNotice("Could not restore the saved local profile.");
+      if (active && profileReads.current.matches(request) && revision === editRevision.current) setSavedNotice("Could not restore the saved local profile.");
     });
     return () => { active = false; };
   }, []);
@@ -48,12 +52,11 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   useEffect(() => {
     if (saving) return;
     let active = true;
-    let requestSequence = 0;
     const refreshProfiles = () => {
       const revision = editRevision.current;
-      const sequence = ++requestSequence;
+      const request = profileReads.current.begin();
       void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((current) => {
-        if (!active || sequence !== requestSequence || revision !== editRevision.current) return;
+        if (!active || !profileReads.current.matches(request) || revision !== editRevision.current) return;
         if (!sameAiSavedLocalProfiles(current, savedProfiles)) {
           setSavedProfiles(current);
           setSavedNotice("Saved profiles changed in another window. Your unsaved edits were kept; review before saving.");
@@ -76,7 +79,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }).catch(() => {});
     return () => {
       active = false;
-      requestSequence += 1;
+      profileReads.current.invalidate();
       unlisten?.();
       window.removeEventListener("focus", refreshProfiles);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
@@ -96,6 +99,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
 
   function invalidate(preserveSavedHint = false) {
     epoch.current.invalidate();
+    profileReads.current.invalidate();
     setBusy(false);
     setError(null);
     setInventory(null);
@@ -141,9 +145,10 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   // Refresh only the saved list after a failed mutation. Never overwrite
   // unsaved endpoint/model edits with another window's values.
   async function refreshSavedProfiles(revision: number) {
+    const request = profileReads.current.begin();
     try {
       const current = parseAiSavedLocalProfiles(await invoke<unknown>("read_local_ai_profiles"));
-      if (revision === editRevision.current) setSavedProfiles(current);
+      if (profileReads.current.matches(request) && revision === editRevision.current) setSavedProfiles(current);
     } catch {
       // Keep the user's draft if the native store is unavailable.
     }
@@ -220,6 +225,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
     const requested = { name: profileName, protocol, endpoint, model: selectedModel };
     const revision = editRevision.current;
+    profileReads.current.invalidate();
     setSaving(true);
     setSavedNotice(null);
     try {
