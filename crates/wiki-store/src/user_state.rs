@@ -1727,10 +1727,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wiki-setting-cas-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("wiki-setting-cas-{}-{stamp}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("state.sqlite");
         let first = UserState::open(&path).unwrap();
