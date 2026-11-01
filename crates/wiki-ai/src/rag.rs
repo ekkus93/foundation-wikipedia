@@ -188,7 +188,11 @@ pub fn answer_article(
     let Some(prepared) = prepare_article_context(article, question)? else {
         return Ok(GroundedAnswer::InsufficientEvidence);
     };
-    let PreparedArticleContext { user_message, evidence, index } = prepared;
+    let PreparedArticleContext {
+        user_message,
+        evidence,
+        index,
+    } = prepared;
 
     let request = GenerateRequest {
         model: question.model.to_string(),
@@ -428,6 +432,14 @@ mod citation_parser_tests {
             max_output_tokens: 16,
             outbound_policy: OutboundPolicy::OnDeviceOnly,
         };
+        // The consent preview is prepared locally and obeys the identical
+        // byte and evidence constraints as the eventual provider request.
+        let preview = prepare_article_context(&large, &long_request)
+            .unwrap()
+            .unwrap();
+        assert!(preview.user_message.len() <= MAX_CONTEXT_BYTES);
+        assert!(preview.evidence.len() > 0 && preview.evidence.len() < 15);
+        assert!(!preview.evidence.iter().any(|hit| hit.block_id == hits.last().unwrap().block_id));
         // A byte-aware retriever retains the highest-ranked fitting passages
         // rather than rejecting an otherwise answerable question because all
         // fifteen hits together would exceed the provider message limit.
@@ -711,7 +723,9 @@ mod citation_parser_tests {
             ),
             Ok(GroundedAnswer::Supported { .. })
         ));
-        let prepared = prepare_article_context(&article, &question).unwrap().unwrap();
+        let prepared = prepare_article_context(&article, &question)
+            .unwrap()
+            .unwrap();
         assert_eq!(prepared.evidence, vec![selected.clone()]);
         assert!(prepared.user_message.len() <= MAX_CONTEXT_BYTES);
         let request = provider.request.lock().unwrap().clone().unwrap();
