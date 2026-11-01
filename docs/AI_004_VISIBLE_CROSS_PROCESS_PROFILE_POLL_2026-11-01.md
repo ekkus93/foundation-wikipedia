@@ -18,7 +18,13 @@ A Tauri profile-change event reaches windows in the same application process, an
 
 ## Verification
 
-Source and documentation are committed atomically to exact `master`; inspect the resulting commit's Rust workspace, Platform shells (including Node tests and typecheck), and Desktop launch smoke CI before qualifying the implementation. Do not claim interactive cross-process acceptance from unit tests alone.
+**Verified implementation SHA:** `41bf1d83b5332c498505dfe8a3a7c2b45415bfc9` (exact `master` at implementation verification).
+
+- [Rust workspace 41282430915](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41282430915): passed.
+- [Platform shells 41282430913](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41282430913): passed, including desktop frontend typecheck, Node tests, native Tauri adapter tests and Android shell checks.
+- [Desktop launch smoke 41282430905](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41282430905): passed.
+
+These automated checks do not constitute interactive cross-process desktop acceptance.
 
 ## Remaining acceptance
 
