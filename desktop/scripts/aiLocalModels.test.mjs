@@ -86,7 +86,7 @@ test("bounded named local profiles reject secret-bearing rows and duplicate name
 
 
 test("profile focus reconciliation detects remote mutations without changing local drafts", () => {
-  const original = { active: "Desktop", profiles: [{ name: "Desktop", protocol, endpoint, model: "qwen3:8b" }] };
+  const original = { revision: 0, active: "Desktop", profiles: [{ name: "Desktop", protocol, endpoint, model: "qwen3:8b" }] };
   const equivalent = parseAiSavedLocalProfiles(JSON.parse(JSON.stringify(original)));
   assert.equal(sameAiSavedLocalProfiles(original, equivalent), true);
   assert.equal(sameAiSavedLocalProfiles(original, { ...original, active: null }), false);
