@@ -340,6 +340,59 @@ mod citation_parser_tests {
             ),
             Ok(GroundedAnswer::InsufficientEvidence)
         );
+
+        // The evidence-only context fits, but the combined outbound message
+        // must still reject an additional bounded, long user question.
+        let mut large = cjk;
+        large.lead = (0..15)
+            .map(|ordinal| Block {
+                ordinal,
+                content: BlockContent::Paragraph(format!("gravity {}", "x".repeat(3_900))),
+            })
+            .collect();
+        let long_question = "gravity ".repeat(1_000);
+        assert!(long_question.len() <= MAX_LEXICAL_QUERY_BYTES);
+        let hits = ArticleLexicalIndex::build(&large)
+            .unwrap()
+            .search(&long_question, 100);
+        assert_eq!(hits.len(), 15);
+        let context_bytes = format!(
+            "Wikipedia project: {}, page: {}, revision: {}\\n",
+            large.key.project, large.key.page_id, large.revision.revision_id
+        )
+        .len()
+            + hits
+                .iter()
+                .map(|hit| {
+                    format!(
+                        "\\nEvidence ID: {}\\nHeadings (JSON): {}\\nExcerpt (JSON): {}\\n",
+                        hit.block_id,
+                        serde_json::to_string(&hit.heading_path).unwrap(),
+                        serde_json::to_string(&hit.excerpt).unwrap()
+                    )
+                    .len()
+                })
+                .sum::<usize>();
+        assert!(context_bytes < MAX_CONTEXT_BYTES);
+        assert!(context_bytes + long_question.len() > MAX_CONTEXT_BYTES);
+        let long_request = ArticleQuestion {
+            question: &long_question,
+            model: "local-model",
+            passage_limit: 15,
+            context_word_budget: 100_000,
+            selected_evidence: None,
+            max_output_tokens: 16,
+            outbound_policy: OutboundPolicy::OnDeviceOnly,
+        };
+        assert_eq!(
+            answer_article(
+                &large,
+                &MustNotCallProvider,
+                &long_request,
+                &CancellationToken::default(),
+            ),
+            Err(RagError::ContextTooLarge)
+        );
     }
 
     #[test]
