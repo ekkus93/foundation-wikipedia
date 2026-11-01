@@ -56,6 +56,13 @@ pub struct SelectedLocalModel {
 pub struct LocalArticlePreview {
     selected: SelectedLocalModel,
     context: crate::rag::PreparedArticleContext,
+    // Consent applies to the entire requested inference, not only excerpts.
+    question: String,
+    passage_limit: usize,
+    context_word_budget: usize,
+    selected_evidence: Option<EvidenceHit>,
+    max_output_tokens: u32,
+    outbound_policy: OutboundPolicy,
 }
 
 impl LocalArticlePreview {
@@ -216,6 +223,12 @@ impl SelectedLocalModel {
                 context.map(|context| LocalArticlePreview {
                     selected: self.clone(),
                     context,
+                    question: question.question.to_owned(),
+                    passage_limit: question.passage_limit,
+                    context_word_budget: question.context_word_budget,
+                    selected_evidence: question.selected_evidence.cloned(),
+                    max_output_tokens: question.max_output_tokens,
+                    outbound_policy: question.outbound_policy,
                 })
             })
             .map_err(LocalArticleError::Rag)
@@ -238,17 +251,33 @@ impl SelectedLocalModel {
         if question.model != self.model {
             return Err(LocalArticleError::ModelMismatch);
         }
-        if self != &preview.selected {
+        if self != &preview.selected
+            || question.question != preview.question
+            || question.passage_limit != preview.passage_limit
+            || question.context_word_budget != preview.context_word_budget
+            || question.selected_evidence != preview.selected_evidence.as_ref()
+            || question.max_output_tokens != preview.max_output_tokens
+            || question.outbound_policy != preview.outbound_policy
+        {
             return Err(LocalArticleError::PreviewMismatch);
         }
-        let current = self.prepare_article_preview(article, question)?;
-        if !current.is_some_and(|current| {
-            current.context.user_message == preview.context.user_message
-                && current.context.evidence == preview.context.evidence
-        }) {
+        let Some(current) = self.prepare_article_preview(article, question)? else {
+            return Err(LocalArticleError::PreviewMismatch);
+        };
+        if current.context.user_message != preview.context.user_message
+            || current.context.evidence != preview.context.evidence
+        {
             return Err(LocalArticleError::PreviewMismatch);
         }
-        self.answer_article(article, question, true, cancellation)
+        // Reuse the context just verified against consent. Do not rebuild it
+        // again between verification and the actual provider request.
+        crate::rag::answer_prepared_article(
+            provider(self.protocol, self.endpoint.clone()).as_ref(),
+            question,
+            current.context,
+            cancellation,
+        )
+        .map_err(LocalArticleError::Rag)
     }
 
     /// Use this exact discovered local model for revision-scoped RAG.
@@ -555,6 +584,42 @@ mod tests {
             ),
             Err(LocalArticleError::PassageConsentRequired)
         );
+        // Changes to generation limits or locality permission invalidate
+        // prior consent even when the evidence bytes happen to be identical.
+        let altered_questions = [
+            ArticleQuestion {
+                max_output_tokens: 128,
+                ..question.clone()
+            },
+            ArticleQuestion {
+                outbound_policy: OutboundPolicy::OnDeviceOnly,
+                ..question.clone()
+            },
+            ArticleQuestion {
+                passage_limit: 3,
+                ..question.clone()
+            },
+            ArticleQuestion {
+                context_word_budget: 128,
+                ..question.clone()
+            },
+            ArticleQuestion {
+                selected_evidence: Some(&hit),
+                ..question.clone()
+            },
+        ];
+        for altered in &altered_questions {
+            assert_eq!(
+                selected.answer_article_with_preview(
+                    &article,
+                    altered,
+                    &preview,
+                    true,
+                    &cancellation
+                ),
+                Err(LocalArticleError::PreviewMismatch)
+            );
+        }
 
         assert_eq!(
             selected.answer_article(&article, &question, false, &cancellation),

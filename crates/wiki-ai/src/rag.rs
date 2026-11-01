@@ -188,6 +188,17 @@ pub fn answer_article(
     let Some(prepared) = prepare_article_context(article, question)? else {
         return Ok(GroundedAnswer::InsufficientEvidence);
     };
+    answer_prepared_article(provider, question, prepared, cancellation)
+}
+
+/// Send one already-prepared canonical context, without a second retrieval.
+/// Only shared-core callers may supply this private-index-bearing value.
+pub(crate) fn answer_prepared_article(
+    provider: &dyn LlmProvider,
+    question: &ArticleQuestion<'_>,
+    prepared: PreparedArticleContext,
+    cancellation: &CancellationToken,
+) -> Result<GroundedAnswer, RagError> {
     let PreparedArticleContext {
         user_message,
         evidence,
