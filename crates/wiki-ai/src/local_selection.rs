@@ -508,7 +508,13 @@ mod tests {
         let mut changed_article = article.clone();
         changed_article.revision.revision_id += 1;
         assert_eq!(
-            selected.answer_article_with_preview(&changed_article, &question, &preview, true, &cancellation),
+            selected.answer_article_with_preview(
+                &changed_article,
+                &question,
+                &preview,
+                true,
+                &cancellation
+            ),
             Err(LocalArticleError::PreviewMismatch)
         );
         let changed_question = ArticleQuestion {
@@ -516,7 +522,13 @@ mod tests {
             ..question.clone()
         };
         assert_eq!(
-            selected.answer_article_with_preview(&article, &changed_question, &preview, true, &cancellation),
+            selected.answer_article_with_preview(
+                &article,
+                &changed_question,
+                &preview,
+                true,
+                &cancellation
+            ),
             Err(LocalArticleError::PreviewMismatch)
         );
         let different_endpoint = SelectedLocalModel {
@@ -524,11 +536,23 @@ mod tests {
             ..selected.clone()
         };
         assert_eq!(
-            different_endpoint.answer_article_with_preview(&article, &question, &preview, true, &cancellation),
+            different_endpoint.answer_article_with_preview(
+                &article,
+                &question,
+                &preview,
+                true,
+                &cancellation
+            ),
             Err(LocalArticleError::PreviewMismatch)
         );
         assert_eq!(
-            selected.answer_article_with_preview(&article, &question, &preview, false, &cancellation),
+            selected.answer_article_with_preview(
+                &article,
+                &question,
+                &preview,
+                false,
+                &cancellation
+            ),
             Err(LocalArticleError::PassageConsentRequired)
         );
 
@@ -563,7 +587,13 @@ mod tests {
             )))
         );
         assert_eq!(
-            selected.answer_article_with_preview(&article, &question, &preview, true, &cancellation),
+            selected.answer_article_with_preview(
+                &article,
+                &question,
+                &preview,
+                true,
+                &cancellation
+            ),
             Ok(GroundedAnswer::Supported {
                 text: answer,
                 citations: vec![hit],
