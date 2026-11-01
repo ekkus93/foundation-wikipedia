@@ -166,23 +166,23 @@ pub fn answer_navigation_parts(
 ) -> Result<Vec<ArticleAnswerDisplayPart>, ArticleAnswerDisplayError> {
     let index =
         ArticleLexicalIndex::build(article).map_err(ArticleAnswerDisplayError::InvalidArticle)?;
-    let parts = answer_display_parts(answer)
-        .map_err(ArticleAnswerDisplayError::InvalidCitationMarkup)?;
+    let parts =
+        answer_display_parts(answer).map_err(ArticleAnswerDisplayError::InvalidCitationMarkup)?;
     parts
         .into_iter()
         .map(|part| match part {
             AnswerDisplayPart::Text(text) => Ok(ArticleAnswerDisplayPart::Text(text)),
             AnswerDisplayPart::Citation(evidence) => {
                 if !index.contains_evidence(&evidence) {
-                    return Err(ArticleAnswerDisplayError::StaleCitation(
-                        evidence.block_id,
-                    ));
+                    return Err(ArticleAnswerDisplayError::StaleCitation(evidence.block_id));
                 }
-                Ok(ArticleAnswerDisplayPart::Citation(CitationNavigationTarget {
-                    article: article.key.clone(),
-                    revision_id: article.revision.revision_id,
-                    evidence,
-                }))
+                Ok(ArticleAnswerDisplayPart::Citation(
+                    CitationNavigationTarget {
+                        article: article.key.clone(),
+                        revision_id: article.revision.revision_id,
+                        evidence,
+                    },
+                ))
             }
         })
         .collect()
@@ -698,6 +698,7 @@ mod citation_parser_tests {
             ) -> Result<(), ProviderError> {
                 if self.oversized {
                     on_event(StreamEvent::TextDelta("x".repeat(MAX_RESPONSE_BYTES + 1)))?;
+
                     Ok(())
                 } else {
                     Err(ProviderError::Rejected)
