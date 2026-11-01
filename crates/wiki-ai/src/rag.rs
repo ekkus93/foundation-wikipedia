@@ -8,7 +8,7 @@ use crate::{
     stream_selected, CancellationToken, GenerateRequest, LlmProvider, Message, MessageRole,
     OutboundPolicy, ProviderError, StreamEvent,
 };
-use wiki_model::{Article, ModelError};
+use wiki_model::{Article, ArticleKey, ModelError};
 use wiki_search::{
     evidence_word_cost, validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit,
     GroundedAnswer, MAX_LEXICAL_QUERY_BYTES,
@@ -129,6 +129,63 @@ pub fn answer_display_parts(
         parts.push(AnswerDisplayPart::Text(remaining.to_owned()));
     }
     Ok(parts)
+}
+
+/// A navigation target bound to the article identity and the exact
+/// revision whose canonical evidence was checked. The UI must still verify
+/// that its currently displayed article matches these fields before scrolling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CitationNavigationTarget {
+    pub article: ArticleKey,
+    pub revision_id: u64,
+    pub evidence: EvidenceHit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArticleAnswerDisplayPart {
+    Text(String),
+    Citation(CitationNavigationTarget),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArticleAnswerDisplayError {
+    InvalidArticle(ModelError),
+    InvalidCitationMarkup(AnswerDisplayError),
+    StaleCitation(String),
+}
+
+/// Build literal text and revision-bound citation navigation targets only
+/// after checking every cited hit against the supplied canonical article.
+///
+/// This does not prove that an arbitrary caller-constructed GroundedAnswer
+/// came from an LLM or passed the inference-time consent boundary. Use only
+/// fresh validated RAG results, never saved historical answer text.
+pub fn answer_navigation_parts(
+    article: &Article,
+    answer: &GroundedAnswer,
+) -> Result<Vec<ArticleAnswerDisplayPart>, ArticleAnswerDisplayError> {
+    let index =
+        ArticleLexicalIndex::build(article).map_err(ArticleAnswerDisplayError::InvalidArticle)?;
+    let parts = answer_display_parts(answer)
+        .map_err(ArticleAnswerDisplayError::InvalidCitationMarkup)?;
+    parts
+        .into_iter()
+        .map(|part| match part {
+            AnswerDisplayPart::Text(text) => Ok(ArticleAnswerDisplayPart::Text(text)),
+            AnswerDisplayPart::Citation(evidence) => {
+                if !index.contains_evidence(&evidence) {
+                    return Err(ArticleAnswerDisplayError::StaleCitation(
+                        evidence.block_id,
+                    ));
+                }
+                Ok(ArticleAnswerDisplayPart::Citation(CitationNavigationTarget {
+                    article: article.key.clone(),
+                    revision_id: article.revision.revision_id,
+                    evidence,
+                }))
+            }
+        })
+        .collect()
 }
 
 /// A locally prepared, exact-revision context preview. Preparing it does not
@@ -881,6 +938,123 @@ mod citation_parser_tests {
             answer_display_parts(&GroundedAnswer::InsufficientEvidence),
             Ok(Vec::new())
         );
+    }
+
+    #[test]
+    fn navigation_parts_bind_citations_to_canonical_article_revision() {
+        use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
+            revision: Revision {
+                revision_id: 12,
+                timestamp: "2026-10-12T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Gravity".into(),
+            display_title: "Gravity".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: Vec::new(),
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Gravity attracts mass.".into()),
+            }],
+            sections: Vec::new(),
+            references: Vec::new(),
+            links: Vec::new(),
+            media: Vec::new(),
+            rendered_html: "<article/>".into(),
+            is_disambiguation: false,
+        };
+        let hit = ArticleLexicalIndex::build(&article)
+            .unwrap()
+            .search("gravity", 1)
+            .pop()
+            .unwrap();
+        let answer = GroundedAnswer::Supported {
+            text: format!("Gravity [[cite:{}]]", hit.block_id),
+            citations: vec![hit.clone()],
+        };
+        assert_eq!(
+            answer_navigation_parts(&article, &answer),
+            Ok(vec![
+                ArticleAnswerDisplayPart::Text("Gravity ".into()),
+                ArticleAnswerDisplayPart::Citation(CitationNavigationTarget {
+                    article: article.key.clone(),
+                    revision_id: 12,
+                    evidence: hit.clone(),
+                }),
+            ])
+        );
+        assert_eq!(
+            answer_navigation_parts(&article, &GroundedAnswer::InsufficientEvidence),
+            Ok(Vec::new())
+        );
+
+        // A valid-looking ID is not sufficient if the revision, passage,
+        // heading path or content of the current article no longer matches.
+        let mut changed_revision = article.clone();
+        changed_revision.revision.revision_id = 13;
+        let mut changed_content = article.clone();
+        changed_content.lead[0].content =
+            BlockContent::Paragraph("Different canonical evidence.".into());
+        for changed in [&changed_revision, &changed_content] {
+            assert_eq!(
+                answer_navigation_parts(changed, &answer),
+                Err(ArticleAnswerDisplayError::StaleCitation(
+                    hit.block_id.clone()
+                ))
+            );
+        }
+        for invalid_hit in [
+            EvidenceHit {
+                revision_id: 13,
+                ..hit.clone()
+            },
+            EvidenceHit {
+                excerpt: "Forged excerpt".into(),
+                ..hit.clone()
+            },
+            EvidenceHit {
+                heading_path: vec!["Forged heading".into()],
+                ..hit.clone()
+            },
+        ] {
+            assert_eq!(
+                answer_navigation_parts(
+                    &article,
+                    &GroundedAnswer::Supported {
+                        text: format!("Gravity [[cite:{}]]", invalid_hit.block_id),
+                        citations: vec![invalid_hit],
+                    }
+                ),
+                Err(ArticleAnswerDisplayError::StaleCitation(
+                    hit.block_id.clone()
+                ))
+            );
+        }
+        let malformed = GroundedAnswer::Supported {
+            text: "Gravity [[cite:forged]]".into(),
+            citations: vec![hit],
+        };
+        assert_eq!(
+            answer_navigation_parts(&article, &malformed),
+            Err(ArticleAnswerDisplayError::InvalidCitationMarkup(
+                AnswerDisplayError::CitationMismatch
+            ))
+        );
+        let mut invalid_article = article;
+        invalid_article.key.page_id = 0;
+        assert!(matches!(
+            answer_navigation_parts(&invalid_article, &answer),
+            Err(ArticleAnswerDisplayError::InvalidArticle(_))
+        ));
     }
 
     #[test]
