@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, classifyAiLocalEndpoint } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -126,4 +126,14 @@ test("forged public saved endpoints and inventory locality fail closed in UI", (
   assert.throws(() => parseAiLocalInventory({
     ...response(), endpoint: lan, locality: "localhost",
   }, protocol, lan), /Invalid local model inventory/);
+});
+
+test("profile review fence stays pending after subsequent unchanged refreshes", () => {
+  const old = { active: "Desktop", profiles: [{ name: "Desktop", protocol, endpoint, model: "old" }] };
+  const current = { active: "Desktop", profiles: [{ ...old.profiles[0], model: "new" }] };
+  assert.equal(needsAiProfileReview(old, old), false);
+  assert.equal(needsAiProfileReview(old, current), true);
+  assert.equal(needsAiProfileReview(current, current, true), true);
+  assert.equal(needsAiProfileReview(current, current, false), false);
+  assert.equal(needsAiProfileReview(old, { ...old, active: null }), true);
 });

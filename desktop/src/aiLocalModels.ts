@@ -186,3 +186,8 @@ export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles 
   }
   return { active: raw.active as string | null, profiles };
 }
+
+/** Sticky review fence: refreshing a CAS snapshot must not approve a stale draft. */
+export function needsAiProfileReview(previous: AiSavedLocalProfiles, current: AiSavedLocalProfiles, pending = false): boolean {
+  return pending || !sameAiSavedLocalProfiles(previous, current);
+}

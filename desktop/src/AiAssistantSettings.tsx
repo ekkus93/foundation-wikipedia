@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -18,6 +18,9 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   const [savedProfiles, setSavedProfiles] = useState<AiSavedLocalProfiles>({ active: null, profiles: [] });
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  // A refreshed CAS snapshot must not silently authorize an old draft to
+  // overwrite changes made in another window.
+  const [needsReview, setNeedsReview] = useState(false);
   const editRevision = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(new RequestEpoch());
@@ -59,7 +62,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         if (!active || !profileReads.current.matches(request) || revision !== editRevision.current) return;
         if (!sameAiSavedLocalProfiles(current, savedProfiles)) {
           setSavedProfiles(current);
-          setSavedNotice("Saved profiles changed in another window. Your unsaved edits were kept; review before saving.");
+          setNeedsReview((pending) => needsAiProfileReview(savedProfiles, current, pending));
+          setSavedNotice("Saved profiles changed in another window. Your draft was kept; acknowledge the new saved state before saving.");
         }
       }).catch(() => {
         // A failed read must not replace a user's draft or erase saved data.
@@ -148,7 +152,10 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     const request = profileReads.current.begin();
     try {
       const current = parseAiSavedLocalProfiles(await invoke<unknown>("read_local_ai_profiles"));
-      if (profileReads.current.matches(request) && revision === editRevision.current) setSavedProfiles(current);
+      if (profileReads.current.matches(request) && revision === editRevision.current) {
+        setNeedsReview(true);
+        setSavedProfiles(current);
+      }
     } catch {
       // Keep the user's draft if the native store is unavailable.
     }
@@ -169,6 +176,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       const updated = parseAiSavedLocalProfiles(await invoke<unknown>("activate_local_ai_profile", { name, expectedProfiles: savedProfiles }));
       if (revision === editRevision.current) {
         setSavedProfiles(updated);
+        setNeedsReview(false);
         setSavedNotice("Profile selected. Discover models to verify the server and model.");
       }
     } catch {
@@ -198,8 +206,10 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     setSaving(true);
     try {
       const updated = parseAiSavedLocalProfiles(await invoke<unknown>("remove_local_ai_profile", { name, expectedProfiles: savedProfiles }));
+
       if (revision === editRevision.current) {
         setSavedProfiles(updated);
+        setNeedsReview(false);
         const replacement = updated.profiles.find((item) => item.name === updated.active);
         setProfileName(replacement?.name ?? "");
         setProtocol(replacement?.protocol ?? "ollama");
@@ -219,6 +229,10 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
 
   async function saveChoice() {
     if (saving || !inventory || !selectedModel || offlineMode.getSnapshot()) return;
+    if (needsReview) {
+      setSavedNotice("Review and acknowledge the newer saved profiles before saving your draft.");
+      return;
+    }
     if (!validAiLocalProfileName(profileName)) {
       setSavedNotice("Choose a profile name (1–40 ASCII letters, numbers, spaces, dots, hyphens or underscores).");
       return;
@@ -232,6 +246,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       const updated = parseAiSavedLocalProfiles(await invoke<unknown>("upsert_local_ai_profile", { profile: requested, expectedProfiles: savedProfiles }));
       if (revision === editRevision.current && !offlineMode.getSnapshot()) {
         setSavedProfiles(updated);
+        setNeedsReview(false);
         setSavedModelHint(selectedModel);
         setSavedNotice("Saved local profile. It will be revalidated on the next discovery.");
       }
@@ -285,6 +300,17 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     {offline && <p role="status">Work offline is enabled. Localhost and LAN connections are disabled.</p>}
     {error && !offline && <p role="alert">{error}</p>}
     {savedNotice && <p role="status">{savedNotice}</p>}
+    {needsReview && <div className="ai-local-inventory" role="alert">
+      <p>Saved profiles changed while this editor was open. Your unsaved fields were preserved, but saving them could overwrite newer work.</p>
+      <p>Current saved selection: <strong>{savedProfiles.active ?? "None"}</strong>. {(() => {
+        const current = savedProfiles.profiles.find((item) => item.name === profileName);
+        return current ? <>For <strong>{profileName}</strong>, the saved server is <code>{current.endpoint}</code> and model is <code>{current.model}</code>.</> : <>No profile named <strong>{profileName || "(unnamed)"}</strong> is currently saved.</>;
+      })()}</p>
+      <button type="button" disabled={saving} onClick={() => {
+        setNeedsReview(false);
+        setSavedNotice("Newer saved profiles acknowledged. Saving your current draft is now an explicit overwrite.");
+      }}>I reviewed the saved state — allow saving my draft</button>
+    </div>}
     {inventory && !offline && <div className="ai-local-inventory">
       <p role="status">Discovered {inventory.models.length} model(s) at <code>{inventory.endpoint}</code>.</p>
       <p>{aiLocalityDisclosure(inventory.locality)}</p>
@@ -297,7 +323,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         </option>)}
       </select>
       {selectedModel && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
-      {selectedModel && <button type="button" disabled={saving || offline} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
+      {selectedModel && <button type="button" disabled={saving || offline || needsReview} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
     </div>}
     <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, remote credentials and model inference are not wired to the reader yet.</p>
   </section>;
