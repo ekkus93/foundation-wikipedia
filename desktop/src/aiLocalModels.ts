@@ -197,3 +197,30 @@ export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles 
 export function needsAiProfileReview(previous: AiSavedLocalProfiles, current: AiSavedLocalProfiles, pending = false): boolean {
   return pending || !sameAiSavedLocalProfiles(previous, current);
 }
+
+/** A visible but unfocused window must eventually observe other processes. */
+export function shouldPollAiProfiles(visibilityState: string): boolean {
+  return visibilityState === "visible";
+}
+
+/** Coalesce concurrent native refresh triggers; never starve a slow read. */
+export class AiProfileRefreshGate {
+  private inFlight = false;
+  private queued = false;
+
+  begin(): boolean {
+    if (this.inFlight) {
+      this.queued = true;
+      return false;
+    }
+    this.inFlight = true;
+    return true;
+  }
+
+  finish(): boolean {
+    this.inFlight = false;
+    const queued = this.queued;
+    this.queued = false;
+    return queued;
+  }
+}

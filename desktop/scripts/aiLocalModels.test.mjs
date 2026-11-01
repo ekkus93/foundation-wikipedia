@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -149,4 +149,19 @@ test("profile snapshot generation detects ABA even with identical saved fields",
   assert.equal(sameAiSavedLocalProfiles(initial, restored), false);
   assert.equal(needsAiProfileReview(initial, restored), true);
   assert.equal(sameAiSavedLocalProfiles(restored, { ...restored }), true);
+});
+
+test("visible cross-process profile refresh is coalesced and hidden windows do not poll", () => {
+  assert.equal(shouldPollAiProfiles("visible"), true);
+  assert.equal(shouldPollAiProfiles("hidden"), false);
+  assert.equal(shouldPollAiProfiles("prerender"), false);
+  const gate = new AiProfileRefreshGate();
+  assert.equal(gate.begin(), true);
+  assert.equal(gate.begin(), false);
+  assert.equal(gate.begin(), false);
+  assert.equal(gate.finish(), true, "several triggers require only one follow-up");
+  assert.equal(gate.begin(), true);
+  assert.equal(gate.finish(), false, "no extra refresh without a queued trigger");
+  assert.equal(gate.begin(), true, "a completed read releases the gate");
+  assert.equal(gate.finish(), false);
 });

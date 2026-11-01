@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -55,7 +55,11 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   useEffect(() => {
     if (saving) return;
     let active = true;
+    const refreshGate = new AiProfileRefreshGate();
     const refreshProfiles = () => {
+      // Coalesce event, focus and timer triggers rather than overlapping
+      // SQLite reads or starving the latest RequestEpoch on slow disks.
+      if (!refreshGate.begin()) return;
       const revision = editRevision.current;
       const request = profileReads.current.begin();
       void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((current) => {
@@ -67,13 +71,20 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         }
       }).catch(() => {
         // A failed read must not replace a user's draft or erase saved data.
+      }).finally(() => {
+        if (refreshGate.finish() && active) refreshProfiles();
       });
     };
     const refreshOnVisibility = () => {
-      if (document.visibilityState === "visible") refreshProfiles();
+      if (shouldPollAiProfiles(document.visibilityState)) refreshProfiles();
     };
     window.addEventListener("focus", refreshProfiles);
     document.addEventListener("visibilitychange", refreshOnVisibility);
+    // Another desktop process may update SQLite while both windows remain
+    // visible and neither regains focus. This never contacts an AI endpoint.
+    const poll = window.setInterval(() => {
+      if (shouldPollAiProfiles(document.visibilityState)) refreshProfiles();
+    }, 5000);
     // Native events carry no saved-profile data. They only trigger a fresh,
     // validated read; failed registration leaves focus reconciliation intact.
     let unlisten: (() => void) | undefined;
@@ -83,6 +94,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }).catch(() => {});
     return () => {
       active = false;
+      window.clearInterval(poll);
       profileReads.current.invalidate();
       unlisten?.();
       window.removeEventListener("focus", refreshProfiles);
