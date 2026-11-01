@@ -68,7 +68,18 @@ impl LlmProvider for LocalOpenAiProvider {
 
 /// HTTP-only initial transport: no DNS, no proxies, no redirects, no secrets.
 pub fn discover_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, ProviderError> {
-    let json = fetch_local_json(endpoint, "/v1/models")?;
+    discover_models_cancellable(endpoint, &CancellationToken::default())
+}
+
+/// Cancellable inventory GET used by explicit user-initiated diagnostics.
+pub fn discover_models_cancellable(
+    endpoint: &LocalEndpoint,
+    cancellation: &CancellationToken,
+) -> Result<Vec<ModelInfo>, ProviderError> {
+    let json = fetch_local_json_cancellable(endpoint, "/v1/models", cancellation)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     parse_openai_models(&json)
 }
 
@@ -78,6 +89,17 @@ pub(crate) fn fetch_local_json(
     endpoint: &LocalEndpoint,
     path: &'static str,
 ) -> Result<Value, ProviderError> {
+    fetch_local_json_cancellable(endpoint, path, &CancellationToken::default())
+}
+
+pub(crate) fn fetch_local_json_cancellable(
+    endpoint: &LocalEndpoint,
+    path: &'static str,
+    cancellation: &CancellationToken,
+) -> Result<Value, ProviderError> {
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     let authority = endpoint
         .base_url()
         .strip_prefix("http://")
@@ -87,16 +109,35 @@ pub(crate) fn fetch_local_json(
         .ok_or(ProviderError::InvalidRequest)?;
     let mut socket =
         TcpStream::connect_timeout(&endpoint.connect_addr(), TIMEOUT).map_err(map_io)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     socket.set_read_timeout(Some(READ_POLL)).map_err(map_io)?;
     socket.set_write_timeout(Some(TIMEOUT)).map_err(map_io)?;
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
     );
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     socket.write_all(request.as_bytes()).map_err(map_io)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     // A peer that drips one byte before every socket timeout must not
     // keep model discovery alive indefinitely.
-    let response = read_bounded_response(&mut socket, Instant::now() + TIMEOUT)?;
+    let response = read_bounded_response_cancellable(
+        &mut socket,
+        Instant::now() + TIMEOUT,
+        cancellation,
+    )?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     let body = parse_http_response(&response)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     serde_json::from_slice(&body).map_err(|_| ProviderError::InvalidResponse)
 }
 
@@ -143,14 +184,30 @@ fn read_bounded_response<R: Read>(
     reader: &mut R,
     deadline: Instant,
 ) -> Result<Vec<u8>, ProviderError> {
+    read_bounded_response_cancellable(reader, deadline, &CancellationToken::default())
+}
+
+fn read_bounded_response_cancellable<R: Read>(
+    reader: &mut R,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u8>, ProviderError> {
     let mut response = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
         if Instant::now() >= deadline {
             return Err(ProviderError::Timeout);
         }
         match reader.read(&mut chunk) {
-            Ok(0) => return Ok(response),
+            Ok(0) => {
+                if cancellation.is_cancelled() {
+                    return Err(ProviderError::Cancelled);
+                }
+                return Ok(response);
+            },
             Ok(n) => {
                 if response
                     .len()
@@ -160,6 +217,9 @@ fn read_bounded_response<R: Read>(
                     return Err(ProviderError::InvalidResponse);
                 }
                 response.extend_from_slice(&chunk[..n]);
+                if cancellation.is_cancelled() {
+                    return Err(ProviderError::Cancelled);
+                }
             }
             Err(error)
                 if matches!(
@@ -305,6 +365,45 @@ mod tests {
             LocalEndpoint::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap(),
             handle,
         )
+    }
+
+    #[test]
+    fn cancellable_discovery_aborts_a_stalled_inventory_get() {
+        use std::sync::mpsc;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = LocalEndpoint::parse(
+            &format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port())
+        ).unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            use std::io::Read;
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(TIMEOUT)).unwrap();
+            let mut request = [0u8; 512];
+            let count = socket.read(&mut request).unwrap();
+            ready_tx.send(String::from_utf8_lossy(&request[..count]).into_owned()).unwrap();
+            // Keep the connection open without completing the HTTP response.
+            thread::sleep(Duration::from_millis(800));
+        });
+        let cancellation = CancellationToken::default();
+        let worker_token = cancellation.clone();
+        let worker = thread::spawn(move || discover_models_cancellable(&endpoint, &worker_token));
+        let request = ready_rx.recv_timeout(TIMEOUT).unwrap();
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+        cancellation.cancel();
+        assert_eq!(worker.join().unwrap(), Err(ProviderError::Cancelled));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn pre_cancelled_discovery_never_opens_a_socket() {
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        let endpoint = LocalEndpoint::parse("http://127.0.0.1:1").unwrap();
+        assert_eq!(
+            discover_models_cancellable(&endpoint, &cancellation),
+            Err(ProviderError::Cancelled)
+        );
     }
 
     #[test]

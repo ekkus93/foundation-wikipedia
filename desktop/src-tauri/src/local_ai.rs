@@ -10,7 +10,7 @@ use wiki_ai::local_endpoint::LocalEndpoint;
 use wiki_ai::{CancellationToken, GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
 use wiki_store::user_state::UserState;
 use crate::open_private_bookmark_store;
-use wiki_ai::local_selection::{discover_local_models, LocalProtocol, SelectionError};
+use wiki_ai::local_selection::{discover_local_models, discover_local_models_cancellable, LocalProtocol, SelectionError};
 use wiki_ai::{Locality, ProviderError};
 
 #[derive(Serialize)]
@@ -171,8 +171,11 @@ fn probe_local_model(
     }
     // Re-discover on the native side: a stale or forged UI inventory cannot
     // authorize inference using a model the server no longer advertises.
-    let inventory = discover_local_models(protocol, endpoint)
-        .map_err(|_| "Could not verify the selected local model".to_owned())?;
+    let inventory = discover_local_models_cancellable(protocol, endpoint, cancellation)
+        .map_err(|error| match error {
+            SelectionError::Provider(ProviderError::Cancelled) => "Local model test cancelled".to_owned(),
+            _ => "Could not verify the selected local model".to_owned(),
+        })?;
     if cancellation.is_cancelled() {
         return Err("Local model test cancelled".to_owned());
     }

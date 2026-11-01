@@ -54,10 +54,27 @@ pub fn discover_local_models(
     protocol: LocalProtocol,
     endpoint_url: &str,
 ) -> Result<LocalModelInventory, SelectionError> {
+    discover_local_models_cancellable(protocol, endpoint_url, &CancellationToken::default())
+}
+
+/// The explicit diagnostic can withdraw local-network permission during GET.
+/// This retains the same endpoint parser, inventory validation and model IDs.
+pub fn discover_local_models_cancellable(
+    protocol: LocalProtocol,
+    endpoint_url: &str,
+    cancellation: &CancellationToken,
+) -> Result<LocalModelInventory, SelectionError> {
     let endpoint = LocalEndpoint::parse(endpoint_url).map_err(SelectionError::InvalidEndpoint)?;
-    let models = provider(protocol, endpoint.clone())
-        .list_models()
-        .map_err(SelectionError::Provider)?;
+    if cancellation.is_cancelled() {
+        return Err(SelectionError::Provider(ProviderError::Cancelled));
+    }
+    let models = match protocol {
+        LocalProtocol::Ollama => crate::ollama::discover_ollama_models_cancellable(&endpoint, cancellation),
+        LocalProtocol::OpenAiCompatible => crate::local_http::discover_models_cancellable(&endpoint, cancellation),
+    }.map_err(SelectionError::Provider)?;
+    if cancellation.is_cancelled() {
+        return Err(SelectionError::Provider(ProviderError::Cancelled));
+    }
     Ok(LocalModelInventory {
         protocol,
         endpoint,

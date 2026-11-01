@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::local_endpoint::LocalEndpoint;
-use crate::local_http::fetch_local_json;
+use crate::local_http::{fetch_local_json, fetch_local_json_cancellable};
 use crate::{
     valid_model_id, CancellationToken, GenerateRequest, LlmProvider, Locality, ModelInfo,
     ProviderCapabilities, ProviderError, StreamEvent,
@@ -65,6 +65,18 @@ impl LlmProvider for LocalOllamaProvider {
 /// context-window limit, so the optional value is intentionally unknown.
 pub fn discover_ollama_models(endpoint: &LocalEndpoint) -> Result<Vec<ModelInfo>, ProviderError> {
     let json = fetch_local_json(endpoint, "/api/tags")?;
+    parse_tags(&json)
+}
+
+/// Cancellable native Ollama inventory GET for explicit diagnostics.
+pub fn discover_ollama_models_cancellable(
+    endpoint: &LocalEndpoint,
+    cancellation: &CancellationToken,
+) -> Result<Vec<ModelInfo>, ProviderError> {
+    let json = fetch_local_json_cancellable(endpoint, "/api/tags", cancellation)?;
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
     parse_tags(&json)
 }
 
