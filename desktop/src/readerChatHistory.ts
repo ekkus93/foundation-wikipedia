@@ -77,3 +77,27 @@ class ReaderChatIdentityFence {
  * A new thread selection invalidates older exchange reads before effect cleanup. */
 export class ReaderChatDeleteFence extends ReaderChatIdentityFence {}
 export class ReaderChatExchangeReadFence extends ReaderChatIdentityFence {}
+
+/** List requests have no thread ID yet. A response is valid only for the
+ * article identity and the particular mount/request generation that started
+ * it. In particular, React effect cleanup can lag a navigation render. */
+export class ReaderChatThreadListFence {
+  private epoch = 0;
+  private active: { epoch: number; identity: string } | null = null;
+
+  begin(article: { project: string; pageId: number; revisionId: number }): number {
+    const epoch = ++this.epoch;
+    this.active = { epoch, identity: JSON.stringify([article.project, article.pageId, article.revisionId]) };
+    return epoch;
+  }
+
+  isCurrent(epoch: number, article: { project: string; pageId: number; revisionId: number }): boolean {
+    return this.active?.epoch === epoch &&
+      this.active.identity === JSON.stringify([article.project, article.pageId, article.revisionId]);
+  }
+
+  invalidate(): void {
+    this.epoch += 1;
+    this.active = null;
+  }
+}

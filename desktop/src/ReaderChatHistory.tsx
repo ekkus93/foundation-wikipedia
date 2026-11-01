@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
 import type { ReaderArticleContext } from "./OnlineReader";
-import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, type ReaderChatExchange } from "./readerChatHistory";
+import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, ReaderChatThreadListFence, type ReaderChatExchange } from "./readerChatHistory";
 
 /** Read-only historical transcript: an online HTML preview is not canonical RAG
  * evidence, so this component never generates, transmits or certifies citations. */
@@ -24,6 +24,7 @@ export default function ReaderChatHistory({ article, onClose }: {
   const [position, setPosition] = useState<ReaderChatPosition | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const deleteFenceRef = useRef(new ReaderChatDeleteFence());
+  const threadListFenceRef = useRef(new ReaderChatThreadListFence());
   const exchangeReadFenceRef = useRef(new ReaderChatExchangeReadFence());
   // Updated during render, not in an effect: a pending IPC may settle before
   // the old article's effect cleanup runs after a navigation.
@@ -106,7 +107,9 @@ export default function ReaderChatHistory({ article, onClose }: {
   }
 
   useEffect(() => {
-    let active = true;
+    const fence = threadListFenceRef.current;
+    const token = fence.begin(article);
+    const isCurrent = () => fence.isCurrent(token, currentArticleRef.current);
     deleteFenceRef.current.invalidate();
     exchangeReadFenceRef.current.invalidate();
     setDeleting(false);
@@ -121,14 +124,14 @@ export default function ReaderChatHistory({ article, onClose }: {
     void invoke<unknown>("list_reader_chat_threads", {
       project: article.project, pageId: article.pageId, revisionId: article.revisionId,
     }).then(parseReaderChatThreads).then((ids) => {
-      if (!active) return;
+      if (!isCurrent()) return;
       setThreads(ids);
       setSelectedThread(ids[0] ?? null);
     }).catch(() => {
-      if (active) setError("Saved conversations could not be loaded.");
-    }).finally(() => { if (active) setLoadingThreads(false); });
+      if (isCurrent()) setError("Saved conversations could not be loaded.");
+    }).finally(() => { if (isCurrent()) setLoadingThreads(false); });
     return () => {
-      active = false;
+      fence.invalidate();
       deleteFenceRef.current.invalidate();
       exchangeReadFenceRef.current.invalidate();
     };

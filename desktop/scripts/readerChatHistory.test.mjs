@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReaderChatThreads, parseReaderChatExchanges, ReaderChatDeleteFence, ReaderChatExchangeReadFence } from "../src/readerChatHistory.ts";
+import { parseReaderChatThreads, parseReaderChatExchanges, ReaderChatDeleteFence, ReaderChatExchangeReadFence, ReaderChatThreadListFence } from "../src/readerChatHistory.ts";
 
 test("thread IDs must be unique, bounded and exactly representable", () => {
   assert.deepEqual(parseReaderChatThreads([2, 1]), [2, 1]);
@@ -69,4 +69,26 @@ test("late transcript reads cannot display a previous thread after a new selecti
   const repeated = fence.begin(article, 12);
   assert.equal(fence.isCurrent(newer, article, 12), false);
   assert.equal(fence.isCurrent(repeated, article, 12), true);
+});
+
+test("late thread-list responses cannot select a conversation from another article", () => {
+  const fence = new ReaderChatThreadListFence();
+  const article = { project: "enwiki", pageId: 42, revisionId: 7 };
+  const old = fence.begin(article);
+  assert.equal(fence.isCurrent(old, article), true);
+  // A navigation render changes currentArticleRef before effect cleanup.
+  assert.equal(fence.isCurrent(old, { ...article, pageId: 43 }), false);
+  assert.equal(fence.isCurrent(old, { ...article, revisionId: 8 }), false);
+  assert.equal(fence.isCurrent(old, { ...article, project: "frwiki" }), false);
+  fence.invalidate();
+  assert.equal(fence.isCurrent(old, article), false);
+  const newer = fence.begin(article);
+  assert.equal(fence.isCurrent(old, article), false);
+  assert.equal(fence.isCurrent(newer, article), true);
+  // Same identity after remount is still a distinct request.
+  const repeated = fence.begin(article);
+  assert.equal(fence.isCurrent(newer, article), false);
+  assert.equal(fence.isCurrent(repeated, article), true);
+  fence.invalidate();
+  assert.equal(fence.isCurrent(repeated, article), false);
 });
