@@ -431,6 +431,7 @@ mod local_profile_tests {
         assert!(registry.begin().is_err());
         registry.cancel(ids[0]).unwrap();
         assert!(registry.begin().is_ok());
+        registry.cancel(ids[1]).unwrap();
         // Abandoned prepared leases are reclaimed without canceling running
         // workers, so a crashed window cannot permanently consume capacity.
         let stale = registry.begin().unwrap();
