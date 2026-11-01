@@ -92,7 +92,7 @@ pub fn answer_article(
     let encoded_question =
         serde_json::to_string(question.question).map_err(|_| RagError::InvalidQuestion)?;
     let mut user_message = format!(
-        "Question (JSON string): {encoded_question}\\n\\nWikipedia project: {}, page: {}, revision: {}\\n",
+        "Question (JSON string): {encoded_question}\n\nWikipedia project: {}, page: {}, revision: {}\n",
         article.key.project, article.key.page_id, article.revision.revision_id
     );
     if user_message.len() > MAX_CONTEXT_BYTES {
@@ -104,7 +104,7 @@ pub fn answer_article(
             serde_json::to_string(&hit.heading_path).map_err(|_| RagError::ContextTooLarge)?;
         let excerpt = serde_json::to_string(&hit.excerpt).map_err(|_| RagError::ContextTooLarge)?;
         Ok(format!(
-            "\\nEvidence ID: {}\\nHeadings (JSON): {}\\nExcerpt (JSON): {}\\n",
+            "\nEvidence ID: {}\nHeadings (JSON): {}\nExcerpt (JSON): {}\n",
             hit.block_id, headings, excerpt
         ))
     };
@@ -428,7 +428,7 @@ mod citation_parser_tests {
                 let sent = &request.messages[1].content;
                 assert!(sent.len() <= MAX_CONTEXT_BYTES);
                 assert!(sent.contains("Question (JSON string):"));
-                let supplied = sent.matches("\\nEvidence ID: ").count();
+                let supplied = sent.matches("\nEvidence ID: ").count();
                 assert!(supplied > 0 && supplied < 15);
                 on_event(StreamEvent::TextDelta("[NO_EVIDENCE]".into()))?;
                 on_event(StreamEvent::Completed {
