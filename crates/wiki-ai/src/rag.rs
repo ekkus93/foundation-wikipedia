@@ -439,7 +439,10 @@ mod citation_parser_tests {
             .unwrap();
         assert!(preview.user_message.len() <= MAX_CONTEXT_BYTES);
         assert!(preview.evidence.len() > 0 && preview.evidence.len() < 15);
-        assert!(!preview.evidence.iter().any(|hit| hit.block_id == hits.last().unwrap().block_id));
+        assert!(!preview
+            .evidence
+            .iter()
+            .any(|hit| hit.block_id == hits.last().unwrap().block_id));
         // A byte-aware retriever retains the highest-ranked fitting passages
         // rather than rejecting an otherwise answerable question because all
         // fifteen hits together would exceed the provider message limit.
