@@ -34,6 +34,16 @@ pub enum LocalArticleError {
     ModelMismatch,
     PreviewMismatch,
     Rag(crate::rag::RagError),
+    Display(crate::rag::ArticleAnswerDisplayError),
+}
+
+/// Only fresh, consent-gated, citation-validated inference can produce
+/// these typed navigation targets. Historical saved answers cannot enter
+/// this API as an input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalArticleDisplayAnswer {
+    Supported(Vec<crate::rag::ArticleAnswerDisplayPart>),
+    InsufficientEvidence,
 }
 
 #[derive(Clone, Debug)]
@@ -280,6 +290,34 @@ impl SelectedLocalModel {
         .map_err(LocalArticleError::Rag)
     }
 
+    /// Return presentation-safe text and canonical citation navigation
+    /// targets from a *fresh* consent-gated local inference, not from an
+    /// arbitrary caller-constructed or persisted GroundedAnswer. Model output
+    /// stays buffered until all citation and current-article checks pass.
+    pub fn answer_article_with_preview_display(
+        &self,
+        article: &Article,
+        question: &crate::rag::ArticleQuestion<'_>,
+        preview: &LocalArticlePreview,
+        share_article_passages: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<LocalArticleDisplayAnswer, LocalArticleError> {
+        match self.answer_article_with_preview(
+            article,
+            question,
+            preview,
+            share_article_passages,
+            cancellation,
+        )? {
+            GroundedAnswer::InsufficientEvidence => {
+                Ok(LocalArticleDisplayAnswer::InsufficientEvidence)
+            }
+            supported => crate::rag::answer_navigation_parts(article, &supported)
+                .map(LocalArticleDisplayAnswer::Supported)
+                .map_err(LocalArticleError::Display),
+        }
+    }
+
     /// Use this exact discovered local model for revision-scoped RAG.
     ///
     /// The caller must obtain per-request consent before sharing article
@@ -447,7 +485,9 @@ mod tests {
 
     #[test]
     fn selected_local_article_rag_requires_consent_and_checks_exact_citations() {
-        use crate::rag::{ArticleQuestion, RagError};
+        use crate::rag::{
+            ArticleAnswerDisplayPart, ArticleQuestion, CitationNavigationTarget, RagError,
+        };
         use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
         use wiki_search::{ArticleLexicalIndex, CitationError};
 
@@ -510,6 +550,7 @@ mod tests {
         };
         let (url, server) = serve(vec![
             http(r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
+            response(valid_chunk.clone()),
             response(valid_chunk),
             response(forged_chunk),
         ]);
@@ -661,8 +702,35 @@ mod tests {
             ),
             Ok(GroundedAnswer::Supported {
                 text: answer,
-                citations: vec![hit],
+                citations: vec![hit.clone()],
             })
+        );
+        assert_eq!(
+            selected.answer_article_with_preview_display(
+                &article,
+                &question,
+                &preview,
+                false,
+                &cancellation,
+            ),
+            Err(LocalArticleError::PassageConsentRequired)
+        );
+        assert_eq!(
+            selected.answer_article_with_preview_display(
+                &article,
+                &question,
+                &preview,
+                true,
+                &cancellation,
+            ),
+            Ok(LocalArticleDisplayAnswer::Supported(vec![
+                ArticleAnswerDisplayPart::Text("Gravity attracts masses ".into()),
+                ArticleAnswerDisplayPart::Citation(CitationNavigationTarget {
+                    article: article.key.clone(),
+                    revision_id: 12,
+                    evidence: hit,
+                }),
+            ]))
         );
         assert_eq!(
             selected.answer_article(&article, &question, true, &cancellation),
@@ -672,7 +740,7 @@ mod tests {
         );
 
         let requests = server.join().unwrap();
-        assert_eq!(requests.len(), 3);
+        assert_eq!(requests.len(), 4);
         assert!(requests[0].starts_with("GET /api/tags HTTP/1.1\r\n"));
         for request in &requests[1..] {
             assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
