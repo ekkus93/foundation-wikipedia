@@ -369,7 +369,10 @@ mod tests {
         assert_eq!(changed.profiles[0].model, "new-model");
         let after = remove(&state, "Desktop").unwrap();
         assert_eq!(after.active.as_deref(), Some("LAN"));
-        assert_eq!(remove(&state, "LAN").unwrap(), LocalProfiles::default());
+        let empty = remove(&state, "LAN").unwrap();
+        assert_eq!(empty.active, None);
+        assert!(empty.profiles.is_empty());
+        assert_eq!(empty.revision, 6);
         state.set_setting(LEGACY_KEY, "ignored").unwrap();
         assert_eq!(read_profiles(&state).unwrap(), LocalProfiles::default());
     }
