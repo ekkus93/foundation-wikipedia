@@ -2343,8 +2343,7 @@ mod tests {
             .append_chat_message(&key(), 123, thread, "assistant", "Completed")
             .unwrap();
         assert_eq!(
-            user.recent_chat_exchanges(&key(), 123, thread, 1)
-                .unwrap()[0]
+            user.recent_chat_exchanges(&key(), 123, thread, 1).unwrap()[0]
                 .answer
                 .content,
             "Completed"
