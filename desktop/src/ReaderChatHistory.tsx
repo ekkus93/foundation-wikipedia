@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
 import type { ReaderArticleContext } from "./OnlineReader";
 import { parseReaderChatExchanges, parseReaderChatThreads, type ReaderChatExchange } from "./readerChatHistory";
@@ -18,6 +19,80 @@ export default function ReaderChatHistory({ article, onClose }: {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+  const [minimized, setMinimized] = useState(false);
+  const [position, setPosition] = useState<ReaderChatPosition | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{
+    pointerId: number; startX: number; startY: number; left: number; top: number;
+  } | null>(null);
+
+  // Constrain both native CSS resizing and viewport resizing. Moving this
+  // nonmodal panel never changes the article or conversation identity.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    function constrain() {
+      const rect = panel!.getBoundingClientRect();
+      setPosition((previous) => {
+        const next = clampReaderChatPosition(
+          previous?.left ?? rect.left, previous?.top ?? rect.top,
+          rect.width, rect.height, window.innerWidth, window.innerHeight,
+        );
+        return previous?.left === next.left && previous?.top === next.top ? previous : next;
+      });
+    }
+    constrain();
+    window.addEventListener("resize", constrain);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(constrain);
+    observer?.observe(panel);
+    return () => { window.removeEventListener("resize", constrain); observer?.disconnect(); };
+  }, []);
+
+  function moveTo(left: number, top: number) {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    setPosition(clampReaderChatPosition(
+      left, top, rect.width, rect.height, window.innerWidth, window.innerHeight,
+    ));
+  }
+
+  function startDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !panelRef.current) return;
+    const rect = panelRef.current.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+      left: rect.left, top: rect.top,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function drag(event: PointerEvent<HTMLDivElement>) {
+    const active = dragRef.current;
+    if (active?.pointerId !== event.pointerId) return;
+    moveTo(active.left + event.clientX - active.startX, active.top + event.clientY - active.startY);
+  }
+
+  function stopDrag(event: PointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function moveWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    const directions: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+    };
+    const direction = directions[event.key];
+    if (!direction || !panelRef.current) return;
+    event.preventDefault();
+    const rect = panelRef.current.getBoundingClientRect();
+    const step = event.shiftKey ? 48 : 16;
+    moveTo(rect.left + direction[0] * step, rect.top + direction[1] * step);
+  }
 
   useEffect(() => {
     let active = true;
@@ -85,10 +160,25 @@ export default function ReaderChatHistory({ article, onClose }: {
     }
   }
 
-  return <aside className="reader-chat-history" role="dialog" aria-label="Saved article conversations">
-    <header><strong>Saved article conversations</strong>
-      <button type="button" onClick={onClose} aria-label="Close saved conversations">×</button>
+  return <aside ref={panelRef} className="reader-chat-history" role="dialog"
+    aria-label="Saved article conversations" data-minimized={minimized}
+    style={position ? { left: position.left, top: position.top, right: "auto" } : undefined}>
+    <header>
+      <div className="reader-chat-drag-handle" role="button" tabIndex={0}
+        aria-label="Move saved conversations window; use arrow keys"
+        onPointerDown={startDrag} onPointerMove={drag}
+        onPointerUp={stopDrag} onPointerCancel={stopDrag} onKeyDown={moveWithKeyboard}>
+        <strong>Saved article conversations</strong>
+      </div>
+      <div className="reader-chat-header-actions">
+        <button type="button" onClick={() => setMinimized((value) => !value)}
+          aria-expanded={!minimized} aria-label={minimized ? "Restore saved conversations" : "Minimize saved conversations"}>
+          {minimized ? "□" : "−"}
+        </button>
+        <button type="button" onClick={onClose} aria-label="Close saved conversations">×</button>
+      </div>
     </header>
+    <div className="reader-chat-body" hidden={minimized}>
     <p>Edition {article.project} · page {article.pageId} · revision {article.revisionId}</p>
     <p className="reader-chat-disclaimer">Read-only history. Saved answers are plain text and their citation claims are not revalidated. The online preview cannot supply canonical article evidence for new AI questions.</p>
     {loadingThreads && <p role="status">Loading saved conversations…</p>}
@@ -118,5 +208,6 @@ export default function ReaderChatHistory({ article, onClose }: {
         <p><strong>Question</strong></p><p className="reader-chat-text">{question}</p>
         <p><strong>Saved answer (unverified)</strong></p><p className="reader-chat-text">{answer}</p>
       </li>)}</ol>
+    </div>
   </aside>;
 }

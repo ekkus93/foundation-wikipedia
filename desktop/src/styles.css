@@ -84,8 +84,14 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .ai-local-settings [role="alert"] { border-left: 4px solid #b32424; padding: 12px; }
 
 /* Read-only chat replay: saved model output is always rendered as text. */
-.reader-chat-history { position: fixed; z-index: 3; right: 24px; top: 96px; width: min(440px, calc(100vw - 48px)); max-height: calc(100vh - 180px); overflow: auto; padding: 18px; border: 1px solid var(--reader-border); border-radius: 18px; background: var(--reader-bg); color: var(--reader-text); box-shadow: 0 10px 36px #0003; font: 14px/1.5 system-ui, sans-serif; }
+.reader-chat-history { position: fixed; z-index: 3; right: 24px; top: 96px; width: min(440px, calc(100vw - 48px)); height: min(540px, calc(100dvh - 112px)); min-width: min(280px, calc(100vw - 16px)); min-height: min(180px, calc(100dvh - 16px)); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); resize: both; overflow: auto; padding: 18px; border: 1px solid var(--reader-border); border-radius: 18px; background: var(--reader-bg); color: var(--reader-text); box-shadow: 0 10px 36px #0003; font: 14px/1.5 system-ui, sans-serif; }
+.reader-chat-history[data-minimized="true"] { height: auto !important; min-height: 0; resize: none; overflow: hidden; }
 .reader-chat-history header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reader-chat-drag-handle { min-width: 0; flex: 1; cursor: move; touch-action: none; user-select: none; }
+.reader-chat-drag-handle:focus-visible { outline: 3px solid var(--reader-link); outline-offset: 3px; }
+.reader-chat-header-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.reader-chat-body { padding-top: 8px; }
+@media (max-width: 500px) { .reader-chat-history { right: 8px; top: 8px; width: calc(100vw - 16px); } }
 .reader-chat-history button, .reader-chat-history select { background: var(--reader-surface); color: var(--reader-text); border: 1px solid var(--reader-muted); border-radius: 6px; padding: 7px 10px; }
 .reader-chat-history label { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .reader-chat-history :is(button,select):focus-visible { outline: 3px solid var(--reader-link); outline-offset: 3px; }
