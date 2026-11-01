@@ -127,13 +127,20 @@ fn read_profiles(state: &UserState) -> Result<LocalProfiles, String> {
     Ok(value)
 }
 
-fn write_profiles(state: &UserState, profiles: &LocalProfiles) -> Result<(), String> {
+fn write_profiles(
+    state: &UserState,
+    previous: Option<&str>,
+    profiles: &LocalProfiles,
+) -> Result<(), String> {
     validate_profiles(profiles)?;
     let json =
         serde_json::to_string(profiles).map_err(|_| "Cannot encode local AI profiles")?;
-    state
-        .set_setting(PROFILE_KEY, &json)
+    let written = state
+        .compare_and_swap_setting(PROFILE_KEY, previous, &json)
         .map_err(|_| "Cannot save local AI profiles")?;
+    if !written {
+        return Err("Local AI profiles changed in another window; reload and retry".to_owned());
+    }
     // Once the v2 record is durable, the legacy row is no longer authoritative.
     // v2 stays present even if empty, to prevent resurrecting old selections.
     state
@@ -144,6 +151,7 @@ fn write_profiles(state: &UserState, profiles: &LocalProfiles) -> Result<(), Str
 
 fn upsert(state: &UserState, incoming: LocalProfile) -> Result<LocalProfiles, String> {
     validate_profile(&incoming)?;
+    let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
     let mut current = read_profiles(state)?;
     if let Some(existing) = current.profiles.iter_mut().find(|p| {
         p.name.eq_ignore_ascii_case(&incoming.name)
@@ -159,21 +167,23 @@ fn upsert(state: &UserState, incoming: LocalProfile) -> Result<LocalProfiles, St
         current.profiles.push(incoming.clone());
     }
     current.active = Some(incoming.name);
-    write_profiles(state, &current)?;
+    write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
 
 fn activate(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
+    let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
     let mut current = read_profiles(state)?;
     if !current.profiles.iter().any(|p| p.name == name) {
         return Err("Unknown local AI profile".to_owned());
     }
     current.active = Some(name.to_owned());
-    write_profiles(state, &current)?;
+    write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
 
 fn remove(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
+    let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
     let mut current = read_profiles(state)?;
     let Some(index) = current.profiles.iter().position(|p| p.name == name) else {
         return Err("Unknown local AI profile".to_owned());
@@ -182,7 +192,7 @@ fn remove(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
     if current.active.as_deref() == Some(name) {
         current.active = current.profiles.first().map(|p| p.name.clone());
     }
-    write_profiles(state, &current)?;
+    write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
 
@@ -308,6 +318,29 @@ mod tests {
         }
         assert!(upsert(&state, profile("Overflow", "http://127.0.0.1", "safe")).is_err());
         assert_eq!(read_profiles(&state).unwrap().profiles.len(), MAX_PROFILES);
+    }
+
+
+    #[test]
+    fn stale_profile_snapshot_cannot_overwrite_newer_saved_collection() {
+        let state = UserState::in_memory().unwrap();
+        let first = upsert(
+            &state,
+            profile("First", "http://127.0.0.1:11434", "first-model"),
+        )
+        .unwrap();
+        let stale = state.setting(PROFILE_KEY).unwrap().unwrap();
+        upsert(
+            &state,
+            profile("Second", "http://127.0.0.1:11434", "second-model"),
+        )
+        .unwrap();
+        assert_eq!(first.profiles.len(), 1);
+        let result = write_profiles(&state, Some(&stale), &first);
+        assert!(result.is_err());
+        let after = read_profiles(&state).unwrap();
+        assert_eq!(after.profiles.len(), 2);
+        assert_eq!(after.active.as_deref(), Some("Second"));
     }
 
     #[test]
