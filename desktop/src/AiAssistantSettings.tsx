@@ -48,8 +48,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     if (saving) return;
     let active = true;
     let requestSequence = 0;
-    const revision = editRevision.current;
     const refreshOnFocus = () => {
+      const revision = editRevision.current;
       const sequence = ++requestSequence;
       void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((current) => {
         if (!active || sequence !== requestSequence || revision !== editRevision.current) return;
