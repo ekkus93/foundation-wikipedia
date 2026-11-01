@@ -95,6 +95,16 @@ export interface AiSavedLocalProfiles {
   profiles: AiNamedLocalProfile[];
 }
 
+/** Compare native profile snapshots without interpreting a saved hint as consent. */
+export function sameAiSavedLocalProfiles(a: AiSavedLocalProfiles, b: AiSavedLocalProfiles): boolean {
+  return a.active === b.active && a.profiles.length === b.profiles.length &&
+    a.profiles.every((profile, index) => {
+      const other = b.profiles[index];
+      return profile.name === other.name && profile.protocol === other.protocol &&
+        profile.endpoint === other.endpoint && profile.model === other.model;
+    });
+}
+
 export function validAiLocalProfileName(name: unknown): name is string {
   return typeof name === "string" && name.length <= 40 && name.trim() === name &&
     /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(name);

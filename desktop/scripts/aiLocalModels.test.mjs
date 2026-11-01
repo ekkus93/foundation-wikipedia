@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -77,4 +77,15 @@ test("bounded named local profiles reject secret-bearing rows and duplicate name
     { active: null, profiles: Array(9).fill(profile) },
     { active: "Desktop", profiles: [{ ...profile, endpoint: "https://public.example" }] },
   ]) assert.throws(() => parseAiSavedLocalProfiles(invalid), /Invalid saved AI profiles/);
+});
+
+
+test("profile focus reconciliation detects remote mutations without changing local drafts", () => {
+  const original = { active: "Desktop", profiles: [{ name: "Desktop", protocol, endpoint, model: "qwen3:8b" }] };
+  const equivalent = parseAiSavedLocalProfiles(JSON.parse(JSON.stringify(original)));
+  assert.equal(sameAiSavedLocalProfiles(original, equivalent), true);
+  assert.equal(sameAiSavedLocalProfiles(original, { ...original, active: null }), false);
+  assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [{ ...original.profiles[0], model: "other" }] }), false);
+  assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [...original.profiles, { ...original.profiles[0], name: "LAN" }] }), false);
+  assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [] }), false);
 });

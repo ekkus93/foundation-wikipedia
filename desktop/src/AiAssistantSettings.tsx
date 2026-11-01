@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -41,6 +41,33 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     });
     return () => { active = false; };
   }, []);
+  // Reconcile durable profiles when another desktop window/process has changed
+  // them. Keep the user's unsaved form and require an explicit selection.
+  // This reads only local SQLite; it never contacts a model endpoint.
+  useEffect(() => {
+    if (saving) return;
+    let active = true;
+    let requestSequence = 0;
+    const revision = editRevision.current;
+    const refreshOnFocus = () => {
+      const sequence = ++requestSequence;
+      void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((current) => {
+        if (!active || sequence !== requestSequence || revision !== editRevision.current) return;
+        if (!sameAiSavedLocalProfiles(current, savedProfiles)) {
+          setSavedProfiles(current);
+          setSavedNotice("Saved profiles changed in another window. Your unsaved edits were kept; review before saving.");
+        }
+      }).catch(() => {
+        // A failed read must not replace a user's draft or erase saved data.
+      });
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [savedProfiles, saving]);
+
   // Network permission may be withdrawn during an in-flight discovery.
   useEffect(() => offlineMode.subscribe(() => {
     if (offlineMode.getSnapshot()) {
