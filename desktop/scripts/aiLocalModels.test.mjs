@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, activeAiLocalProfileDestination } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -214,4 +214,26 @@ test("conflict resolution loads current saved values without treating model hint
   assert.deepEqual(latestAiSavedLocalDraft({ revision: 13, active: null, profiles: [] }, "Deleted"), {
     name: "", protocol: "ollama", endpoint, modelHint: "",
   }, "an empty saved collection resets to a nonconnected editor");
+});
+
+test("saved active AI destination is disclosed independently of an unsaved draft", () => {
+  const saved = parseAiSavedLocalProfiles({
+    revision: 6, active: "LAN",
+    profiles: [
+      { name: "Desktop", protocol, endpoint, model: "local-model" },
+      { name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.20:8080/v1", model: "remote-lan-model" },
+    ],
+  });
+  assert.deepEqual(activeAiLocalProfileDestination(saved), {
+    name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.20:8080/v1", locality: "local-network",
+  });
+  assert.match(aiLocalityDisclosure(activeAiLocalProfileDestination(saved).locality), /LAN/);
+  assert.deepEqual(activeAiLocalProfileDestination({ ...saved, active: "Desktop" }), {
+    name: "Desktop", protocol, endpoint, locality: "localhost",
+  });
+  assert.equal(activeAiLocalProfileDestination({ revision: 7, active: null, profiles: [] }), null);
+  assert.equal(activeAiLocalProfileDestination({ ...saved, active: "Missing" }), null);
+  assert.equal(activeAiLocalProfileDestination({
+    ...saved, profiles: [{ ...saved.profiles[1], endpoint: "https://public.example" }],
+  }), null, "invalid persisted destination is never presented as a trusted locality");
 });

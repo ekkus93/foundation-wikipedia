@@ -153,6 +153,22 @@ export interface AiSavedLocalProfiles {
   profiles: AiNamedLocalProfile[];
 }
 
+/** Display the *persisted active* destination separately from any unsaved editor
+ * draft. Reading this metadata never grants permission to connect or infer.
+ */
+export function activeAiLocalProfileDestination(saved: AiSavedLocalProfiles): {
+  name: string;
+  protocol: AiLocalProtocol;
+  endpoint: string;
+  locality: AiLocality;
+} | null {
+  const active = saved.profiles.find((profile) => profile.name === saved.active);
+  if (!active) return null;
+  const locality = classifyAiLocalEndpoint(active.endpoint);
+  if (locality === null) return null;
+  return { name: active.name, protocol: active.protocol, endpoint: active.endpoint, locality };
+}
+
 /** Compare native profile snapshots without interpreting a saved hint as consent. */
 export function sameAiSavedLocalProfiles(a: AiSavedLocalProfiles, b: AiSavedLocalProfiles): boolean {
   return a.revision === b.revision && a.active === b.active && a.profiles.length === b.profiles.length &&

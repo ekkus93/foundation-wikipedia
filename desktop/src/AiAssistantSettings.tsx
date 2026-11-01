@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, classifyAiLocalEndpoint, activeAiLocalProfileDestination } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -292,6 +292,9 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
   }
 
+  const activeDestination = activeAiLocalProfileDestination(savedProfiles);
+  const draftLocality = classifyAiLocalEndpoint(endpoint);
+
   return <section className="ai-local-settings" aria-label="Local AI provider selection">
     <div className="ai-local-inventory">
       <label htmlFor={`${id}-saved-profile`}>Saved local profiles</label>
@@ -315,6 +318,15 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       <input id={`${id}-profile-name`} value={profileName} maxLength={40}
         disabled={saving} autoComplete="off" onChange={(event) => { invalidate(); setProfileName(event.target.value); }} />
       <p>Up to eight named local profiles. Switching or restoring a profile never contacts its server. Delete removes saved configuration, not installed models.</p>
+    </div>
+    <div className="ai-local-inventory" aria-label="Saved AI destination disclosure">
+      {activeDestination ? <>
+        <p>Active saved profile: <strong>{activeDestination.name}</strong> · {activeDestination.protocol === "ollama" ? "Ollama" : "OpenAI-compatible"} · <code>{activeDestination.endpoint}</code>.</p>
+        <p>{aiLocalityDisclosure(activeDestination.locality)} This saved selection is not a connection or permission to send article passages.</p>
+      </> : <p>No active local AI profile is saved.</p>}
+      <p>Current editor destination: {draftLocality
+        ? aiLocalityDisclosure(draftLocality)
+        : "Not a permitted localhost/private-LAN HTTP endpoint."} Editing or restoring settings does not contact this destination.</p>
     </div>
     <p>Choose a server explicitly. No AI provider is contacted until you select <strong>Discover models</strong>. Public internet and DNS hostnames are rejected by the local provider adapter.</p>
     <form onSubmit={(event) => void discover(event)}>
