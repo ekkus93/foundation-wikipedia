@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import AiAssistantSettings from "./AiAssistantSettings";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
@@ -566,7 +567,8 @@ export default function App() {
               <button type="button" disabled={savedBusy} onClick={() => setConfirmClearReading(false)}>Cancel</button>
             </div>
           )}
-        </section> : <p>Settings for {settingsSection} are not available in this development preview.</p>}
+        </section> : settingsSection === "AI Assistant" ? <AiAssistantSettings offlineMode={offlineMode} />
+        : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>

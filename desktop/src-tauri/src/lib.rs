@@ -1,6 +1,8 @@
 //! Thin desktop Tauri adapter around the shared revision-safe Rust source API.
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
+mod local_ai;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1398,6 +1400,7 @@ pub fn run() {
         .manage(DesktopPersonalDataGate::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
+            local_ai::discover_local_ai_models,
             open_wikipedia_title,
             open_wikipedia_page,
             toggle_reader_bookmark,

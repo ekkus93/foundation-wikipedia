@@ -71,3 +71,14 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .article-preview-frame { display: block; width: 100%; min-height: 68vh; border: 1px solid var(--reader-border); border-radius: 6px; background: #fff; }
 .article-preview-frame[hidden] { display: none; }
 @media (max-width: 800px) { .article-preview-frame { min-height: 62vh; } }
+
+/* Explicit AI endpoint/model selection; never imply that LAN means offline. */
+.ai-local-settings { font: 15px/1.5 system-ui, sans-serif; }
+.ai-local-settings form { display: grid; gap: 10px; padding: 18px; border: 1px solid var(--reader-border); border-radius: 12px; }
+.ai-local-settings input, .ai-local-settings select { color: var(--reader-text); background: var(--reader-surface); border: 1px solid var(--reader-muted); padding: 9px; border-radius: 6px; min-width: 0; width: 100%; }
+.ai-local-settings button { justify-self: start; border: none; padding: 12px 18px; border-radius: 8px; background: #4b3a8b; color: white; cursor: pointer; }
+.ai-local-settings button:disabled { opacity: .6; cursor: not-allowed; }
+.ai-local-settings :is(button,select,input):focus-visible { outline: 3px solid var(--reader-link); outline-offset: 3px; }
+.ai-local-note { font-size: 13px; color: var(--reader-muted); }
+.ai-local-inventory { margin: 18px 0; padding: 16px; border: 1px solid var(--reader-border); border-radius: 12px; overflow-wrap: anywhere; }
+.ai-local-settings [role="alert"] { border-left: 4px solid #b32424; padding: 12px; }

@@ -18,6 +18,8 @@ wiki-core = { path = "../../crates/wiki-core" }
 wiki-source = { path = "../../crates/wiki-source" }
 wiki-store = { path = "../../crates/wiki-store" }
 wiki-model = { path = "../../crates/wiki-model" }
+wiki-ai = { path = "../../crates/wiki-ai" }
+serde = { version = "1", features = ["derive"] }
 
 # Separate from the platform-neutral root workspace.
 [workspace]

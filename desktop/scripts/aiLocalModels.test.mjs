@@ -1,0 +1,45 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId } from "../src/aiLocalModels.ts";
+
+const endpoint = "http://127.0.0.1:11434";
+const protocol = "ollama";
+const response = () => ({
+  endpoint, protocol, locality: "localhost",
+  models: [{ id: "qwen3:8b", contextWindow: null }, { id: "modèle-1", contextWindow: 4096 }],
+});
+
+test("exact requested provider, endpoint, model, and locale are retained", () => {
+  assert.deepEqual(parseAiLocalInventory(response(), protocol, endpoint), response());
+  assert.match(aiLocalityDisclosure("local-network"), /not.*offline|unavailable offline/i);
+  assert.match(aiLocalityDisclosure("localhost"), /not.*on-device/i);
+});
+
+test("rejects substituted endpoints, cloud locality, mismatched protocol, and invalid payloads", () => {
+  const variants = [null, [], {}, { ...response(), endpoint: "https://example.com" },
+    { ...response(), protocol: "cloud" }, { ...response(), locality: "cloud" },
+    { ...response(), models: {} }, { ...response(), models: Array(257).fill({ id: "a", contextWindow: null }) }];
+  for (const value of variants) assert.throws(() => parseAiLocalInventory(value, protocol, endpoint), /Invalid local model inventory/);
+});
+
+test("rejects duplicate, spoofed and malformed model names and out-of-range context counts", () => {
+  for (const models of [
+    [{id: "a", contextWindow: null}, {id: "a", contextWindow: null}],
+    [{id: "a\u202eb", contextWindow: null}],
+    [{id: "a\u200bb", contextWindow: null}],
+    [{id: "a", contextWindow: 0}],
+    [{id: "a", contextWindow: -1}],
+    [{id: "a", contextWindow: 2 ** 32}],
+    [{id: "a", contextWindow: "512"}],
+    [{id: "a"}],
+  ]) {
+    assert.throws(() => parseAiLocalInventory({ ...response(), models }, protocol, endpoint), /Invalid local model inventory/);
+  }
+  assert.equal(validAiLocalModelId("qwen3:8b"), true);
+  assert.equal(validAiLocalModelId("modèle-1"), true);
+  assert.equal(validAiLocalModelId("qwen\u{e0100}3"), false);
+  assert.equal(validAiLocalModelId("a\ud800b"), false);
+  assert.equal(validAiLocalModelId("a\udc00b"), false);
+  assert.equal(validAiLocalModelId("a🐈"), true);
+  assert.equal(validAiLocalModelId("a".repeat(257)), false);
+});
