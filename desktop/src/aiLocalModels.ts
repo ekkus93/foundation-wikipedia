@@ -129,13 +129,15 @@ export function parseAiSavedLocalProfile(input: unknown): AiSavedLocalProfile | 
 /** Read-only saved profiles; no saved entry authorizes an outbound request. */
 export interface AiNamedLocalProfile extends AiSavedLocalProfile { name: string }
 export interface AiSavedLocalProfiles {
+  /** Monotonic persisted edit generation; prevents identical-value ABA replay. */
+  revision: number;
   active: string | null;
   profiles: AiNamedLocalProfile[];
 }
 
 /** Compare native profile snapshots without interpreting a saved hint as consent. */
 export function sameAiSavedLocalProfiles(a: AiSavedLocalProfiles, b: AiSavedLocalProfiles): boolean {
-  return a.active === b.active && a.profiles.length === b.profiles.length &&
+  return a.revision === b.revision && a.active === b.active && a.profiles.length === b.profiles.length &&
     a.profiles.every((profile, index) => {
       const other = b.profiles[index];
       return profile.name === other.name && profile.protocol === other.protocol &&
@@ -153,7 +155,11 @@ export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles 
     throw new Error("Invalid saved AI profiles");
   }
   const raw = input as Record<string, unknown>;
-  if (Object.keys(raw).sort().join(",") !== "active,profiles" ||
+  const keys = Object.keys(raw).sort().join(",");
+  // Pre-revision v2 records remain readable as generation zero.
+  const revision = keys === "active,profiles" ? 0 : raw.revision;
+  if (!(keys === "active,profiles" || keys === "active,profiles,revision") ||
+      !Number.isSafeInteger(revision) || (revision as number) < 0 ||
       !Array.isArray(raw.profiles) || raw.profiles.length > 8) {
     throw new Error("Invalid saved AI profiles");
   }
@@ -184,7 +190,7 @@ export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles 
   if (new TextEncoder().encode(JSON.stringify(input)).length > 4096) {
     throw new Error("Invalid saved AI profiles");
   }
-  return { active: raw.active as string | null, profiles };
+  return { revision: revision as number, active: raw.active as string | null, profiles };
 }
 
 /** Sticky review fence: refreshing a CAS snapshot must not approve a stale draft. */

@@ -63,8 +63,9 @@ test("saved profile shape is non-secret and preserves exact model hint", () => {
 test("bounded named local profiles reject secret-bearing rows and duplicate names", () => {
   const profile = { name: "Desktop", protocol: "ollama", endpoint, model: "qwen3:8b" };
   const collection = { active: "Desktop", profiles: [profile] };
-  assert.deepEqual(parseAiSavedLocalProfiles(collection), collection);
-  assert.deepEqual(parseAiSavedLocalProfiles({ active: null, profiles: [] }), { active: null, profiles: [] });
+  assert.deepEqual(parseAiSavedLocalProfiles(collection), { ...collection, revision: 0 });
+  assert.deepEqual(parseAiSavedLocalProfiles({ ...collection, revision: 7 }), { ...collection, revision: 7 });
+  assert.deepEqual(parseAiSavedLocalProfiles({ active: null, profiles: [] }), { revision: 0, active: null, profiles: [] });
   assert.ok(validAiLocalProfileName("LAN Office"));
   for (const name of ["", " space", "bad/name", "bad\u202e", "a".repeat(41)]) {
     assert.equal(validAiLocalProfileName(name), false);
@@ -75,6 +76,10 @@ test("bounded named local profiles reject secret-bearing rows and duplicate name
     { active: "Desktop", profiles: [{ ...profile, apiKey: "secret" }] },
     { active: "Desktop", profiles: [profile, { ...profile, name: "desktop" }] },
     { active: null, profiles: Array(9).fill(profile) },
+    { ...collection, revision: -1 },
+    { ...collection, revision: 1.5 },
+    { ...collection, revision: Number.MAX_SAFE_INTEGER + 1 },
+    { ...collection, revision: "1" },
     { active: "Desktop", profiles: [{ ...profile, endpoint: "https://public.example" }] },
   ]) assert.throws(() => parseAiSavedLocalProfiles(invalid), /Invalid saved AI profiles/);
 });
@@ -136,4 +141,12 @@ test("profile review fence stays pending after subsequent unchanged refreshes", 
   assert.equal(needsAiProfileReview(current, current, true), true);
   assert.equal(needsAiProfileReview(current, current, false), false);
   assert.equal(needsAiProfileReview(old, { ...old, active: null }), true);
+});
+
+test("profile snapshot generation detects ABA even with identical saved fields", () => {
+  const initial = parseAiSavedLocalProfiles({ revision: 1, active: "Desktop", profiles: [{ name: "Desktop", protocol, endpoint, model: "a" }] });
+  const restored = parseAiSavedLocalProfiles({ ...initial, revision: 3 });
+  assert.equal(sameAiSavedLocalProfiles(initial, restored), false);
+  assert.equal(needsAiProfileReview(initial, restored), true);
+  assert.equal(sameAiSavedLocalProfiles(restored, { ...restored }), true);
 });

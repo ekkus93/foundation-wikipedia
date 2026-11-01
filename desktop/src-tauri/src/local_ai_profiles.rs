@@ -14,6 +14,9 @@ const PROFILE_KEY: &str = "ai.local_profiles.v2";
 const LEGACY_KEY: &str = "ai.local_profile.v1";
 const MAX_PROFILES: usize = 8;
 const MAX_SAVED_BYTES: usize = 4096;
+// JavaScript transports revisions as exact JSON numbers. Reject wraparound
+// and values above Number.MAX_SAFE_INTEGER at the native storage boundary.
+const MAX_SAFE_REVISION: u64 = 9_007_199_254_740_991;
 // Best-effort in-process notification; focus reconciliation covers separate processes.
 const PROFILES_CHANGED_EVENT: &str = "ai-local-profiles-changed";
 
@@ -29,6 +32,8 @@ pub struct LocalProfile {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalProfiles {
+    #[serde(default)]
+    revision: u64,
     active: Option<String>,
     profiles: Vec<LocalProfile>,
 }
@@ -74,6 +79,9 @@ fn validate_profile(profile: &LocalProfile) -> Result<(), String> {
 }
 
 fn validate_profiles(value: &LocalProfiles) -> Result<(), String> {
+    if value.revision > MAX_SAFE_REVISION {
+        return Err("Invalid local AI profile revision".to_owned());
+    }
     if value.profiles.len() > MAX_PROFILES {
         return Err("Too many local AI profiles".to_owned());
     }
@@ -118,6 +126,7 @@ fn read_profiles(state: &UserState) -> Result<LocalProfiles, String> {
     let old: LegacyProfile =
         serde_json::from_str(&json).map_err(|_| "Invalid legacy local AI profile")?;
     let value = LocalProfiles {
+        revision: 0,
         active: Some("Default".to_owned()),
         profiles: vec![LocalProfile {
             name: "Default".to_owned(),
@@ -189,6 +198,13 @@ fn remove_if_current(
     remove(state, name)
 }
 
+fn bump_revision(current: &mut LocalProfiles) -> Result<(), String> {
+    current.revision = current.revision.checked_add(1)
+        .filter(|revision| *revision <= MAX_SAFE_REVISION)
+        .ok_or_else(|| "Local AI profile revision exhausted".to_owned())?;
+    Ok(())
+}
+
 fn upsert(state: &UserState, incoming: LocalProfile) -> Result<LocalProfiles, String> {
     validate_profile(&incoming)?;
     let previous = state.setting(PROFILE_KEY).map_err(|_| "Cannot read local AI profiles")?;
@@ -207,6 +223,7 @@ fn upsert(state: &UserState, incoming: LocalProfile) -> Result<LocalProfiles, St
         current.profiles.push(incoming.clone());
     }
     current.active = Some(incoming.name);
+    bump_revision(&mut current)?;
     write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
@@ -218,6 +235,7 @@ fn activate(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
         return Err("Unknown local AI profile".to_owned());
     }
     current.active = Some(name.to_owned());
+    bump_revision(&mut current)?;
     write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
@@ -232,6 +250,7 @@ fn remove(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
     if current.active.as_deref() == Some(name) {
         current.active = current.profiles.first().map(|p| p.name.clone());
     }
+    bump_revision(&mut current)?;
     write_profiles(state, previous.as_deref(), &current)?;
     Ok(current)
 }
@@ -449,6 +468,44 @@ mod tests {
         drop(first);
         drop(second);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+
+    #[test]
+    fn monotonic_revision_rejects_aba_profile_replay() {
+        let state = UserState::in_memory().unwrap();
+        let original = upsert(
+            &state,
+            profile("Desktop", "http://127.0.0.1:11434", "model-a"),
+        ).unwrap();
+        assert_eq!(original.revision, 1);
+        upsert(&state, profile("Desktop", "http://127.0.0.1:11434", "model-b")).unwrap();
+        let restored = upsert(
+            &state,
+            profile("Desktop", "http://127.0.0.1:11434", "model-a"),
+        ).unwrap();
+        assert_eq!(restored.profiles, original.profiles);
+        assert_eq!(restored.active, original.active);
+        assert_eq!(restored.revision, 3);
+        assert!(activate_if_current(&state, "Desktop", &original).is_err());
+        assert!(upsert_if_current(
+            &state,
+            profile("Desktop", "http://127.0.0.1:11434", "stale-model"),
+            &original
+        ).is_err());
+        assert_eq!(read_profiles(&state).unwrap(), restored);
+        assert_eq!(activate_if_current(&state, "Desktop", &restored).unwrap().revision, 4);
+    }
+
+    #[test]
+    fn legacy_v2_collection_without_revision_starts_at_zero() {
+        let state = UserState::in_memory().unwrap();
+        state.set_setting(PROFILE_KEY, r#"{"active":"Desktop","profiles":[{"name":"Desktop","protocol":"ollama","endpoint":"http://127.0.0.1:11434","model":"model-a"}]}"#).unwrap();
+        let legacy = read_profiles(&state).unwrap();
+        assert_eq!(legacy.revision, 0);
+        let updated = activate_if_current(&state, "Desktop", &legacy).unwrap();
+        assert_eq!(updated.revision, 1);
+        assert!(activate_if_current(&state, "Desktop", &legacy).is_err());
     }
 
     #[test]

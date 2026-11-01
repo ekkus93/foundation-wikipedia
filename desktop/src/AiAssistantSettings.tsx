@@ -15,7 +15,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   const [busy, setBusy] = useState(false);
   const [savedModelHint, setSavedModelHint] = useState("");
   const [profileName, setProfileName] = useState("Default");
-  const [savedProfiles, setSavedProfiles] = useState<AiSavedLocalProfiles>({ active: null, profiles: [] });
+  const [savedProfiles, setSavedProfiles] = useState<AiSavedLocalProfiles>({ revision: 0, active: null, profiles: [] });
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   // A refreshed CAS snapshot must not silently authorize an old draft to
