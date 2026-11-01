@@ -1399,10 +1399,13 @@ pub fn run() {
     tauri::Builder::default()
         .manage(DesktopOnlineCache::default())
         .manage(DesktopPersonalDataGate::default())
+        .manage(local_ai::LocalAiProbeRegistry::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             local_ai::discover_local_ai_models,
+            local_ai::begin_local_ai_model_test,
             local_ai::test_local_ai_model,
+            local_ai::cancel_local_ai_model_test,
             local_ai::read_local_ai_profile,
             local_ai::save_local_ai_profile,
             local_ai_profiles::read_local_ai_profiles,

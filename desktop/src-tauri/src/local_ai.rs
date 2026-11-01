@@ -1,5 +1,9 @@
 //! Thin Tauri adapter for explicit, local-only model discovery (AI-002).
 //! Source of authority is wiki-ai's pinned-address transport, not web fetch.
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use wiki_ai::local_endpoint::LocalEndpoint;
 use wiki_ai::{CancellationToken, GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
@@ -71,11 +75,96 @@ fn parse_local_protocol(protocol: &str) -> Result<LocalProtocol, String> {
     }
 }
 
+
+struct ProbeEntry {
+    cancellation: CancellationToken,
+    running: bool,
+    registered_at: Instant,
+}
+
+/// One explicit user-started diagnostic lease. Preparing a lease does not
+/// contact a provider. Cancellation removes the lease and signals any worker
+/// holding a cloned token; a late run cannot resurrect a cancelled lease.
+#[derive(Default)]
+pub struct LocalAiProbeRegistry {
+    next_id: AtomicU64,
+    entries: Mutex<HashMap<u64, ProbeEntry>>,
+}
+
+impl LocalAiProbeRegistry {
+    fn begin(&self) -> Result<u64, String> {
+        let mut entries = self.entries.lock().map_err(|_| "Local test registry unavailable")?;
+        // A window that crashes between prepare and run cannot exhaust the
+        // registry forever. Running requests are removed on worker completion.
+        entries.retain(|_, entry| entry.running || entry.registered_at.elapsed() < Duration::from_secs(300));
+        if entries.len() >= 32 {
+            return Err("Too many pending local model tests".to_owned());
+        }
+        // IDs cross JavaScript IPC, so never exceed Number.MAX_SAFE_INTEGER.
+        let id = self.next_id.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            (value < 9_007_199_254_740_991).then_some(value + 1)
+        }).map_err(|_| "Local test ID space exhausted")? + 1;
+        entries.insert(id, ProbeEntry {
+            cancellation: CancellationToken::default(),
+            running: false,
+            registered_at: Instant::now(),
+        });
+        Ok(id)
+    }
+
+    fn claim(&self, id: u64) -> Result<CancellationToken, String> {
+        let mut entries = self.entries.lock().map_err(|_| "Local test registry unavailable")?;
+        let entry = entries.get_mut(&id).ok_or("Local model test was cancelled or expired")?;
+        if entry.running {
+            return Err("Local model test already started".to_owned());
+        }
+        entry.running = true;
+        Ok(entry.cancellation.clone())
+    }
+
+    fn cancel(&self, id: u64) -> Result<(), String> {
+        let entry = self.entries.lock().map_err(|_| "Local test registry unavailable")?.remove(&id);
+        if let Some(entry) = entry {
+            entry.cancellation.cancel();
+        }
+        Ok(())
+    }
+
+    fn finish(&self, id: u64) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(&id);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn begin_local_ai_model_test(
+    registry: tauri::State<'_, LocalAiProbeRegistry>,
+) -> Result<u64, String> {
+    registry.begin()
+}
+
+#[tauri::command]
+pub fn cancel_local_ai_model_test(
+    registry: tauri::State<'_, LocalAiProbeRegistry>,
+    request_id: u64,
+) -> Result<(), String> {
+    registry.cancel(request_id)
+}
+
 // This explicit diagnostic never receives article text, user prompts,
 // bookmarks, history, or credentials. No generated text leaves native Rust.
 const LOCAL_TEST_PROMPT: &str = "Reply OK.";
 
-fn probe_local_model(protocol: LocalProtocol, endpoint: &str, model: &str) -> Result<(), String> {
+fn probe_local_model(
+    protocol: LocalProtocol,
+    endpoint: &str,
+    model: &str,
+    cancellation: &CancellationToken,
+) -> Result<(), String> {
+    if cancellation.is_cancelled() {
+        return Err("Local model test cancelled".to_owned());
+    }
     if endpoint.len() > 512 || model.len() > 256 {
         return Err("Invalid local model test selection".to_owned());
     }
@@ -83,6 +172,9 @@ fn probe_local_model(protocol: LocalProtocol, endpoint: &str, model: &str) -> Re
     // authorize inference using a model the server no longer advertises.
     let inventory = discover_local_models(protocol, endpoint)
         .map_err(|_| "Could not verify the selected local model".to_owned())?;
+    if cancellation.is_cancelled() {
+        return Err("Local model test cancelled".to_owned());
+    }
     let selected = inventory.select(model)
         .map_err(|_| "Selected model is no longer advertised by this server".to_owned())?;
     let mut saw_text = false;
@@ -93,7 +185,7 @@ fn probe_local_model(protocol: LocalProtocol, endpoint: &str, model: &str) -> Re
                 content: LOCAL_TEST_PROMPT.to_owned(),
             }],
             8,
-            &CancellationToken::default(),
+            cancellation,
             OutboundPolicy::AllowLocalEndpoints,
             &mut |event| {
                 if let StreamEvent::TextDelta(text) = event {
@@ -111,17 +203,25 @@ fn probe_local_model(protocol: LocalProtocol, endpoint: &str, model: &str) -> Re
 
 #[tauri::command]
 pub async fn test_local_ai_model(
+    app: tauri::AppHandle,
+    request_id: u64,
     protocol: String,
     endpoint: String,
     model: String,
 ) -> Result<(), String> {
-    let selected = parse_local_protocol(&protocol)?;
-    if endpoint.len() > 512 || model.len() > 256 {
-        return Err("Invalid local model test selection".to_owned());
-    }
-    tauri::async_runtime::spawn_blocking(move || probe_local_model(selected, &endpoint, &model))
-        .await
-        .map_err(|_| "Local model test worker stopped".to_owned())?
+    let cancellation = app.state::<LocalAiProbeRegistry>().claim(request_id)?;
+    let result = match parse_local_protocol(&protocol) {
+        Ok(selected) if endpoint.len() <= 512 && model.len() <= 256 => {
+            tauri::async_runtime::spawn_blocking(move || {
+                probe_local_model(selected, &endpoint, &model, &cancellation)
+            })
+            .await
+            .map_err(|_| "Local model test worker stopped".to_owned())?
+        }
+        _ => Err("Invalid local model test selection".to_owned()),
+    };
+    app.state::<LocalAiProbeRegistry>().finish(request_id);
+    result
 }
 
 /// One non-secret local profile in the private SQLite preferences. A restored
@@ -268,7 +368,7 @@ mod local_profile_tests {
             (r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
             (sse, "text/event-stream"),
         ]);
-        probe_local_model(LocalProtocol::Ollama, &endpoint, "qwen3:8b").unwrap();
+        probe_local_model(LocalProtocol::Ollama, &endpoint, "qwen3:8b", &CancellationToken::default()).unwrap();
         let requests = worker.join().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("GET /api/tags HTTP/1.1"));
@@ -283,13 +383,52 @@ mod local_profile_tests {
         let (endpoint, worker) = serve_probe_fixture(vec![
             (r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
         ]);
-        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, "unadvertised").is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, "unadvertised", &CancellationToken::default()).is_err());
         let requests = worker.join().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /api/tags HTTP/1.1"));
-        assert!(probe_local_model(LocalProtocol::Ollama, "http://8.8.8.8", "qwen3:8b").is_err());
-        assert!(probe_local_model(LocalProtocol::Ollama, "http://user:secret@127.0.0.1", "qwen3:8b").is_err());
-        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, &"x".repeat(257)).is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, "http://8.8.8.8", "qwen3:8b", &CancellationToken::default()).is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, "http://user:secret@127.0.0.1", "qwen3:8b", &CancellationToken::default()).is_err());
+        assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, &"x".repeat(257), &CancellationToken::default()).is_err());
+    }
+
+
+    #[test]
+    fn diagnostic_leases_cancel_before_run_and_during_stream() {
+        let registry = LocalAiProbeRegistry::default();
+        let first = registry.begin().unwrap();
+        let running = registry.claim(first).unwrap();
+        assert!(!running.is_cancelled());
+        assert!(registry.claim(first).is_err(), "one lease cannot run twice");
+        registry.cancel(first).unwrap();
+        assert!(running.is_cancelled(), "an in-flight worker observes cancellation");
+        assert!(registry.claim(first).is_err(), "cancelled leases cannot restart");
+        registry.cancel(first).unwrap(); // idempotent
+
+        let second = registry.begin().unwrap();
+        assert_ne!(first, second);
+        registry.cancel(second).unwrap();
+        let already_cancelled = CancellationToken::default();
+        already_cancelled.cancel();
+        assert!(probe_local_model(
+            LocalProtocol::Ollama,
+            "http://127.0.0.1:1",
+            "qwen3:8b",
+            &already_cancelled
+        ).is_err(), "pre-cancelled probe must not open a socket");
+        registry.finish(first);
+    }
+
+    #[test]
+    fn diagnostic_lease_capacity_is_bounded_and_reusable() {
+        let registry = LocalAiProbeRegistry::default();
+        let mut ids = Vec::new();
+        for _ in 0..32 {
+            ids.push(registry.begin().unwrap());
+        }
+        assert!(registry.begin().is_err());
+        registry.cancel(ids[0]).unwrap();
+        assert!(registry.begin().is_ok());
     }
 
     #[test]
