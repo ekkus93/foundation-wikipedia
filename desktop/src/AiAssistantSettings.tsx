@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -243,6 +243,22 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
   }
 
+  function discardDraftAndLoadSaved() {
+    if (saving || !needsReview) return;
+    // The saved list was independently parsed and revision-checked on read.
+    // Clearing the draft also invalidates any in-flight discovery response.
+    const latest = latestAiSavedLocalDraft(savedProfiles, profileName);
+    invalidate();
+    setProfileName(latest.name);
+    setProtocol(latest.protocol);
+    setEndpoint(latest.endpoint);
+    setSavedModelHint(latest.modelHint);
+    setNeedsReview(false);
+    setSavedNotice(latest.name
+      ? "Draft discarded. Current saved values loaded; discover models to verify availability."
+      : "Draft discarded. No saved profiles remain; create a new profile to continue.");
+  }
+
   async function saveChoice() {
     if (saving || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) || offlineMode.getSnapshot()) return;
     if (needsReview) {
@@ -332,6 +348,9 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         setNeedsReview(false);
         setSavedNotice("Newer saved profiles acknowledged. Saving your current draft is now an explicit overwrite.");
       }}>I reviewed the saved state — allow saving my draft</button>
+      <button type="button" disabled={saving} onClick={discardDraftAndLoadSaved}>
+        Discard my draft and load latest saved values
+      </button>
     </div>}
     {inventory && !offline && <div className="ai-local-inventory">
       <p role="status">Discovered {inventory.models.length} model(s) at <code>{inventory.endpoint}</code>.</p>

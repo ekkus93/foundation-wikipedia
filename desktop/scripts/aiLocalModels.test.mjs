@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -193,4 +193,25 @@ test("saved profile deletion requires a fresh explicit confirmation for the sele
   assert.equal(canConfirmAiLocalProfileDelete("Other", "Other", saved, false), false);
   assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Desktop", saved, true), false);
   assert.equal(canConfirmAiLocalProfileDelete("Desktop", "Desktop", { ...saved, profiles: [] }, false), false);
+});
+
+
+test("conflict resolution loads current saved values without treating model hints as verified", () => {
+  const current = parseAiSavedLocalProfiles({
+    revision: 12, active: "LAN",
+    profiles: [
+      { name: "Desktop", protocol, endpoint, model: "new-local-model" },
+      { name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.10:8080/v1", model: "lan-model" },
+    ],
+  });
+  assert.deepEqual(latestAiSavedLocalDraft(current, "Desktop"), {
+    name: "Desktop", protocol, endpoint, modelHint: "new-local-model",
+  }, "a matching edited profile uses its newest persisted fields");
+  assert.deepEqual(latestAiSavedLocalDraft(current, "Deleted"), {
+    name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.10:8080/v1", modelHint: "lan-model",
+  }, "deleted drafts fall back to the latest active profile");
+  assert.deepEqual(latestAiSavedLocalDraft(current, ""), latestAiSavedLocalDraft(current, "Deleted"));
+  assert.deepEqual(latestAiSavedLocalDraft({ revision: 13, active: null, profiles: [] }, "Deleted"), {
+    name: "", protocol: "ollama", endpoint, modelHint: "",
+  }, "an empty saved collection resets to a nonconnected editor");
 });

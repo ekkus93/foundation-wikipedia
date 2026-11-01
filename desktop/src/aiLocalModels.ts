@@ -216,6 +216,23 @@ export function needsAiProfileReview(previous: AiSavedLocalProfiles, current: Ai
   return pending || !sameAiSavedLocalProfiles(previous, current);
 }
 
+/** Replace an unsaved conflict draft with a fresh, validated SQLite snapshot.
+ * Prefer the draft's named profile if it still exists; otherwise load the
+ * current active profile. Never interpret the stored model as discovered.
+ */
+export function latestAiSavedLocalDraft(saved: AiSavedLocalProfiles, preferredName: string): {
+  name: string;
+  protocol: AiLocalProtocol;
+  endpoint: string;
+  modelHint: string;
+} {
+  const profile = saved.profiles.find((item) => item.name === preferredName) ??
+    saved.profiles.find((item) => item.name === saved.active);
+  return profile
+    ? { name: profile.name, protocol: profile.protocol, endpoint: profile.endpoint, modelHint: profile.model }
+    : { name: "", protocol: "ollama", endpoint: "http://127.0.0.1:11434", modelHint: "" };
+}
+
 /** Deleting a saved profile requires an explicit, still-current selection. */
 export function canConfirmAiLocalProfileDelete(
   pendingName: string | null,
