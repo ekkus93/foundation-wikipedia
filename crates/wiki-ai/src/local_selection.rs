@@ -335,6 +335,142 @@ mod tests {
     }
 
     #[test]
+    fn selected_local_article_rag_requires_consent_and_checks_exact_citations() {
+        use crate::rag::{ArticleQuestion, RagError};
+        use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+        use wiki_search::{ArticleLexicalIndex, CitationError};
+
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
+            revision: Revision {
+                revision_id: 12,
+                timestamp: "2026-10-12T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Gravity".into(),
+            display_title: "Gravity".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: Vec::new(),
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph(
+                    "Gravity is the attraction between masses.".into(),
+                ),
+            }],
+            sections: Vec::new(),
+            references: Vec::new(),
+            links: Vec::new(),
+            media: Vec::new(),
+            rendered_html: "<article/>".into(),
+            is_disambiguation: false,
+        };
+        let hit = ArticleLexicalIndex::build(&article)
+            .unwrap()
+            .search("gravity", 1)
+            .pop()
+            .unwrap();
+        let answer = format!("Gravity attracts masses [[cite:{}]]", hit.block_id);
+        let valid_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": answer},
+                "finish_reason": null
+            }]
+        });
+        let forged_chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": "Unverified [[cite:forged]]"},
+                "finish_reason": null
+            }]
+        });
+        let response = |chunk: serde_json::Value| {
+            let sse = format!(
+                "data: {chunk}\n\ndata: {stop}\n\ndata: [DONE]\n\n",
+                stop = r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#
+            );
+            http(&sse, "text/event-stream")
+        };
+        let (url, server) = serve(vec![
+            http(r#"{"models":[{"name":"qwen3:8b"}]}"#, "application/json"),
+            response(valid_chunk),
+            response(forged_chunk),
+        ]);
+        let inventory = discover_local_models(LocalProtocol::Ollama, &url).unwrap();
+        let selected = inventory.select("qwen3:8b").unwrap();
+        let question = ArticleQuestion {
+            question: "gravity",
+            model: "qwen3:8b",
+            passage_limit: 2,
+            context_word_budget: 64,
+            selected_evidence: None,
+            max_output_tokens: 64,
+            outbound_policy: OutboundPolicy::AllowLocalEndpoints,
+        };
+        let cancellation = CancellationToken::default();
+
+        assert_eq!(
+            selected.answer_article(&article, &question, false, &cancellation),
+            Err(LocalArticleError::PassageConsentRequired)
+        );
+        let wrong_model = ArticleQuestion {
+            model: "not-selected",
+            ..question.clone()
+        };
+        assert_eq!(
+            selected.answer_article(&article, &wrong_model, true, &cancellation),
+            Err(LocalArticleError::ModelMismatch)
+        );
+        let denied = ArticleQuestion {
+            outbound_policy: OutboundPolicy::OnDeviceOnly,
+            ..question.clone()
+        };
+        assert_eq!(
+            selected.answer_article(&article, &denied, true, &cancellation),
+            Err(LocalArticleError::Rag(RagError::Provider(
+                ProviderError::DestinationNotAllowed
+            )))
+        );
+        let cancelled = CancellationToken::default();
+        cancelled.cancel();
+        assert_eq!(
+            selected.answer_article(&article, &question, true, &cancelled),
+            Err(LocalArticleError::Rag(RagError::Provider(
+                ProviderError::Cancelled
+            )))
+        );
+        assert_eq!(
+            selected.answer_article(&article, &question, true, &cancellation),
+            Ok(GroundedAnswer::Supported {
+                text: answer,
+                citations: vec![hit],
+            })
+        );
+        assert_eq!(
+            selected.answer_article(&article, &question, true, &cancellation),
+            Err(LocalArticleError::Rag(RagError::Citation(
+                CitationError::UnretrievedCitation("forged".into())
+            )))
+        );
+
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /api/tags HTTP/1.1\r\n"));
+        for request in &requests[1..] {
+            assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+            assert!(request.contains(r#""model":"qwen3:8b""#));
+            assert!(request.contains("Gravity is the attraction between masses."));
+            assert!(request.contains(&format!("Evidence ID: {}", article.key.block_id(12, &[], 0))));
+        }
+    }
+
+    #[test]
     fn endpoint_rejection_and_https_unsupported_never_trigger_cloud_fallback() {
         assert!(matches!(
             discover_local_models(LocalProtocol::Ollama, "https://api.openai.com/v1"),
