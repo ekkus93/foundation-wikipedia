@@ -12,6 +12,8 @@ use crate::{
     stream_selected, CancellationToken, GenerateRequest, LlmProvider, Locality, Message, ModelInfo,
     OutboundPolicy, ProviderError, StreamEvent,
 };
+use wiki_model::Article;
+use wiki_search::GroundedAnswer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalProtocol {
@@ -24,6 +26,13 @@ pub enum SelectionError {
     InvalidEndpoint(EndpointError),
     Provider(ProviderError),
     UnknownModel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalArticleError {
+    PassageConsentRequired,
+    ModelMismatch,
+    Rag(crate::rag::RagError),
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +167,34 @@ impl SelectedLocalModel {
             policy,
             on_event,
         )
+    }
+
+    /// Use this exact discovered local model for revision-scoped RAG.
+    ///
+    /// The caller must obtain per-request consent before sharing article
+    /// passages. Saving a profile or discovering models is not consent.
+    /// Responses are buffered until citation validation succeeds; this
+    /// checks provenance, not factual entailment.
+    pub fn answer_article(
+        &self,
+        article: &Article,
+        question: &crate::rag::ArticleQuestion<'_>,
+        share_article_passages: bool,
+        cancellation: &CancellationToken,
+    ) -> Result<GroundedAnswer, LocalArticleError> {
+        if !share_article_passages {
+            return Err(LocalArticleError::PassageConsentRequired);
+        }
+        if question.model != self.model {
+            return Err(LocalArticleError::ModelMismatch);
+        }
+        crate::rag::answer_article(
+            article,
+            provider(self.protocol, self.endpoint.clone()).as_ref(),
+            question,
+            cancellation,
+        )
+        .map_err(LocalArticleError::Rag)
     }
 }
 
