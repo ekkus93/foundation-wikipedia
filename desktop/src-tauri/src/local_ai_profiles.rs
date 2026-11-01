@@ -5,6 +5,7 @@
 use crate::open_private_bookmark_store;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use tauri::Emitter;
 use wiki_ai::local_endpoint::LocalEndpoint;
 use wiki_ai::{GenerateRequest, Message, MessageRole};
 use wiki_store::user_state::UserState;
@@ -13,6 +14,8 @@ const PROFILE_KEY: &str = "ai.local_profiles.v2";
 const LEGACY_KEY: &str = "ai.local_profile.v1";
 const MAX_PROFILES: usize = 8;
 const MAX_SAVED_BYTES: usize = 4096;
+// Best-effort in-process notification; focus reconciliation covers separate processes.
+const PROFILES_CHANGED_EVENT: &str = "ai-local-profiles-changed";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -250,11 +253,16 @@ pub async fn upsert_local_ai_profile(
 ) -> Result<LocalProfiles, String> {
     validate_profile(&profile)?;
     validate_profiles(&expected_profiles)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let notify = app.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
         upsert_if_current(&open_private_bookmark_store(&app)?, profile, &expected_profiles)
     })
     .await
-    .map_err(|_| "Local AI profile worker stopped".to_owned())?
+    .map_err(|_| "Local AI profile worker stopped".to_owned())??;
+    // Only broadcast after a successful durable CAS. Never include endpoints,
+    // model IDs or any profile contents in the event payload.
+    let _ = notify.emit(PROFILES_CHANGED_EVENT, ());
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -264,11 +272,16 @@ pub async fn activate_local_ai_profile(
     expected_profiles: LocalProfiles,
 ) -> Result<LocalProfiles, String> {
     validate_profiles(&expected_profiles)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let notify = app.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
         activate_if_current(&open_private_bookmark_store(&app)?, &name, &expected_profiles)
     })
     .await
-    .map_err(|_| "Local AI profile worker stopped".to_owned())?
+    .map_err(|_| "Local AI profile worker stopped".to_owned())??;
+    // Only broadcast after a successful durable CAS. Never include endpoints,
+    // model IDs or any profile contents in the event payload.
+    let _ = notify.emit(PROFILES_CHANGED_EVENT, ());
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -278,11 +291,16 @@ pub async fn remove_local_ai_profile(
     expected_profiles: LocalProfiles,
 ) -> Result<LocalProfiles, String> {
     validate_profiles(&expected_profiles)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let notify = app.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || {
         remove_if_current(&open_private_bookmark_store(&app)?, &name, &expected_profiles)
     })
     .await
-    .map_err(|_| "Local AI profile worker stopped".to_owned())?
+    .map_err(|_| "Local AI profile worker stopped".to_owned())??;
+    // Only broadcast after a successful durable CAS. Never include endpoints,
+    // model IDs or any profile contents in the event payload.
+    let _ = notify.emit(PROFILES_CHANGED_EVENT, ());
+    Ok(saved)
 }
 
 #[cfg(test)]

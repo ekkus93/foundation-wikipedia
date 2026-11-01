@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
@@ -41,14 +42,14 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     });
     return () => { active = false; };
   }, []);
-  // Reconcile durable profiles when another desktop window/process has changed
-  // them. Keep the user's unsaved form and require an explicit selection.
-  // This reads only local SQLite; it never contacts a model endpoint.
+  // Reconcile durable profiles after another window's native save event,
+  // window focus or visibility restoration (the latter two cover processes).
+  // Keep the unsaved form; all refresh paths read local SQLite only.
   useEffect(() => {
     if (saving) return;
     let active = true;
     let requestSequence = 0;
-    const refreshOnFocus = () => {
+    const refreshProfiles = () => {
       const revision = editRevision.current;
       const sequence = ++requestSequence;
       void invoke<unknown>("read_local_ai_profiles").then(parseAiSavedLocalProfiles).then((current) => {
@@ -61,10 +62,24 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         // A failed read must not replace a user's draft or erase saved data.
       });
     };
-    window.addEventListener("focus", refreshOnFocus);
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") refreshProfiles();
+    };
+    window.addEventListener("focus", refreshProfiles);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+    // Native events carry no saved-profile data. They only trigger a fresh,
+    // validated read; failed registration leaves focus reconciliation intact.
+    let unlisten: (() => void) | undefined;
+    void listen("ai-local-profiles-changed", refreshProfiles).then((dispose) => {
+      if (active) unlisten = dispose;
+      else dispose();
+    }).catch(() => {});
     return () => {
       active = false;
-      window.removeEventListener("focus", refreshOnFocus);
+      requestSequence += 1;
+      unlisten?.();
+      window.removeEventListener("focus", refreshProfiles);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
     };
   }, [savedProfiles, saving]);
 
