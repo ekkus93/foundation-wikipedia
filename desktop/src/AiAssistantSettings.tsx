@@ -328,7 +328,9 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         setProtocol(replacement?.protocol ?? "ollama");
         setEndpoint(replacement?.endpoint ?? "http://127.0.0.1:11434");
         setSavedModelHint(replacement?.model ?? "");
-        setSavedNotice("Saved profile deleted. Any remaining model must be rediscovered.");
+        setSavedNotice(savedProfiles.active === name
+          ? "Active profile deleted. No local AI provider is selected; activate another saved profile explicitly."
+          : "Inactive saved profile deleted. The active profile is unchanged.");
       }
     } catch {
       if (revision === editRevision.current) {
@@ -408,7 +410,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       <button type="button" disabled={saving || needsReview || !savedProfiles.profiles.some((p) => p.name === profileName)}
         onClick={() => setDeletePending(profileName)}>Delete saved profile…</button>
       {deletePending !== null && <div role="alert" className="ai-local-inventory">
-        <p>Delete saved profile <strong>{deletePending}</strong>? This removes its saved server and model selection, not the installed model.</p>
+        <p>Delete saved profile <strong>{deletePending}</strong>? This removes its saved server and model selection, not the installed model. {deletePending === savedProfiles.active ? "Deleting the active profile disables local AI until you explicitly select another profile." : "The currently active profile will remain selected."}</p>
         <button type="button" disabled={saving || !canConfirmAiLocalProfileDelete(deletePending, profileName, savedProfiles, needsReview)}
           onClick={() => void removeProfile()}>Confirm delete profile</button>
         <button type="button" disabled={saving} onClick={() => setDeletePending(null)}>Cancel deletion</button>
@@ -416,7 +418,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       <label htmlFor={`${id}-profile-name`}>Profile name</label>
       <input id={`${id}-profile-name`} value={profileName} maxLength={40}
         disabled={saving} autoComplete="off" onChange={(event) => { invalidate(); setProfileName(event.target.value); }} />
-      <p>Up to eight named local profiles. Disable leaves saved profiles intact but selects no active provider; selecting a saved profile reactivates it. Switching or restoring never contacts its server. Delete removes saved configuration, not installed models.</p>
+      <p>Up to eight named local profiles. Disable leaves saved profiles intact but selects no active provider; selecting a saved profile reactivates it. Switching or restoring never contacts its server. Deleting the active profile leaves no provider selected; it never falls back to another saved server. Delete removes saved configuration, not installed models.</p>
     </div>
     <div className="ai-local-inventory" aria-label="Saved AI destination disclosure">
       {activeDestination ? <>

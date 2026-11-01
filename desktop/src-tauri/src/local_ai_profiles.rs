@@ -269,8 +269,10 @@ fn remove(state: &UserState, name: &str) -> Result<LocalProfiles, String> {
         return Err("Unknown local AI profile".to_owned());
     };
     current.profiles.remove(index);
+    // Removing the active destination must never silently activate a different
+    // saved server/model. The user must explicitly select a replacement.
     if current.active.as_deref() == Some(name) {
-        current.active = current.profiles.first().map(|p| p.name.clone());
+        current.active = None;
     }
     bump_revision(&mut current)?;
     write_profiles(state, previous.as_deref(), &current)?;
@@ -406,13 +408,38 @@ mod tests {
         assert_eq!(changed.profiles.len(), 2);
         assert_eq!(changed.profiles[0].model, "new-model");
         let after = remove(&state, "Desktop").unwrap();
-        assert_eq!(after.active.as_deref(), Some("LAN"));
+        assert_eq!(after.active, None);
+        assert_eq!(after.profiles.len(), 1);
         let empty = remove(&state, "LAN").unwrap();
         assert_eq!(empty.active, None);
         assert!(empty.profiles.is_empty());
         assert_eq!(empty.revision, 6);
         state.set_setting(LEGACY_KEY, "ignored").unwrap();
         assert_eq!(read_profiles(&state).unwrap(), empty);
+    }
+
+    #[test]
+    fn deleting_active_profile_never_selects_another_saved_destination() {
+        let state = UserState::in_memory().unwrap();
+        upsert(&state, profile("Desktop", "http://127.0.0.1:11434", "model-a")).unwrap();
+        upsert(&state, profile("LAN", "http://10.0.0.2:8080", "model-b")).unwrap();
+        activate(&state, "Desktop").unwrap();
+        let before = read_profiles(&state).unwrap();
+        let removed = remove_if_current(&state, "Desktop", &before).unwrap();
+        assert_eq!(removed.active, None);
+        assert_eq!(removed.profiles.len(), 1);
+        assert_eq!(removed.profiles[0].name, "LAN");
+        assert_eq!(read_profiles(&state).unwrap(), removed);
+        // A stale window cannot silently reactivate the previously saved choice.
+        assert!(activate_if_current(&state, "LAN", &before).is_err());
+        let selected = activate_if_current(&state, "LAN", &removed).unwrap();
+        assert_eq!(selected.active.as_deref(), Some("LAN"));
+
+        upsert(&state, profile("Spare", "http://127.0.0.1:11434", "model-c")).unwrap();
+        let selected = activate(&state, "LAN").unwrap();
+        let after_inactive = remove_if_current(&state, "Spare", &selected).unwrap();
+        assert_eq!(after_inactive.active.as_deref(), Some("LAN"));
+        assert_eq!(after_inactive.profiles.len(), 1);
     }
 
     #[test]
