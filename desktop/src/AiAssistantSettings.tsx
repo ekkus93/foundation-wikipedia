@@ -322,7 +322,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   return <section className="ai-local-settings" aria-label="Local AI provider selection">
     <div className="ai-local-inventory">
       <label htmlFor={`${id}-saved-profile`}>Saved local profiles</label>
-      <select id={`${id}-saved-profile`} disabled={saving} value={savedProfiles.profiles.some((p) => p.name === profileName) ? profileName : ""}
+      <select id={`${id}-saved-profile`} disabled={saving} value={savedProfiles.active ?? ""}
         onChange={(event) => { if (event.target.value) void activateProfile(event.target.value); }}>
         <option value="">Choose saved profile…</option>
         {savedProfiles.profiles.map((item) => <option key={item.name} value={item.name}>
