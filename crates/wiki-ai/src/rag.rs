@@ -68,6 +68,69 @@ fn claimed_citations(text: &str) -> Result<Vec<String>, RagError> {
     Ok(claims)
 }
 
+/// A presentation-safe, structured view of an already validated RAG answer.
+/// Render Text as literal text nodes, never HTML. A Citation carries the exact
+/// revision-bound evidence hit for an eventual reader scroll/highlight action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnswerDisplayPart {
+    Text(String),
+    Citation(EvidenceHit),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnswerDisplayError {
+    MalformedCitation,
+    CitationMismatch,
+}
+
+/// Split an answer into literal text and typed citation references, rejecting
+/// any disagreement between the model's markup and the validated hit list.
+///
+/// This does NOT independently authenticate a caller-constructed GroundedAnswer:
+/// call it only with a value returned by the citation-validating RAG pipeline.
+/// In particular, historical saved answers must not be upgraded to trusted
+/// clickable citations merely by parsing their stored text.
+pub fn answer_display_parts(
+    answer: &GroundedAnswer,
+) -> Result<Vec<AnswerDisplayPart>, AnswerDisplayError> {
+    let GroundedAnswer::Supported { text, citations } = answer else {
+        return Ok(Vec::new());
+    };
+    let claimed = claimed_citations(text).map_err(|_| AnswerDisplayError::MalformedCitation)?;
+    let mut seen = std::collections::BTreeSet::new();
+    if claimed.is_empty()
+        || claimed.len() != citations.len()
+        || claimed
+            .iter()
+            .zip(citations)
+            .any(|(id, hit)| id != &hit.block_id || !seen.insert(id))
+    {
+        return Err(AnswerDisplayError::CitationMismatch);
+    }
+
+    let mut parts = Vec::with_capacity(citations.len() * 2 + 1);
+    let mut remaining = text.as_str();
+    for hit in citations {
+        // The first pass has already checked the complete marker grammar.
+        let start = remaining
+            .find(CITE_OPEN)
+            .ok_or(AnswerDisplayError::CitationMismatch)?;
+        let (literal, marker) = remaining.split_at(start);
+        if !literal.is_empty() {
+            parts.push(AnswerDisplayPart::Text(literal.to_owned()));
+        }
+        let close = marker
+            .find("]]")
+            .ok_or(AnswerDisplayError::MalformedCitation)?;
+        remaining = &marker[close + 2..];
+        parts.push(AnswerDisplayPart::Citation(hit.clone()));
+    }
+    if !remaining.is_empty() {
+        parts.push(AnswerDisplayPart::Text(remaining.to_owned()));
+    }
+    Ok(parts)
+}
+
 /// A locally prepared, exact-revision context preview. Preparing it does not
 /// authorize transmission: callers must obtain per-request passage consent
 /// before calling the provider. The private index binds citation validation
@@ -781,4 +844,76 @@ mod citation_parser_tests {
             assert_eq!(claimed_citations(text), Err(RagError::MalformedCitation));
         }
     }
+    #[test]
+    fn display_parts_preserve_literal_unicode_and_revision_scoped_citations() {
+        let first = EvidenceHit {
+            block_id: "wkb:enwiki:9:12:b0".into(),
+            revision_id: 12,
+            heading_path: vec!["Physics".into()],
+            excerpt: "Gravity attracts mass.".into(),
+            score: 1,
+        };
+        let second = EvidenceHit {
+            block_id: "wkb:enwiki:9:12:b1".into(),
+            revision_id: 12,
+            heading_path: vec!["Physics".into()],
+            excerpt: "光 is light.".into(),
+            score: 2,
+        };
+        let answer = GroundedAnswer::Supported {
+            text: format!(
+                "光 <img src=x onerror=alert(1)> [[cite:{}]] and [[cite:{}]] ✓",
+                first.block_id, second.block_id
+            ),
+            citations: vec![first.clone(), second.clone()],
+        };
+        assert_eq!(
+            answer_display_parts(&answer),
+            Ok(vec![
+                AnswerDisplayPart::Text("光 <img src=x onerror=alert(1)> ".into()),
+                AnswerDisplayPart::Citation(first),
+                AnswerDisplayPart::Text(" and ".into()),
+                AnswerDisplayPart::Citation(second),
+                AnswerDisplayPart::Text(" ✓".into()),
+            ])
+        );
+        assert_eq!(
+            answer_display_parts(&GroundedAnswer::InsufficientEvidence),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn display_parts_reject_forged_missing_duplicate_and_reordered_markers() {
+        let hit = EvidenceHit {
+            block_id: "wkb:enwiki:9:12:b0".into(),
+            revision_id: 12,
+            heading_path: Vec::new(),
+            excerpt: "Gravity attracts mass.".into(),
+            score: 1,
+        };
+        let other = EvidenceHit {
+            block_id: "wkb:enwiki:9:12:b1".into(),
+            ..hit.clone()
+        };
+        for (text, citations, error) in [
+            ("No citation", vec![hit.clone()], AnswerDisplayError::CitationMismatch),
+            ("[[cite:forged]]", vec![hit.clone()], AnswerDisplayError::CitationMismatch),
+            ("[[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), other.clone()], AnswerDisplayError::CitationMismatch),
+            ("[[cite:wkb:enwiki:9:12:b1]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), other.clone()], AnswerDisplayError::CitationMismatch),
+            ("[[cite:wkb:enwiki:9:12:b0]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone(), hit.clone()], AnswerDisplayError::CitationMismatch),
+            ("[[cite:unfinished", vec![hit.clone()], AnswerDisplayError::MalformedCitation),
+            ("[[cite-id]] [[cite:wkb:enwiki:9:12:b0]]", vec![hit.clone()], AnswerDisplayError::MalformedCitation),
+        ] {
+            assert_eq!(
+                answer_display_parts(&GroundedAnswer::Supported {
+                    text: text.into(),
+                    citations,
+                }),
+                Err(error),
+                "text: {text}"
+            );
+        }
+    }
+
 }
