@@ -20,6 +20,7 @@ wiki-store = { path = "../../crates/wiki-store" }
 wiki-model = { path = "../../crates/wiki-model" }
 wiki-ai = { path = "../../crates/wiki-ai" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Separate from the platform-neutral root workspace.
 [workspace]

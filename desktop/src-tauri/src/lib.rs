@@ -1401,6 +1401,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             local_ai::discover_local_ai_models,
+            local_ai::read_local_ai_profile,
+            local_ai::save_local_ai_profile,
             open_wikipedia_title,
             open_wikipedia_page,
             toggle_reader_bookmark,
