@@ -217,7 +217,8 @@ pub async fn test_local_ai_model(
                 probe_local_model(selected, &endpoint, &model, &cancellation)
             })
             .await
-            .map_err(|_| "Local model test worker stopped".to_owned())?
+            .map_err(|_| "Local model test worker stopped".to_owned())
+            .and_then(|outcome| outcome)
         }
         _ => Err("Invalid local model test selection".to_owned()),
     };
@@ -430,6 +431,13 @@ mod local_profile_tests {
         assert!(registry.begin().is_err());
         registry.cancel(ids[0]).unwrap();
         assert!(registry.begin().is_ok());
+        // Abandoned prepared leases are reclaimed without canceling running
+        // workers, so a crashed window cannot permanently consume capacity.
+        let stale = registry.begin().unwrap();
+        registry.entries.lock().unwrap().get_mut(&stale).unwrap().registered_at =
+            Instant::now() - Duration::from_secs(301);
+        let _fresh = registry.begin().unwrap();
+        assert!(registry.claim(stale).is_err());
     }
 
     #[test]
