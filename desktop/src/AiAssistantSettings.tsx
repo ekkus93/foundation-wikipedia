@@ -31,6 +31,15 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   // Otherwise a slow initial read can overwrite a newer window notification.
   const profileReads = useRef(new RequestEpoch());
   const activeProbe = useRef<number | null>(null);
+  const activeDiscovery = useRef<number | null>(null);
+
+  function cancelActiveDiscovery() {
+    const requestId = activeDiscovery.current;
+    activeDiscovery.current = null;
+    if (requestId !== null) {
+      void invoke<void>("cancel_local_ai_model_discovery", { requestId }).catch(() => {});
+    }
+  }
 
   function cancelActiveProbe() {
     const requestId = activeProbe.current;
@@ -41,7 +50,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   }
   const offline = useSyncExternalStore(offlineMode.subscribe, offlineMode.getSnapshot, offlineMode.getSnapshot);
 
-  useEffect(() => () => { epoch.current.invalidate(); profileReads.current.invalidate(); cancelActiveProbe(); }, []);
+  useEffect(() => () => { epoch.current.invalidate(); profileReads.current.invalidate(); cancelActiveDiscovery(); cancelActiveProbe(); }, []);
   useEffect(() => {
     let active = true;
     const revision = editRevision.current;
@@ -118,6 +127,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   // Network permission may be withdrawn during an in-flight discovery.
   useEffect(() => offlineMode.subscribe(() => {
     if (offlineMode.getSnapshot()) {
+      cancelActiveDiscovery();
       cancelActiveProbe();
       epoch.current.invalidate();
       setBusy(false);
@@ -130,6 +140,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   }), [offlineMode]);
 
   function invalidate(preserveSavedHint = false) {
+    cancelActiveDiscovery();
     cancelActiveProbe();
     epoch.current.invalidate();
     profileReads.current.invalidate();
@@ -155,9 +166,19 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
     }
     const request = epoch.current.begin();
     setBusy(true);
+    let requestId: number | null = null;
     try {
+      // Register a native single-use lease before opening a socket.
+      // A late registration is cancelled, never allowed to start a GET.
+      requestId = await invoke<number>("begin_local_ai_model_discovery");
+      if (!Number.isSafeInteger(requestId) || requestId <= 0) throw new Error("Invalid discovery lease");
+      if (!epoch.current.matches(request) || offlineMode.getSnapshot()) {
+        void invoke<void>("cancel_local_ai_model_discovery", { requestId }).catch(() => {});
+        return;
+      }
+      activeDiscovery.current = requestId;
       // Native Rust is the sole networking boundary. Browser fetch is never used.
-      const response = await invoke<unknown>("discover_local_ai_models", { protocol, endpoint });
+      const response = await invoke<unknown>("discover_local_ai_models", { requestId, protocol, endpoint });
       const parsed = parseAiLocalInventory(response, protocol, endpoint);
       if (epoch.current.matches(request) && !offlineMode.getSnapshot()) {
         setInventory(parsed);
@@ -174,6 +195,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         setError("Could not discover models. Check the endpoint, server availability, and protocol. HTTPS is not supported yet.");
       }
     } finally {
+      if (activeDiscovery.current === requestId) activeDiscovery.current = null;
       if (epoch.current.matches(request)) setBusy(false);
     }
   }
@@ -459,7 +481,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
         </option>)}
       </select>
       {selectedModel && <>
-        <p>Test selected model sends only the fixed text <strong>Reply OK.</strong> to this localhost/LAN server. No article text, bookmarks or credentials are sent. It does not save or enable a profile and may take up to two minutes. Switching offline or changing the selection cancels an active test; model discovery may still finish its bounded HTTP read.</p>
+        <p>Test selected model sends only the fixed text <strong>Reply OK.</strong> to this localhost/LAN server. No article text, bookmarks or credentials are sent. It does not save or enable a profile and may take up to two minutes. Switching offline or changing the selection cancels an active test, including a stalled model-inventory read; TCP connect and writes retain bounded timeouts.</p>
         <button type="button" disabled={!canTestAiLocalChoice(inventory, protocol, endpoint, selectedModel, offline, saving || busy || testing)}
           onClick={() => void testSelectedModel()}>{testing ? "Testing local model…" : "Test selected model"}</button>
       </>}

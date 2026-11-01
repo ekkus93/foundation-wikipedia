@@ -10,7 +10,7 @@ use wiki_ai::local_endpoint::LocalEndpoint;
 use wiki_ai::{CancellationToken, GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
 use wiki_store::user_state::UserState;
 use crate::open_private_bookmark_store;
-use wiki_ai::local_selection::{discover_local_models, discover_local_models_cancellable, LocalProtocol, SelectionError};
+use wiki_ai::local_selection::{discover_local_models_cancellable, LocalProtocol, SelectionError};
 use wiki_ai::{Locality, ProviderError};
 
 #[derive(Serialize)]
@@ -31,41 +31,54 @@ pub struct DesktopAiInventory {
 
 #[tauri::command]
 pub async fn discover_local_ai_models(
+    app: tauri::AppHandle,
+    request_id: u64,
     protocol: String,
     endpoint: String,
 ) -> Result<DesktopAiInventory, String> {
-    let selected = parse_local_protocol(&protocol)?;
-    if endpoint.len() > 512 {
-        return Err("Invalid local endpoint".to_owned());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let inventory = discover_local_models(selected, &endpoint).map_err(|error| match error {
-            SelectionError::InvalidEndpoint(_) => {
-                "Only explicit localhost or private-IP endpoints are supported".to_owned()
-            }
-            SelectionError::Provider(ProviderError::Unsupported) => {
-                "Authenticated HTTPS is not supported yet".to_owned()
-            }
-            SelectionError::Provider(ProviderError::Timeout) => {
-                "Local model discovery timed out".to_owned()
-            }
-            _ => "Local model discovery failed".to_owned(),
-        })?;
-        let locality = match inventory.locality() {
-            Locality::Localhost => "localhost",
-            Locality::LocalNetwork => "local-network",
-            _ => return Err("The selected AI destination is not local".to_owned()),
-        };
-        Ok(DesktopAiInventory {
-            protocol,
-            endpoint: inventory.endpoint().to_owned(),
-            locality,
-            models: inventory.models().iter().map(|model| DesktopAiModel {
-                id: model.id.clone(),
-                context_window: model.context_window,
-            }).collect(),
-        })
-    }).await.map_err(|_| "Local model discovery worker stopped".to_owned())?
+    let cancellation = app.state::<LocalAiDiscoveryRegistry>().0.claim(request_id)?;
+    let result = match parse_local_protocol(&protocol) {
+        Ok(selected) if endpoint.len() <= 512 => {
+            tauri::async_runtime::spawn_blocking(move || {
+                let inventory = discover_local_models_cancellable(selected, &endpoint, &cancellation)
+                    .map_err(|error| match error {
+                        SelectionError::InvalidEndpoint(_) => {
+                            "Only explicit localhost or private-IP endpoints are supported".to_owned()
+                        }
+                        SelectionError::Provider(ProviderError::Unsupported) => {
+                            "Authenticated HTTPS is not supported yet".to_owned()
+                        }
+                        SelectionError::Provider(ProviderError::Timeout) => {
+                            "Local model discovery timed out".to_owned()
+                        }
+                        SelectionError::Provider(ProviderError::Cancelled) => {
+                            "Local model discovery cancelled".to_owned()
+                        }
+                        _ => "Local model discovery failed".to_owned(),
+                    })?;
+                let locality = match inventory.locality() {
+                    Locality::Localhost => "localhost",
+                    Locality::LocalNetwork => "local-network",
+                    _ => return Err("The selected AI destination is not local".to_owned()),
+                };
+                Ok(DesktopAiInventory {
+                    protocol,
+                    endpoint: inventory.endpoint().to_owned(),
+                    locality,
+                    models: inventory.models().iter().map(|model| DesktopAiModel {
+                        id: model.id.clone(),
+                        context_window: model.context_window,
+                    }).collect(),
+                })
+            })
+            .await
+            .map_err(|_| "Local model discovery worker stopped".to_owned())
+            .and_then(|outcome| outcome)
+        }
+        _ => Err("Invalid local endpoint or protocol".to_owned()),
+    };
+    app.state::<LocalAiDiscoveryRegistry>().0.finish(request_id);
+    result
 }
 
 fn parse_local_protocol(protocol: &str) -> Result<LocalProtocol, String> {
@@ -136,6 +149,26 @@ impl LocalAiProbeRegistry {
             entries.remove(&id);
         }
     }
+}
+
+/// Discovery leases are isolated from fixed-prompt inference-test leases.
+/// A stale or forged discovery request ID cannot authorize an inference POST.
+#[derive(Default)]
+pub struct LocalAiDiscoveryRegistry(LocalAiProbeRegistry);
+
+#[tauri::command]
+pub fn begin_local_ai_model_discovery(
+    registry: tauri::State<'_, LocalAiDiscoveryRegistry>,
+) -> Result<u64, String> {
+    registry.0.begin()
+}
+
+#[tauri::command]
+pub fn cancel_local_ai_model_discovery(
+    registry: tauri::State<'_, LocalAiDiscoveryRegistry>,
+    request_id: u64,
+) -> Result<(), String> {
+    registry.0.cancel(request_id)
 }
 
 #[tauri::command]
@@ -397,6 +430,18 @@ mod local_profile_tests {
         assert!(probe_local_model(LocalProtocol::Ollama, &endpoint, &"x".repeat(257), &CancellationToken::default()).is_err());
     }
 
+
+    #[test]
+    fn discovery_and_inference_leases_are_independent() {
+        let discovery = LocalAiDiscoveryRegistry::default();
+        let inference = LocalAiProbeRegistry::default();
+        let discovery_id = discovery.0.begin().unwrap();
+        assert!(inference.claim(discovery_id).is_err());
+        let token = discovery.0.claim(discovery_id).unwrap();
+        discovery.0.cancel(discovery_id).unwrap();
+        assert!(token.is_cancelled());
+        assert!(discovery.0.claim(discovery_id).is_err());
+    }
 
     #[test]
     fn diagnostic_leases_cancel_before_run_and_during_stream() {

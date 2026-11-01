@@ -1400,9 +1400,12 @@ pub fn run() {
         .manage(DesktopOnlineCache::default())
         .manage(DesktopPersonalDataGate::default())
         .manage(local_ai::LocalAiProbeRegistry::default())
+        .manage(local_ai::LocalAiDiscoveryRegistry::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             local_ai::discover_local_ai_models,
+            local_ai::begin_local_ai_model_discovery,
+            local_ai::cancel_local_ai_model_discovery,
             local_ai::begin_local_ai_model_test,
             local_ai::test_local_ai_model,
             local_ai::cancel_local_ai_model_test,
