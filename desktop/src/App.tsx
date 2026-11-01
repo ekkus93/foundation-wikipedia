@@ -585,11 +585,18 @@ export default function App() {
         </section> : settingsSection === "AI Assistant" ? <AiAssistantSettings offlineMode={offlineMode} />
         : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
-      {destination === "article" && chatOpen && (() => {
+      {chatOpen && (() => {
         const article = tabArticleRef.current.get(readerTabs.activeId);
-        return article ? <ReaderChatHistory
-          key={`${readerSessionId}:${readerTabs.activeId}:${article.project}:${article.pageId}:${article.revisionId}`}
-          article={article} onClose={() => setChatOpen(false)} /> : null;
+        // Keep the same floating panel mounted while Settings is the temporary
+        // destination, preserving its minimized, moved and resized state.
+        return article ? <div hidden={destination !== "article"}>
+          <ReaderChatHistory
+            key={`${readerSessionId}:${readerTabs.activeId}:${article.project}:${article.pageId}:${article.revisionId}`}
+            article={article} onClose={() => {
+              setChatOpen(false);
+              mainActionRef.current?.focus();
+            }} />
+        </div> : null;
       })()}
       {destination === "article" && message && <div className="notice" role="status">
         {message}<button aria-label="Dismiss notice" onClick={() => setMessage(null)}>×</button>

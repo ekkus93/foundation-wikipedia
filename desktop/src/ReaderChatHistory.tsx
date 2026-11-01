@@ -33,6 +33,8 @@ export default function ReaderChatHistory({ article, onClose }: {
     if (!panel) return;
     function constrain() {
       const rect = panel!.getBoundingClientRect();
+      // The panel stays mounted but hidden while Settings is open.
+      if (rect.width === 0 || rect.height === 0) return;
       setPosition((previous) => {
         const next = clampReaderChatPosition(
           previous?.left ?? rect.left, previous?.top ?? rect.top,
