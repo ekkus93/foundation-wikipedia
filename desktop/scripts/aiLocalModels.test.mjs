@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, classifyAiLocalEndpoint } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -88,4 +88,42 @@ test("profile focus reconciliation detects remote mutations without changing loc
   assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [{ ...original.profiles[0], model: "other" }] }), false);
   assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [...original.profiles, { ...original.profiles[0], name: "LAN" }] }), false);
   assert.equal(sameAiSavedLocalProfiles(original, { ...original, profiles: [] }), false);
+});
+
+test("local endpoint classification matches native locality for accepted HTTP addresses", () => {
+  for (const [url, locality] of [
+    ["http://localhost:11434", "localhost"],
+    ["http://LOCALHOST/v1", "localhost"],
+    ["http://127.2.3.4", "localhost"],
+    ["http://[::1]:11434/v1", "localhost"],
+    ["http://10.1.2.3:11434", "local-network"],
+    ["http://172.31.1.1/v1", "local-network"],
+    ["http://192.168.0.50:8080/v1/", "local-network"],
+    ["http://[fd00::42]:11434", "local-network"],
+  ]) assert.equal(classifyAiLocalEndpoint(url), locality, url);
+  for (const url of [
+    "https://127.0.0.1", "http://example.com", "http://ollama.lan",
+    "http://localhost.evil", "http://8.8.8.8", "http://169.254.169.254",
+    "http://0.0.0.0", "http://172.32.0.1", "http://[fe80::1]",
+    "http://[2001:4860::8888]", "http://[::ffff:127.0.0.1]",
+    "http://localhost:0", "http://localhost:65536",
+    "http://localhost:abc", "http://localhost:11434/api",
+    "http://localhost:11434/v1?key=secret", "http://user:pass@localhost",
+    "http://127.0.0.1:11434/%2e%2e", "http://127.0.0.01",
+  ]) assert.equal(classifyAiLocalEndpoint(url), null, url);
+});
+
+test("forged public saved endpoints and inventory locality fail closed in UI", () => {
+  const profile = { protocol, endpoint: "http://example.com", model: "qwen3:8b" };
+  assert.throws(() => parseAiSavedLocalProfile(profile), /Invalid saved AI profile/);
+  assert.throws(() => parseAiSavedLocalProfiles({
+    active: "Public", profiles: [{ ...profile, name: "Public" }],
+  }), /Invalid saved AI profiles/);
+  assert.throws(() => parseAiLocalInventory({
+    ...response(), locality: "local-network",
+  }, protocol, endpoint), /Invalid local model inventory/);
+  const lan = "http://192.168.1.10:11434";
+  assert.throws(() => parseAiLocalInventory({
+    ...response(), endpoint: lan, locality: "localhost",
+  }, protocol, lan), /Invalid local model inventory/);
 });

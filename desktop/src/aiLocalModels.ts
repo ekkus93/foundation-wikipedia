@@ -27,6 +27,45 @@ export function validAiLocalModelId(id: unknown): id is string {
     !/[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufe00-\ufe0f\ufeff\u{e0100}-\u{e01ef}]/u.test(id);
 }
 
+/** Conservative UI-side subset of Rust LocalEndpoint::parse; never grants network access. */
+export function classifyAiLocalEndpoint(value: unknown): AiLocality | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512 ||
+      /[^\x21-\x7e]|[@?#\\%]/u.test(value)) return null;
+  const match = /^http:\/\/([^/]+)(?:\/(?:v1\/?)?)?$/.exec(value);
+  if (!match) return null;
+  const authority = match[1];
+  const bracketed = authority.startsWith("[");
+  const parts = bracketed
+    ? /^(\[[0-9a-fA-F:]+\])(?::([0-9]+))?$/.exec(authority)
+    : /^([A-Za-z0-9.]+)(?::([0-9]+))?$/.exec(authority);
+  if (!parts) return null;
+  if (parts[2] !== undefined) {
+    const port = Number(parts[2]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  }
+  const host = parts[1];
+  if (bracketed) {
+    try {
+      // URL validates IPv6 syntax; inspect the canonical address, not a label.
+      const canonical = new URL(value).hostname;
+      if (canonical === "[::1]") return "localhost";
+      const first = Number.parseInt(canonical.slice(1).split(":")[0], 16);
+      return first >= 0xfc00 && first <= 0xfdff ? "local-network" : null;
+    } catch {
+      return null;
+    }
+  }
+  if (host.toLowerCase() === "localhost") return "localhost";
+  const octets = host.split(".");
+  if (octets.length !== 4 || !octets.every((part) =>
+    /^[0-9]{1,3}$/.test(part) && (part === "0" || !part.startsWith("0")) &&
+    Number(part) <= 255)) return null;
+  const [a, b] = octets.map(Number);
+  if (a === 127) return "localhost";
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ? "local-network" : null;
+}
+
 /** Fail closed if the native response does not describe the requested host. */
 export function parseAiLocalInventory(value: unknown, protocol: AiLocalProtocol, endpoint: string): AiLocalInventory {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -34,7 +73,8 @@ export function parseAiLocalInventory(value: unknown, protocol: AiLocalProtocol,
   }
   const result = value as Record<string, unknown>;
   if (result.protocol !== protocol || result.endpoint !== endpoint ||
-      !(result.locality === "localhost" || result.locality === "local-network") ||
+      classifyAiLocalEndpoint(endpoint) === null ||
+      result.locality !== classifyAiLocalEndpoint(endpoint) ||
       !Array.isArray(result.models) || result.models.length > 256) {
     throw new Error("Invalid local model inventory");
   }
@@ -80,9 +120,7 @@ export function parseAiSavedLocalProfile(input: unknown): AiSavedLocalProfile | 
   const row = input as Record<string, unknown>;
   if (Object.keys(row).sort().join(",") !== "endpoint,model,protocol" ||
       !(row.protocol === "ollama" || row.protocol === "openai-compatible") ||
-      typeof row.endpoint !== "string" || !row.endpoint.startsWith("http://") ||
-      row.endpoint.trim() !== row.endpoint || row.endpoint.length > 512 ||
-      /[\s\u0000-\u001f\u007f-\u009f@?#\\]/u.test(row.endpoint) ||
+      classifyAiLocalEndpoint(row.endpoint) === null ||
       !validAiLocalModelId(row.model)) {
     throw new Error("Invalid saved AI profile");
   }
