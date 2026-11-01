@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles } from "./aiLocalModels";
+import { type AiLocalInventory, type AiLocalProtocol, aiLocalityDisclosure, parseAiLocalInventory, parseAiSavedLocalProfiles, validAiLocalProfileName, type AiSavedLocalProfiles, sameAiSavedLocalProfiles, needsAiProfileReview, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice } from "./aiLocalModels";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 
@@ -240,7 +240,7 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
   }
 
   async function saveChoice() {
-    if (saving || !inventory || !selectedModel || offlineMode.getSnapshot()) return;
+    if (saving || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) || offlineMode.getSnapshot()) return;
     if (needsReview) {
       setSavedNotice("Review and acknowledge the newer saved profiles before saving your draft.");
       return;
@@ -334,8 +334,8 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
           {model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString()} context tokens` : ""}
         </option>)}
       </select>
-      {selectedModel && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
-      {selectedModel && <button type="button" disabled={saving || offline || needsReview} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
+      {selectedModel && canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
+      {selectedModel && <button type="button" disabled={saving || offline || needsReview || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel)} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
     </div>}
     <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, remote credentials and model inference are not wired to the reader yet.</p>
   </section>;

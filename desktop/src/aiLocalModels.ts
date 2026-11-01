@@ -102,6 +102,24 @@ export function parseAiLocalInventory(value: unknown, protocol: AiLocalProtocol,
   };
 }
 
+/** A selected model can be saved only from this exact, currently verified inventory.
+ * Editing the endpoint/protocol or supplying an unadvertised ID must not
+ * turn a stale discovery result into a durable profile hint.
+ */
+export function canSaveAiLocalChoice(
+  inventory: AiLocalInventory | null,
+  protocol: AiLocalProtocol,
+  endpoint: string,
+  selectedModel: string,
+): boolean {
+  return inventory !== null &&
+    (protocol === "ollama" || protocol === "openai-compatible") &&
+    inventory.protocol === protocol && inventory.endpoint === endpoint &&
+    inventory.locality === classifyAiLocalEndpoint(endpoint) &&
+    validAiLocalModelId(selectedModel) &&
+    inventory.models.some((model) => model.id === selectedModel);
+}
+
 export function aiLocalityDisclosure(locality: AiLocality): string {
   return locality === "localhost"
     ? "Localhost server — connected over TCP/IP; not an embedded on-device model."

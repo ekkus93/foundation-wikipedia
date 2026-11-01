@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -164,4 +164,19 @@ test("visible cross-process profile refresh is coalesced and hidden windows do n
   assert.equal(gate.finish(), false, "no extra refresh without a queued trigger");
   assert.equal(gate.begin(), true, "a completed read releases the gate");
   assert.equal(gate.finish(), false);
+});
+
+
+test("saved local choice must match the exact discovered server and advertised model", () => {
+  const inventory = parseAiLocalInventory(response(), protocol, endpoint);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, endpoint, "qwen3:8b"), true);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, endpoint, "modèle-1"), true);
+  assert.equal(canSaveAiLocalChoice(null, protocol, endpoint, "qwen3:8b"), false);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, endpoint, ""), false);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, endpoint, "not-advertised"), false);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, endpoint, "qwen\\u202e3:8b"), false);
+  assert.equal(canSaveAiLocalChoice(inventory, "openai-compatible", endpoint, "qwen3:8b"), false);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, "http://127.0.0.1:11435", "qwen3:8b"), false);
+  assert.equal(canSaveAiLocalChoice(inventory, protocol, "http://8.8.8.8", "qwen3:8b"), false);
+  assert.equal(canSaveAiLocalChoice({ ...inventory, locality: "local-network" }, protocol, endpoint, "qwen3:8b"), false);
 });
