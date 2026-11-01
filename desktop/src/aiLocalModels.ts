@@ -88,3 +88,53 @@ export function parseAiSavedLocalProfile(input: unknown): AiSavedLocalProfile | 
   }
   return { protocol: row.protocol, endpoint: row.endpoint, model: row.model };
 }
+/** Read-only saved profiles; no saved entry authorizes an outbound request. */
+export interface AiNamedLocalProfile extends AiSavedLocalProfile { name: string }
+export interface AiSavedLocalProfiles {
+  active: string | null;
+  profiles: AiNamedLocalProfile[];
+}
+
+export function validAiLocalProfileName(name: unknown): name is string {
+  return typeof name === "string" && name.length <= 40 && name.trim() === name &&
+    /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(name);
+}
+
+export function parseAiSavedLocalProfiles(input: unknown): AiSavedLocalProfiles {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error("Invalid saved AI profiles");
+  }
+  const raw = input as Record<string, unknown>;
+  if (Object.keys(raw).sort().join(",") !== "active,profiles" ||
+      !Array.isArray(raw.profiles) || raw.profiles.length > 8) {
+    throw new Error("Invalid saved AI profiles");
+  }
+  const profiles: AiNamedLocalProfile[] = [];
+  const names = new Set<string>();
+  for (const item of raw.profiles) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Invalid saved AI profiles");
+    }
+    const candidate = item as Record<string, unknown>;
+    const { name, protocol, endpoint, model } = candidate;
+    if (Object.keys(candidate).sort().join(",") !== "endpoint,model,name,protocol" ||
+        !validAiLocalProfileName(name) || names.has(name.toLowerCase())) {
+      throw new Error("Invalid saved AI profiles");
+    }
+    names.add(name.toLowerCase());
+    try {
+      parseAiSavedLocalProfile({ protocol, endpoint, model });
+    } catch {
+      throw new Error("Invalid saved AI profiles");
+    }
+    profiles.push({ name, protocol: protocol as AiLocalProtocol, endpoint: endpoint as string, model: model as string });
+  }
+  if (profiles.length === 0 ? raw.active !== null :
+      typeof raw.active !== "string" || !profiles.some((p) => p.name === raw.active)) {
+    throw new Error("Invalid saved AI profiles");
+  }
+  if (new TextEncoder().encode(JSON.stringify(input)).length > 4096) {
+    throw new Error("Invalid saved AI profiles");
+  }
+  return { active: raw.active as string | null, profiles };
+}

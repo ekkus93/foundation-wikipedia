@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -57,4 +57,24 @@ test("saved profile shape is non-secret and preserves exact model hint", () => {
     { ...profile, model: "bad\u202emodel" },
     { ...profile, model: "" },
   ]) assert.throws(() => parseAiSavedLocalProfile(bad), /Invalid saved AI profile/);
+});
+
+
+test("bounded named local profiles reject secret-bearing rows and duplicate names", () => {
+  const profile = { name: "Desktop", protocol: "ollama", endpoint, model: "qwen3:8b" };
+  const collection = { active: "Desktop", profiles: [profile] };
+  assert.deepEqual(parseAiSavedLocalProfiles(collection), collection);
+  assert.deepEqual(parseAiSavedLocalProfiles({ active: null, profiles: [] }), { active: null, profiles: [] });
+  assert.ok(validAiLocalProfileName("LAN Office"));
+  for (const name of ["", " space", "bad/name", "bad\u202e", "a".repeat(41)]) {
+    assert.equal(validAiLocalProfileName(name), false);
+  }
+  for (const invalid of [
+    null, {}, { active: "Missing", profiles: [profile] },
+    { active: null, profiles: [profile] },
+    { active: "Desktop", profiles: [{ ...profile, apiKey: "secret" }] },
+    { active: "Desktop", profiles: [profile, { ...profile, name: "desktop" }] },
+    { active: null, profiles: Array(9).fill(profile) },
+    { active: "Desktop", profiles: [{ ...profile, endpoint: "https://public.example" }] },
+  ]) assert.throws(() => parseAiSavedLocalProfiles(invalid), /Invalid saved AI profiles/);
 });
