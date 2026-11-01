@@ -573,7 +573,7 @@ mod tests {
     fn corrupt_or_secret_bearing_storage_fails_closed() {
         let state = UserState::in_memory().unwrap();
         for saved in [
-            r#"{"active":null,"profiles":[{"name":"A","protocol":"ollama","endpoint":"http://127.0.0.1","model":"x"}]}"#,
+            r#"{"active":"Missing","profiles":[{"name":"A","protocol":"ollama","endpoint":"http://127.0.0.1","model":"x"}]}"#,
             r#"{"active":"A","profiles":[{"name":"A","protocol":"ollama","endpoint":"http://127.0.0.1","model":"x","apiKey":"secret"}]}"#,
             r#"{"active":"A","profiles":[{"name":"A","protocol":"ollama","endpoint":"http://127.0.0.1","model":"x"},{"name":"a","protocol":"ollama","endpoint":"http://127.0.0.1","model":"x"}]}"#,
             r#"{"active":"missing","profiles":[]}"#,
