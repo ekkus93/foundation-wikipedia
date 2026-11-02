@@ -31,7 +31,7 @@ const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Args {
     corpus: Option<PathBuf>,
     expected_suite_sha256: Option<String>,
