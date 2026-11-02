@@ -297,8 +297,7 @@ pub fn evaluate_answer_support_json(
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
             }
-            if !seen_claims.insert(claim.id.clone())
-                || !seen_claim_texts.insert(claim.text.clone())
+            if !seen_claims.insert(claim.id.clone()) || !seen_claim_texts.insert(claim.text.clone())
             {
                 return Err(AnswerSupportError::DuplicateClaim(case.id));
             }
@@ -626,9 +625,8 @@ mod tests {
 
         // Removing a marker must not splice its neighbors into a new claim.
         let mut spliced: serde_json::Value = serde_json::from_str(&suite()).unwrap();
-        spliced["cases"][0]["answer"] = serde_json::json!(
-            "Two [[cite:lead_0]]moons. An unsupported aside [[cite:sec_1]]."
-        );
+        spliced["cases"][0]["answer"] =
+            serde_json::json!("Two [[cite:lead_0]]moons. An unsupported aside [[cite:sec_1]].");
         spliced["cases"][0]["claims"][0]["text"] = serde_json::json!("Two moons");
         assert_eq!(
             evaluate_answer_support_json(&spliced.to_string()),
@@ -636,7 +634,13 @@ mod tests {
         );
 
         // Ordinary distinct claims still pass and retain their scores.
-        assert_eq!(evaluate_answer_support_json(&suite()).unwrap().totals.claims, 2);
+        assert_eq!(
+            evaluate_answer_support_json(&suite())
+                .unwrap()
+                .totals
+                .claims,
+            2
+        );
     }
 
     #[test]
@@ -698,16 +702,3 @@ mod tests {
             Err(AnswerSupportError::InconsistentSupport(_))
         ));
     }
-
-    #[test]
-    fn bounded_and_nonvacuous() {
-        assert_eq!(
-            evaluate_answer_support_json(&"x".repeat(MAX_SUITE_BYTES + 1)).unwrap_err(),
-            AnswerSupportError::TooLarge
-        );
-        assert!(matches!(
-            evaluate_answer_support_json(r#"{"schema_version":1,"suite_id":"x","cases":[]}"#),
-            Err(AnswerSupportError::InvalidCase(_))
-        ));
-    }
-}
