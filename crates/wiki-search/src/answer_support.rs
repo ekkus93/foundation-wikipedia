@@ -146,6 +146,17 @@ fn valid_id(id: &str, max: usize) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
+/// Canonical article block IDs include revision-bound colon-separated fields
+/// (for example `wkb:enwiki:42:100:b0`). Unlike suite/claim names,
+/// citation IDs must retain colons rather than rejecting real evidence IDs.
+fn valid_citation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
+        })
+}
+
 /// Parse literal [[cite:BLOCK_ID]] markers; malformed or unterminated markers
 /// cannot be smuggled into an apparently annotated answer.
 fn answer_markers(answer: &str, case_id: &str) -> Result<BTreeSet<String>, AnswerSupportError> {
@@ -157,7 +168,7 @@ fn answer_markers(answer: &str, case_id: &str) -> Result<BTreeSet<String>, Answe
             .find("]]")
             .ok_or_else(|| AnswerSupportError::InvalidCitation(case_id.to_owned()))?;
         let id = &rest[..end];
-        if !valid_id(id, 256) {
+        if !valid_citation_id(id) {
             return Err(AnswerSupportError::InvalidCitation(case_id.to_owned()));
         }
         markers.insert(id.to_owned());
@@ -239,7 +250,7 @@ pub fn evaluate_answer_support_json(
             let mut seen_citations = BTreeSet::new();
             let mut supported_citation = false;
             for citation in claim.citations {
-                if !valid_id(&citation.block_id, 256) {
+                if !valid_citation_id(&citation.block_id) {
                     return Err(AnswerSupportError::InvalidCitation(case.id));
                 }
                 if !seen_citations.insert(citation.block_id.clone()) {
@@ -324,6 +335,13 @@ mod tests {
             }]
         })
         .to_string()
+    }
+
+    #[test]
+    fn accepts_revision_scoped_canonical_block_ids() {
+        let input = suite().replace("lead_0", "wkb:enwiki:42:100:b0");
+        let report = evaluate_answer_support_json(&input).unwrap();
+        assert_eq!(report.totals.supported_citations, 1);
     }
 
     #[test]
