@@ -4,7 +4,7 @@
 //! cargo run -p wiki-search --example retrieval_suite_runner --locked -- \\
 //!   --pack corpus.wpack --suite labels.json --sha <40-hex-commit> \\
 //!   --output report.json [--top-k 5] [--min-recall-per-mille 800] \\
-//!   [--max-no-answer-fp 0]
+//!   [--max-no-answer-fp 0] [--min-case-recall-per-mille 0]
 //!
 //! Use --corpus articles.json instead of --pack for unpacked input.
 //! Use --snapshot-root PATH for catalog.sqlite and MessagePack/zstd shard frames.
@@ -45,6 +45,7 @@ struct Args {
     top_k: usize,
     min_recall_per_mille: u16,
     max_no_answer_fp: usize,
+    min_case_recall_per_mille: u16,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -57,6 +58,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut top_k = 5;
     let mut min_recall_per_mille = 800;
     let mut max_no_answer_fp = 0;
+    let mut min_case_recall_per_mille = 0;
     let mut args = args.into_iter();
     let mut seen_flags = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
@@ -84,10 +86,18 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "invalid no-answer limit".to_owned())?;
             }
+            "--min-case-recall-per-mille" => {
+                min_case_recall_per_mille = value
+                    .parse()
+                    .map_err(|_| "invalid per-case recall threshold".to_owned())?;
+            }
             _ => return Err(format!("unknown or duplicate argument: {flag}")),
         }
     }
-    if !(1..=100).contains(&top_k) || min_recall_per_mille > 1_000 {
+    if !(1..=100).contains(&top_k)
+        || min_recall_per_mille > 1_000
+        || min_case_recall_per_mille > 1_000
+    {
         return Err("top-k must be 1..=100 and recall threshold 0..=1000".into());
     }
     let sha = sha.ok_or("missing --sha")?;
@@ -111,6 +121,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         top_k,
         min_recall_per_mille,
         max_no_answer_fp,
+        min_case_recall_per_mille,
     })
 }
 
@@ -354,12 +365,56 @@ fn with_input_receipts(
     articles: &[Article],
     suite_bytes: &[u8],
     corpus_kind: &str,
+    min_case_recall_per_mille: u16,
 ) -> Result<String, String> {
+    if min_case_recall_per_mille > 1_000 {
+        return Err("per-case recall threshold exceeds 1000".into());
+    }
     let mut report: serde_json::Value = serde_json::from_str(score_json)
         .map_err(|error| format!("invalid retrieval score report: {error}"))?;
     let fields = report
         .as_object_mut()
         .ok_or("retrieval score report must be an object")?;
+    let baseline_passed = fields
+        .get("passed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("retrieval score report has no gate decision")?;
+    let cases = fields
+        .get("retrieval")
+        .and_then(|retrieval| retrieval.get("cases"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or("retrieval score report has no scored cases")?;
+    let mut answerable_cases = 0usize;
+    let mut missed_case_ids = Vec::new();
+    for case in cases {
+        let id = case
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("scored case has no ID")?;
+        let relevant = case
+            .get("relevant_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("scored case has no relevant count")?;
+        let found = case
+            .get("found_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("scored case has no found count")?;
+        if found > relevant {
+            return Err("scored case has more hits than gold labels".into());
+        }
+        if relevant > 0 {
+            answerable_cases += 1;
+            if (found as u128) * 1_000
+                < (min_case_recall_per_mille as u128) * (relevant as u128)
+            {
+                missed_case_ids.push(id.to_owned());
+            }
+        }
+    }
+    // A nonzero minimum cannot be satisfied vacuously by a suite containing
+    // only no-answer cases. Zero retains the existing aggregate-only policy.
+    let case_gate_passed = min_case_recall_per_mille == 0
+        || (answerable_cases > 0 && missed_case_ids.is_empty());
     fields.insert("schema_version".into(), serde_json::json!(3));
     fields.insert(
         "input_receipts".into(),
@@ -370,6 +425,19 @@ fn with_input_receipts(
             "corpus_source_kind": corpus_kind,
             "source_authentication": "caller_supplied_unverified"
         }),
+    );
+    fields.insert(
+        "case_recall_gate".into(),
+        serde_json::json!({
+            "min_case_recall_per_mille": min_case_recall_per_mille,
+            "answerable_cases": answerable_cases,
+            "below_threshold_case_ids": missed_case_ids,
+            "passed": case_gate_passed
+        }),
+    );
+    fields.insert(
+        "passed".into(),
+        serde_json::json!(baseline_passed && case_gate_passed),
     );
     let mut output = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("cannot serialize benchmark receipts: {error}"))?;
@@ -419,9 +487,20 @@ fn run(args: Args) -> Result<(), String> {
     } else {
         "json_article_array"
     };
-    let report = with_input_receipts(&result.report_json, &articles, &suite_bytes, corpus_kind)?;
+    let report = with_input_receipts(
+        &result.report_json,
+        &articles,
+        &suite_bytes,
+        corpus_kind,
+        args.min_case_recall_per_mille,
+    )?;
     persist_new_report(&args.output, &report)?;
-    if !result.passed {
+    let report_passed = serde_json::from_str::<serde_json::Value>(&report)
+        .map_err(|error| format!("cannot read scored report: {error}"))?
+        .get("passed")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or("scored report missing gate decision")?;
+    if !report_passed {
         return Err(format!(
             "retrieval regression failed; inspect {}",
             args.output.display()
@@ -495,10 +574,10 @@ mod tests {
 
     #[test]
     fn report_receipts_bind_canonical_articles_and_exact_label_bytes() {
-        let score = r#"{"schema_version":2,"passed":true}"#;
-        let first = with_input_receipts(score, &[], b"{}", "json_article_array").unwrap();
+        let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[{"id":"a","relevant_count":1,"found_count":1}]}}"#;
+        let first = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
         let repeat = with_input_receipts(score, &[], b"{}", "json_article_array").unwrap();
-        let changed = with_input_receipts(score, &[], b"{ }", "json_article_array").unwrap();
+        let changed = with_input_receipts(score, &[], b"{ }", "json_article_array", 0).unwrap();
         assert_eq!(first, repeat);
         let first: serde_json::Value = serde_json::from_str(&first).unwrap();
         let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
@@ -524,15 +603,54 @@ mod tests {
     }
 
     #[test]
+    fn per_case_recall_gate_exposes_failures_hidden_by_aggregate_recall() {
+        // Aggregate recall is 2/3, so a 600-per-mille micro gate passes.
+        // One answerable question still retrieves none of its labeled gold.
+        let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[
+            {"id":"answer-a","relevant_count":2,"found_count":2},
+            {"id":"answer-b","relevant_count":1,"found_count":0},
+            {"id":"no-answer","relevant_count":0,"found_count":0}
+        ]}}"#;
+        let strict = with_input_receipts(score, &[], b"{}", "json_article_array", 500).unwrap();
+        let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+        assert_eq!(strict["passed"], false);
+        assert_eq!(strict["case_recall_gate"]["passed"], false);
+        assert_eq!(strict["case_recall_gate"]["answerable_cases"], 2);
+        assert_eq!(
+            strict["case_recall_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["answer-b"])
+        );
+
+        let legacy = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
+        let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(legacy["passed"], true);
+        assert_eq!(legacy["case_recall_gate"]["passed"], true);
+        let no_answer_only = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"negative","relevant_count":0,"found_count":0}
+        ]}}"#;
+        let empty = with_input_receipts(
+            no_answer_only, &[], b"{}", "json_article_array", 1,
+        ).unwrap();
+        let empty: serde_json::Value = serde_json::from_str(&empty).unwrap();
+        assert_eq!(empty["passed"], false);
+        assert_eq!(empty["case_recall_gate"]["below_threshold_case_ids"], serde_json::json!([]));
+        assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 1001).is_err());
+    }
+
+    #[test]
     fn parses_bounded_reproducible_run() {
         let args = parse_args(arguments()).unwrap();
         assert_eq!(args.top_k, 5);
         assert_eq!(args.min_recall_per_mille, 800);
         assert_eq!(args.max_no_answer_fp, 0);
+        assert_eq!(args.min_case_recall_per_mille, 0);
     }
 
     #[test]
     fn rejects_invalid_limits_duplicate_flags_and_missing_inputs() {
+        let mut args = arguments();
+        args.extend(["--min-case-recall-per-mille".into(), "1001".into()]);
+        assert!(parse_args(args).is_err());
         let mut args = arguments();
         args.extend(["--top-k".into(), "101".into()]);
         assert!(parse_args(args).is_err());
@@ -563,6 +681,7 @@ mod tests {
             ("--top-k", "3"),
             ("--min-recall-per-mille", "900"),
             ("--max-no-answer-fp", "1"),
+            ("--min-case-recall-per-mille", "500"),
         ] {
             let mut args = arguments();
             args.extend([
@@ -708,6 +827,7 @@ mod tests {
             top_k: 5,
             min_recall_per_mille: 800,
             max_no_answer_fp: 0,
+            min_case_recall_per_mille: 0,
         };
         fs::write(
             &args.suite,
