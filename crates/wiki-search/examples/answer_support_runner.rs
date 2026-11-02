@@ -417,13 +417,24 @@ mod tests {
             Some("a.json".into())
         );
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
+        assert!(
+            parse_args(values(&[
+                "--suite",
+                "x",
+                "--output",
+                "z",
+                "--require-schema-v3"
+            ]))
+            .unwrap()
+            .require_schema_v3
+        );
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--require-schema-v3"
-        ]))
-        .unwrap()
-        .require_schema_v3);
-        assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--require-schema-v3", "--require-schema-v3"
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--require-schema-v3",
+            "--require-schema-v3"
         ]))
         .is_err());
         let pin = "a".repeat(64);
@@ -711,9 +722,8 @@ mod tests {
         // operator must not accidentally downgrade the benchmark to v2.
         let mut downgraded = labels.clone();
         downgraded["schema_version"] = serde_json::json!(2);
-        downgraded["cases"][0]["answer"] = serde_json::json!(
-            "Two moons [[cite:wkb:enwiki:42:100:b0]] Unreviewed extra assertion"
-        );
+        downgraded["cases"][0]["answer"] =
+            serde_json::json!("Two moons [[cite:wkb:enwiki:42:100:b0]] Unreviewed extra assertion");
         fs::write(&suite, downgraded.to_string()).unwrap();
         let downgraded_output = root.join("downgraded.json");
         assert!(run(Args {
