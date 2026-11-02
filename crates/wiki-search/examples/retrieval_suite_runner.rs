@@ -5,7 +5,8 @@
 //!   --pack corpus.wpack --suite labels.json --sha <40-hex-commit> \\
 //!   --output report.json [--top-k 5] [--min-recall-per-mille 800] \\
 //!   [--max-no-answer-fp 0] [--min-case-recall-per-mille 0] \\
-//!   [--min-case-precision-per-mille 0] [--max-first-relevant-rank 0]
+//!   [--min-case-precision-per-mille 0] [--max-first-relevant-rank 0] \\
+//!   [--expect-articles-sha256 <64-hex>] [--expect-suite-sha256 <64-hex>]
 //!
 //! Use --corpus articles.json instead of --pack for unpacked input.
 //! Use --snapshot-root PATH for catalog.sqlite and MessagePack/zstd shard frames.
@@ -49,6 +50,8 @@ struct Args {
     min_case_recall_per_mille: u16,
     min_case_precision_per_mille: u16,
     max_first_relevant_rank: usize,
+    expected_articles_sha256: Option<String>,
+    expected_suite_sha256: Option<String>,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -64,6 +67,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut min_case_recall_per_mille = 0;
     let mut min_case_precision_per_mille = 0;
     let mut max_first_relevant_rank = 0;
+    let mut expected_articles_sha256 = None;
+    let mut expected_suite_sha256 = None;
     let mut args = args.into_iter();
     let mut seen_flags = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
@@ -106,6 +111,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "invalid first relevant rank limit".to_owned())?;
             }
+            "--expect-articles-sha256" => expected_articles_sha256 = Some(value),
+            "--expect-suite-sha256" => expected_suite_sha256 = Some(value),
             _ => return Err(format!("unknown or duplicate argument: {flag}")),
         }
     }
@@ -128,6 +135,19 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     {
         return Err("specify exactly one of --corpus, --pack or --snapshot-root".into());
     }
+    // Both content identities must be pinned together; pinning only labels
+    // or only articles leaves the scored input pair ambiguous.
+    if expected_articles_sha256.is_some() != expected_suite_sha256.is_some() {
+        return Err("both --expect-articles-sha256 and --expect-suite-sha256 are required together".into());
+    }
+    let normalize_digest = |value: String| -> Result<String, String> {
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("expected SHA-256 must be exactly 64 hexadecimal characters".into());
+        }
+        Ok(value.to_ascii_lowercase())
+    };
+    let expected_articles_sha256 = expected_articles_sha256.map(normalize_digest).transpose()?;
+    let expected_suite_sha256 = expected_suite_sha256.map(normalize_digest).transpose()?;
     Ok(Args {
         corpus,
         pack,
@@ -141,6 +161,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         min_case_recall_per_mille,
         min_case_precision_per_mille,
         max_first_relevant_rank,
+        expected_articles_sha256,
+        expected_suite_sha256,
     })
 }
 
@@ -568,6 +590,24 @@ fn with_input_receipts(
     )
 }
 
+/// Operator-pinned digests are compared with the exact canonical objects and
+/// label bytes used for scoring, before any report is published. These pins
+/// prevent accidental input substitution, not forged labels or source claims.
+fn verify_input_pins(args: &Args, articles: &[Article], suite_bytes: &[u8]) -> Result<(), String> {
+    if let (Some(expected_articles), Some(expected_suite)) = (
+        &args.expected_articles_sha256,
+        &args.expected_suite_sha256,
+    ) {
+        if canonical_articles_sha256(articles)? != *expected_articles {
+            return Err("canonical articles SHA-256 differs from the operator pin".into());
+        }
+        if wiki_pack_format::sha256_hex(suite_bytes) != *expected_suite {
+            return Err("label suite bytes SHA-256 differs from the operator pin".into());
+        }
+    }
+    Ok(())
+}
+
 fn run(args: Args) -> Result<(), String> {
     validate_output_destination(&args)?;
     let (articles, pack_project) = if let Some(root) = &args.snapshot_root {
@@ -597,6 +637,7 @@ fn run(args: Args) -> Result<(), String> {
     let suite_bytes = read_bounded(&args.suite, MAX_SUITE_BYTES)?;
     let suite = std::str::from_utf8(&suite_bytes)
         .map_err(|error| format!("suite must be UTF-8: {error}"))?;
+    verify_input_pins(&args, &articles, &suite_bytes)?;
     let thresholds = RetrievalThresholds {
         min_recall_per_mille: args.min_recall_per_mille,
         max_no_answer_false_positive_cases: args.max_no_answer_fp,
@@ -695,6 +736,47 @@ mod tests {
         fs::write(&input, b"x").unwrap();
         assert!(read_bounded(&input, 0).is_err());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn input_pins_require_both_valid_sha256_values() {
+        let mut args = arguments();
+        args.extend(["--expect-articles-sha256".into(), "a".repeat(64)]);
+        assert!(parse_args(args).is_err());
+        let mut args = arguments();
+        args.extend(["--expect-suite-sha256".into(), "b".repeat(64)]);
+        assert!(parse_args(args).is_err());
+        for invalid in ["a".repeat(63), "z".repeat(64), "".into()] {
+            let mut args = arguments();
+            args.extend([
+                "--expect-articles-sha256".into(), invalid,
+                "--expect-suite-sha256".into(), "b".repeat(64),
+            ]);
+            assert!(parse_args(args).is_err());
+        }
+        let mut args = arguments();
+        args.extend([
+            "--expect-articles-sha256".into(), "A".repeat(64),
+            "--expect-suite-sha256".into(), "B".repeat(64),
+        ]);
+        let parsed = parse_args(args).unwrap();
+        assert_eq!(parsed.expected_articles_sha256.as_deref(), Some("a".repeat(64).as_str()));
+        assert_eq!(parsed.expected_suite_sha256.as_deref(), Some("b".repeat(64).as_str()));
+    }
+
+    #[test]
+    fn operator_pins_bind_canonical_articles_and_exact_label_bytes() {
+        let mut args = parse_args(arguments()).unwrap();
+        args.expected_articles_sha256 = Some(canonical_articles_sha256(&[]).unwrap());
+        args.expected_suite_sha256 = Some(wiki_pack_format::sha256_hex(b"{}"));
+        verify_input_pins(&args, &[], b"{}").unwrap();
+        assert!(verify_input_pins(&args, &[], b"{ }")
+            .unwrap_err()
+            .contains("label suite bytes"));
+        args.expected_articles_sha256 = Some("0".repeat(64));
+        assert!(verify_input_pins(&args, &[], b"{}")
+            .unwrap_err()
+            .contains("canonical articles"));
     }
 
     #[test]
@@ -1079,6 +1161,8 @@ mod tests {
             min_case_recall_per_mille: 0,
             min_case_precision_per_mille: 0,
             max_first_relevant_rank: 1,
+            expected_articles_sha256: None,
+            expected_suite_sha256: None,
         };
         fs::write(
             &args.suite,
@@ -1112,6 +1196,18 @@ mod tests {
             "local_snapshot_frames"
         );
         fs::remove_file(report_path).unwrap();
+
+        // Exact input pins accept this snapshot and refuse changed labels
+        // before publishing a misleading success or failure report.
+        let mut pinned = external.clone();
+        pinned.output = root.with_extension("pinned-report.json");
+        pinned.expected_articles_sha256 = Some(canonical_articles_sha256(&[article]).unwrap());
+        pinned.expected_suite_sha256 = Some(wiki_pack_format::sha256_hex(&fs::read(&pinned.suite).unwrap()));
+        run(pinned.clone()).unwrap();
+        fs::remove_file(&pinned.output).unwrap();
+        pinned.expected_suite_sha256 = Some("0".repeat(64));
+        assert!(run(pinned.clone()).unwrap_err().contains("label suite bytes"));
+        assert!(!pinned.output.exists());
 
         // A strict per-case floor must fail a missed labeled question even
         // when the aggregate recall floor is explicitly disabled. The
