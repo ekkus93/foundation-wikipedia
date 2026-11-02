@@ -404,17 +404,15 @@ fn with_input_receipts(
         }
         if relevant > 0 {
             answerable_cases += 1;
-            if (found as u128) * 1_000
-                < (min_case_recall_per_mille as u128) * (relevant as u128)
-            {
+            if (found as u128) * 1_000 < (min_case_recall_per_mille as u128) * (relevant as u128) {
                 missed_case_ids.push(id.to_owned());
             }
         }
     }
     // A nonzero minimum cannot be satisfied vacuously by a suite containing
     // only no-answer cases. Zero retains the existing aggregate-only policy.
-    let case_gate_passed = min_case_recall_per_mille == 0
-        || (answerable_cases > 0 && missed_case_ids.is_empty());
+    let case_gate_passed =
+        min_case_recall_per_mille == 0 || (answerable_cases > 0 && missed_case_ids.is_empty());
     fields.insert("schema_version".into(), serde_json::json!(3));
     fields.insert(
         "input_receipts".into(),
@@ -628,12 +626,14 @@ mod tests {
         let no_answer_only = r#"{"passed":true,"retrieval":{"cases":[
             {"id":"negative","relevant_count":0,"found_count":0}
         ]}}"#;
-        let empty = with_input_receipts(
-            no_answer_only, &[], b"{}", "json_article_array", 1,
-        ).unwrap();
+        let empty =
+            with_input_receipts(no_answer_only, &[], b"{}", "json_article_array", 1).unwrap();
         let empty: serde_json::Value = serde_json::from_str(&empty).unwrap();
         assert_eq!(empty["passed"], false);
-        assert_eq!(empty["case_recall_gate"]["below_threshold_case_ids"], serde_json::json!([]));
+        assert_eq!(
+            empty["case_recall_gate"]["below_threshold_case_ids"],
+            serde_json::json!([])
+        );
         assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 1001).is_err());
     }
 
