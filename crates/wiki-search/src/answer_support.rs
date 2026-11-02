@@ -203,10 +203,18 @@ fn citation_matches_case(id: &str, project: &str, page_id: u64, revision_id: u64
 
 /// Parse literal [[cite:BLOCK_ID]] markers; malformed or unterminated markers
 /// cannot be smuggled into an apparently annotated answer.
-fn answer_markers(answer: &str, case_id: &str) -> Result<BTreeSet<String>, AnswerSupportError> {
+fn answer_markers(
+    answer: &str,
+    case_id: &str,
+) -> Result<(BTreeSet<String>, String), AnswerSupportError> {
     let mut markers = BTreeSet::new();
+    // Claims must be anchored in answer prose, not in citation IDs. Keep a
+    // separator where a marker was so words on either side cannot join.
+    let mut visible_answer = String::with_capacity(answer.len());
     let mut rest = answer;
     while let Some(start) = rest.find("[[cite:") {
+        visible_answer.push_str(&rest[..start]);
+        visible_answer.push(' ');
         rest = &rest[start + "[[cite:".len()..];
         let end = rest
             .find("]]")
@@ -218,7 +226,8 @@ fn answer_markers(answer: &str, case_id: &str) -> Result<BTreeSet<String>, Answe
         markers.insert(id.to_owned());
         rest = &rest[end + 2..];
     }
-    Ok(markers)
+    visible_answer.push_str(rest);
+    Ok((markers, visible_answer))
 }
 
 /// Grade explicit human annotations for generated answers. The reviewer must
@@ -271,21 +280,26 @@ pub fn evaluate_answer_support_json(
         if !seen_cases.insert(case.id.clone()) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
-        let markers = answer_markers(&case.answer, &case.id)?;
+        let (markers, visible_answer) = answer_markers(&case.answer, &case.id)?;
         let mut labeled_markers = BTreeSet::new();
         let mut seen_claims = BTreeSet::new();
+        // Text-only claim annotations have no occurrence offsets. Counting
+        // the same literal span under different IDs inflates support scores.
+        let mut seen_claim_texts = BTreeSet::new();
         let mut counts = SupportCounts::default();
 
         for claim in case.claims {
             if !valid_id(&claim.id, 255)
                 || claim.text.trim().is_empty()
                 || claim.text.len() > 8_192
-                || !case.answer.contains(&claim.text)
+                || !visible_answer.contains(&claim.text)
                 || claim.citations.len() > MAX_CITATIONS_PER_CLAIM
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
             }
-            if !seen_claims.insert(claim.id.clone()) {
+            if !seen_claims.insert(claim.id.clone())
+                || !seen_claim_texts.insert(claim.text.clone())
+            {
                 return Err(AnswerSupportError::DuplicateClaim(case.id));
             }
             counts.claims += 1;
@@ -586,6 +600,43 @@ mod tests {
         assert_eq!(report.cases[0].answer_sha256.len(), 64);
         assert_eq!(report.input_sha256, sha256(suite().as_bytes()));
         serde_json::to_string(&report).unwrap();
+    }
+
+    #[test]
+    fn claim_labels_must_reference_distinct_visible_answer_text() {
+        let mut duplicated: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        let mut repeated = duplicated["cases"][0]["claims"][0].clone();
+        repeated["id"] = serde_json::json!("another_id");
+        duplicated["cases"][0]["claims"]
+            .as_array_mut()
+            .unwrap()
+            .push(repeated);
+        assert_eq!(
+            evaluate_answer_support_json(&duplicated.to_string()),
+            Err(AnswerSupportError::DuplicateClaim("case_1".into()))
+        );
+
+        // A marker's block ID is metadata, not generated answer prose.
+        let mut marker_only: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        marker_only["cases"][0]["claims"][0]["text"] = serde_json::json!("lead_0");
+        assert_eq!(
+            evaluate_answer_support_json(&marker_only.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+
+        // Removing a marker must not splice its neighbors into a new claim.
+        let mut spliced: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        spliced["cases"][0]["answer"] = serde_json::json!(
+            "Two [[cite:lead_0]]moons. An unsupported aside [[cite:sec_1]]."
+        );
+        spliced["cases"][0]["claims"][0]["text"] = serde_json::json!("Two moons");
+        assert_eq!(
+            evaluate_answer_support_json(&spliced.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+
+        // Ordinary distinct claims still pass and retain their scores.
+        assert_eq!(evaluate_answer_support_json(&suite()).unwrap().totals.claims, 2);
     }
 
     #[test]
