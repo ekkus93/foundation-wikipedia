@@ -398,27 +398,60 @@ mod tests {
                 "--suite", "x", "--output", "z", "--corpus", "a.json"
             ]))
             .unwrap()
+
             .corpus,
             Some("a.json".into())
         );
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
         let pin = "a".repeat(64);
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--corpus", "a.json",
-            "--expect-suite-sha256", &pin,
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--corpus",
+            "a.json",
+            "--expect-suite-sha256",
+            &pin,
+        ]))
+        .is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z",
-            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin,
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--expect-suite-sha256",
+            &pin,
+            "--expect-corpus-sha256",
+            &pin,
+        ]))
+        .is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--corpus", "a.json",
-            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin.to_uppercase(),
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--corpus",
+            "a.json",
+            "--expect-suite-sha256",
+            &pin,
+            "--expect-corpus-sha256",
+            &pin.to_uppercase(),
+        ]))
+        .is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--corpus", "a.json",
-            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin,
-        ])).is_ok());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--corpus",
+            "a.json",
+            "--expect-suite-sha256",
+            &pin,
+            "--expect-corpus-sha256",
+            &pin,
+        ]))
+        .is_ok());
         assert!(parse_args(values(&[
             "--suite",
             "x",
@@ -595,7 +628,10 @@ mod tests {
 
         let pinned = Args {
             expected_suite_sha256: Some(format!("{:x}", Sha256::digest(fs::read(&suite).unwrap()))),
-            expected_corpus_sha256: Some(format!("{:x}", Sha256::digest(fs::read(&corpus).unwrap()))),
+            expected_corpus_sha256: Some(format!(
+                "{:x}",
+                Sha256::digest(fs::read(&corpus).unwrap())
+            )),
             ..args.clone()
         };
         let pinned_output = root.join("pinned.json");
