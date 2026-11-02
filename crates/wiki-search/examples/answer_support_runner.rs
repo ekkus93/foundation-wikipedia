@@ -386,5 +386,4 @@ mod tests {
         assert!(!stale_output.exists());
         fs::remove_dir_all(root).unwrap();
     }
-
 }
