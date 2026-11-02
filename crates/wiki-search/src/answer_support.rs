@@ -196,10 +196,10 @@ pub fn evaluate_answer_support_json(
     let mut totals = SupportCounts::default();
     for case in raw.cases {
         if !valid_id(&case.id, 255)
-            || ArticleKey {
+            || (ArticleKey {
                 project: case.project.clone(),
                 page_id: case.page_id,
-            }
+            })
             .validate()
             .is_err()
             || case.revision_id == 0
