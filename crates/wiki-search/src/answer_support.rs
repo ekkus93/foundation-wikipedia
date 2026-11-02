@@ -230,6 +230,27 @@ fn answer_markers(
     Ok((markers, visible_answer))
 }
 
+/// Require reviewed literal claims to align with complete Unicode word tokens,
+/// rather than matching a fragment inside a longer visible word. This is a
+/// structural check, not a judgment about factual entailment.
+fn is_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+fn visible_claim_occurs(answer: &str, claim: &str) -> bool {
+    answer.match_indices(claim).any(|(start, _)| {
+        let end = start + claim.len();
+        let left_is_boundary = !claim.chars().next().is_some_and(is_word_character)
+            || !answer[..start]
+                .chars()
+                .next_back()
+                .is_some_and(is_word_character);
+        let right_is_boundary = !claim.chars().next_back().is_some_and(is_word_character)
+            || !answer[end..].chars().next().is_some_and(is_word_character);
+        left_is_boundary && right_is_boundary
+    })
+}
+
 /// Grade explicit human annotations for generated answers. The reviewer must
 /// identify each literal claim in the answer and label every cited block/claim
 /// pair separately. A "supported" claim must have at least one individually
@@ -292,7 +313,7 @@ pub fn evaluate_answer_support_json(
             if !valid_id(&claim.id, 255)
                 || claim.text.trim().is_empty()
                 || claim.text.len() > 8_192
-                || !visible_answer.contains(&claim.text)
+                || !visible_claim_occurs(&visible_answer, &claim.text)
                 || claim.citations.len() > MAX_CITATIONS_PER_CLAIM
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
@@ -346,6 +367,11 @@ pub fn evaluate_answer_support_json(
                     counts.reviewed_claims += 1;
                 }
                 ReviewVerdict::Unsupported => {
+                    // A reviewer cannot label a claim unsupported while also
+                    // declaring that one of its cited blocks supports it.
+                    if supported_citation {
+                        return Err(AnswerSupportError::InconsistentSupport(case.id));
+                    }
                     counts.unsupported_claims += 1;
                     counts.reviewed_claims += 1;
                 }
@@ -641,6 +667,43 @@ mod tests {
                 .claims,
             2
         );
+    }
+
+    #[test]
+    fn reviewed_claims_cannot_be_substrings_of_longer_words() {
+        let mut data: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("moon");
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("moons");
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+
+        // Apply the same boundary rule to Unicode letters, not just ASCII.
+        data["cases"][0]["answer"] =
+            serde_json::json!("The cafés [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].");
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("café");
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("cafés");
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+    }
+
+    #[test]
+    fn unsupported_claim_cannot_have_a_supported_citation() {
+        let mut data: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        data["cases"][0]["claims"][1]["citations"][0]["verdict"] =
+            serde_json::json!("supported");
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InconsistentSupport("case_1".into()))
+        );
+        // A supported claim still requires a supported citation.
+        data["cases"][0]["claims"][1]["verdict"] = serde_json::json!("supported");
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
     }
 
     #[test]
