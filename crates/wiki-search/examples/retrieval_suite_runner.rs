@@ -113,15 +113,23 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     })
 }
 
+// Open once: checking a pathname and then reopening it permits substitution.
+// A bounded reader also caps FIFOs and files that grow after the metadata
+// check, rather than allocating the entire replacement before rejecting it.
 fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
-    let size = fs::metadata(path)
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let size = file
+        .metadata()
         .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
         .len();
     if size > max {
         return Err(format!("{} exceeds {max} bytes", path.display()));
     }
-    let bytes =
-        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     if bytes.len() as u64 > max {
         return Err(format!("{} exceeds {max} bytes", path.display()));
     }
@@ -386,6 +394,25 @@ mod tests {
         .iter()
         .map(|s| (*s).to_owned())
         .collect()
+    }
+
+    #[test]
+    fn bounded_input_reader_accepts_exact_limit_and_rejects_overflow() {
+        let dir = std::env::temp_dir().join(format!(
+            "wiki-retrieval-bounded-read-{}-{}",
+            process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("suite.json");
+        fs::write(&input, b"12345678").unwrap();
+        assert_eq!(read_bounded(&input, 8).unwrap(), b"12345678");
+        assert!(read_bounded(&input, 7).unwrap_err().contains("exceeds 7 bytes"));
+        fs::write(&input, b"").unwrap();
+        assert_eq!(read_bounded(&input, 0).unwrap(), b"");
+        fs::write(&input, b"x").unwrap();
+        assert!(read_bounded(&input, 0).is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
