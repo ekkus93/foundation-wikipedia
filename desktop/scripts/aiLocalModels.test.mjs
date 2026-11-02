@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canTestAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, activeAiLocalProfileDestination } from "../src/aiLocalModels.ts";
+import { parseAiLocalInventory, aiLocalityDisclosure, validAiLocalModelId, parseAiSavedLocalProfile, parseAiSavedLocalProfiles, validAiLocalProfileName, sameAiSavedLocalProfiles, needsAiProfileReview, classifyAiLocalEndpoint, AiProfileRefreshGate, shouldPollAiProfiles, canSaveAiLocalChoice, canTestAiLocalChoice, canConfirmAiLocalProfileDelete, latestAiSavedLocalDraft, activeAiLocalProfileDestination, activeAiLocalChatProfile } from "../src/aiLocalModels.ts";
 
 const endpoint = "http://127.0.0.1:11434";
 const protocol = "ollama";
@@ -261,4 +261,25 @@ test("explicit inference test requires fresh exact model, network permission and
   assert.equal(canTestAiLocalChoice(inventory, protocol, endpoint, "unadvertised", false, false), false);
   assert.equal(canTestAiLocalChoice(inventory, "openai-compatible", endpoint, "qwen3:8b", false, false), false);
   assert.equal(canTestAiLocalChoice(inventory, protocol, "http://192.168.1.2:11434", "qwen3:8b", false, false), false);
+});
+
+test("read-only chat destination uses the exact active saved model without fallback", () => {
+  const saved = parseAiSavedLocalProfiles({
+    revision: 4,
+    active: "LAN",
+    profiles: [
+      { name: "Local", protocol: "ollama", endpoint, model: "qwen3:8b" },
+      { name: "LAN", protocol: "openai-compatible", endpoint: "http://192.168.1.20:8080/v1", model: "coder-7b" },
+    ],
+  });
+  assert.deepEqual(activeAiLocalChatProfile(saved), {
+    name: "LAN", protocol: "openai-compatible",
+    endpoint: "http://192.168.1.20:8080/v1",
+    model: "coder-7b", locality: "local-network",
+  });
+  assert.equal(activeAiLocalChatProfile({ ...saved, active: null }), null);
+  assert.equal(activeAiLocalChatProfile({ ...saved, active: "Local" })?.model, "qwen3:8b");
+  assert.throws(() => parseAiSavedLocalProfiles({
+    ...saved, profiles: [{ ...saved.profiles[1], endpoint: "https://example.com" }],
+  }), /Invalid saved AI profiles/);
 });

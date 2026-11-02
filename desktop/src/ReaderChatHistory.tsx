@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
+import ReaderChatProviderStatus from "./ReaderChatProviderStatus";
 import type { ReaderArticleContext } from "./OnlineReader";
 import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, ReaderChatThreadListFence, type ReaderChatExchange } from "./readerChatHistory";
 
@@ -223,6 +224,7 @@ export default function ReaderChatHistory({ article, onClose }: {
     <div className="reader-chat-body" hidden={minimized}>
     <p>Edition {article.project} · page {article.pageId} · revision {article.revisionId}</p>
     <p className="reader-chat-disclaimer">Read-only history. Saved answers are plain text and their citation claims are not revalidated. The online preview cannot supply canonical article evidence for new AI questions.</p>
+    <ReaderChatProviderStatus />
     {loadingThreads && <p role="status">Loading saved conversations…</p>}
     {error && <p role="alert">{error}</p>}
     {deleteNotice && <p role="status">{deleteNotice}</p>}

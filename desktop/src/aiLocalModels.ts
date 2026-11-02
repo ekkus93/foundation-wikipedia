@@ -181,6 +181,19 @@ export function activeAiLocalProfileDestination(saved: AiSavedLocalProfiles): {
   return { name: active.name, protocol: active.protocol, endpoint: active.endpoint, locality };
 }
 
+/** A read-only chat label must use the persisted active profile, never the
+ * unsaved Settings draft or the first remaining profile after deactivation.
+ * This is metadata disclosure only, not model discovery or passage consent.
+ */
+export function activeAiLocalChatProfile(saved: AiSavedLocalProfiles): (AiNamedLocalProfile & {
+  locality: AiLocality;
+}) | null {
+  const destination = activeAiLocalProfileDestination(saved);
+  if (!destination) return null;
+  const profile = saved.profiles.find((item) => item.name === destination.name);
+  return profile ? { ...profile, locality: destination.locality } : null;
+}
+
 /** Compare native profile snapshots without interpreting a saved hint as consent. */
 export function sameAiSavedLocalProfiles(a: AiSavedLocalProfiles, b: AiSavedLocalProfiles): boolean {
   return a.revision === b.revision && a.active === b.active && a.profiles.length === b.profiles.length &&
