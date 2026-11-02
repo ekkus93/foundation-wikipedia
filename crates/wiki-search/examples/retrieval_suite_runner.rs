@@ -138,7 +138,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     // Both content identities must be pinned together; pinning only labels
     // or only articles leaves the scored input pair ambiguous.
     if expected_articles_sha256.is_some() != expected_suite_sha256.is_some() {
-        return Err("both --expect-articles-sha256 and --expect-suite-sha256 are required together".into());
+        return Err(
+            "both --expect-articles-sha256 and --expect-suite-sha256 are required together".into(),
+        );
     }
     let normalize_digest = |value: String| -> Result<String, String> {
         if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -594,10 +596,9 @@ fn with_input_receipts(
 /// label bytes used for scoring, before any report is published. These pins
 /// prevent accidental input substitution, not forged labels or source claims.
 fn verify_input_pins(args: &Args, articles: &[Article], suite_bytes: &[u8]) -> Result<(), String> {
-    if let (Some(expected_articles), Some(expected_suite)) = (
-        &args.expected_articles_sha256,
-        &args.expected_suite_sha256,
-    ) {
+    if let (Some(expected_articles), Some(expected_suite)) =
+        (&args.expected_articles_sha256, &args.expected_suite_sha256)
+    {
         if canonical_articles_sha256(articles)? != *expected_articles {
             return Err("canonical articles SHA-256 differs from the operator pin".into());
         }
@@ -749,19 +750,29 @@ mod tests {
         for invalid in ["a".repeat(63), "z".repeat(64), "".into()] {
             let mut args = arguments();
             args.extend([
-                "--expect-articles-sha256".into(), invalid,
-                "--expect-suite-sha256".into(), "b".repeat(64),
+                "--expect-articles-sha256".into(),
+                invalid,
+                "--expect-suite-sha256".into(),
+                "b".repeat(64),
             ]);
             assert!(parse_args(args).is_err());
         }
         let mut args = arguments();
         args.extend([
-            "--expect-articles-sha256".into(), "A".repeat(64),
-            "--expect-suite-sha256".into(), "B".repeat(64),
+            "--expect-articles-sha256".into(),
+            "A".repeat(64),
+            "--expect-suite-sha256".into(),
+            "B".repeat(64),
         ]);
         let parsed = parse_args(args).unwrap();
-        assert_eq!(parsed.expected_articles_sha256.as_deref(), Some("a".repeat(64).as_str()));
-        assert_eq!(parsed.expected_suite_sha256.as_deref(), Some("b".repeat(64).as_str()));
+        assert_eq!(
+            parsed.expected_articles_sha256.as_deref(),
+            Some("a".repeat(64).as_str())
+        );
+        assert_eq!(
+            parsed.expected_suite_sha256.as_deref(),
+            Some("b".repeat(64).as_str())
+        );
     }
 
     #[test]
@@ -1202,11 +1213,15 @@ mod tests {
         let mut pinned = external.clone();
         pinned.output = root.with_extension("pinned-report.json");
         pinned.expected_articles_sha256 = Some(canonical_articles_sha256(&[article]).unwrap());
-        pinned.expected_suite_sha256 = Some(wiki_pack_format::sha256_hex(&fs::read(&pinned.suite).unwrap()));
+        pinned.expected_suite_sha256 = Some(wiki_pack_format::sha256_hex(
+            &fs::read(&pinned.suite).unwrap(),
+        ));
         run(pinned.clone()).unwrap();
         fs::remove_file(&pinned.output).unwrap();
         pinned.expected_suite_sha256 = Some("0".repeat(64));
-        assert!(run(pinned.clone()).unwrap_err().contains("label suite bytes"));
+        assert!(run(pinned.clone())
+            .unwrap_err()
+            .contains("label suite bytes"));
         assert!(!pinned.output.exists());
 
         // A strict per-case floor must fail a missed labeled question even
