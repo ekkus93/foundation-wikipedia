@@ -698,7 +698,22 @@ mod tests {
             evaluate_answer_support_json(&suite().replace(
                 "\"block_id\":\"lead_0\",\"verdict\":\"supported\"",
                 "\"block_id\":\"lead_0\",\"verdict\":\"unsupported\""
+
             )),
             Err(AnswerSupportError::InconsistentSupport(_))
         ));
     }
+
+
+    #[test]
+    fn bounded_and_nonvacuous() {
+        assert_eq!(
+            evaluate_answer_support_json(&"x".repeat(MAX_SUITE_BYTES + 1)).unwrap_err(),
+            AnswerSupportError::TooLarge
+        );
+        assert!(matches!(
+            evaluate_answer_support_json(r#"{"schema_version":1,"suite_id":"x","cases":[]}"#),
+            Err(AnswerSupportError::InvalidCase(_))
+        ));
+    }
+}
