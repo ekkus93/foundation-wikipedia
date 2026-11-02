@@ -185,9 +185,7 @@ fn citation_matches_case(id: &str, project: &str, page_id: u64, revision_id: u64
     let mut tail = parts.peekable();
     while let Some(part) = tail.next() {
         if tail.peek().is_none() {
-            return part
-                .strip_prefix('b')
-                .is_some_and(canonical_decimal_u32);
+            return part.strip_prefix('b').is_some_and(canonical_decimal_u32);
         }
         if !canonical_decimal_u32(part) {
             return false;
