@@ -333,7 +333,9 @@ pub fn evaluate_answer_support_json(
                 };
                 if start >= end
                     || case.answer.get(start..end) != Some(claim.text.as_str())
-                    || occurrences.iter().any(|marker| start < marker.end && marker.start < end)
+                    || occurrences
+                        .iter()
+                        .any(|marker| start < marker.end && marker.start < end)
                     || !visible_claim_occurs(&visible_answer, &claim.text)
                 {
                     return Err(AnswerSupportError::InvalidClaim(case.id));
@@ -347,10 +349,16 @@ pub fn evaluate_answer_support_json(
                 }
             }
             for (index, (_, _, id)) in spans.iter().enumerate() {
-                let next = spans.get(index + 1).map_or(case.answer.len(), |span| span.0);
+                let next = spans
+                    .get(index + 1)
+                    .map_or(case.answer.len(), |span| span.0);
                 next_claim_start.insert(id.clone(), next);
             }
-        } else if case.claims.iter().any(|claim| claim.start_byte.is_some() || claim.end_byte.is_some()) {
+        } else if case
+            .claims
+            .iter()
+            .any(|claim| claim.start_byte.is_some() || claim.end_byte.is_some())
+        {
             return Err(AnswerSupportError::InvalidClaim(case.id));
         }
         let mut assigned_occurrences = BTreeSet::new();
@@ -809,7 +817,10 @@ mod tests {
     #[test]
     fn v2_rejects_overlaps_missing_offsets_and_marker_only_spans() {
         let mut data = suite_v2();
-        data["cases"][0]["claims"][0].as_object_mut().unwrap().remove("start_byte");
+        data["cases"][0]["claims"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("start_byte");
         assert_eq!(
             evaluate_answer_support_json(&data.to_string()),
             Err(AnswerSupportError::InvalidClaim("case_1".into()))
@@ -822,7 +833,10 @@ mod tests {
         let start = answer.find("moons").unwrap();
         overlap["start_byte"] = serde_json::json!(start);
         overlap["end_byte"] = serde_json::json!(start + "moons".len());
-        data["cases"][0]["claims"].as_array_mut().unwrap().push(overlap);
+        data["cases"][0]["claims"]
+            .as_array_mut()
+            .unwrap()
+            .push(overlap);
         assert_eq!(
             evaluate_answer_support_json(&data.to_string()),
             Err(AnswerSupportError::InvalidClaim("case_1".into()))
@@ -843,13 +857,21 @@ mod tests {
     fn v2_allows_repeated_literal_claims_at_distinct_spans() {
         let mut data = suite_v2();
         let original = data["cases"][0]["answer"].as_str().unwrap().to_owned();
-        data["cases"][0]["answer"] = serde_json::json!(format!("{original} Two moons [[cite:lead_0]]."));
+        data["cases"][0]["answer"] =
+            serde_json::json!(format!("{original} Two moons [[cite:lead_0]]."));
         let mut repeat = data["cases"][0]["claims"][0].clone();
         repeat["id"] = serde_json::json!("repeat");
-        let start = data["cases"][0]["answer"].as_str().unwrap().rfind("Two moons").unwrap();
+        let start = data["cases"][0]["answer"]
+            .as_str()
+            .unwrap()
+            .rfind("Two moons")
+            .unwrap();
         repeat["start_byte"] = serde_json::json!(start);
         repeat["end_byte"] = serde_json::json!(start + "Two moons".len());
-        data["cases"][0]["claims"].as_array_mut().unwrap().push(repeat);
+        data["cases"][0]["claims"]
+            .as_array_mut()
+            .unwrap()
+            .push(repeat);
         let report = evaluate_answer_support_json(&data.to_string()).unwrap();
         assert_eq!(report.totals.claims, 3);
         assert_eq!(report.totals.supported_claims, 2);
