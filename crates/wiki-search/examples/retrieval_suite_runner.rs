@@ -272,7 +272,10 @@ fn validate_output_destination(args: &Args) -> Result<(), String> {
 /// hard-link publication is atomic and fails if another process created the
 /// destination after preflight (including a symlink to an input file).
 fn persist_new_report(output: &Path, content: &str) -> Result<(), String> {
-    let parent = output.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let name = output.file_name().ok_or("invalid report filename")?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -480,14 +483,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "wiki-retrieval-publish-{}-{}",
             process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         let report = dir.join("report.json");
-        persist_new_report(&report, "{\\\"passed\\\":true}\\n").unwrap();
-        assert_eq!(fs::read_to_string(&report).unwrap(), "{\\\"passed\\\":true}\\n");
+        persist_new_report(&report, r#"{"passed":true}"#).unwrap();
+        assert_eq!(fs::read_to_string(&report).unwrap(), r#"{"passed":true}"#);
         assert!(persist_new_report(&report, "replacement").is_err());
-        assert_eq!(fs::read_to_string(&report).unwrap(), "{\\\"passed\\\":true}\\n");
+        assert_eq!(fs::read_to_string(&report).unwrap(), r#"{"passed":true}"#);
         // Failed publication must not leave temporary reports behind.
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
         #[cfg(unix)]
