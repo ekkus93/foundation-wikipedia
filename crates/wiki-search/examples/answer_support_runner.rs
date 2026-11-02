@@ -303,4 +303,88 @@ mod tests {
         assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn strict_runner_scores_only_citations_present_in_exact_canonical_corpus() {
+        use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
+
+        let root = std::env::temp_dir().join(format!(
+            "wiki-answer-corpus-{}-{}",
+            process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let suite = root.join("suite.json");
+        let corpus = root.join("articles.json");
+        let output = root.join("report.json");
+        let article = Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
+            revision: Revision {
+                revision_id: 100,
+                timestamp: "2026-11-02T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Moons".into(),
+            display_title: "Moons".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Two moons orbit.".into()),
+            }],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article>Moons</article>".into(),
+            is_disambiguation: false,
+        };
+        let labels = serde_json::json!({
+            "schema_version": 1,
+            "suite_id": "strict_test",
+            "cases": [{
+                "id": "c1", "project": "enwiki", "page_id": 42, "revision_id": 100,
+                "question": "How many moons?",
+                "answer": "Two moons [[cite:wkb:enwiki:42:100:b0]]",
+                "claims": [{
+                    "id": "claim", "text": "Two moons", "verdict": "supported",
+                    "citations": [{"block_id": "wkb:enwiki:42:100:b0", "verdict": "supported"}]
+                }]
+            }]
+        });
+        fs::write(&suite, labels.to_string()).unwrap();
+        fs::write(&corpus, serde_json::to_vec(&vec![article.clone()]).unwrap()).unwrap();
+        let args = Args {
+            corpus: Some(corpus.clone()),
+            suite: suite.clone(),
+            output: output.clone(),
+            min_claim_support_per_mille: 1_000,
+            min_citation_precision_per_mille: 1_000,
+        };
+        assert_eq!(run(args.clone()), Ok(true));
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(report["evidence_membership_checked"], true);
+        assert_eq!(report["gate"]["passed"], true);
+        assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
+
+        let mut stale = article;
+        stale.revision.revision_id = 101;
+        fs::write(&corpus, serde_json::to_vec(&vec![stale]).unwrap()).unwrap();
+        let stale_output = root.join("stale.json");
+        assert!(run(Args {
+            output: stale_output.clone(),
+            ..args
+        })
+        .is_err());
+        assert!(!stale_output.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }
