@@ -790,8 +790,8 @@ mod tests {
         data["schema_version"] = serde_json::json!(2);
         let answer = data["cases"][0]["answer"].as_str().unwrap().to_owned();
         for claim in data["cases"][0]["claims"].as_array_mut().unwrap() {
-            let text = claim["text"].as_str().unwrap();
-            let start = answer.find(text).unwrap();
+            let text = claim["text"].as_str().unwrap().to_owned();
+            let start = answer.find(&text).unwrap();
             claim["start_byte"] = serde_json::json!(start);
             claim["end_byte"] = serde_json::json!(start + text.len());
         }
