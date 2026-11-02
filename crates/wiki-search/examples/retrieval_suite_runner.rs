@@ -685,8 +685,7 @@ mod tests {
             {"id":"missing","relevant_count":1,"found_count":0,"retrieved_count":0},
             {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":1}
         ]}}"#;
-        let strict =
-            with_input_receipts(score, &[], b"{}", "json_article_array", 0, 500).unwrap();
+        let strict = with_input_receipts(score, &[], b"{}", "json_article_array", 0, 500).unwrap();
         let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
         assert_eq!(strict["passed"], false);
         assert_eq!(strict["case_recall_gate"]["passed"], true);
@@ -696,16 +695,14 @@ mod tests {
             strict["case_precision_gate"]["below_threshold_case_ids"],
             serde_json::json!(["noisy", "missing"])
         );
-        let legacy =
-            with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
+        let legacy = with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
         let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
         assert_eq!(legacy["passed"], true);
 
         let no_answer = r#"{"passed":true,"retrieval":{"cases":[
             {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":0}
         ]}}"#;
-        let empty =
-            with_input_receipts(no_answer, &[], b"{}", "json_article_array", 0, 1).unwrap();
+        let empty = with_input_receipts(no_answer, &[], b"{}", "json_article_array", 0, 1).unwrap();
         let empty: serde_json::Value = serde_json::from_str(&empty).unwrap();
         assert_eq!(empty["case_precision_gate"]["passed"], false);
         assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 0, 1001).is_err());
