@@ -304,8 +304,9 @@ pub fn evaluate_answer_support_json(
     }
 
     let mut seen_cases = BTreeSet::new();
-    // Distinct case IDs must not let the same question/answer/revision
-    // contribute multiple times to aggregate benchmark quality scores.
+    // Distinct IDs and whitespace-only presentation changes must not replay
+    // the same question/answer/revision into aggregate quality scores.
+    // This is NOT semantic paraphrase detection; it preserves exact words.
     let mut seen_case_payloads = BTreeSet::new();
     let mut cases = Vec::with_capacity(raw.cases.len());
     let mut totals = SupportCounts::default();
@@ -336,8 +337,8 @@ pub fn evaluate_answer_support_json(
             case.project.clone(),
             case.page_id,
             case.revision_id,
-            case.question.clone(),
-            case.answer.clone(),
+            case.question.split_whitespace().collect::<Vec<_>>().join(" "),
+            case.answer.split_whitespace().collect::<Vec<_>>().join(" "),
         )) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
@@ -789,6 +790,35 @@ mod tests {
             data["cases"][1] = original;
             data["cases"][1]["id"] = serde_json::json!("replay_with_different_id");
             data["cases"][1]["revision_id"] = serde_json::json!(101);
+            assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+        }
+    }
+
+    #[test]
+    fn whitespace_only_case_replays_cannot_inflate_scores() {
+        for version in [1, 2, 3] {
+            let mut data = if version == 1 {
+                serde_json::from_str::<serde_json::Value>(&suite()).unwrap()
+            } else {
+                suite_v2()
+            };
+            data["schema_version"] = serde_json::json!(version);
+            let mut replay = data["cases"][0].clone();
+            replay["id"] = serde_json::json!("replay_whitespace");
+            replay["question"] = serde_json::json!("  How   many\tmoons?\n");
+            replay["answer"] = serde_json::json!(format!(
+                "{}  \n",
+                replay["answer"].as_str().unwrap()
+            ));
+            data["cases"].as_array_mut().unwrap().push(replay);
+            assert_eq!(
+                evaluate_answer_support_json(&data.to_string()),
+                Err(AnswerSupportError::DuplicateCase("replay_whitespace".into())),
+                "schema v{version}"
+            );
+
+            // A different question remains an independent evaluation case.
+            data["cases"][1]["question"] = serde_json::json!("How many planets?");
             assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
         }
     }
