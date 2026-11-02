@@ -401,13 +401,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "wiki-retrieval-bounded-read-{}-{}",
             process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
         let input = dir.join("suite.json");
         fs::write(&input, b"12345678").unwrap();
         assert_eq!(read_bounded(&input, 8).unwrap(), b"12345678");
-        assert!(read_bounded(&input, 7).unwrap_err().contains("exceeds 7 bytes"));
+        assert!(read_bounded(&input, 7)
+            .unwrap_err()
+            .contains("exceeds 7 bytes"));
         fs::write(&input, b"").unwrap();
         assert_eq!(read_bounded(&input, 0).unwrap(), b"");
         fs::write(&input, b"x").unwrap();
