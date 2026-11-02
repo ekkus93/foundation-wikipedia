@@ -34,7 +34,7 @@ const MAX_ARTICLES: usize = 20_000;
 const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
 static REPORT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Args {
     corpus: Option<PathBuf>,
     pack: Option<PathBuf>,
@@ -844,7 +844,7 @@ mod tests {
         external.output = root.with_extension("report.json");
         assert!(validate_output_destination(&external).is_ok());
         let report_path = external.output.clone();
-        run(external).unwrap();
+        run(external.clone()).unwrap();
         let report = fs::read_to_string(&report_path).unwrap();
         assert!(report.contains("\"suite_id\": \"snapshot-v1\""));
         assert!(report.contains("\"passed\": true"));
@@ -856,6 +856,35 @@ mod tests {
             "local_snapshot_frames"
         );
         fs::remove_file(report_path).unwrap();
+
+        // A strict per-case floor must fail a missed labeled question even
+        // when the aggregate recall floor is explicitly disabled. The
+        // complete failed report is still published for diagnosis.
+        let mut missed = external;
+        missed.output = root.with_extension("missed-report.json");
+        missed.suite = root.join("missed-suite.json");
+        missed.min_recall_per_mille = 0;
+        missed.min_case_recall_per_mille = 1_000;
+        fs::write(
+            &missed.suite,
+            r#"{"schema_version":1,"suite_id":"missed-gold-v1","cases":[
+                {"id":"unretrieved","query":"unobtainium","project":"enwiki",
+                 "relevant":[{"article":{"project":"enwiki","page_id":42},
+                 "revision_id":99,"block_id":"wkb:enwiki:42:99:b0"}]}
+            ]}"#,
+        )
+        .unwrap();
+        let missed_report = missed.output.clone();
+        assert!(run(missed).unwrap_err().contains("retrieval regression failed"));
+        let missed_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&missed_report).unwrap()).unwrap();
+        assert_eq!(missed_json["passed"], false);
+        assert_eq!(missed_json["case_recall_gate"]["passed"], false);
+        assert_eq!(
+            missed_json["case_recall_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["unretrieved"])
+        );
+        fs::remove_file(missed_report).unwrap();
 
         let final_byte = shard.len() - 1;
         shard[final_byte] ^= 1;
