@@ -527,6 +527,42 @@ mod tests {
         );
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
 
+        // The aggregate 50% score passes, but the weak case must fail both
+        // per-case floors. The executable path must persist that diagnosis.
+        let mut weak_suite = labels.clone();
+        let mut weak_case = weak_suite["cases"][0].clone();
+        weak_case["id"] = serde_json::json!("weak");
+        weak_case["answer"] = serde_json::json!("Incorrect [[cite:wkb:enwiki:42:100:b0]]");
+        weak_case["claims"][0]["text"] = serde_json::json!("Incorrect");
+        weak_case["claims"][0]["verdict"] = serde_json::json!("unsupported");
+        weak_case["claims"][0]["citations"][0]["verdict"] =
+            serde_json::json!("unsupported");
+        weak_suite["cases"].as_array_mut().unwrap().push(weak_case);
+        fs::write(&suite, weak_suite.to_string()).unwrap();
+        let weak_output = root.join("weak.json");
+        assert_eq!(
+            run(Args {
+                output: weak_output.clone(),
+                min_claim_support_per_mille: 500,
+                min_citation_precision_per_mille: 500,
+                min_case_claim_support_per_mille: 800,
+                min_case_citation_precision_per_mille: 800,
+                ..args.clone()
+            }),
+            Ok(false)
+        );
+        let weak_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&weak_output).unwrap()).unwrap();
+        assert_eq!(weak_report["gate"]["passed"], false);
+        assert_eq!(
+            weak_report["gate"]["case_claim_support_gate"]["failed_case_ids"],
+            serde_json::json!(["weak"])
+        );
+        assert_eq!(
+            weak_report["gate"]["case_citation_precision_gate"]["failed_case_ids"],
+            serde_json::json!(["weak"])
+        );
+
         let mut stale = article;
         stale.revision.revision_id = 101;
         fs::write(&corpus, serde_json::to_vec(&vec![stale]).unwrap()).unwrap();
