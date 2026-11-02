@@ -8,6 +8,7 @@
 //!   [--min-citation-precision-per-mille 800] [--corpus canonical_articles.json]
 //!   [--min-case-claim-support-per-mille 800]
 //!   [--min-case-citation-precision-per-mille 800]
+//!   [--expect-suite-sha256 64-lowercase-hex --expect-corpus-sha256 64-lowercase-hex]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -33,6 +34,8 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
     corpus: Option<PathBuf>,
+    expected_suite_sha256: Option<String>,
+    expected_corpus_sha256: Option<String>,
     suite: PathBuf,
     output: PathBuf,
     min_claim_support_per_mille: u16,
@@ -43,6 +46,8 @@ struct Args {
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut corpus = None;
+    let mut expected_suite_sha256 = None;
+    let mut expected_corpus_sha256 = None;
     let mut suite = None;
     let mut output = None;
     let mut claim_floor = 0;
@@ -61,6 +66,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         match flag.as_str() {
             "--suite" => suite = Some(PathBuf::from(value)),
             "--corpus" => corpus = Some(PathBuf::from(value)),
+            "--expect-suite-sha256" => expected_suite_sha256 = Some(value),
+            "--expect-corpus-sha256" => expected_corpus_sha256 = Some(value),
             "--output" => output = Some(PathBuf::from(value)),
             "--min-claim-support-per-mille" => {
                 claim_floor = value.parse::<u16>().map_err(|_| "invalid claim floor")?;
@@ -88,8 +95,28 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     {
         return Err("thresholds must be 0..=1000".into());
     }
+    if expected_suite_sha256.is_some() != expected_corpus_sha256.is_some() {
+        return Err("suite and corpus SHA-256 pins must be supplied together".into());
+    }
+    if expected_suite_sha256.is_some() && corpus.is_none() {
+        return Err("SHA-256 pins require --corpus".into());
+    }
+    for digest in [&expected_suite_sha256, &expected_corpus_sha256]
+        .into_iter()
+        .flatten()
+    {
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("expected SHA-256 must be 64 lowercase hex characters".into());
+        }
+    }
     Ok(Args {
         corpus,
+        expected_suite_sha256,
+        expected_corpus_sha256,
         suite: suite.ok_or("missing --suite")?,
         output: output.ok_or("missing --output")?,
         min_claim_support_per_mille: claim_floor,
@@ -230,8 +257,23 @@ fn per_case_gate(
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
+    let suite_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    if args
+        .expected_suite_sha256
+        .as_deref()
+        .is_some_and(|expected| expected != suite_sha256)
+    {
+        return Err("reviewed suite SHA-256 differs from operator pin".into());
+    }
     let (report, corpus_sha256) = if let Some(path) = &args.corpus {
         let (articles, digest) = read_corpus(path)?;
+        if args
+            .expected_corpus_sha256
+            .as_deref()
+            .is_some_and(|expected| expected != digest)
+        {
+            return Err("canonical corpus SHA-256 differs from operator pin".into());
+        }
         let report = evaluate_answer_support_with_corpus_json(&raw, &articles)
             .map_err(|error| format!("invalid reviewed canonical evidence: {error:?}"))?;
         (report, Some(digest))
@@ -269,6 +311,7 @@ fn run(args: Args) -> Result<bool, String> {
         "evaluation": report,
         "corpus_input_sha256": corpus_sha256,
         "evidence_membership_checked": args.corpus.is_some(),
+        "operator_input_pins_verified": args.expected_suite_sha256.is_some(),
         "gate": {
             "min_claim_support_per_mille": args.min_claim_support_per_mille,
             "min_citation_precision_per_mille": args.min_citation_precision_per_mille,
@@ -310,6 +353,8 @@ mod tests {
             parse_args(values(&["--suite", "a.json", "--output", "b.json"])).unwrap(),
             Args {
                 corpus: None,
+                expected_suite_sha256: None,
+                expected_corpus_sha256: None,
                 suite: "a.json".into(),
                 output: "b.json".into(),
                 min_claim_support_per_mille: 0,
@@ -357,6 +402,23 @@ mod tests {
             Some("a.json".into())
         );
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
+        let pin = "a".repeat(64);
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--corpus", "a.json",
+            "--expect-suite-sha256", &pin,
+        ])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z",
+            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin,
+        ])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--corpus", "a.json",
+            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin.to_uppercase(),
+        ])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--corpus", "a.json",
+            "--expect-suite-sha256", &pin, "--expect-corpus-sha256", &pin,
+        ])).is_ok());
         assert!(parse_args(values(&[
             "--suite",
             "x",
@@ -398,6 +460,7 @@ mod tests {
     }
 
     #[test]
+
     fn per_case_gates_expose_weak_case_masked_by_strong_case() {
         use wiki_search::answer_support::evaluate_answer_support_json;
         let suite = serde_json::json!({
@@ -508,6 +571,8 @@ mod tests {
         fs::write(&corpus, serde_json::to_vec(&vec![article.clone()]).unwrap()).unwrap();
         let args = Args {
             corpus: Some(corpus.clone()),
+            expected_suite_sha256: None,
+            expected_corpus_sha256: None,
             suite: suite.clone(),
             output: output.clone(),
             min_claim_support_per_mille: 1_000,
@@ -526,6 +591,41 @@ mod tests {
             true
         );
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(report["operator_input_pins_verified"], false);
+
+        let pinned = Args {
+            expected_suite_sha256: Some(format!("{:x}", Sha256::digest(fs::read(&suite).unwrap()))),
+            expected_corpus_sha256: Some(format!("{:x}", Sha256::digest(fs::read(&corpus).unwrap()))),
+            ..args.clone()
+        };
+        let pinned_output = root.join("pinned.json");
+        assert_eq!(
+            run(Args {
+                output: pinned_output.clone(),
+                ..pinned.clone()
+            }),
+            Ok(true)
+        );
+        let pinned_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&pinned_output).unwrap()).unwrap();
+        assert_eq!(pinned_report["operator_input_pins_verified"], true);
+        let wrong_corpus_output = root.join("wrong-corpus.json");
+        assert!(run(Args {
+            output: wrong_corpus_output.clone(),
+            expected_corpus_sha256: Some("0".repeat(64)),
+            ..pinned.clone()
+        })
+        .is_err());
+        assert!(!wrong_corpus_output.exists());
+        fs::write(&suite, format!("{}\n", labels)).unwrap();
+        let changed_suite_output = root.join("changed-suite.json");
+        assert!(run(Args {
+            output: changed_suite_output.clone(),
+            ..pinned
+        })
+        .is_err());
+        assert!(!changed_suite_output.exists());
+        fs::write(&suite, labels.to_string()).unwrap();
 
         // The aggregate 50% score passes, but the weak case must fail both
         // per-case floors. The executable path must persist that diagnosis.
