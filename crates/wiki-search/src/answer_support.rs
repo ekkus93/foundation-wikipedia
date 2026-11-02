@@ -771,7 +771,9 @@ mod tests {
             data["cases"].as_array_mut().unwrap().push(replay);
             assert_eq!(
                 evaluate_answer_support_json(&data.to_string()),
-                Err(AnswerSupportError::DuplicateCase("replay_with_different_id".into())),
+                Err(AnswerSupportError::DuplicateCase(
+                    "replay_with_different_id".into()
+                )),
                 "schema v{version}"
             );
 
