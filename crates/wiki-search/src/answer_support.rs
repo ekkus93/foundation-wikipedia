@@ -405,6 +405,10 @@ pub fn evaluate_answer_support_json(
         for claim in case.claims {
             if !valid_id(&claim.id, 255)
                 || claim.text.trim().is_empty()
+                // A punctuation/emoji-only annotation is not a factual claim.
+                // Otherwise it can pad the supported-claim denominator and
+                // conceal unsupported prose in aggregate quality scores.
+                || !claim.text.chars().any(is_word_character)
                 || claim.text.len() > 8_192
                 || (raw.schema_version == 1 && !visible_claim_occurs(&visible_answer, &claim.text))
                 || claim.citations.len() > MAX_CITATIONS_PER_CLAIM
@@ -830,6 +834,48 @@ mod tests {
             claim["end_byte"] = serde_json::json!(start + text.len());
         }
         data
+    }
+
+    #[test]
+    fn nonlexical_claims_cannot_pad_reviewed_support_scores() {
+        let mut legacy: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        legacy["cases"][0]["answer"] =
+            serde_json::json!("! [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].");
+        legacy["cases"][0]["claims"][0]["text"] = serde_json::json!("!");
+        assert_eq!(
+            evaluate_answer_support_json(&legacy.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+
+        // Schema v3 covers all prose, but a punctuation-only extra claim
+        // must not inflate the numerator or denominator of the quality gate.
+        let mut strict = suite_v2();
+        strict["schema_version"] = serde_json::json!(3);
+        let answer = format!(
+            "{} ! [[cite:lead_0]]",
+            strict["cases"][0]["answer"].as_str().unwrap()
+        );
+        let start = answer.rfind("! [[cite:lead_0]]").unwrap();
+        strict["cases"][0]["answer"] = serde_json::json!(answer);
+        let mut padding = strict["cases"][0]["claims"][0].clone();
+        padding["id"] = serde_json::json!("padding");
+        padding["text"] = serde_json::json!("!");
+        padding["start_byte"] = serde_json::json!(start);
+        padding["end_byte"] = serde_json::json!(start + 1);
+        strict["cases"][0]["claims"]
+            .as_array_mut()
+            .unwrap()
+            .push(padding);
+        assert_eq!(
+            evaluate_answer_support_json(&strict.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+
+        // A non-Latin lexical claim remains valid.
+        legacy["cases"][0]["answer"] =
+            serde_json::json!("月 [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].");
+        legacy["cases"][0]["claims"][0]["text"] = serde_json::json!("月");
+        assert!(evaluate_answer_support_json(&legacy.to_string()).is_ok());
     }
 
     #[test]
