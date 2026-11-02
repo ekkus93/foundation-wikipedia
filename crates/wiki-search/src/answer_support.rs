@@ -255,17 +255,23 @@ fn is_word_character(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
+fn claim_has_word_boundaries(answer: &str, start: usize, end: usize) -> bool {
+    let Some(claim) = answer.get(start..end) else {
+        return false;
+    };
+    let left_is_boundary = !claim.chars().next().is_some_and(is_word_character)
+        || !answer[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_word_character);
+    let right_is_boundary = !claim.chars().next_back().is_some_and(is_word_character)
+        || !answer[end..].chars().next().is_some_and(is_word_character);
+    left_is_boundary && right_is_boundary
+}
+
 fn visible_claim_occurs(answer: &str, claim: &str) -> bool {
     answer.match_indices(claim).any(|(start, _)| {
-        let end = start + claim.len();
-        let left_is_boundary = !claim.chars().next().is_some_and(is_word_character)
-            || !answer[..start]
-                .chars()
-                .next_back()
-                .is_some_and(is_word_character);
-        let right_is_boundary = !claim.chars().next_back().is_some_and(is_word_character)
-            || !answer[end..].chars().next().is_some_and(is_word_character);
-        left_is_boundary && right_is_boundary
+        claim_has_word_boundaries(answer, start, start + claim.len())
     })
 }
 
@@ -336,7 +342,9 @@ pub fn evaluate_answer_support_json(
                     || occurrences
                         .iter()
                         .any(|marker| start < marker.end && marker.start < end)
-                    || !visible_claim_occurs(&visible_answer, &claim.text)
+                    // Check the *annotated* occurrence, not an unrelated
+                    // matching phrase elsewhere in the visible answer.
+                    || !claim_has_word_boundaries(&case.answer, start, end)
                 {
                     return Err(AnswerSupportError::InvalidClaim(case.id));
                 }
@@ -373,7 +381,8 @@ pub fn evaluate_answer_support_json(
             if !valid_id(&claim.id, 255)
                 || claim.text.trim().is_empty()
                 || claim.text.len() > 8_192
-                || !visible_claim_occurs(&visible_answer, &claim.text)
+                || (raw.schema_version == 1
+                    && !visible_claim_occurs(&visible_answer, &claim.text))
                 || claim.citations.len() > MAX_CITATIONS_PER_CLAIM
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
@@ -851,6 +860,52 @@ mod tests {
             evaluate_answer_support_json(&data.to_string()),
             Err(AnswerSupportError::InvalidClaim("case_1".into()))
         );
+    }
+
+    #[test]
+    fn v2_word_boundaries_must_hold_at_the_annotated_span() {
+        let mut data = suite_v2();
+        let answer = "Two moons. moon [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].";
+        data["cases"][0]["answer"] = serde_json::json!(answer);
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("moon");
+        let first = answer.find("moon").unwrap();
+        data["cases"][0]["claims"][0]["start_byte"] = serde_json::json!(first);
+        data["cases"][0]["claims"][0]["end_byte"] = serde_json::json!(first + 4);
+        let aside = answer.find("An unsupported aside").unwrap();
+        data["cases"][0]["claims"][1]["start_byte"] = serde_json::json!(aside);
+        data["cases"][0]["claims"][1]["end_byte"] =
+            serde_json::json!(aside + "An unsupported aside".len());
+        // The same word occurs independently later in the answer. That
+        // occurrence must not launder a partial-word annotated span.
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        let standalone = answer.find(" moon [[cite:").unwrap() + 1;
+        data["cases"][0]["claims"][0]["start_byte"] = serde_json::json!(standalone);
+        data["cases"][0]["claims"][0]["end_byte"] = serde_json::json!(standalone + 4);
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+
+        // Check a partial prefix, and a Unicode suffix, against a separate
+        // complete occurrence of the same literal claim.
+        for (answer, fragment, expected) in [
+            ("premoon. moon [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].", "moon", 3),
+            ("cafés. café [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].", "café", 0),
+        ] {
+            data["cases"][0]["answer"] = serde_json::json!(answer);
+            data["cases"][0]["claims"][0]["text"] = serde_json::json!(fragment);
+            data["cases"][0]["claims"][0]["start_byte"] = serde_json::json!(expected);
+            data["cases"][0]["claims"][0]["end_byte"] =
+                serde_json::json!(expected + fragment.len());
+            let aside = answer.find("An unsupported aside").unwrap();
+            data["cases"][0]["claims"][1]["start_byte"] = serde_json::json!(aside);
+            data["cases"][0]["claims"][1]["end_byte"] =
+                serde_json::json!(aside + "An unsupported aside".len());
+            assert_eq!(
+                evaluate_answer_support_json(&data.to_string()),
+                Err(AnswerSupportError::InvalidClaim("case_1".into()))
+            );
+        }
     }
 
     #[test]
