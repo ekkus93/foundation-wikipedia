@@ -398,7 +398,6 @@ mod tests {
                 "--suite", "x", "--output", "z", "--corpus", "a.json"
             ]))
             .unwrap()
-
             .corpus,
             Some("a.json".into())
         );
