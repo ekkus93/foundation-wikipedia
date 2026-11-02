@@ -133,7 +133,10 @@ pub struct CaseSupportScore {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AnswerSupportReport {
+    /// Version of this report's serialization contract.
     pub schema_version: u32,
+    /// Version of the reviewed input annotations; v3 enforces complete visible prose coverage.
+    pub annotation_schema_version: u32,
     pub suite_id: String,
     /// Digest of the exact annotation-file bytes for reproducible comparison.
     pub input_sha256: String,
@@ -504,6 +507,7 @@ pub fn evaluate_answer_support_json(
     cases.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(AnswerSupportReport {
         schema_version: 1,
+        annotation_schema_version: raw.schema_version,
         suite_id: raw.suite_id,
         input_sha256: sha256(input.as_bytes()),
         cases,
@@ -832,7 +836,8 @@ mod tests {
     fn v3_requires_complete_visible_word_coverage() {
         let mut data = suite_v2();
         data["schema_version"] = serde_json::json!(3);
-        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+        let report = evaluate_answer_support_json(&data.to_string()).unwrap();
+        assert_eq!(report.annotation_schema_version, 3);
 
         let answer = data["cases"][0]["answer"].as_str().unwrap().to_owned();
         data["cases"][0]["answer"] = serde_json::json!(format!("{answer} Extra claim."));

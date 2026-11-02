@@ -9,6 +9,7 @@
 //!   [--min-case-claim-support-per-mille 800]
 //!   [--min-case-citation-precision-per-mille 800]
 //!   [--expect-suite-sha256 64-lowercase-hex --expect-corpus-sha256 64-lowercase-hex]
+//!   [--require-schema-v3]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -34,6 +35,7 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Args {
     corpus: Option<PathBuf>,
+    require_schema_v3: bool,
     expected_suite_sha256: Option<String>,
     expected_corpus_sha256: Option<String>,
     suite: PathBuf,
@@ -46,6 +48,7 @@ struct Args {
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut corpus = None;
+    let mut require_schema_v3 = false;
     let mut expected_suite_sha256 = None;
     let mut expected_corpus_sha256 = None;
     let mut suite = None;
@@ -59,6 +62,10 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     while let Some(flag) = values.next() {
         if !seen.insert(flag.clone()) {
             return Err(format!("duplicate argument: {flag}"));
+        }
+        if flag == "--require-schema-v3" {
+            require_schema_v3 = true;
+            continue;
         }
         let value = values
             .next()
@@ -115,6 +122,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     }
     Ok(Args {
         corpus,
+        require_schema_v3,
         expected_suite_sha256,
         expected_corpus_sha256,
         suite: suite.ok_or("missing --suite")?,
@@ -282,6 +290,11 @@ fn run(args: Args) -> Result<bool, String> {
             .map_err(|error| format!("invalid human-reviewed support suite: {error:?}"))?;
         (report, None)
     };
+    // A benchmark configured for complete visible-prose review must never
+    // silently accept a legacy partial-annotation suite.
+    if args.require_schema_v3 && report.annotation_schema_version != 3 {
+        return Err("reviewed suite must use annotation schema v3".into());
+    }
     let case_claim_gate = per_case_gate(
         &report.cases,
         args.min_case_claim_support_per_mille,
@@ -311,6 +324,7 @@ fn run(args: Args) -> Result<bool, String> {
         "evaluation": report,
         "corpus_input_sha256": corpus_sha256,
         "evidence_membership_checked": args.corpus.is_some(),
+        "complete_prose_coverage_required": args.require_schema_v3,
         "operator_input_pins_verified": args.expected_suite_sha256.is_some(),
         "gate": {
             "min_claim_support_per_mille": args.min_claim_support_per_mille,
@@ -353,6 +367,7 @@ mod tests {
             parse_args(values(&["--suite", "a.json", "--output", "b.json"])).unwrap(),
             Args {
                 corpus: None,
+                require_schema_v3: false,
                 expected_suite_sha256: None,
                 expected_corpus_sha256: None,
                 suite: "a.json".into(),
@@ -402,6 +417,15 @@ mod tests {
             Some("a.json".into())
         );
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--require-schema-v3"
+        ]))
+        .unwrap()
+        .require_schema_v3);
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--require-schema-v3", "--require-schema-v3"
+        ]))
+        .is_err());
         let pin = "a".repeat(64);
         assert!(parse_args(values(&[
             "--suite",
@@ -604,6 +628,7 @@ mod tests {
         fs::write(&corpus, serde_json::to_vec(&vec![article.clone()]).unwrap()).unwrap();
         let args = Args {
             corpus: Some(corpus.clone()),
+            require_schema_v3: true,
             expected_suite_sha256: None,
             expected_corpus_sha256: None,
             suite: suite.clone(),
@@ -617,6 +642,8 @@ mod tests {
         let report: serde_json::Value =
             serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(report["evidence_membership_checked"], true);
+        assert_eq!(report["complete_prose_coverage_required"], true);
+        assert_eq!(report["evaluation"]["annotation_schema_version"], 3);
         assert_eq!(report["gate"]["passed"], true);
         assert_eq!(report["gate"]["case_claim_support_gate"]["passed"], true);
         assert_eq!(
@@ -678,6 +705,23 @@ mod tests {
         })
         .is_err());
         assert!(!uncovered_output.exists());
+        fs::write(&suite, labels.to_string()).unwrap();
+
+        // An otherwise valid legacy suite may omit unreviewed prose. A strict
+        // operator must not accidentally downgrade the benchmark to v2.
+        let mut downgraded = labels.clone();
+        downgraded["schema_version"] = serde_json::json!(2);
+        downgraded["cases"][0]["answer"] = serde_json::json!(
+            "Two moons [[cite:wkb:enwiki:42:100:b0]] Unreviewed extra assertion"
+        );
+        fs::write(&suite, downgraded.to_string()).unwrap();
+        let downgraded_output = root.join("downgraded.json");
+        assert!(run(Args {
+            output: downgraded_output.clone(),
+            ..args.clone()
+        })
+        .is_err());
+        assert!(!downgraded_output.exists());
         fs::write(&suite, labels.to_string()).unwrap();
 
         // The aggregate 50% score passes, but the weak case must fail both
