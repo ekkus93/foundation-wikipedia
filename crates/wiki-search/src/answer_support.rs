@@ -698,12 +698,10 @@ mod tests {
             evaluate_answer_support_json(&suite().replace(
                 "\"block_id\":\"lead_0\",\"verdict\":\"supported\"",
                 "\"block_id\":\"lead_0\",\"verdict\":\"unsupported\""
-
             )),
             Err(AnswerSupportError::InconsistentSupport(_))
         ));
     }
-
 
     #[test]
     fn bounded_and_nonvacuous() {
