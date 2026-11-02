@@ -4,7 +4,8 @@
 //! cargo run -p wiki-search --example retrieval_suite_runner --locked -- \\
 //!   --pack corpus.wpack --suite labels.json --sha <40-hex-commit> \\
 //!   --output report.json [--top-k 5] [--min-recall-per-mille 800] \\
-//!   [--max-no-answer-fp 0] [--min-case-recall-per-mille 0]
+//!   [--max-no-answer-fp 0] [--min-case-recall-per-mille 0] \\
+//!   [--min-case-precision-per-mille 0]
 //!
 //! Use --corpus articles.json instead of --pack for unpacked input.
 //! Use --snapshot-root PATH for catalog.sqlite and MessagePack/zstd shard frames.
@@ -46,6 +47,7 @@ struct Args {
     min_recall_per_mille: u16,
     max_no_answer_fp: usize,
     min_case_recall_per_mille: u16,
+    min_case_precision_per_mille: u16,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -59,6 +61,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut min_recall_per_mille = 800;
     let mut max_no_answer_fp = 0;
     let mut min_case_recall_per_mille = 0;
+    let mut min_case_precision_per_mille = 0;
     let mut args = args.into_iter();
     let mut seen_flags = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
@@ -91,14 +94,20 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "invalid per-case recall threshold".to_owned())?;
             }
+            "--min-case-precision-per-mille" => {
+                min_case_precision_per_mille = value
+                    .parse()
+                    .map_err(|_| "invalid per-case precision threshold".to_owned())?;
+            }
             _ => return Err(format!("unknown or duplicate argument: {flag}")),
         }
     }
     if !(1..=100).contains(&top_k)
         || min_recall_per_mille > 1_000
         || min_case_recall_per_mille > 1_000
+        || min_case_precision_per_mille > 1_000
     {
-        return Err("top-k must be 1..=100 and recall threshold 0..=1000".into());
+        return Err("top-k must be 1..=100 and recall/precision thresholds 0..=1000".into());
     }
     let sha = sha.ok_or("missing --sha")?;
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -122,6 +131,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         min_recall_per_mille,
         max_no_answer_fp,
         min_case_recall_per_mille,
+        min_case_precision_per_mille,
     })
 }
 
@@ -366,9 +376,10 @@ fn with_input_receipts(
     suite_bytes: &[u8],
     corpus_kind: &str,
     min_case_recall_per_mille: u16,
+    min_case_precision_per_mille: u16,
 ) -> Result<String, String> {
-    if min_case_recall_per_mille > 1_000 {
-        return Err("per-case recall threshold exceeds 1000".into());
+    if min_case_recall_per_mille > 1_000 || min_case_precision_per_mille > 1_000 {
+        return Err("per-case recall or precision threshold exceeds 1000".into());
     }
     let mut report: serde_json::Value = serde_json::from_str(score_json)
         .map_err(|error| format!("invalid retrieval score report: {error}"))?;
@@ -386,6 +397,7 @@ fn with_input_receipts(
         .ok_or("retrieval score report has no scored cases")?;
     let mut answerable_cases = 0usize;
     let mut missed_case_ids = Vec::new();
+    let mut low_precision_case_ids = Vec::new();
     for case in cases {
         let id = case
             .get("id")
@@ -399,13 +411,27 @@ fn with_input_receipts(
             .get("found_count")
             .and_then(serde_json::Value::as_u64)
             .ok_or("scored case has no found count")?;
-        if found > relevant {
-            return Err("scored case has more hits than gold labels".into());
+        let retrieved = case
+            .get("retrieved_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("scored case has no retrieved count")?;
+        if found > relevant || found > retrieved {
+            return Err("scored case has impossible hit counts".into());
         }
         if relevant > 0 {
             answerable_cases += 1;
             if (found as u128) * 1_000 < (min_case_recall_per_mille as u128) * (relevant as u128) {
                 missed_case_ids.push(id.to_owned());
+            }
+            // An answerable question with no hits has undefined precision;
+            // it cannot satisfy a positive precision floor. No-answer cases
+            // are governed by the separate false-positive gate.
+            if min_case_precision_per_mille > 0
+                && (retrieved == 0
+                    || (found as u128) * 1_000
+                        < (min_case_precision_per_mille as u128) * (retrieved as u128))
+            {
+                low_precision_case_ids.push(id.to_owned());
             }
         }
     }
@@ -413,6 +439,8 @@ fn with_input_receipts(
     // only no-answer cases. Zero retains the existing aggregate-only policy.
     let case_gate_passed =
         min_case_recall_per_mille == 0 || (answerable_cases > 0 && missed_case_ids.is_empty());
+    let precision_gate_passed = min_case_precision_per_mille == 0
+        || (answerable_cases > 0 && low_precision_case_ids.is_empty());
     fields.insert("schema_version".into(), serde_json::json!(3));
     fields.insert(
         "input_receipts".into(),
@@ -434,8 +462,17 @@ fn with_input_receipts(
         }),
     );
     fields.insert(
+        "case_precision_gate".into(),
+        serde_json::json!({
+            "min_case_precision_per_mille": min_case_precision_per_mille,
+            "answerable_cases": answerable_cases,
+            "below_threshold_case_ids": low_precision_case_ids,
+            "passed": precision_gate_passed
+        }),
+    );
+    fields.insert(
         "passed".into(),
-        serde_json::json!(baseline_passed && case_gate_passed),
+        serde_json::json!(baseline_passed && case_gate_passed && precision_gate_passed),
     );
     let mut output = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("cannot serialize benchmark receipts: {error}"))?;
@@ -491,6 +528,7 @@ fn run(args: Args) -> Result<(), String> {
         &suite_bytes,
         corpus_kind,
         args.min_case_recall_per_mille,
+        args.min_case_precision_per_mille,
     )?;
     persist_new_report(&args.output, &report)?;
     let report_passed = serde_json::from_str::<serde_json::Value>(&report)
@@ -572,10 +610,10 @@ mod tests {
 
     #[test]
     fn report_receipts_bind_canonical_articles_and_exact_label_bytes() {
-        let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[{"id":"a","relevant_count":1,"found_count":1}]}}"#;
-        let first = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
-        let repeat = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
-        let changed = with_input_receipts(score, &[], b"{ }", "json_article_array", 0).unwrap();
+        let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[{"id":"a","relevant_count":1,"found_count":1,"retrieved_count":1}]}}"#;
+        let first = with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
+        let repeat = with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
+        let changed = with_input_receipts(score, &[], b"{ }", "json_article_array", 0, 0).unwrap();
         assert_eq!(first, repeat);
         let first: serde_json::Value = serde_json::from_str(&first).unwrap();
         let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
@@ -605,11 +643,11 @@ mod tests {
         // Aggregate recall is 2/3, so a 600-per-mille micro gate passes.
         // One answerable question still retrieves none of its labeled gold.
         let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[
-            {"id":"answer-a","relevant_count":2,"found_count":2},
-            {"id":"answer-b","relevant_count":1,"found_count":0},
-            {"id":"no-answer","relevant_count":0,"found_count":0}
+            {"id":"answer-a","relevant_count":2,"found_count":2,"retrieved_count":2},
+            {"id":"answer-b","relevant_count":1,"found_count":0,"retrieved_count":0},
+            {"id":"no-answer","relevant_count":0,"found_count":0,"retrieved_count":0}
         ]}}"#;
-        let strict = with_input_receipts(score, &[], b"{}", "json_article_array", 500).unwrap();
+        let strict = with_input_receipts(score, &[], b"{}", "json_article_array", 500, 0).unwrap();
         let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
         assert_eq!(strict["passed"], false);
         assert_eq!(strict["case_recall_gate"]["passed"], false);
@@ -619,22 +657,62 @@ mod tests {
             serde_json::json!(["answer-b"])
         );
 
-        let legacy = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
+        let legacy = with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
         let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
         assert_eq!(legacy["passed"], true);
         assert_eq!(legacy["case_recall_gate"]["passed"], true);
         let no_answer_only = r#"{"passed":true,"retrieval":{"cases":[
-            {"id":"negative","relevant_count":0,"found_count":0}
+            {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":0}
         ]}}"#;
         let empty =
-            with_input_receipts(no_answer_only, &[], b"{}", "json_article_array", 1).unwrap();
+            with_input_receipts(no_answer_only, &[], b"{}", "json_article_array", 1, 0).unwrap();
         let empty: serde_json::Value = serde_json::from_str(&empty).unwrap();
         assert_eq!(empty["passed"], false);
         assert_eq!(
             empty["case_recall_gate"]["below_threshold_case_ids"],
             serde_json::json!([])
         );
-        assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 1001).is_err());
+        assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 1001, 0).is_err());
+    }
+
+    #[test]
+    fn per_case_precision_gate_rejects_noisy_and_missing_evidence() {
+        // A micro precision score can hide one noisy question. A positive
+        // per-case floor must also reject answerable questions with no hits.
+        let score = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"noisy","relevant_count":1,"found_count":1,"retrieved_count":3},
+            {"id":"clean","relevant_count":1,"found_count":1,"retrieved_count":1},
+            {"id":"missing","relevant_count":1,"found_count":0,"retrieved_count":0},
+            {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":1}
+        ]}}"#;
+        let strict =
+            with_input_receipts(score, &[], b"{}", "json_article_array", 0, 500).unwrap();
+        let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+        assert_eq!(strict["passed"], false);
+        assert_eq!(strict["case_recall_gate"]["passed"], true);
+        assert_eq!(strict["case_precision_gate"]["passed"], false);
+        assert_eq!(strict["case_precision_gate"]["answerable_cases"], 3);
+        assert_eq!(
+            strict["case_precision_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["noisy", "missing"])
+        );
+        let legacy =
+            with_input_receipts(score, &[], b"{}", "json_article_array", 0, 0).unwrap();
+        let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(legacy["passed"], true);
+
+        let no_answer = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":0}
+        ]}}"#;
+        let empty =
+            with_input_receipts(no_answer, &[], b"{}", "json_article_array", 0, 1).unwrap();
+        let empty: serde_json::Value = serde_json::from_str(&empty).unwrap();
+        assert_eq!(empty["case_precision_gate"]["passed"], false);
+        assert!(with_input_receipts(score, &[], b"{}", "json_article_array", 0, 1001).is_err());
+        let impossible = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"bad","relevant_count":1,"found_count":1,"retrieved_count":0}
+        ]}}"#;
+        assert!(with_input_receipts(impossible, &[], b"{}", "json_article_array", 0, 0).is_err());
     }
 
     #[test]
@@ -644,12 +722,16 @@ mod tests {
         assert_eq!(args.min_recall_per_mille, 800);
         assert_eq!(args.max_no_answer_fp, 0);
         assert_eq!(args.min_case_recall_per_mille, 0);
+        assert_eq!(args.min_case_precision_per_mille, 0);
     }
 
     #[test]
     fn rejects_invalid_limits_duplicate_flags_and_missing_inputs() {
         let mut args = arguments();
         args.extend(["--min-case-recall-per-mille".into(), "1001".into()]);
+        assert!(parse_args(args).is_err());
+        let mut args = arguments();
+        args.extend(["--min-case-precision-per-mille".into(), "1001".into()]);
         assert!(parse_args(args).is_err());
         let mut args = arguments();
         args.extend(["--top-k".into(), "101".into()]);
@@ -682,6 +764,7 @@ mod tests {
             ("--min-recall-per-mille", "900"),
             ("--max-no-answer-fp", "1"),
             ("--min-case-recall-per-mille", "500"),
+            ("--min-case-precision-per-mille", "500"),
         ] {
             let mut args = arguments();
             args.extend([
@@ -828,6 +911,7 @@ mod tests {
             min_recall_per_mille: 800,
             max_no_answer_fp: 0,
             min_case_recall_per_mille: 0,
+            min_case_precision_per_mille: 0,
         };
         fs::write(
             &args.suite,
@@ -864,7 +948,8 @@ mod tests {
         missed.output = root.with_extension("missed-report.json");
         missed.suite = root.join("missed-suite.json");
         missed.min_recall_per_mille = 0;
-        missed.min_case_recall_per_mille = 1_000;
+        missed.min_case_recall_per_mille = 0;
+        missed.min_case_precision_per_mille = 500;
         fs::write(
             &missed.suite,
             r#"{"schema_version":1,"suite_id":"missed-gold-v1","cases":[
@@ -881,9 +966,10 @@ mod tests {
         let missed_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&missed_report).unwrap()).unwrap();
         assert_eq!(missed_json["passed"], false);
-        assert_eq!(missed_json["case_recall_gate"]["passed"], false);
+        assert_eq!(missed_json["case_recall_gate"]["passed"], true);
+        assert_eq!(missed_json["case_precision_gate"]["passed"], false);
         assert_eq!(
-            missed_json["case_recall_gate"]["below_threshold_case_ids"],
+            missed_json["case_precision_gate"]["below_threshold_case_ids"],
             serde_json::json!(["unretrieved"])
         );
         fs::remove_file(missed_report).unwrap();
