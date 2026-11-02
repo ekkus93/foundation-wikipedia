@@ -5,11 +5,13 @@
 //! This library checks annotation completeness and citation-marker integrity;
 //! it does NOT infer entailment or authenticate the reviewer or source data.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use wiki_model::ArticleKey;
+use wiki_model::{Article, ArticleKey};
+
+use crate::ArticleLexicalIndex;
 
 const MAX_SUITE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CASES: usize = 1_000;
@@ -75,6 +77,11 @@ pub enum AnswerSupportError {
     MissingCitationMarker(String),
     UnlabeledCitationMarker(String),
     InconsistentSupport(String),
+    InvalidCorpus,
+    InvalidCorpusArticle(String),
+    DuplicateCorpusArticle(String),
+    UnknownOrStaleArticle(String),
+    UnknownEvidence(String),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -357,6 +364,55 @@ pub fn evaluate_answer_support_json(
     })
 }
 
+
+//// Strict benchmark mode: independently verify that every reviewer-labeled
+//// citation is an actual retrievable block of the supplied canonical article
+//// at the exact project/page/revision. This does not authenticate the corpus
+//// or reviewer, nor prove that a block factually entails the answer.
+pub fn evaluate_answer_support_with_corpus_json(
+    input: &str,
+    articles: &[Article],
+) -> Result<AnswerSupportReport, AnswerSupportError> {
+    // Validate labels first, including all literal markers and structural IDs.
+    let report = evaluate_answer_support_json(input)?;
+    if articles.is_empty() || articles.len() > MAX_CASES {
+        return Err(AnswerSupportError::InvalidCorpus);
+    }
+    let mut indexes = BTreeMap::new();
+    for article in articles {
+        let key = (article.key.project.clone(), article.key.page_id);
+        let index = ArticleLexicalIndex::build(article)
+            .map_err(|_| AnswerSupportError::InvalidCorpusArticle(format!("{}:{}", key.0, key.1)))?;
+        if indexes.insert(key.clone(), index).is_some() {
+            return Err(AnswerSupportError::DuplicateCorpusArticle(format!(
+                "{}:{}", key.0, key.1
+            )));
+        }
+    }
+    // The strict mode never accepts legacy fixture aliases: an ID must be
+    // minted from a real canonical block and survive an exact index lookup.
+    let raw: RawSuite = serde_json::from_str(input).map_err(|_| AnswerSupportError::InvalidJson)?;
+    for case in raw.cases {
+        let index = indexes
+            .get(&(case.project, case.page_id))
+            .filter(|index| index.revision_id == case.revision_id)
+            .ok_or_else(|| AnswerSupportError::UnknownOrStaleArticle(case.id.clone()))?;
+        for claim in case.claims {
+            for citation in claim.citations {
+                if !citation.block_id.starts_with("wkb:")
+                    || !index
+                        .entries
+                        .iter()
+                        .any(|hit| hit.block_id == citation.block_id)
+                {
+                    return Err(AnswerSupportError::UnknownEvidence(case.id));
+                }
+            }
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +434,93 @@ mod tests {
             }]
         })
         .to_string()
+    }
+
+
+    fn canonical_article() -> Article {
+        use wiki_model::{Block, BlockContent, Revision, Section, ARTICLE_SCHEMA_VERSION};
+        Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey { project: "enwiki".into(), page_id: 42 },
+            revision: Revision {
+                revision_id: 100,
+                timestamp: "2026-11-02T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Moons".into(),
+            display_title: "Moons".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![Block {
+                ordinal: 0,
+                content: BlockContent::Paragraph("Two moons orbit this planet.".into()),
+            }],
+            sections: vec![Section {
+                ordinal: 1,
+                heading: "Discussion".into(),
+                blocks: vec![Block {
+                    ordinal: 0,
+                    content: BlockContent::Paragraph("An unsupported aside.".into()),
+                }],
+                subsections: vec![],
+            }],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article>Moons</article>".into(),
+            is_disambiguation: false,
+        }
+    }
+
+    fn canonical_suite() -> String {
+        suite()
+            .replace("lead_0", "wkb:enwiki:42:100:b0")
+            .replace("sec_1", "wkb:enwiki:42:100:1:b0")
+    }
+
+    #[test]
+    fn strict_review_requires_real_revision_scoped_canonical_evidence() {
+        let input = canonical_suite();
+        let article = canonical_article();
+        let report = evaluate_answer_support_with_corpus_json(&input, &[article.clone()]).unwrap();
+        assert_eq!(report.totals.reviewed_citations, 2);
+        let fabricated = input.replace("wkb:enwiki:42:100:b0", "wkb:enwiki:42:100:b99");
+        assert_eq!(
+            evaluate_answer_support_with_corpus_json(&fabricated, &[article.clone()]),
+            Err(AnswerSupportError::UnknownEvidence("case_1".into()))
+        );
+        assert_eq!(
+            evaluate_answer_support_with_corpus_json(&suite(), &[article.clone()]),
+            Err(AnswerSupportError::UnknownEvidence("case_1".into()))
+        );
+        let mut stale = article.clone();
+        stale.revision.revision_id = 101;
+        assert_eq!(
+            evaluate_answer_support_with_corpus_json(&input, &[stale]),
+            Err(AnswerSupportError::UnknownOrStaleArticle("case_1".into()))
+        );
+        assert!(matches!(
+            evaluate_answer_support_with_corpus_json(&input, &[article.clone(), article.clone()]),
+            Err(AnswerSupportError::DuplicateCorpusArticle(_))
+        ));
+        assert_eq!(
+            evaluate_answer_support_with_corpus_json(&input, &[]),
+            Err(AnswerSupportError::InvalidCorpus)
+        );
+        let mut malformed = article.clone();
+        malformed.revision.content_sha256 = "bad".into();
+        assert!(matches!(
+            evaluate_answer_support_with_corpus_json(&input, &[malformed]),
+            Err(AnswerSupportError::InvalidCorpusArticle(_))
+        ));
+        let mut no_evidence = article;
+        no_evidence.lead[0].content = wiki_model::BlockContent::HtmlFallback("<p>two moons</p>".into());
+        assert_eq!(
+            evaluate_answer_support_with_corpus_json(&input, &[no_evidence]),
+            Err(AnswerSupportError::UnknownEvidence("case_1".into()))
+        );
     }
 
     #[test]
