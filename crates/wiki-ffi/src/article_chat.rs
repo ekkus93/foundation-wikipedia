@@ -114,17 +114,30 @@ fn persist_validated_display(
 /// This is a blocking shared-core API; desktop and Android adapters must run
 /// it off their UI thread and cancel when article/revision or consent changes.
 /// The UI must still compare citation target identities before navigating.
+pub struct ArticleChatRequest<'a> {
+    pub article: &'a Article,
+    pub question: &'a ArticleQuestion<'a>,
+    pub selected: &'a SelectedLocalModel,
+    pub preview: &'a LocalArticlePreview,
+    pub share_article_passages: bool,
+    pub existing_thread: Option<i64>,
+    pub cancellation: &'a CancellationToken,
+}
+
 pub fn answer_and_save_local_article(
     state: &mut UserState,
     generation: u64,
-    article: &Article,
-    question: &ArticleQuestion<'_>,
-    selected: &SelectedLocalModel,
-    preview: &LocalArticlePreview,
-    share_article_passages: bool,
-    existing_thread: Option<i64>,
-    cancellation: &CancellationToken,
+    request: ArticleChatRequest<'_>,
 ) -> Result<SavedArticleChatOutcome, ArticleChatError> {
+    let ArticleChatRequest {
+        article,
+        question,
+        selected,
+        preview,
+        share_article_passages,
+        existing_thread,
+        cancellation,
+    } = request;
     if !share_article_passages {
         return Err(ArticleChatError::Inference(
             LocalArticleError::PassageConsentRequired,
@@ -410,8 +423,17 @@ mod tests {
         let token = CancellationToken::default();
         assert!(matches!(
             answer_and_save_local_article(
-                &mut state, generation, &article, &question, &selected, &preview, false, None,
-                &token,
+                &mut state,
+                generation,
+                ArticleChatRequest {
+                    article: &article,
+                    question: &question,
+                    selected: &selected,
+                    preview: &preview,
+                    share_article_passages: false,
+                    existing_thread: None,
+                    cancellation: &token,
+                },
             ),
             Err(ArticleChatError::Inference(
                 LocalArticleError::PassageConsentRequired
@@ -422,7 +444,17 @@ mod tests {
             .unwrap()
             .is_empty());
         let saved = answer_and_save_local_article(
-            &mut state, generation, &article, &question, &selected, &preview, true, None, &token,
+            &mut state,
+            generation,
+            ArticleChatRequest {
+                article: &article,
+                question: &question,
+                selected: &selected,
+                preview: &preview,
+                share_article_passages: true,
+                existing_thread: None,
+                cancellation: &token,
+            },
         )
         .unwrap();
         let SavedArticleChatOutcome::Supported {
