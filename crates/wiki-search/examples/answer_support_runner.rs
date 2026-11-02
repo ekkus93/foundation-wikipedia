@@ -39,7 +39,9 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         if !seen.insert(flag.clone()) {
             return Err(format!("duplicate argument: {flag}"));
         }
-        let value = values.next().ok_or_else(|| format!("missing value for {flag}"))?;
+        let value = values
+            .next()
+            .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
             "--suite" => suite = Some(PathBuf::from(value)),
             "--output" => output = Some(PathBuf::from(value)),
@@ -65,7 +67,12 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
 
 fn read_suite(path: &Path) -> Result<String, String> {
     let file = fs::File::open(path).map_err(|error| format!("cannot open suite: {error}"))?;
-    if file.metadata().map_err(|error| format!("cannot stat suite: {error}"))?.len() > MAX_SUITE_BYTES {
+    if file
+        .metadata()
+        .map_err(|error| format!("cannot stat suite: {error}"))?
+        .len()
+        > MAX_SUITE_BYTES
+    {
         return Err("suite is larger than 2 MiB".into());
     }
     let mut bytes = Vec::new();
@@ -82,7 +89,8 @@ fn validate_output(suite: &Path, output: &Path) -> Result<(), String> {
     if fs::symlink_metadata(output).is_ok() {
         return Err("report already exists or is a symlink".into());
     }
-    let suite = fs::canonicalize(suite).map_err(|error| format!("cannot resolve suite: {error}"))?;
+    let suite =
+        fs::canonicalize(suite).map_err(|error| format!("cannot resolve suite: {error}"))?;
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -200,8 +208,14 @@ mod tests {
         assert!(parse_args(values(&["--suite", "x"])).is_err());
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-claim-support-per-mille", "1001"
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-claim-support-per-mille",
+            "1001"
+        ]))
+        .is_err());
     }
 
     #[test]
