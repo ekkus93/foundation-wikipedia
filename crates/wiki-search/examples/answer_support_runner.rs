@@ -535,8 +535,7 @@ mod tests {
         weak_case["answer"] = serde_json::json!("Incorrect [[cite:wkb:enwiki:42:100:b0]]");
         weak_case["claims"][0]["text"] = serde_json::json!("Incorrect");
         weak_case["claims"][0]["verdict"] = serde_json::json!("unsupported");
-        weak_case["claims"][0]["citations"][0]["verdict"] =
-            serde_json::json!("unsupported");
+        weak_case["claims"][0]["citations"][0]["verdict"] = serde_json::json!("unsupported");
         weak_suite["cases"].as_array_mut().unwrap().push(weak_case);
         fs::write(&suite, weak_suite.to_string()).unwrap();
         let weak_output = root.join("weak.json");
