@@ -5,4 +5,5 @@
 //! any future ABI export requires a separately reviewed FFI safety boundary.
 //! Native ELF compilation is not equivalent to a working Kotlin/UniFFI API.
 
+pub mod article_chat;
 pub mod online_reader;
