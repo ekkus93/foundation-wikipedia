@@ -74,6 +74,7 @@ pub enum AnswerSupportError {
     InvalidCase(String),
     DuplicateCase(String),
     InvalidClaim(String),
+    UnreviewedProse(String),
     DuplicateClaim(String),
     InvalidCitation(String),
     DuplicateCitation(String),
@@ -289,7 +290,7 @@ pub fn evaluate_answer_support_json(
         return Err(AnswerSupportError::TooLarge);
     }
     let raw: RawSuite = serde_json::from_str(input).map_err(|_| AnswerSupportError::InvalidJson)?;
-    if raw.schema_version != 1 && raw.schema_version != 2 {
+    if !matches!(raw.schema_version, 1..=3) {
         return Err(AnswerSupportError::UnsupportedSchema(raw.schema_version));
     }
     if !valid_id(&raw.suite_id, 128) {
@@ -326,12 +327,12 @@ pub fn evaluate_answer_support_json(
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
         let (markers, visible_answer, occurrences) = answer_markers(&case.answer, &case.id)?;
-        // Schema v2 anchors every claim to an exact, disjoint UTF-8 byte span.
-        // Its citations must occur after that span and before the next claim.
+        // Schema v2/v3 anchor every claim to an exact, disjoint UTF-8 byte span.
+        // Citations must occur after that span and before the next claim.
         // This prevents unrelated citation markers elsewhere in an answer from
         // being credited to the reviewed assertion. V1 remains exploratory.
         let mut next_claim_start = BTreeMap::new();
-        if raw.schema_version == 2 {
+        if raw.schema_version >= 2 {
             let mut spans = Vec::with_capacity(case.claims.len());
             for claim in &case.claims {
                 let (Some(start), Some(end)) = (claim.start_byte, claim.end_byte) else {
@@ -354,6 +355,27 @@ pub fn evaluate_answer_support_json(
             for pair in spans.windows(2) {
                 if pair[0].1 > pair[1].0 {
                     return Err(AnswerSupportError::InvalidClaim(case.id));
+                }
+            }
+            // Schema v3 additionally requires every visible word character to
+            // belong to a reviewed claim. Punctuation/whitespace may remain
+            // outside claims, but an unreviewed factual phrase cannot be
+            // hidden between two annotated claims or after the last citation.
+            // Citation marker bytes are excluded from the visible prose.
+            if raw.schema_version == 3 {
+                let mut covered = vec![false; case.answer.len()];
+                for marker in &occurrences {
+                    covered[marker.start..marker.end].fill(true);
+                }
+                for (start, end, _) in &spans {
+                    covered[*start..*end].fill(true);
+                }
+                if case
+                    .answer
+                    .char_indices()
+                    .any(|(offset, ch)| is_word_character(ch) && !covered[offset])
+                {
+                    return Err(AnswerSupportError::UnreviewedProse(case.id));
                 }
             }
             for (index, (_, _, id)) in spans.iter().enumerate() {
@@ -412,7 +434,7 @@ pub fn evaluate_answer_support_json(
                 if !markers.contains(&citation.block_id) {
                     return Err(AnswerSupportError::MissingCitationMarker(case.id));
                 }
-                if raw.schema_version == 2 {
+                if raw.schema_version >= 2 {
                     let end = claim.end_byte.expect("v2 span checked above");
                     let next = next_claim_start[&claim.id];
                     let mut found = false;
@@ -465,7 +487,7 @@ pub fn evaluate_answer_support_json(
             }
         }
         if markers != labeled_markers
-            || (raw.schema_version == 2 && assigned_occurrences.len() != occurrences.len())
+            || (raw.schema_version >= 2 && assigned_occurrences.len() != occurrences.len())
         {
             return Err(AnswerSupportError::UnlabeledCitationMarker(case.id));
         }
@@ -804,6 +826,34 @@ mod tests {
             claim["end_byte"] = serde_json::json!(start + text.len());
         }
         data
+    }
+
+    #[test]
+    fn v3_requires_complete_visible_word_coverage() {
+        let mut data = suite_v2();
+        data["schema_version"] = serde_json::json!(3);
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+
+        let answer = data["cases"][0]["answer"].as_str().unwrap().to_owned();
+        data["cases"][0]["answer"] = serde_json::json!(format!("{answer} Extra claim."));
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::UnreviewedProse("case_1".into()))
+        );
+        data["cases"][0]["answer"] = serde_json::json!(format!("{answer} café"));
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::UnreviewedProse("case_1".into()))
+        );
+
+        // Non-lexical punctuation is not a factual claim.
+        data["cases"][0]["answer"] = serde_json::json!(format!("{answer} !?"));
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+
+        // Preserve schema-v2's explicitly partial-annotation behavior.
+        data["schema_version"] = serde_json::json!(2);
+        data["cases"][0]["answer"] = serde_json::json!(format!("{answer} Extra claim."));
+        assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
     }
 
     #[test]
