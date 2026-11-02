@@ -587,7 +587,7 @@ mod tests {
             is_disambiguation: false,
         };
         let labels = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 3,
             "suite_id": "strict_test",
             "cases": [{
                 "id": "c1", "project": "enwiki", "page_id": 42, "revision_id": 100,
@@ -595,6 +595,7 @@ mod tests {
                 "answer": "Two moons [[cite:wkb:enwiki:42:100:b0]]",
                 "claims": [{
                     "id": "claim", "text": "Two moons", "verdict": "supported",
+                    "start_byte": 0, "end_byte": 9,
                     "citations": [{"block_id": "wkb:enwiki:42:100:b0", "verdict": "supported"}]
                 }]
             }]
@@ -660,6 +661,23 @@ mod tests {
         })
         .is_err());
         assert!(!changed_suite_output.exists());
+        fs::write(&suite, labels.to_string()).unwrap();
+
+        // Schema v3 must reject an unannotated assertion in the executable
+        // strict-corpus path, even when the original reviewed claim and its
+        // canonical citation remain valid. Invalid suites publish no report.
+        let mut unreviewed = labels.clone();
+        unreviewed["cases"][0]["answer"] = serde_json::json!(
+            "Two moons [[cite:wkb:enwiki:42:100:b0]] Additional unsupported assertion"
+        );
+        fs::write(&suite, unreviewed.to_string()).unwrap();
+        let uncovered_output = root.join("unreviewed-prose.json");
+        assert!(run(Args {
+            output: uncovered_output.clone(),
+            ..args.clone()
+        })
+        .is_err());
+        assert!(!uncovered_output.exists());
         fs::write(&suite, labels.to_string()).unwrap();
 
         // The aggregate 50% score passes, but the weak case must fail both
