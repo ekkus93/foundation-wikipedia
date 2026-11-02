@@ -1433,26 +1433,26 @@ impl UserState {
         Ok((changed != 0).then(|| self.conn.last_insert_rowid()))
     }
 
-    /// Persist a completed, externally validated Q&A turn as one transaction.
-    /// The caller must verify model citations before calling this method:
-    /// neither a user prompt nor an unvalidated partial model stream belongs
-    /// in durable chat history. Both rows commit together or neither does.
+    /// Persist a complete, externally citation-validated Q&A turn atomically.
+    /// If thread_id is None, create the thread inside the SAME transaction as
+    /// both messages: failed inference, stale privacy consent or bad content
+    /// must never leave an empty conversation behind.
     ///
-    /// An IMMEDIATE SQLite transaction serializes the generation check,
-    /// revision/thread identity check, and both inserts with cross-process
-    /// privacy resets. A stale generation returns None without writing.
-    pub fn append_chat_exchange_for_generation(
+    /// This store validates identity, size and privacy generation; the caller
+    /// must validate the model's citations against canonical article evidence.
+    /// A stale cross-process privacy reset returns None without any write.
+    pub fn save_chat_exchange_for_generation(
         &mut self,
         generation: u64,
         key: &ArticleKey,
         revision_id: u64,
-        thread_id: i64,
+        thread_id: Option<i64>,
         question: &str,
         validated_answer: &str,
-    ) -> Result<Option<(i64, i64)>, UserStateError> {
+    ) -> Result<Option<(i64, i64, i64)>, UserStateError> {
         let (page, revision) = Self::ids(key, revision_id)?;
         if generation > i64::MAX as u64
-            || thread_id <= 0
+            || thread_id.is_some_and(|id| id <= 0)
             || question.is_empty()
             || question.len() > 65536
             || question.contains('\0')
@@ -1475,29 +1475,64 @@ impl UserState {
         if current_generation != generation.to_string() {
             return Ok(None);
         }
-        let exists: i64 = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM chat_threads
-             WHERE id=?1 AND project=?2 AND page_id=?3 AND revision_id=?4)",
-            params![thread_id, key.project, page, revision],
-            |row| row.get(0),
-        )?;
-        if exists != 1 {
-            return Err(UserStateError::InvalidValue);
-        }
+        let id = match thread_id {
+            Some(id) => {
+                let exists: i64 = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM chat_threads
+                     WHERE id=?1 AND project=?2 AND page_id=?3 AND revision_id=?4)",
+                    params![id, key.project, page, revision],
+                    |row| row.get(0),
+                )?;
+                if exists != 1 {
+                    return Err(UserStateError::InvalidValue);
+                }
+                id
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO chat_threads (project,page_id,revision_id)
+                     VALUES (?1,?2,?3)",
+                    params![key.project, page, revision],
+                )?;
+                tx.last_insert_rowid()
+            }
+        };
         tx.execute(
             "INSERT INTO chat_messages (thread_id,role,content)
              VALUES (?1,'user',?2)",
-            params![thread_id, question],
+            params![id, question],
         )?;
         let question_id = tx.last_insert_rowid();
         tx.execute(
             "INSERT INTO chat_messages (thread_id,role,content)
              VALUES (?1,'assistant',?2)",
-            params![thread_id, validated_answer],
+            params![id, validated_answer],
         )?;
         let answer_id = tx.last_insert_rowid();
         tx.commit()?;
-        Ok(Some((question_id, answer_id)))
+        Ok(Some((id, question_id, answer_id)))
+    }
+
+    /// Append to an existing exact-revision thread; both rows commit together.
+    /// The original API is preserved for existing callers.
+    pub fn append_chat_exchange_for_generation(
+        &mut self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        question: &str,
+        validated_answer: &str,
+    ) -> Result<Option<(i64, i64)>, UserStateError> {
+        self.save_chat_exchange_for_generation(
+            generation,
+            key,
+            revision_id,
+            Some(thread_id),
+            question,
+            validated_answer,
+        )
+        .map(|saved| saved.map(|(_, question_id, answer_id)| (question_id, answer_id)))
     }
 
     pub fn chat_messages(
@@ -2177,6 +2212,50 @@ mod tests {
             .chat_messages(&key(), 123, new_thread, 10)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn new_chat_thread_and_validated_exchange_are_one_atomic_privacy_scoped_write() {
+        let mut user = UserState::in_memory().unwrap();
+        let generation = user.personal_generation().unwrap();
+        assert!(matches!(
+            user.save_chat_exchange_for_generation(
+                generation, &key(), 123, None, "Question", ""
+            ),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        let (thread, question_id, answer_id) = user
+            .save_chat_exchange_for_generation(
+                generation, &key(), 123, None, "Question", "Verified answer"
+            )
+            .unwrap()
+            .unwrap();
+        assert!(thread > 0 && question_id > 0 && answer_id > question_id);
+        assert_eq!(user.list_chat_threads(&key(), 123, 10).unwrap(), vec![thread]);
+        let messages = user.chat_messages(&key(), 123, thread, 10).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Question");
+        assert_eq!(messages[1].content, "Verified answer");
+        assert!(matches!(
+            user.save_chat_exchange_for_generation(
+                generation, &key(), 124, Some(thread), "Other revision", "No"
+            ),
+            Err(UserStateError::InvalidValue)
+        ));
+        assert_eq!(user.chat_messages(&key(), 123, thread, 10).unwrap().len(), 2);
+        user.clear_personal_reading_data().unwrap();
+        assert_eq!(
+            user.save_chat_exchange_for_generation(
+                generation, &key(), 123, None, "Stale", "Stale answer"
+            ).unwrap(),
+            None
+        );
+        assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
+        let fresh = user.personal_generation().unwrap();
+        assert!(user.save_chat_exchange_for_generation(
+            fresh, &key(), 123, None, "Fresh", "Fresh answer"
+        ).unwrap().is_some());
     }
 
     #[test]
