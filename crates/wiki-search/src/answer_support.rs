@@ -152,9 +152,9 @@ fn valid_id(id: &str, max: usize) -> bool {
 fn valid_citation_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
-        && id.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
-        })
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
 }
 
 /// Parse literal [[cite:BLOCK_ID]] markers; malformed or unterminated markers
