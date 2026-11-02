@@ -778,12 +778,13 @@ mod tests {
             // Reusing a question for a genuinely different answer or exact
             // revision is not a duplicate evaluation case.
             data["cases"][1]["answer"] = serde_json::json!(
-                "Three moons [[cite:lead_0]]. An unsupported aside [[cite:sec_1]]."
+                "Six moons [[cite:lead_0]]. An unsupported aside [[cite:sec_1]]."
             );
-            data["cases"][1]["claims"][0]["text"] = serde_json::json!("Three moons");
+            data["cases"][1]["claims"][0]["text"] = serde_json::json!("Six moons");
             assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
 
-            data["cases"][1] = data["cases"][0].clone();
+            let original = data["cases"][0].clone();
+            data["cases"][1] = original;
             data["cases"][1]["id"] = serde_json::json!("replay_with_different_id");
             data["cases"][1]["revision_id"] = serde_json::json!(101);
             assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
