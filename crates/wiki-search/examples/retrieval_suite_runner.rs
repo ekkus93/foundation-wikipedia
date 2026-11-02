@@ -538,7 +538,9 @@ fn with_input_receipts_with_rank(
     );
     fields.insert(
         "passed".into(),
-        serde_json::json!(baseline_passed && case_gate_passed && precision_gate_passed && first_rank_gate_passed),
+        serde_json::json!(
+            baseline_passed && case_gate_passed && precision_gate_passed && first_rank_gate_passed
+        ),
     );
     let mut output = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("cannot serialize benchmark receipts: {error}"))?;
@@ -839,28 +841,39 @@ mod tests {
             with_input_receipts_with_rank(score, &[], b"{}", "json_article_array", 0, 0, 3)
                 .unwrap();
         let relaxed: serde_json::Value = serde_json::from_str(&relaxed).unwrap();
-        assert_eq!(relaxed["first_relevant_rank_gate"]["below_threshold_case_ids"],
-            serde_json::json!(["absent"]));
-        assert!(with_input_receipts_with_rank(
-            score, &[], b"{}", "json_article_array", 0, 0, 101
-        ).is_err());
+        assert_eq!(
+            relaxed["first_relevant_rank_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["absent"])
+        );
+        assert!(
+            with_input_receipts_with_rank(score, &[], b"{}", "json_article_array", 0, 0, 101)
+                .is_err()
+        );
         let no_answer = r#"{"passed":true,"retrieval":{"cases":[
             {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":0}
         ]}}"#;
-        let vacuous = with_input_receipts_with_rank(
-            no_answer, &[], b"{}", "json_article_array", 0, 0, 1
-        ).unwrap();
+        let vacuous =
+            with_input_receipts_with_rank(no_answer, &[], b"{}", "json_article_array", 0, 0, 1)
+                .unwrap();
         let vacuous: serde_json::Value = serde_json::from_str(&vacuous).unwrap();
         assert_eq!(vacuous["first_relevant_rank_gate"]["passed"], false);
 
         let malformed = score.replace(r#""rank":3"#, r#""rank":2"#);
         assert!(with_input_receipts_with_rank(
-            &malformed, &[], b"{}", "json_article_array", 0, 0, 2
-        ).is_err());
+            &malformed,
+            &[],
+            b"{}",
+            "json_article_array",
+            0,
+            0,
+            2
+        )
+        .is_err());
         let missing = score.replace(r#""ranked_evidence":[]"#, r#""ranked_evidence":null"#);
-        assert!(with_input_receipts_with_rank(
-            &missing, &[], b"{}", "json_article_array", 0, 0, 2
-        ).is_err());
+        assert!(
+            with_input_receipts_with_rank(&missing, &[], b"{}", "json_article_array", 0, 0, 2)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1089,7 +1102,10 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&report).unwrap();
         assert_eq!(parsed["schema_version"], 3);
         assert_eq!(parsed["first_relevant_rank_gate"]["passed"], true);
-        assert_eq!(parsed["first_relevant_rank_gate"]["max_first_relevant_rank"], 1);
+        assert_eq!(
+            parsed["first_relevant_rank_gate"]["max_first_relevant_rank"],
+            1
+        );
         assert_eq!(parsed["input_receipts"]["canonical_article_count"], 1);
         assert_eq!(
             parsed["input_receipts"]["corpus_source_kind"],
