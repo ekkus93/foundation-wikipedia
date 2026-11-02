@@ -179,8 +179,7 @@ pub fn evaluate_answer_support_json(
     if input.len() > MAX_SUITE_BYTES {
         return Err(AnswerSupportError::TooLarge);
     }
-    let raw: RawSuite =
-        serde_json::from_str(input).map_err(|_| AnswerSupportError::InvalidJson)?;
+    let raw: RawSuite = serde_json::from_str(input).map_err(|_| AnswerSupportError::InvalidJson)?;
     if raw.schema_version != 1 {
         return Err(AnswerSupportError::UnsupportedSchema(raw.schema_version));
     }
@@ -323,7 +322,8 @@ mod tests {
                       "citations": [{"block_id": "sec_1", "verdict": "unsupported"}] }
                 ]
             }]
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[test]
@@ -345,7 +345,8 @@ mod tests {
     fn missing_unlabeled_and_duplicate_citations_fail_closed() {
         let s = suite();
         assert_eq!(
-            evaluate_answer_support_json(&s.replace("[[cite:lead_0]]", "[[cite:changed]]")).unwrap_err(),
+            evaluate_answer_support_json(&s.replace("[[cite:lead_0]]", "[[cite:changed]]"))
+                .unwrap_err(),
             AnswerSupportError::MissingCitationMarker("case_1".into())
         );
         let missing = s.replace("\"block_id\":\"lead_0\"", "\"block_id\":\"other\"");
@@ -378,15 +379,24 @@ mod tests {
             Err(AnswerSupportError::InvalidCase(_))
         ));
         assert_eq!(
-            evaluate_answer_support_json(&suite().replace("\"schema_version\":1", "\"schema_version\":2")).unwrap_err(),
+            evaluate_answer_support_json(
+                &suite().replace("\"schema_version\":1", "\"schema_version\":2")
+            )
+            .unwrap_err(),
             AnswerSupportError::UnsupportedSchema(2)
         );
         assert_eq!(
-            evaluate_answer_support_json(&suite().replace("\"id\":\"case_1\"", "\"id\":\"case_1\",\"extra\":1")).unwrap_err(),
+            evaluate_answer_support_json(
+                &suite().replace("\"id\":\"case_1\"", "\"id\":\"case_1\",\"extra\":1")
+            )
+            .unwrap_err(),
             AnswerSupportError::InvalidJson
         );
         assert!(matches!(
-            evaluate_answer_support_json(&suite().replace("\"block_id\":\"lead_0\",\"verdict\":\"supported\"", "\"block_id\":\"lead_0\",\"verdict\":\"unsupported\"")),
+            evaluate_answer_support_json(&suite().replace(
+                "\"block_id\":\"lead_0\",\"verdict\":\"supported\"",
+                "\"block_id\":\"lead_0\",\"verdict\":\"unsupported\""
+            )),
             Err(AnswerSupportError::InconsistentSupport(_))
         ));
     }
