@@ -1058,10 +1058,10 @@ mod tests {
         ));
         assert_eq!(
             evaluate_answer_support_json(
-                &suite().replace("\"schema_version\":1", "\"schema_version\":3")
+                &suite().replace("\"schema_version\":1", "\"schema_version\":4")
             )
             .unwrap_err(),
-            AnswerSupportError::UnsupportedSchema(3)
+            AnswerSupportError::UnsupportedSchema(4)
         );
         assert_eq!(
             evaluate_answer_support_json(
