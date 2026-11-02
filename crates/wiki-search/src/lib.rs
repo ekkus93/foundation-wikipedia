@@ -3,6 +3,7 @@
 //! This indexes only one validated article revision and is not yet a BM25
 //! search engine. Evidence IDs are revision-bound, not persistent bookmarks.
 
+pub mod answer_support;
 pub mod evaluation;
 pub mod evaluation_suite;
 
