@@ -333,6 +333,10 @@ pub fn evaluate_answer_support_json(
         if !seen_cases.insert(case.id.clone()) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
+        // Citation identifiers are not independent answer content. The same
+        // question and visible answer cannot be counted twice merely because
+        // a reviewer changed the cited block IDs in the second case.
+        let (markers, visible_answer, occurrences) = answer_markers(&case.answer, &case.id)?;
         if !seen_case_payloads.insert((
             case.project.clone(),
             case.page_id,
@@ -341,11 +345,13 @@ pub fn evaluate_answer_support_json(
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" "),
-            case.answer.split_whitespace().collect::<Vec<_>>().join(" "),
+            visible_answer
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
         )) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
-        let (markers, visible_answer, occurrences) = answer_markers(&case.answer, &case.id)?;
         // Schema v2/v3 anchor every claim to an exact, disjoint UTF-8 byte span.
         // Citations must occur after that span and before the next claim.
         // This prevents unrelated citation markers elsewhere in an answer from
@@ -823,6 +829,50 @@ mod tests {
             // A different question remains an independent evaluation case.
             data["cases"][1]["question"] = serde_json::json!("How many planets?");
             assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+        }
+    }
+
+    #[test]
+    fn citation_id_changes_cannot_replay_the_same_visible_answer() {
+        for version in [1, 2, 3] {
+            let mut data = if version == 1 {
+                serde_json::from_str::<serde_json::Value>(&suite()).unwrap()
+            } else {
+                suite_v2()
+            };
+            data["schema_version"] = serde_json::json!(version);
+            let mut replay = data["cases"][0].clone();
+            replay["id"] = serde_json::json!("replay_changed_citations");
+            let changed_answer = replay["answer"]
+                .as_str()
+                .unwrap()
+                .replace("lead_0", "lead_1")
+                .replace("sec_1", "sec_2");
+            replay["answer"] = serde_json::json!(changed_answer);
+            for claim in replay["claims"].as_array_mut().unwrap() {
+                let changed_id = claim["citations"][0]["block_id"]
+                    .as_str()
+                    .unwrap()
+                    .replace("lead_0", "lead_1")
+                    .replace("sec_1", "sec_2");
+                claim["citations"][0]["block_id"] = serde_json::json!(changed_id);
+            }
+            // Each case is structurally valid by itself. It is the replay
+            // of the same reviewed prose that must fail the aggregate suite.
+            let mut single = data.clone();
+            single["cases"] = serde_json::json!([replay.clone()]);
+            assert!(
+                evaluate_answer_support_json(&single.to_string()).is_ok(),
+                "schema v{version}"
+            );
+            data["cases"].as_array_mut().unwrap().push(replay);
+            assert_eq!(
+                evaluate_answer_support_json(&data.to_string()),
+                Err(AnswerSupportError::DuplicateCase(
+                    "replay_changed_citations".into()
+                )),
+                "schema v{version}"
+            );
         }
     }
 
