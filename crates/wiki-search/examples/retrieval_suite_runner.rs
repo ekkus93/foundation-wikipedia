@@ -14,9 +14,11 @@
 
 use std::{
     env, fs,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use wiki_model::{Article, ArticleKey, PageRecord};
@@ -29,6 +31,7 @@ use wiki_store::catalog::SnapshotCatalog;
 const MAX_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ARTICLES: usize = 20_000;
 const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
+static REPORT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
@@ -223,8 +226,10 @@ fn validate_pack_project<'a>(
 // Canonical paths catch equivalent spellings and symlinked parent directories.
 // Refuse output symlinks, including dangling ones, rather than following them.
 fn validate_output_destination(args: &Args) -> Result<(), String> {
-    if fs::symlink_metadata(&args.output).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Err("report output must not be a symlink".into());
+    // A report is a new evidence artifact, never an overwrite. This also
+    // refuses dangling symlinks and eliminates the existing-file clobber path.
+    if fs::symlink_metadata(&args.output).is_ok() {
+        return Err("report output already exists (or is a symlink)".into());
     }
     let output = match fs::canonicalize(&args.output) {
         Ok(path) => path,
@@ -262,6 +267,40 @@ fn validate_output_destination(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// Publish a complete report without ever truncating an existing path.
+/// The temporary file is written and synced in the destination directory;
+/// hard-link publication is atomic and fails if another process created the
+/// destination after preflight (including a symlink to an input file).
+fn persist_new_report(output: &Path, content: &str) -> Result<(), String> {
+    let parent = output.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = output.file_name().ok_or("invalid report filename")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "system clock before Unix epoch")?
+        .as_nanos();
+    let sequence = REPORT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".{}.tmp-{}-{nonce}-{sequence}",
+        name.to_string_lossy(),
+        process::id()
+    ));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("cannot create report staging file: {error}"))?;
+    let published = (|| -> std::io::Result<()> {
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        fs::hard_link(&temporary, output)?;
+        Ok(())
+    })();
+    drop(file);
+    // A failed write or conflicting output must not leave a partial artifact.
+    let _ = fs::remove_file(&temporary);
+    published.map_err(|error| format!("cannot publish new report {}: {error}", output.display()))
+}
+
 fn run(args: Args) -> Result<(), String> {
     validate_output_destination(&args)?;
     let (articles, pack_project) = if let Some(root) = &args.snapshot_root {
@@ -297,8 +336,7 @@ fn run(args: Args) -> Result<(), String> {
     };
     let result = run_retrieval_suite_json(&index, suite, args.top_k, &args.sha, &thresholds)
         .map_err(|error| format!("retrieval suite rejected: {error:?}"))?;
-    fs::write(&args.output, result.report_json)
-        .map_err(|error| format!("cannot persist {}: {error}", args.output.display()))?;
+    persist_new_report(&args.output, &result.report_json)?;
     if !result.passed {
         return Err(format!(
             "retrieval regression failed; inspect {}",
@@ -419,6 +457,9 @@ mod tests {
         args.suite = suite.clone();
         args.output = dir.join("report.json");
         assert!(validate_output_destination(&args).is_ok());
+        fs::write(&args.output, b"old report").unwrap();
+        assert!(validate_output_destination(&args).is_err());
+        fs::remove_file(&args.output).unwrap();
         args.output = corpus.clone();
         assert!(validate_output_destination(&args).is_err());
         args.output = dir.join("./suite.json");
@@ -430,6 +471,35 @@ mod tests {
             symlink(&suite, &link).unwrap();
             args.output = link;
             assert!(validate_output_destination(&args).is_err());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn report_publication_is_complete_and_never_overwrites_a_competing_output() {
+        let dir = std::env::temp_dir().join(format!(
+            "wiki-retrieval-publish-{}-{}",
+            process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let report = dir.join("report.json");
+        persist_new_report(&report, "{\\\"passed\\\":true}\\n").unwrap();
+        assert_eq!(fs::read_to_string(&report).unwrap(), "{\\\"passed\\\":true}\\n");
+        assert!(persist_new_report(&report, "replacement").is_err());
+        assert_eq!(fs::read_to_string(&report).unwrap(), "{\\\"passed\\\":true}\\n");
+        // Failed publication must not leave temporary reports behind.
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let target = dir.join("input.json");
+            fs::write(&target, b"source").unwrap();
+            let alias = dir.join("linked.json");
+            symlink(&target, &alias).unwrap();
+            assert!(persist_new_report(&alias, "replacement").is_err());
+            assert_eq!(fs::read(&target).unwrap(), b"source");
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 3);
         }
         fs::remove_dir_all(dir).unwrap();
     }
