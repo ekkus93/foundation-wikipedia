@@ -695,8 +695,7 @@ mod tests {
     #[test]
     fn unsupported_claim_cannot_have_a_supported_citation() {
         let mut data: serde_json::Value = serde_json::from_str(&suite()).unwrap();
-        data["cases"][0]["claims"][1]["citations"][0]["verdict"] =
-            serde_json::json!("supported");
+        data["cases"][0]["claims"][1]["citations"][0]["verdict"] = serde_json::json!("supported");
         assert_eq!(
             evaluate_answer_support_json(&data.to_string()),
             Err(AnswerSupportError::InconsistentSupport("case_1".into()))
