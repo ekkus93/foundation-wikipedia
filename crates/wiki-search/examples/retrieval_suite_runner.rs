@@ -21,6 +21,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
 use wiki_model::{Article, ArticleKey, PageRecord};
 use wiki_pack_format::container::verify_container;
 use wiki_search::{
@@ -312,6 +313,70 @@ fn persist_new_report(output: &Path, content: &str) -> Result<(), String> {
     published.map_err(|error| format!("cannot publish new report {}: {error}", output.display()))
 }
 
+// Hash the exact canonical article objects that were indexed, not a mutable
+// pathname or an unauthenticated upstream identity. Sort by stable page and
+// revision identity so equivalent input orderings yield the same receipt.
+// Stream the serialization into SHA-256 to avoid a second corpus-sized buffer.
+struct DigestWriter<'a>(&'a mut Sha256);
+
+impl Write for DigestWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn canonical_articles_sha256(articles: &[Article]) -> Result<String, String> {
+    let mut ordered = articles.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        left.key
+            .project
+            .cmp(&right.key.project)
+            .then(left.key.page_id.cmp(&right.key.page_id))
+            .then(left.revision.revision_id.cmp(&right.revision.revision_id))
+    });
+    let mut hasher = Sha256::new();
+    serde_json::to_writer(DigestWriter(&mut hasher), &ordered)
+        .map_err(|error| format!("cannot hash canonical benchmark articles: {error}"))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// The library's stable schema-v2 score report remains unchanged. The CLI
+/// publishes schema v3 with input-byte receipts so a future reviewer can
+/// detect corpus or label substitutions even when the claimed SHA is identical.
+/// Digests identify content, not the authority or correctness of its source.
+fn with_input_receipts(
+    score_json: &str,
+    articles: &[Article],
+    suite_bytes: &[u8],
+    corpus_kind: &str,
+) -> Result<String, String> {
+    let mut report: serde_json::Value = serde_json::from_str(score_json)
+        .map_err(|error| format!("invalid retrieval score report: {error}"))?;
+    let fields = report
+        .as_object_mut()
+        .ok_or("retrieval score report must be an object")?;
+    fields.insert("schema_version".into(), serde_json::json!(3));
+    fields.insert(
+        "input_receipts".into(),
+        serde_json::json!({
+            "canonical_articles_json_sha256": canonical_articles_sha256(articles)?,
+            "label_suite_bytes_sha256": wiki_pack_format::sha256_hex(suite_bytes),
+            "canonical_article_count": articles.len(),
+            "corpus_source_kind": corpus_kind,
+            "source_authentication": "caller_supplied_unverified"
+        }),
+    );
+    let mut output = serde_json::to_string_pretty(&report)
+        .map_err(|error| format!("cannot serialize benchmark receipts: {error}"))?;
+    output.push('\n');
+    Ok(output)
+}
+
 fn run(args: Args) -> Result<(), String> {
     validate_output_destination(&args)?;
     let (articles, pack_project) = if let Some(root) = &args.snapshot_root {
@@ -347,7 +412,15 @@ fn run(args: Args) -> Result<(), String> {
     };
     let result = run_retrieval_suite_json(&index, suite, args.top_k, &args.sha, &thresholds)
         .map_err(|error| format!("retrieval suite rejected: {error:?}"))?;
-    persist_new_report(&args.output, &result.report_json)?;
+    let corpus_kind = if args.snapshot_root.is_some() {
+        "local_snapshot_frames"
+    } else if args.pack.is_some() {
+        "pack_articles_object"
+    } else {
+        "json_article_array"
+    };
+    let report = with_input_receipts(&result.report_json, &articles, &suite_bytes, corpus_kind)?;
+    persist_new_report(&args.output, &report)?;
     if !result.passed {
         return Err(format!(
             "retrieval regression failed; inspect {}",
@@ -418,6 +491,36 @@ mod tests {
         fs::write(&input, b"x").unwrap();
         assert!(read_bounded(&input, 0).is_err());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn report_receipts_bind_canonical_articles_and_exact_label_bytes() {
+        let score = r#"{"schema_version":2,"passed":true}"#;
+        let first = with_input_receipts(score, &[], b"{}", "json_article_array").unwrap();
+        let repeat = with_input_receipts(score, &[], b"{}", "json_article_array").unwrap();
+        let changed = with_input_receipts(score, &[], b"{ }", "json_article_array").unwrap();
+        assert_eq!(first, repeat);
+        let first: serde_json::Value = serde_json::from_str(&first).unwrap();
+        let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
+        assert_eq!(first["schema_version"], 3);
+        assert_eq!(first["passed"], true);
+        assert_eq!(first["input_receipts"]["canonical_article_count"], 0);
+        assert_eq!(
+            first["input_receipts"]["canonical_articles_json_sha256"],
+            wiki_pack_format::sha256_hex(b"[]")
+        );
+        assert_eq!(
+            first["input_receipts"]["label_suite_bytes_sha256"],
+            wiki_pack_format::sha256_hex(b"{}")
+        );
+        assert_ne!(
+            first["input_receipts"]["label_suite_bytes_sha256"],
+            changed["input_receipts"]["label_suite_bytes_sha256"]
+        );
+        assert_eq!(
+            first["input_receipts"]["source_authentication"],
+            "caller_supplied_unverified"
+        );
     }
 
     #[test]
@@ -625,6 +728,13 @@ mod tests {
         let report = fs::read_to_string(&report_path).unwrap();
         assert!(report.contains("\"suite_id\": \"snapshot-v1\""));
         assert!(report.contains("\"passed\": true"));
+        let parsed: serde_json::Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(parsed["schema_version"], 3);
+        assert_eq!(parsed["input_receipts"]["canonical_article_count"], 1);
+        assert_eq!(
+            parsed["input_receipts"]["corpus_source_kind"],
+            "local_snapshot_frames"
+        );
         fs::remove_file(report_path).unwrap();
 
         let final_byte = shard.len() - 1;
