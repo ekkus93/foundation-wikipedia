@@ -420,12 +420,10 @@ mod tests {
                 "{invalid}"
             );
         }
-        let too_large_revision = suite().replace(
-            "\\"revision_id\\":100",
-            "\\"revision_id\\":9223372036854775808",
-        );
+        let mut oversized: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        oversized["cases"][0]["revision_id"] = serde_json::json!(9223372036854775808u64);
         assert!(matches!(
-            evaluate_answer_support_json(&too_large_revision),
+            evaluate_answer_support_json(&oversized.to_string()),
             Err(AnswerSupportError::InvalidCase(_))
         ));
     }
