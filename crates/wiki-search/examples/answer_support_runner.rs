@@ -97,7 +97,9 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .map_err(|_| "invalid case citation floor")?;
             }
             "--min-cases" => {
-                min_cases = value.parse::<usize>().map_err(|_| "invalid case count floor")?;
+                min_cases = value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid case count floor")?;
             }
             "--min-distinct-articles" => {
                 min_distinct_articles = value
@@ -548,13 +550,29 @@ mod tests {
             assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
         }
         let coverage_args = parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-cases", "20",
-            "--min-distinct-articles", "5",
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-cases",
+            "20",
+            "--min-distinct-articles",
+            "5",
         ]))
         .unwrap();
-        assert_eq!((coverage_args.min_cases, coverage_args.min_distinct_articles), (20, 5));
+        assert_eq!(
+            (coverage_args.min_cases, coverage_args.min_distinct_articles),
+            (20, 5)
+        );
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-cases", "1", "--min-cases", "2",
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-cases",
+            "1",
+            "--min-cases",
+            "2",
         ]))
         .is_err());
     }
@@ -728,7 +746,10 @@ mod tests {
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
         assert_eq!(report["operator_input_pins_verified"], false);
         assert_eq!(report["gate"]["coverage_gate"]["observed_cases"], 1);
-        assert_eq!(report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
+        assert_eq!(
+            report["gate"]["coverage_gate"]["observed_distinct_articles"],
+            1
+        );
 
         let coverage_output = root.join("coverage-fail.json");
         assert_eq!(
@@ -743,8 +764,14 @@ mod tests {
         let coverage_report: serde_json::Value =
             serde_json::from_slice(&fs::read(&coverage_output).unwrap()).unwrap();
         assert_eq!(coverage_report["gate"]["coverage_gate"]["passed"], false);
-        assert_eq!(coverage_report["gate"]["coverage_gate"]["observed_cases"], 1);
-        assert_eq!(coverage_report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
+        assert_eq!(
+            coverage_report["gate"]["coverage_gate"]["observed_cases"],
+            1
+        );
+        assert_eq!(
+            coverage_report["gate"]["coverage_gate"]["observed_distinct_articles"],
+            1
+        );
         assert_eq!(coverage_report["gate"]["passed"], false);
 
         let pinned = Args {
@@ -844,7 +871,10 @@ mod tests {
             serde_json::from_slice(&fs::read(&weak_output).unwrap()).unwrap();
         assert_eq!(weak_report["gate"]["passed"], false);
         assert_eq!(weak_report["gate"]["coverage_gate"]["observed_cases"], 2);
-        assert_eq!(weak_report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
+        assert_eq!(
+            weak_report["gate"]["coverage_gate"]["observed_distinct_articles"],
+            1
+        );
         assert_eq!(
             weak_report["gate"]["case_claim_support_gate"]["failed_case_ids"],
             serde_json::json!(["weak"])
