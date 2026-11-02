@@ -574,7 +574,7 @@ mod tests {
     fn report_receipts_bind_canonical_articles_and_exact_label_bytes() {
         let score = r#"{"schema_version":2,"passed":true,"retrieval":{"cases":[{"id":"a","relevant_count":1,"found_count":1}]}}"#;
         let first = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
-        let repeat = with_input_receipts(score, &[], b"{}", "json_article_array").unwrap();
+        let repeat = with_input_receipts(score, &[], b"{}", "json_article_array", 0).unwrap();
         let changed = with_input_receipts(score, &[], b"{ }", "json_article_array", 0).unwrap();
         assert_eq!(first, repeat);
         let first: serde_json::Value = serde_json::from_str(&first).unwrap();
