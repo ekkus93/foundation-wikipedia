@@ -364,7 +364,6 @@ pub fn evaluate_answer_support_json(
     })
 }
 
-
 //// Strict benchmark mode: independently verify that every reviewer-labeled
 //// citation is an actual retrievable block of the supplied canonical article
 //// at the exact project/page/revision. This does not authenticate the corpus
@@ -381,11 +380,13 @@ pub fn evaluate_answer_support_with_corpus_json(
     let mut indexes = BTreeMap::new();
     for article in articles {
         let key = (article.key.project.clone(), article.key.page_id);
-        let index = ArticleLexicalIndex::build(article)
-            .map_err(|_| AnswerSupportError::InvalidCorpusArticle(format!("{}:{}", key.0, key.1)))?;
+        let index = ArticleLexicalIndex::build(article).map_err(|_| {
+            AnswerSupportError::InvalidCorpusArticle(format!("{}:{}", key.0, key.1))
+        })?;
         if indexes.insert(key.clone(), index).is_some() {
             return Err(AnswerSupportError::DuplicateCorpusArticle(format!(
-                "{}:{}", key.0, key.1
+                "{}:{}",
+                key.0, key.1
             )));
         }
     }
@@ -435,7 +436,6 @@ mod tests {
         })
         .to_string()
     }
-
 
     fn canonical_article() -> Article {
         use wiki_model::{Block, BlockContent, Revision, Section, ARTICLE_SCHEMA_VERSION};
