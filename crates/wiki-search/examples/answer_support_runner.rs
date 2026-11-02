@@ -5,7 +5,10 @@
 //! cargo run -p wiki-search --example answer_support_runner --locked -- \
 //!   --suite reviewed_answers.json --output answer_support_report.json \
 //!   [--min-claim-support-per-mille 800] \
-//!   [--min-citation-precision-per-mille 800]
+//!   [--min-citation-precision-per-mille 800] [--corpus canonical_articles.json]
+//! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
+//! each citation must exist in an exact validated article revision; source and
+//! human-label authenticity still require independent verification.
 
 use std::{
     env, fs,
@@ -15,13 +18,19 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-use wiki_search::answer_support::evaluate_answer_support_json;
+use sha2::{Digest, Sha256};
+use wiki_model::Article;
+use wiki_search::answer_support::{
+    evaluate_answer_support_json, evaluate_answer_support_with_corpus_json,
+};
 
 const MAX_SUITE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
+    corpus: Option<PathBuf>,
     suite: PathBuf,
     output: PathBuf,
     min_claim_support_per_mille: u16,
@@ -29,6 +38,7 @@ struct Args {
 }
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
+    let mut corpus = None;
     let mut suite = None;
     let mut output = None;
     let mut claim_floor = 0;
@@ -44,6 +54,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
             .ok_or_else(|| format!("missing value for {flag}"))?;
         match flag.as_str() {
             "--suite" => suite = Some(PathBuf::from(value)),
+            "--corpus" => corpus = Some(PathBuf::from(value)),
             "--output" => output = Some(PathBuf::from(value)),
             "--min-claim-support-per-mille" => {
                 claim_floor = value.parse::<u16>().map_err(|_| "invalid claim floor")?;
@@ -58,6 +69,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         return Err("thresholds must be 0..=1000".into());
     }
     Ok(Args {
+        corpus,
         suite: suite.ok_or("missing --suite")?,
         output: output.ok_or("missing --output")?,
         min_claim_support_per_mille: claim_floor,
@@ -83,6 +95,33 @@ fn read_suite(path: &Path) -> Result<String, String> {
         return Err("suite is larger than 2 MiB".into());
     }
     String::from_utf8(bytes).map_err(|_| "suite is not valid UTF-8".into())
+}
+
+
+fn read_corpus(path: &Path) -> Result<(Vec<Article>, String), String> {
+    let file = fs::File::open(path).map_err(|error| format!("cannot open corpus: {error}"))?;
+    if file
+        .metadata()
+        .map_err(|error| format!("cannot stat corpus: {error}"))?
+        .len()
+        > MAX_CORPUS_BYTES
+    {
+        return Err("corpus is larger than 64 MiB".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CORPUS_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read corpus: {error}"))?;
+    if bytes.len() as u64 > MAX_CORPUS_BYTES {
+        return Err("corpus is larger than 64 MiB".into());
+    }
+    let articles: Vec<Article> = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid canonical article array: {error}"))?;
+    if articles.is_empty() || articles.len() > 1_000 {
+        return Err("strict corpus must contain 1..=1000 articles".into());
+    }
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    Ok((articles, digest))
 }
 
 fn validate_output(suite: &Path, output: &Path) -> Result<(), String> {
@@ -144,8 +183,16 @@ fn meets_floor(numerator: usize, denominator: usize, floor: u16) -> bool {
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
-    let report = evaluate_answer_support_json(&raw)
-        .map_err(|error| format!("invalid human-reviewed support suite: {error:?}"))?;
+    let (report, corpus_sha256) = if let Some(path) = &args.corpus {
+        let (articles, digest) = read_corpus(path)?;
+        let report = evaluate_answer_support_with_corpus_json(&raw, &articles)
+            .map_err(|error| format!("invalid reviewed canonical evidence: {error:?}"))?;
+        (report, Some(digest))
+    } else {
+        let report = evaluate_answer_support_json(&raw)
+            .map_err(|error| format!("invalid human-reviewed support suite: {error:?}"))?;
+        (report, None)
+    };
     let passed = report.all_claims_reviewed
         && report.all_citations_reviewed
         && meets_floor(
@@ -161,6 +208,8 @@ fn run(args: Args) -> Result<bool, String> {
     let mut body = serde_json::to_string_pretty(&serde_json::json!({
         "schema_version": 1,
         "evaluation": report,
+        "corpus_input_sha256": corpus_sha256,
+        "evidence_membership_checked": args.corpus.is_some(),
         "gate": {
             "min_claim_support_per_mille": args.min_claim_support_per_mille,
             "min_citation_precision_per_mille": args.min_citation_precision_per_mille,
@@ -199,6 +248,7 @@ mod tests {
         assert_eq!(
             parse_args(values(&["--suite", "a.json", "--output", "b.json"])).unwrap(),
             Args {
+                corpus: None,
                 suite: "a.json".into(),
                 output: "b.json".into(),
                 min_claim_support_per_mille: 0,
@@ -206,6 +256,7 @@ mod tests {
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
+        assert_eq!(parse_args(values(&["--suite", "x", "--output", "z", "--corpus", "a.json"])).unwrap().corpus, Some("a.json".into()));
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
         assert!(parse_args(values(&[
             "--suite",
