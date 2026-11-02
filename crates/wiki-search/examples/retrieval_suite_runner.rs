@@ -875,7 +875,9 @@ mod tests {
         )
         .unwrap();
         let missed_report = missed.output.clone();
-        assert!(run(missed).unwrap_err().contains("retrieval regression failed"));
+        assert!(run(missed)
+            .unwrap_err()
+            .contains("retrieval regression failed"));
         let missed_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&missed_report).unwrap()).unwrap();
         assert_eq!(missed_json["passed"], false);
