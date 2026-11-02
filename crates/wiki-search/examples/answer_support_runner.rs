@@ -10,6 +10,7 @@
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
 
+use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     io::{Read, Write},
@@ -18,7 +19,6 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-use sha2::{Digest, Sha256};
 use wiki_model::Article;
 use wiki_search::answer_support::{
     evaluate_answer_support_json, evaluate_answer_support_with_corpus_json,
@@ -96,7 +96,6 @@ fn read_suite(path: &Path) -> Result<String, String> {
     }
     String::from_utf8(bytes).map_err(|_| "suite is not valid UTF-8".into())
 }
-
 
 fn read_corpus(path: &Path) -> Result<(Vec<Article>, String), String> {
     let file = fs::File::open(path).map_err(|error| format!("cannot open corpus: {error}"))?;
@@ -256,7 +255,14 @@ mod tests {
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
-        assert_eq!(parse_args(values(&["--suite", "x", "--output", "z", "--corpus", "a.json"])).unwrap().corpus, Some("a.json".into()));
+        assert_eq!(
+            parse_args(values(&[
+                "--suite", "x", "--output", "z", "--corpus", "a.json"
+            ]))
+            .unwrap()
+            .corpus,
+            Some("a.json".into())
+        );
         assert!(parse_args(values(&["--suite", "x", "--suite", "y", "--output", "z"])).is_err());
         assert!(parse_args(values(&[
             "--suite",
