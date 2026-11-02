@@ -441,7 +441,10 @@ mod tests {
         use wiki_model::{Block, BlockContent, Revision, Section, ARTICLE_SCHEMA_VERSION};
         Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: 42 },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
             revision: Revision {
                 revision_id: 100,
                 timestamp: "2026-11-02T00:00:00Z".into(),
@@ -516,7 +519,8 @@ mod tests {
             Err(AnswerSupportError::InvalidCorpusArticle(_))
         ));
         let mut no_evidence = article;
-        no_evidence.lead[0].content = wiki_model::BlockContent::HtmlFallback("<p>two moons</p>".into());
+        no_evidence.lead[0].content =
+            wiki_model::BlockContent::HtmlFallback("<p>two moons</p>".into());
         assert_eq!(
             evaluate_answer_support_with_corpus_json(&input, &[no_evidence]),
             Err(AnswerSupportError::UnknownEvidence("case_1".into()))
