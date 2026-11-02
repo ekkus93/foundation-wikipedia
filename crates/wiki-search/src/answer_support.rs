@@ -270,9 +270,9 @@ fn claim_has_word_boundaries(answer: &str, start: usize, end: usize) -> bool {
 }
 
 fn visible_claim_occurs(answer: &str, claim: &str) -> bool {
-    answer.match_indices(claim).any(|(start, _)| {
-        claim_has_word_boundaries(answer, start, start + claim.len())
-    })
+    answer
+        .match_indices(claim)
+        .any(|(start, _)| claim_has_word_boundaries(answer, start, start + claim.len()))
 }
 
 /// Grade explicit human annotations for generated answers. The reviewer must
@@ -381,8 +381,7 @@ pub fn evaluate_answer_support_json(
             if !valid_id(&claim.id, 255)
                 || claim.text.trim().is_empty()
                 || claim.text.len() > 8_192
-                || (raw.schema_version == 1
-                    && !visible_claim_occurs(&visible_answer, &claim.text))
+                || (raw.schema_version == 1 && !visible_claim_occurs(&visible_answer, &claim.text))
                 || claim.citations.len() > MAX_CITATIONS_PER_CLAIM
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
@@ -889,8 +888,16 @@ mod tests {
         // Check a partial prefix, and a Unicode suffix, against a separate
         // complete occurrence of the same literal claim.
         for (answer, fragment, expected) in [
-            ("premoon. moon [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].", "moon", 3),
-            ("cafés. café [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].", "café", 0),
+            (
+                "premoon. moon [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].",
+                "moon",
+                3,
+            ),
+            (
+                "cafés. café [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].",
+                "café",
+                0,
+            ),
         ] {
             data["cases"][0]["answer"] = serde_json::json!(answer);
             data["cases"][0]["claims"][0]["text"] = serde_json::json!(fragment);
