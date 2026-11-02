@@ -337,7 +337,10 @@ pub fn evaluate_answer_support_json(
             case.project.clone(),
             case.page_id,
             case.revision_id,
-            case.question.split_whitespace().collect::<Vec<_>>().join(" "),
+            case.question
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
             case.answer.split_whitespace().collect::<Vec<_>>().join(" "),
         )) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
@@ -806,14 +809,14 @@ mod tests {
             let mut replay = data["cases"][0].clone();
             replay["id"] = serde_json::json!("replay_whitespace");
             replay["question"] = serde_json::json!("  How   many\tmoons?\n");
-            replay["answer"] = serde_json::json!(format!(
-                "{}  \n",
-                replay["answer"].as_str().unwrap()
-            ));
+            replay["answer"] =
+                serde_json::json!(format!("{}  \n", replay["answer"].as_str().unwrap()));
             data["cases"].as_array_mut().unwrap().push(replay);
             assert_eq!(
                 evaluate_answer_support_json(&data.to_string()),
-                Err(AnswerSupportError::DuplicateCase("replay_whitespace".into())),
+                Err(AnswerSupportError::DuplicateCase(
+                    "replay_whitespace".into()
+                )),
                 "schema v{version}"
             );
 
