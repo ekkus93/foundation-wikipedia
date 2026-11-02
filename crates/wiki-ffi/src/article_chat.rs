@@ -184,7 +184,10 @@ mod tests {
     fn article() -> Article {
         Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
-            key: ArticleKey { project: "enwiki".into(), page_id: 9 },
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 9,
+            },
             revision: Revision {
                 revision_id: 12,
                 timestamp: "2026-10-12T00:00:00Z".into(),
@@ -241,52 +244,98 @@ mod tests {
             ),
             Err(ArticleChatError::Cancelled)
         ));
-        assert!(state.list_chat_threads(&article.key, 12, 10).unwrap().is_empty());
+        assert!(state
+            .list_chat_threads(&article.key, 12, 10)
+            .unwrap()
+            .is_empty());
         let active = CancellationToken::default();
         assert!(matches!(
             persist_validated_display(
-                &mut state, generation, &article, "gravity", None,
-                LocalArticleDisplayAnswer::InsufficientEvidence, &active,
-            ).unwrap(),
+                &mut state,
+                generation,
+                &article,
+                "gravity",
+                None,
+                LocalArticleDisplayAnswer::InsufficientEvidence,
+                &active,
+            )
+            .unwrap(),
             SavedArticleChatOutcome::InsufficientEvidence
         ));
         let saved = persist_validated_display(
-            &mut state, generation, &article, "gravity", None,
-            LocalArticleDisplayAnswer::Supported(parts.clone()), &active,
-        ).unwrap();
-        let SavedArticleChatOutcome::Supported { thread_id, question_id, answer_id, parts: verified } = saved else {
+            &mut state,
+            generation,
+            &article,
+            "gravity",
+            None,
+            LocalArticleDisplayAnswer::Supported(parts.clone()),
+            &active,
+        )
+        .unwrap();
+        let SavedArticleChatOutcome::Supported {
+            thread_id,
+            question_id,
+            answer_id,
+            parts: verified,
+        } = saved
+        else {
             panic!("expected a supported answer");
         };
         assert_eq!(verified, parts);
         assert!(answer_id > question_id);
-        let messages = state.chat_messages(&article.key, 12, thread_id, 10).unwrap();
+        let messages = state
+            .chat_messages(&article.key, 12, thread_id, 10)
+            .unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].content, "gravity");
-        assert_eq!(messages[1].content, format!("Gravity attracts [[cite:{}]]", hit.block_id));
+        assert_eq!(
+            messages[1].content,
+            format!("Gravity attracts [[cite:{}]]", hit.block_id)
+        );
         assert!(matches!(
             persist_validated_display(
-                &mut state, generation, &article, "gravity", Some(thread_id + 1),
-                LocalArticleDisplayAnswer::Supported(parts), &active,
+                &mut state,
+                generation,
+                &article,
+                "gravity",
+                Some(thread_id + 1),
+                LocalArticleDisplayAnswer::Supported(parts),
+                &active,
             ),
             Err(ArticleChatError::Store(UserStateError::InvalidValue))
         ));
-        assert_eq!(state.chat_messages(&article.key, 12, thread_id, 10).unwrap().len(), 2);
+        assert_eq!(
+            state
+                .chat_messages(&article.key, 12, thread_id, 10)
+                .unwrap()
+                .len(),
+            2
+        );
         state.clear_personal_reading_data().unwrap();
         assert!(matches!(
             persist_validated_display(
-                &mut state, generation, &article, "gravity", None,
-                LocalArticleDisplayAnswer::InsufficientEvidence, &active,
+                &mut state,
+                generation,
+                &article,
+                "gravity",
+                None,
+                LocalArticleDisplayAnswer::InsufficientEvidence,
+                &active,
             ),
             Err(ArticleChatError::StalePersonalData)
         ));
-        assert!(state.list_chat_threads(&article.key, 12, 10).unwrap().is_empty());
+        assert!(state
+            .list_chat_threads(&article.key, 12, 10)
+            .unwrap()
+            .is_empty());
     }
 
     fn http(body: &str, content_type: &str) -> Vec<u8> {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
-        ).into_bytes()
+        )
+        .into_bytes()
     }
 
     #[test]
@@ -313,7 +362,9 @@ mod tests {
                 http(&sse, "text/event-stream"),
             ] {
                 let (mut socket, _) = listener.accept().unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
                 let mut bytes = Vec::new();
                 loop {
                     let mut buf = [0; 4096];
@@ -349,24 +400,28 @@ mod tests {
             max_output_tokens: 64,
             outbound_policy: OutboundPolicy::AllowLocalEndpoints,
         };
-        let preview = selected.prepare_article_preview(&article, &question).unwrap().unwrap();
+        let preview = selected
+            .prepare_article_preview(&article, &question)
+            .unwrap()
+            .unwrap();
         assert_eq!(preview.passages(), &[hit]);
         let mut state = UserState::in_memory().unwrap();
         let generation = state.personal_generation().unwrap();
         let token = CancellationToken::default();
         assert!(matches!(
             answer_and_save_local_article(
-                &mut state, generation, &article, &question, &selected,
-                &preview, false, None, &token,
+                &mut state, generation, &article, &question, &selected, &preview, false, None,
+                &token,
             ),
-            Err(ArticleChatError::Inference(LocalArticleError::PassageConsentRequired))
+            Err(ArticleChatError::Inference(
+                LocalArticleError::PassageConsentRequired
+            ))
         ));
-        assert!(state.list_chat_threads(&article.key, 12, 10).unwrap().is_empty());
+        assert!(state
+            .list_chat_threads(&article.key, 12, 10)
+            .unwrap()
+            .is_empty());
         let saved = answer_and_save_local_article(
-            &mut state, generation, &article, &question, &selected,
-            &preview, true, None, &token,
-        ).unwrap();
-        let SavedArticleChatOutcome::Supported { thread_id, parts, .. } = saved else {
             panic!("expected supported answer");
         };
         assert_eq!(parts.len(), 2);
