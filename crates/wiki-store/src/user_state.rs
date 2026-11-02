@@ -2219,43 +2219,64 @@ mod tests {
         let mut user = UserState::in_memory().unwrap();
         let generation = user.personal_generation().unwrap();
         assert!(matches!(
-            user.save_chat_exchange_for_generation(
-                generation, &key(), 123, None, "Question", ""
-            ),
+            user.save_chat_exchange_for_generation(generation, &key(), 123, None, "Question", ""),
             Err(UserStateError::InvalidValue)
         ));
         assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
         let (thread, question_id, answer_id) = user
             .save_chat_exchange_for_generation(
-                generation, &key(), 123, None, "Question", "Verified answer"
+                generation,
+                &key(),
+                123,
+                None,
+                "Question",
+                "Verified answer",
             )
             .unwrap()
             .unwrap();
         assert!(thread > 0 && question_id > 0 && answer_id > question_id);
-        assert_eq!(user.list_chat_threads(&key(), 123, 10).unwrap(), vec![thread]);
+        assert_eq!(
+            user.list_chat_threads(&key(), 123, 10).unwrap(),
+            vec![thread]
+        );
         let messages = user.chat_messages(&key(), 123, thread, 10).unwrap();
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].content, "Question");
         assert_eq!(messages[1].content, "Verified answer");
         assert!(matches!(
             user.save_chat_exchange_for_generation(
-                generation, &key(), 124, Some(thread), "Other revision", "No"
+                generation,
+                &key(),
+                124,
+                Some(thread),
+                "Other revision",
+                "No"
             ),
             Err(UserStateError::InvalidValue)
         ));
-        assert_eq!(user.chat_messages(&key(), 123, thread, 10).unwrap().len(), 2);
+        assert_eq!(
+            user.chat_messages(&key(), 123, thread, 10).unwrap().len(),
+            2
+        );
         user.clear_personal_reading_data().unwrap();
         assert_eq!(
             user.save_chat_exchange_for_generation(
-                generation, &key(), 123, None, "Stale", "Stale answer"
-            ).unwrap(),
+                generation,
+                &key(),
+                123,
+                None,
+                "Stale",
+                "Stale answer"
+            )
+            .unwrap(),
             None
         );
         assert!(user.list_chat_threads(&key(), 123, 10).unwrap().is_empty());
         let fresh = user.personal_generation().unwrap();
-        assert!(user.save_chat_exchange_for_generation(
-            fresh, &key(), 123, None, "Fresh", "Fresh answer"
-        ).unwrap().is_some());
+        assert!(user
+            .save_chat_exchange_for_generation(fresh, &key(), 123, None, "Fresh", "Fresh answer")
+            .unwrap()
+            .is_some());
     }
 
     #[test]
