@@ -53,6 +53,9 @@ struct RawClaim {
     text: String,
     verdict: ReviewVerdict,
     citations: Vec<RawCitation>,
+    /// Schema v2: exact UTF-8 byte span of this claim in the original answer.
+    start_byte: Option<usize>,
+    end_byte: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +78,7 @@ pub enum AnswerSupportError {
     InvalidCitation(String),
     DuplicateCitation(String),
     MissingCitationMarker(String),
+    MisplacedCitationMarker(String),
     UnlabeledCitationMarker(String),
     InconsistentSupport(String),
     InvalidCorpus,
@@ -203,16 +207,25 @@ fn citation_matches_case(id: &str, project: &str, page_id: u64, revision_id: u64
 
 /// Parse literal [[cite:BLOCK_ID]] markers; malformed or unterminated markers
 /// cannot be smuggled into an apparently annotated answer.
+#[derive(Debug)]
+struct MarkerOccurrence {
+    block_id: String,
+    start: usize,
+    end: usize,
+}
+
 fn answer_markers(
     answer: &str,
     case_id: &str,
-) -> Result<(BTreeSet<String>, String), AnswerSupportError> {
+) -> Result<(BTreeSet<String>, String, Vec<MarkerOccurrence>), AnswerSupportError> {
     let mut markers = BTreeSet::new();
+    let mut occurrences = Vec::new();
     // Claims must be anchored in answer prose, not in citation IDs. Keep a
     // separator where a marker was so words on either side cannot join.
     let mut visible_answer = String::with_capacity(answer.len());
     let mut rest = answer;
     while let Some(start) = rest.find("[[cite:") {
+        let marker_start = answer.len() - rest.len() + start;
         visible_answer.push_str(&rest[..start]);
         visible_answer.push(' ');
         rest = &rest[start + "[[cite:".len()..];
@@ -224,10 +237,15 @@ fn answer_markers(
             return Err(AnswerSupportError::InvalidCitation(case_id.to_owned()));
         }
         markers.insert(id.to_owned());
+        occurrences.push(MarkerOccurrence {
+            block_id: id.to_owned(),
+            start: marker_start,
+            end: marker_start + "[[cite:".len() + end + 2,
+        });
         rest = &rest[end + 2..];
     }
     visible_answer.push_str(rest);
-    Ok((markers, visible_answer))
+    Ok((markers, visible_answer, occurrences))
 }
 
 /// Require reviewed literal claims to align with complete Unicode word tokens,
@@ -265,7 +283,7 @@ pub fn evaluate_answer_support_json(
         return Err(AnswerSupportError::TooLarge);
     }
     let raw: RawSuite = serde_json::from_str(input).map_err(|_| AnswerSupportError::InvalidJson)?;
-    if raw.schema_version != 1 {
+    if raw.schema_version != 1 && raw.schema_version != 2 {
         return Err(AnswerSupportError::UnsupportedSchema(raw.schema_version));
     }
     if !valid_id(&raw.suite_id, 128) {
@@ -301,7 +319,41 @@ pub fn evaluate_answer_support_json(
         if !seen_cases.insert(case.id.clone()) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
-        let (markers, visible_answer) = answer_markers(&case.answer, &case.id)?;
+        let (markers, visible_answer, occurrences) = answer_markers(&case.answer, &case.id)?;
+        // Schema v2 anchors every claim to an exact, disjoint UTF-8 byte span.
+        // Its citations must occur after that span and before the next claim.
+        // This prevents unrelated citation markers elsewhere in an answer from
+        // being credited to the reviewed assertion. V1 remains exploratory.
+        let mut next_claim_start = BTreeMap::new();
+        if raw.schema_version == 2 {
+            let mut spans = Vec::with_capacity(case.claims.len());
+            for claim in &case.claims {
+                let (Some(start), Some(end)) = (claim.start_byte, claim.end_byte) else {
+                    return Err(AnswerSupportError::InvalidClaim(case.id));
+                };
+                if start >= end
+                    || case.answer.get(start..end) != Some(claim.text.as_str())
+                    || occurrences.iter().any(|marker| start < marker.end && marker.start < end)
+                    || !visible_claim_occurs(&visible_answer, &claim.text)
+                {
+                    return Err(AnswerSupportError::InvalidClaim(case.id));
+                }
+                spans.push((start, end, claim.id.clone()));
+            }
+            spans.sort_by_key(|span| span.0);
+            for pair in spans.windows(2) {
+                if pair[0].1 > pair[1].0 {
+                    return Err(AnswerSupportError::InvalidClaim(case.id));
+                }
+            }
+            for (index, (_, _, id)) in spans.iter().enumerate() {
+                let next = spans.get(index + 1).map_or(case.answer.len(), |span| span.0);
+                next_claim_start.insert(id.clone(), next);
+            }
+        } else if case.claims.iter().any(|claim| claim.start_byte.is_some() || claim.end_byte.is_some()) {
+            return Err(AnswerSupportError::InvalidClaim(case.id));
+        }
+        let mut assigned_occurrences = BTreeSet::new();
         let mut labeled_markers = BTreeSet::new();
         let mut seen_claims = BTreeSet::new();
         // Text-only claim annotations have no occurrence offsets. Counting
@@ -318,7 +370,8 @@ pub fn evaluate_answer_support_json(
             {
                 return Err(AnswerSupportError::InvalidClaim(case.id));
             }
-            if !seen_claims.insert(claim.id.clone()) || !seen_claim_texts.insert(claim.text.clone())
+            if !seen_claims.insert(claim.id.clone())
+                || (raw.schema_version == 1 && !seen_claim_texts.insert(claim.text.clone()))
             {
                 return Err(AnswerSupportError::DuplicateClaim(case.id));
             }
@@ -342,6 +395,23 @@ pub fn evaluate_answer_support_json(
                 }
                 if !markers.contains(&citation.block_id) {
                     return Err(AnswerSupportError::MissingCitationMarker(case.id));
+                }
+                if raw.schema_version == 2 {
+                    let end = claim.end_byte.expect("v2 span checked above");
+                    let next = next_claim_start[&claim.id];
+                    let mut found = false;
+                    for (index, marker) in occurrences.iter().enumerate() {
+                        if marker.block_id == citation.block_id
+                            && marker.start >= end
+                            && marker.end <= next
+                        {
+                            assigned_occurrences.insert(index);
+                            found = true;
+                        }
+                    }
+                    if !found {
+                        return Err(AnswerSupportError::MisplacedCitationMarker(case.id));
+                    }
                 }
                 labeled_markers.insert(citation.block_id);
                 counts.citations += 1;
@@ -378,7 +448,9 @@ pub fn evaluate_answer_support_json(
                 ReviewVerdict::Unreviewed => counts.unreviewed_claims += 1,
             }
         }
-        if markers != labeled_markers {
+        if markers != labeled_markers
+            || (raw.schema_version == 2 && assigned_occurrences.len() != occurrences.len())
+        {
             return Err(AnswerSupportError::UnlabeledCitationMarker(case.id));
         }
         totals.add(&counts);
@@ -703,6 +775,114 @@ mod tests {
         // A supported claim still requires a supported citation.
         data["cases"][0]["claims"][1]["verdict"] = serde_json::json!("supported");
         assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+    }
+
+    fn suite_v2() -> serde_json::Value {
+        let mut data: serde_json::Value = serde_json::from_str(&suite()).unwrap();
+        data["schema_version"] = serde_json::json!(2);
+        let answer = data["cases"][0]["answer"].as_str().unwrap().to_owned();
+        for claim in data["cases"][0]["claims"].as_array_mut().unwrap() {
+            let text = claim["text"].as_str().unwrap();
+            let start = answer.find(text).unwrap();
+            claim["start_byte"] = serde_json::json!(start);
+            claim["end_byte"] = serde_json::json!(start + text.len());
+        }
+        data
+    }
+
+    #[test]
+    fn v2_claim_spans_bind_citations_to_their_own_occurrences() {
+        let mut data = suite_v2();
+        let report = evaluate_answer_support_json(&data.to_string()).unwrap();
+        assert_eq!(report.totals.supported_claims, 1);
+
+        // Swapping annotations still leaves both IDs present in the answer,
+        // but neither citation is adjacent to its own claim.
+        data["cases"][0]["claims"][0]["citations"][0]["block_id"] = serde_json::json!("sec_1");
+        data["cases"][0]["claims"][1]["citations"][0]["block_id"] = serde_json::json!("lead_0");
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::MisplacedCitationMarker("case_1".into()))
+        );
+    }
+
+    #[test]
+    fn v2_rejects_overlaps_missing_offsets_and_marker_only_spans() {
+        let mut data = suite_v2();
+        data["cases"][0]["claims"][0].as_object_mut().unwrap().remove("start_byte");
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        data = suite_v2();
+        let mut overlap = data["cases"][0]["claims"][0].clone();
+        overlap["id"] = serde_json::json!("overlap");
+        overlap["text"] = serde_json::json!("moons");
+        let answer = data["cases"][0]["answer"].as_str().unwrap();
+        let start = answer.find("moons").unwrap();
+        overlap["start_byte"] = serde_json::json!(start);
+        overlap["end_byte"] = serde_json::json!(start + "moons".len());
+        data["cases"][0]["claims"].as_array_mut().unwrap().push(overlap);
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        data = suite_v2();
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("lead_0");
+        let answer = data["cases"][0]["answer"].as_str().unwrap();
+        let start = answer.find("lead_0").unwrap();
+        data["cases"][0]["claims"][0]["start_byte"] = serde_json::json!(start);
+        data["cases"][0]["claims"][0]["end_byte"] = serde_json::json!(start + 6);
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+    }
+
+    #[test]
+    fn v2_allows_repeated_literal_claims_at_distinct_spans() {
+        let mut data = suite_v2();
+        let original = data["cases"][0]["answer"].as_str().unwrap().to_owned();
+        data["cases"][0]["answer"] = serde_json::json!(format!("{original} Two moons [[cite:lead_0]]."));
+        let mut repeat = data["cases"][0]["claims"][0].clone();
+        repeat["id"] = serde_json::json!("repeat");
+        let start = data["cases"][0]["answer"].as_str().unwrap().rfind("Two moons").unwrap();
+        repeat["start_byte"] = serde_json::json!(start);
+        repeat["end_byte"] = serde_json::json!(start + "Two moons".len());
+        data["cases"][0]["claims"].as_array_mut().unwrap().push(repeat);
+        let report = evaluate_answer_support_json(&data.to_string()).unwrap();
+        assert_eq!(report.totals.claims, 3);
+        assert_eq!(report.totals.supported_claims, 2);
+        // V1 deliberately cannot disambiguate repeated text with different IDs.
+        data["schema_version"] = serde_json::json!(1);
+        for claim in data["cases"][0]["claims"].as_array_mut().unwrap() {
+            claim.as_object_mut().unwrap().remove("start_byte");
+            claim.as_object_mut().unwrap().remove("end_byte");
+        }
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::DuplicateClaim("case_1".into()))
+        );
+    }
+
+    #[test]
+    fn v1_rejects_v2_offsets_and_v2_rejects_mid_utf8_spans() {
+        let mut data = suite_v2();
+        data["schema_version"] = serde_json::json!(1);
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
+        data = suite_v2();
+        let answer = "Café [[cite:lead_0]]. An unsupported aside [[cite:sec_1]].";
+        data["cases"][0]["answer"] = serde_json::json!(answer);
+        data["cases"][0]["claims"][0]["text"] = serde_json::json!("Café");
+        data["cases"][0]["claims"][0]["start_byte"] = serde_json::json!(0);
+        data["cases"][0]["claims"][0]["end_byte"] = serde_json::json!(4);
+        assert_eq!(
+            evaluate_answer_support_json(&data.to_string()),
+            Err(AnswerSupportError::InvalidClaim("case_1".into()))
+        );
     }
 
     #[test]
