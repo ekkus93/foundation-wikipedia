@@ -69,10 +69,14 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                 citation_floor = value.parse::<u16>().map_err(|_| "invalid citation floor")?;
             }
             "--min-case-claim-support-per-mille" => {
-                case_claim_floor = value.parse::<u16>().map_err(|_| "invalid case claim floor")?;
+                case_claim_floor = value
+                    .parse::<u16>()
+                    .map_err(|_| "invalid case claim floor")?;
             }
             "--min-case-citation-precision-per-mille" => {
-                case_citation_floor = value.parse::<u16>().map_err(|_| "invalid case citation floor")?;
+                case_citation_floor = value
+                    .parse::<u16>()
+                    .map_err(|_| "invalid case citation floor")?;
             }
             _ => return Err(format!("unknown option: {flag}")),
         }
@@ -316,15 +320,34 @@ mod tests {
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-case-claim-support-per-mille", "1001"
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-case-claim-support-per-mille",
+            "1001"
+        ]))
+        .is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-case-citation-precision-per-mille", "bad"
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-case-citation-precision-per-mille",
+            "bad"
+        ]))
+        .is_err());
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z", "--min-case-claim-support-per-mille", "1",
-            "--min-case-claim-support-per-mille", "2"
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-case-claim-support-per-mille",
+            "1",
+            "--min-case-claim-support-per-mille",
+            "2"
+        ]))
+        .is_err());
         assert_eq!(
             parse_args(values(&[
                 "--suite", "x", "--output", "z", "--corpus", "a.json"
@@ -413,13 +436,18 @@ mod tests {
             (counts.supported_citations, counts.reviewed_citations)
         });
         assert_eq!(claim_gate["failed_case_ids"], serde_json::json!(["weak"]));
-        assert_eq!(citation_gate["failed_case_ids"], serde_json::json!(["weak"]));
+        assert_eq!(
+            citation_gate["failed_case_ids"],
+            serde_json::json!(["weak"])
+        );
         assert_eq!(claim_gate["passed"], false);
         assert_eq!(citation_gate["passed"], false);
         assert_eq!(per_case_gate(&report.cases, 0, |_| (0, 0))["passed"], true);
         assert_eq!(per_case_gate(&[], 800, |_| (0, 0))["passed"], false);
-        assert_eq!(per_case_gate(&report.cases, 800, |_| (0, 0))["failed_case_ids"],
-            serde_json::json!(["strong", "weak"]));
+        assert_eq!(
+            per_case_gate(&report.cases, 800, |_| (0, 0))["failed_case_ids"],
+            serde_json::json!(["strong", "weak"])
+        );
     }
 
     #[test]
@@ -493,7 +521,10 @@ mod tests {
         assert_eq!(report["evidence_membership_checked"], true);
         assert_eq!(report["gate"]["passed"], true);
         assert_eq!(report["gate"]["case_claim_support_gate"]["passed"], true);
-        assert_eq!(report["gate"]["case_citation_precision_gate"]["passed"], true);
+        assert_eq!(
+            report["gate"]["case_citation_precision_gate"]["passed"],
+            true
+        );
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
 
         let mut stale = article;
