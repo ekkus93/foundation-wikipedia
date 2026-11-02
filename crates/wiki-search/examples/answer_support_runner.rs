@@ -9,7 +9,7 @@
 //!   [--min-case-claim-support-per-mille 800]
 //!   [--min-case-citation-precision-per-mille 800]
 //!   [--expect-suite-sha256 64-lowercase-hex --expect-corpus-sha256 64-lowercase-hex]
-//!   [--require-schema-v3]
+//!   [--require-schema-v3] [--min-cases 100] [--min-distinct-articles 25]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -44,6 +44,8 @@ struct Args {
     min_citation_precision_per_mille: u16,
     min_case_claim_support_per_mille: u16,
     min_case_citation_precision_per_mille: u16,
+    min_cases: usize,
+    min_distinct_articles: usize,
 }
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -57,6 +59,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut citation_floor = 0;
     let mut case_claim_floor = 0;
     let mut case_citation_floor = 0;
+    let mut min_cases = 0;
+    let mut min_distinct_articles = 0;
     let mut seen = std::collections::BTreeSet::new();
     let mut values = values.into_iter();
     while let Some(flag) = values.next() {
@@ -92,6 +96,14 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .parse::<u16>()
                     .map_err(|_| "invalid case citation floor")?;
             }
+            "--min-cases" => {
+                min_cases = value.parse::<usize>().map_err(|_| "invalid case count floor")?;
+            }
+            "--min-distinct-articles" => {
+                min_distinct_articles = value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid distinct article floor")?;
+            }
             _ => return Err(format!("unknown option: {flag}")),
         }
     }
@@ -101,6 +113,9 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         || case_citation_floor > 1_000
     {
         return Err("thresholds must be 0..=1000".into());
+    }
+    if min_cases > 1_000 || min_distinct_articles > 1_000 {
+        return Err("coverage floors must be 0..=1000".into());
     }
     if expected_suite_sha256.is_some() != expected_corpus_sha256.is_some() {
         return Err("suite and corpus SHA-256 pins must be supplied together".into());
@@ -131,6 +146,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         min_citation_precision_per_mille: citation_floor,
         min_case_claim_support_per_mille: case_claim_floor,
         min_case_citation_precision_per_mille: case_citation_floor,
+        min_cases,
+        min_distinct_articles,
     })
 }
 
@@ -262,6 +279,29 @@ fn per_case_gate(
     })
 }
 
+/// An independently reviewed benchmark should span more than one question
+/// and more than one article. Multiple revisions or questions for the same
+/// project/page ID do not count as distinct articles. These are structural
+/// coverage floors, not a representativeness or provenance certification.
+fn coverage_gate(
+    cases: &[wiki_search::answer_support::CaseSupportScore],
+    min_cases: usize,
+    min_distinct_articles: usize,
+) -> serde_json::Value {
+    let distinct_articles = cases
+        .iter()
+        .map(|case| (case.project.as_str(), case.page_id))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    serde_json::json!({
+        "min_cases": min_cases,
+        "min_distinct_articles": min_distinct_articles,
+        "observed_cases": cases.len(),
+        "observed_distinct_articles": distinct_articles,
+        "passed": cases.len() >= min_cases && distinct_articles >= min_distinct_articles
+    })
+}
+
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
@@ -305,7 +345,9 @@ fn run(args: Args) -> Result<bool, String> {
         args.min_case_citation_precision_per_mille,
         |counts| (counts.supported_citations, counts.reviewed_citations),
     );
-    let passed = case_claim_gate["passed"] == true
+    let coverage = coverage_gate(&report.cases, args.min_cases, args.min_distinct_articles);
+    let passed = coverage["passed"] == true
+        && case_claim_gate["passed"] == true
         && case_citation_gate["passed"] == true
         && report.all_claims_reviewed
         && report.all_citations_reviewed
@@ -331,6 +373,7 @@ fn run(args: Args) -> Result<bool, String> {
             "min_citation_precision_per_mille": args.min_citation_precision_per_mille,
             "case_claim_support_gate": case_claim_gate,
             "case_citation_precision_gate": case_citation_gate,
+            "coverage_gate": coverage,
             "passed": passed
         },
         "disclaimer": "Caller-supplied human labels only; no authenticated provenance or automated factual entailment"
@@ -376,6 +419,8 @@ mod tests {
                 min_citation_precision_per_mille: 0,
                 min_case_claim_support_per_mille: 0,
                 min_case_citation_precision_per_mille: 0,
+                min_cases: 0,
+                min_distinct_articles: 0,
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
@@ -493,6 +538,23 @@ mod tests {
             "z",
             "--min-claim-support-per-mille",
             "1001"
+        ]))
+        .is_err());
+        for (flag, value) in [
+            ("--min-cases", "1001"),
+            ("--min-distinct-articles", "-1"),
+            ("--min-distinct-articles", "abc"),
+        ] {
+            assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
+        }
+        let coverage_args = parse_args(values(&[
+            "--suite", "x", "--output", "z", "--min-cases", "20",
+            "--min-distinct-articles", "5",
+        ]))
+        .unwrap();
+        assert_eq!((coverage_args.min_cases, coverage_args.min_distinct_articles), (20, 5));
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--min-cases", "1", "--min-cases", "2",
         ]))
         .is_err());
     }
@@ -648,6 +710,8 @@ mod tests {
             min_citation_precision_per_mille: 1_000,
             min_case_claim_support_per_mille: 1_000,
             min_case_citation_precision_per_mille: 1_000,
+            min_cases: 0,
+            min_distinct_articles: 0,
         };
         assert_eq!(run(args.clone()), Ok(true));
         let report: serde_json::Value =
@@ -663,6 +727,25 @@ mod tests {
         );
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
         assert_eq!(report["operator_input_pins_verified"], false);
+        assert_eq!(report["gate"]["coverage_gate"]["observed_cases"], 1);
+        assert_eq!(report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
+
+        let coverage_output = root.join("coverage-fail.json");
+        assert_eq!(
+            run(Args {
+                output: coverage_output.clone(),
+                min_cases: 2,
+                min_distinct_articles: 2,
+                ..args.clone()
+            }),
+            Ok(false)
+        );
+        let coverage_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&coverage_output).unwrap()).unwrap();
+        assert_eq!(coverage_report["gate"]["coverage_gate"]["passed"], false);
+        assert_eq!(coverage_report["gate"]["coverage_gate"]["observed_cases"], 1);
+        assert_eq!(coverage_report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
+        assert_eq!(coverage_report["gate"]["passed"], false);
 
         let pinned = Args {
             expected_suite_sha256: Some(format!("{:x}", Sha256::digest(fs::read(&suite).unwrap()))),
@@ -760,6 +843,8 @@ mod tests {
         let weak_report: serde_json::Value =
             serde_json::from_slice(&fs::read(&weak_output).unwrap()).unwrap();
         assert_eq!(weak_report["gate"]["passed"], false);
+        assert_eq!(weak_report["gate"]["coverage_gate"]["observed_cases"], 2);
+        assert_eq!(weak_report["gate"]["coverage_gate"]["observed_distinct_articles"], 1);
         assert_eq!(
             weak_report["gate"]["case_claim_support_gate"]["failed_case_ids"],
             serde_json::json!(["weak"])
