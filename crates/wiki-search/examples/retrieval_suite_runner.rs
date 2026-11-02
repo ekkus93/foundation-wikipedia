@@ -5,7 +5,7 @@
 //!   --pack corpus.wpack --suite labels.json --sha <40-hex-commit> \\
 //!   --output report.json [--top-k 5] [--min-recall-per-mille 800] \\
 //!   [--max-no-answer-fp 0] [--min-case-recall-per-mille 0] \\
-//!   [--min-case-precision-per-mille 0]
+//!   [--min-case-precision-per-mille 0] [--max-first-relevant-rank 0]
 //!
 //! Use --corpus articles.json instead of --pack for unpacked input.
 //! Use --snapshot-root PATH for catalog.sqlite and MessagePack/zstd shard frames.
@@ -48,6 +48,7 @@ struct Args {
     max_no_answer_fp: usize,
     min_case_recall_per_mille: u16,
     min_case_precision_per_mille: u16,
+    max_first_relevant_rank: usize,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -62,6 +63,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut max_no_answer_fp = 0;
     let mut min_case_recall_per_mille = 0;
     let mut min_case_precision_per_mille = 0;
+    let mut max_first_relevant_rank = 0;
     let mut args = args.into_iter();
     let mut seen_flags = std::collections::BTreeSet::new();
     while let Some(flag) = args.next() {
@@ -99,6 +101,11 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
                     .parse()
                     .map_err(|_| "invalid per-case precision threshold".to_owned())?;
             }
+            "--max-first-relevant-rank" => {
+                max_first_relevant_rank = value
+                    .parse()
+                    .map_err(|_| "invalid first relevant rank limit".to_owned())?;
+            }
             _ => return Err(format!("unknown or duplicate argument: {flag}")),
         }
     }
@@ -106,8 +113,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         || min_recall_per_mille > 1_000
         || min_case_recall_per_mille > 1_000
         || min_case_precision_per_mille > 1_000
+        || max_first_relevant_rank > 100
     {
-        return Err("top-k must be 1..=100 and recall/precision thresholds 0..=1000".into());
+        return Err("top-k must be 1..=100, recall/precision thresholds 0..=1000, and first relevant rank 0..=100".into());
     }
     let sha = sha.ok_or("missing --sha")?;
     if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -132,6 +140,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         max_no_answer_fp,
         min_case_recall_per_mille,
         min_case_precision_per_mille,
+        max_first_relevant_rank,
     })
 }
 
@@ -370,16 +379,20 @@ fn canonical_articles_sha256(articles: &[Article]) -> Result<String, String> {
 /// publishes schema v3 with input-byte receipts so a future reviewer can
 /// detect corpus or label substitutions even when the claimed SHA is identical.
 /// Digests identify content, not the authority or correctness of its source.
-fn with_input_receipts(
+fn with_input_receipts_with_rank(
     score_json: &str,
     articles: &[Article],
     suite_bytes: &[u8],
     corpus_kind: &str,
     min_case_recall_per_mille: u16,
     min_case_precision_per_mille: u16,
+    max_first_relevant_rank: usize,
 ) -> Result<String, String> {
     if min_case_recall_per_mille > 1_000 || min_case_precision_per_mille > 1_000 {
         return Err("per-case recall or precision threshold exceeds 1000".into());
+    }
+    if max_first_relevant_rank > 100 {
+        return Err("first relevant rank limit exceeds 100".into());
     }
     let mut report: serde_json::Value = serde_json::from_str(score_json)
         .map_err(|error| format!("invalid retrieval score report: {error}"))?;
@@ -398,6 +411,8 @@ fn with_input_receipts(
     let mut answerable_cases = 0usize;
     let mut missed_case_ids = Vec::new();
     let mut low_precision_case_ids = Vec::new();
+    let mut late_first_relevant_case_ids = Vec::new();
+    let mut observed_first_relevant_ranks = Vec::new();
     for case in cases {
         let id = case
             .get("id")
@@ -433,6 +448,45 @@ fn with_input_receipts(
             {
                 low_precision_case_ids.push(id.to_owned());
             }
+            if max_first_relevant_rank > 0 {
+                // The shared evaluator emits rank-ordered, gold-labeled hits.
+                // Validate its receipt before gating: an absent or inconsistent
+                // ranking must never be interpreted as an early gold hit.
+                let ranked = case
+                    .get("ranked_evidence")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or("scored case has no ranked evidence")?;
+                if ranked.len() as u64 != retrieved {
+                    return Err("scored case has inconsistent ranked evidence count".into());
+                }
+                let mut first_rank = None;
+                let mut labeled_count = 0u64;
+                for (position, hit) in ranked.iter().enumerate() {
+                    if hit.get("rank").and_then(serde_json::Value::as_u64)
+                        != Some((position + 1) as u64)
+                    {
+                        return Err("scored case has noncontiguous evidence ranks".into());
+                    }
+                    let labeled = hit
+                        .get("labeled_relevant")
+                        .and_then(serde_json::Value::as_bool)
+                        .ok_or("scored hit has no relevance label")?;
+                    if labeled {
+                        labeled_count += 1;
+                        first_rank.get_or_insert(position + 1);
+                    }
+                }
+                if labeled_count != found {
+                    return Err("scored case has inconsistent relevance labels".into());
+                }
+                if first_rank.is_none_or(|rank| rank > max_first_relevant_rank) {
+                    late_first_relevant_case_ids.push(id.to_owned());
+                }
+                observed_first_relevant_ranks.push(serde_json::json!({
+                    "case_id": id,
+                    "first_relevant_rank": first_rank
+                }));
+            }
         }
     }
     // A nonzero minimum cannot be satisfied vacuously by a suite containing
@@ -441,6 +495,8 @@ fn with_input_receipts(
         min_case_recall_per_mille == 0 || (answerable_cases > 0 && missed_case_ids.is_empty());
     let precision_gate_passed = min_case_precision_per_mille == 0
         || (answerable_cases > 0 && low_precision_case_ids.is_empty());
+    let first_rank_gate_passed = max_first_relevant_rank == 0
+        || (answerable_cases > 0 && late_first_relevant_case_ids.is_empty());
     fields.insert("schema_version".into(), serde_json::json!(3));
     fields.insert(
         "input_receipts".into(),
@@ -471,13 +527,43 @@ fn with_input_receipts(
         }),
     );
     fields.insert(
+        "first_relevant_rank_gate".into(),
+        serde_json::json!({
+            "max_first_relevant_rank": max_first_relevant_rank,
+            "answerable_cases": answerable_cases,
+            "below_threshold_case_ids": late_first_relevant_case_ids,
+            "observed_first_relevant_ranks": observed_first_relevant_ranks,
+            "passed": first_rank_gate_passed
+        }),
+    );
+    fields.insert(
         "passed".into(),
-        serde_json::json!(baseline_passed && case_gate_passed && precision_gate_passed),
+        serde_json::json!(baseline_passed && case_gate_passed && precision_gate_passed && first_rank_gate_passed),
     );
     let mut output = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("cannot serialize benchmark receipts: {error}"))?;
     output.push('\n');
     Ok(output)
+}
+
+#[cfg(test)]
+fn with_input_receipts(
+    score_json: &str,
+    articles: &[Article],
+    suite_bytes: &[u8],
+    corpus_kind: &str,
+    min_case_recall_per_mille: u16,
+    min_case_precision_per_mille: u16,
+) -> Result<String, String> {
+    with_input_receipts_with_rank(
+        score_json,
+        articles,
+        suite_bytes,
+        corpus_kind,
+        min_case_recall_per_mille,
+        min_case_precision_per_mille,
+        0,
+    )
 }
 
 fn run(args: Args) -> Result<(), String> {
@@ -522,13 +608,14 @@ fn run(args: Args) -> Result<(), String> {
     } else {
         "json_article_array"
     };
-    let report = with_input_receipts(
+    let report = with_input_receipts_with_rank(
         &result.report_json,
         &articles,
         &suite_bytes,
         corpus_kind,
         args.min_case_recall_per_mille,
         args.min_case_precision_per_mille,
+        args.max_first_relevant_rank,
     )?;
     persist_new_report(&args.output, &report)?;
     let report_passed = serde_json::from_str::<serde_json::Value>(&report)
@@ -713,6 +800,70 @@ mod tests {
     }
 
     #[test]
+    fn first_relevant_rank_gate_rejects_late_gold_and_invalid_receipts() {
+        // Recall and precision can both pass while the first relevant
+        // passage appears too late for a short evidence context window.
+        let score = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"late","relevant_count":1,"found_count":1,"retrieved_count":3,
+             "ranked_evidence":[{"rank":1,"labeled_relevant":false},
+                                {"rank":2,"labeled_relevant":false},
+                                {"rank":3,"labeled_relevant":true}]},
+            {"id":"early","relevant_count":1,"found_count":1,"retrieved_count":1,
+             "ranked_evidence":[{"rank":1,"labeled_relevant":true}]},
+            {"id":"absent","relevant_count":1,"found_count":0,"retrieved_count":0,
+             "ranked_evidence":[]},
+            {"id":"no-answer","relevant_count":0,"found_count":0,"retrieved_count":0,
+             "ranked_evidence":[]}
+        ]}}"#;
+        let strict =
+            with_input_receipts_with_rank(score, &[], b"{}", "json_article_array", 0, 0, 2)
+                .unwrap();
+        let strict: serde_json::Value = serde_json::from_str(&strict).unwrap();
+        assert_eq!(strict["passed"], false);
+        assert_eq!(strict["case_recall_gate"]["passed"], true);
+        assert_eq!(strict["case_precision_gate"]["passed"], true);
+        assert_eq!(strict["first_relevant_rank_gate"]["answerable_cases"], 3);
+        assert_eq!(
+            strict["first_relevant_rank_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["late", "absent"])
+        );
+        assert_eq!(
+            strict["first_relevant_rank_gate"]["observed_first_relevant_ranks"],
+            serde_json::json!([
+                {"case_id":"late","first_relevant_rank":3},
+                {"case_id":"early","first_relevant_rank":1},
+                {"case_id":"absent","first_relevant_rank":null}
+            ])
+        );
+        let relaxed =
+            with_input_receipts_with_rank(score, &[], b"{}", "json_article_array", 0, 0, 3)
+                .unwrap();
+        let relaxed: serde_json::Value = serde_json::from_str(&relaxed).unwrap();
+        assert_eq!(relaxed["first_relevant_rank_gate"]["below_threshold_case_ids"],
+            serde_json::json!(["absent"]));
+        assert!(with_input_receipts_with_rank(
+            score, &[], b"{}", "json_article_array", 0, 0, 101
+        ).is_err());
+        let no_answer = r#"{"passed":true,"retrieval":{"cases":[
+            {"id":"negative","relevant_count":0,"found_count":0,"retrieved_count":0}
+        ]}}"#;
+        let vacuous = with_input_receipts_with_rank(
+            no_answer, &[], b"{}", "json_article_array", 0, 0, 1
+        ).unwrap();
+        let vacuous: serde_json::Value = serde_json::from_str(&vacuous).unwrap();
+        assert_eq!(vacuous["first_relevant_rank_gate"]["passed"], false);
+
+        let malformed = score.replace(r#""rank":3"#, r#""rank":2"#);
+        assert!(with_input_receipts_with_rank(
+            &malformed, &[], b"{}", "json_article_array", 0, 0, 2
+        ).is_err());
+        let missing = score.replace(r#""ranked_evidence":[]"#, r#""ranked_evidence":null"#);
+        assert!(with_input_receipts_with_rank(
+            &missing, &[], b"{}", "json_article_array", 0, 0, 2
+        ).is_err());
+    }
+
+    #[test]
     fn parses_bounded_reproducible_run() {
         let args = parse_args(arguments()).unwrap();
         assert_eq!(args.top_k, 5);
@@ -720,6 +871,7 @@ mod tests {
         assert_eq!(args.max_no_answer_fp, 0);
         assert_eq!(args.min_case_recall_per_mille, 0);
         assert_eq!(args.min_case_precision_per_mille, 0);
+        assert_eq!(args.max_first_relevant_rank, 0);
     }
 
     #[test]
@@ -729,6 +881,9 @@ mod tests {
         assert!(parse_args(args).is_err());
         let mut args = arguments();
         args.extend(["--min-case-precision-per-mille".into(), "1001".into()]);
+        assert!(parse_args(args).is_err());
+        let mut args = arguments();
+        args.extend(["--max-first-relevant-rank".into(), "101".into()]);
         assert!(parse_args(args).is_err());
         let mut args = arguments();
         args.extend(["--top-k".into(), "101".into()]);
@@ -762,6 +917,7 @@ mod tests {
             ("--max-no-answer-fp", "1"),
             ("--min-case-recall-per-mille", "500"),
             ("--min-case-precision-per-mille", "500"),
+            ("--max-first-relevant-rank", "2"),
         ] {
             let mut args = arguments();
             args.extend([
@@ -909,6 +1065,7 @@ mod tests {
             max_no_answer_fp: 0,
             min_case_recall_per_mille: 0,
             min_case_precision_per_mille: 0,
+            max_first_relevant_rank: 1,
         };
         fs::write(
             &args.suite,
@@ -931,6 +1088,8 @@ mod tests {
         assert!(report.contains("\"passed\": true"));
         let parsed: serde_json::Value = serde_json::from_str(&report).unwrap();
         assert_eq!(parsed["schema_version"], 3);
+        assert_eq!(parsed["first_relevant_rank_gate"]["passed"], true);
+        assert_eq!(parsed["first_relevant_rank_gate"]["max_first_relevant_rank"], 1);
         assert_eq!(parsed["input_receipts"]["canonical_article_count"], 1);
         assert_eq!(
             parsed["input_receipts"]["corpus_source_kind"],
@@ -947,6 +1106,7 @@ mod tests {
         missed.min_recall_per_mille = 0;
         missed.min_case_recall_per_mille = 0;
         missed.min_case_precision_per_mille = 500;
+        missed.max_first_relevant_rank = 1;
         fs::write(
             &missed.suite,
             r#"{"schema_version":1,"suite_id":"missed-gold-v1","cases":[
@@ -965,6 +1125,7 @@ mod tests {
         assert_eq!(missed_json["passed"], false);
         assert_eq!(missed_json["case_recall_gate"]["passed"], true);
         assert_eq!(missed_json["case_precision_gate"]["passed"], false);
+        assert_eq!(missed_json["first_relevant_rank_gate"]["passed"], false);
         assert_eq!(
             missed_json["case_precision_gate"]["below_threshold_case_ids"],
             serde_json::json!(["unretrieved"])
