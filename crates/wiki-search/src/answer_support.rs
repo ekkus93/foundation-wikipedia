@@ -345,16 +345,19 @@ mod tests {
     fn missing_unlabeled_and_duplicate_citations_fail_closed() {
         let s = suite();
         assert_eq!(
-            evaluate_answer_support_json(&s.replace("lead_0", "changed")).unwrap_err(),
-            AnswerSupportError::InvalidCitation("case_1".into())
+            evaluate_answer_support_json(&s.replace("[[cite:lead_0]]", "[[cite:changed]]")).unwrap_err(),
+            AnswerSupportError::MissingCitationMarker("case_1".into())
         );
         let missing = s.replace("\"block_id\":\"lead_0\"", "\"block_id\":\"other\"");
         assert_eq!(
             evaluate_answer_support_json(&missing).unwrap_err(),
             AnswerSupportError::MissingCitationMarker("case_1".into())
         );
-        let omitted = s.replace("\"block_id\":\"lead_0\",\"verdict\":\"supported\"", "\"block_id\":\"sec_1\",\"verdict\":\"supported\"");
-        assert!(evaluate_answer_support_json(&omitted).is_err());
+        let extra = s.replace("[[cite:sec_1]]", "[[cite:sec_1]] [[cite:extra_2]]");
+        assert_eq!(
+            evaluate_answer_support_json(&extra).unwrap_err(),
+            AnswerSupportError::UnlabeledCitationMarker("case_1".into())
+        );
     }
 
     #[test]
@@ -383,7 +386,7 @@ mod tests {
             AnswerSupportError::InvalidJson
         );
         assert!(matches!(
-            evaluate_answer_support_json(&suite().replace("\"verdict\":\"supported\"", "\"verdict\":\"unsupported\"")),
+            evaluate_answer_support_json(&suite().replace("\"block_id\":\"lead_0\",\"verdict\":\"supported\"", "\"block_id\":\"lead_0\",\"verdict\":\"unsupported\"")),
             Err(AnswerSupportError::InconsistentSupport(_))
         ));
     }
