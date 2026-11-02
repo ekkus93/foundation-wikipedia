@@ -157,6 +157,45 @@ fn valid_citation_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
 }
 
+/// Validate the structural identity of a canonical block citation against the
+/// reviewed case. This is deliberately NOT a membership or authenticity check:
+/// the exact article must still be independently verified by the reviewer.
+/// Legacy single-token fixture IDs remain accepted for existing test suites.
+fn canonical_decimal_u32(value: &str) -> bool {
+    value
+        .parse::<u32>()
+        .is_ok_and(|parsed| parsed.to_string() == value)
+}
+
+fn citation_matches_case(id: &str, project: &str, page_id: u64, revision_id: u64) -> bool {
+    if !valid_citation_id(id) {
+        return false;
+    }
+    if !id.contains(':') {
+        return true;
+    }
+    let mut parts = id.split(':');
+    if parts.next() != Some("wkb")
+        || parts.next() != Some(project)
+        || parts.next() != Some(page_id.to_string().as_str())
+        || parts.next() != Some(revision_id.to_string().as_str())
+    {
+        return false;
+    }
+    let mut tail = parts.peekable();
+    while let Some(part) = tail.next() {
+        if tail.peek().is_none() {
+            return part
+                .strip_prefix('b')
+                .is_some_and(canonical_decimal_u32);
+        }
+        if !canonical_decimal_u32(part) {
+            return false;
+        }
+    }
+    false
+}
+
 /// Parse literal [[cite:BLOCK_ID]] markers; malformed or unterminated markers
 /// cannot be smuggled into an apparently annotated answer.
 fn answer_markers(answer: &str, case_id: &str) -> Result<BTreeSet<String>, AnswerSupportError> {
@@ -213,6 +252,7 @@ pub fn evaluate_answer_support_json(
             .validate()
             .is_err()
             || case.revision_id == 0
+            || case.revision_id > i64::MAX as u64
             || case.question.trim().is_empty()
             || case.question.len() > 8_192
             || case.answer.is_empty()
@@ -250,7 +290,12 @@ pub fn evaluate_answer_support_json(
             let mut seen_citations = BTreeSet::new();
             let mut supported_citation = false;
             for citation in claim.citations {
-                if !valid_citation_id(&citation.block_id) {
+                if !citation_matches_case(
+                    &citation.block_id,
+                    &case.project,
+                    case.page_id,
+                    case.revision_id,
+                ) {
                     return Err(AnswerSupportError::InvalidCitation(case.id));
                 }
                 if !seen_citations.insert(citation.block_id.clone()) {
@@ -342,6 +387,47 @@ mod tests {
         let input = suite().replace("lead_0", "wkb:enwiki:42:100:b0");
         let report = evaluate_answer_support_json(&input).unwrap();
         assert_eq!(report.totals.supported_citations, 1);
+    }
+
+    #[test]
+    fn canonical_block_citations_must_match_reviewed_revision_and_shape() {
+        let valid = suite().replace("lead_0", "wkb:enwiki:42:100:0:2:b3");
+        assert_eq!(
+            evaluate_answer_support_json(&valid)
+                .unwrap()
+                .totals
+                .supported_citations,
+            1
+        );
+        for invalid in [
+            "wkb:dewiki:42:100:b0",
+            "wkb:enwiki:43:100:b0",
+            "wkb:enwiki:42:101:b0",
+            "wkb:enwiki:042:100:b0",
+            "wkb:enwiki:42:0100:b0",
+            "wkb:enwiki:42:100:00:b0",
+            "wkb:enwiki:42:100:b00",
+            "wkb:enwiki:42:100:4294967296:b0",
+            "wkb:enwiki:42:100:b4294967296",
+            "wkb:enwiki:42:100:b0:1",
+            "wkb:enwiki:42:100:1",
+            "other:enwiki:42:100:b0",
+        ] {
+            let input = suite().replace("lead_0", invalid);
+            assert_eq!(
+                evaluate_answer_support_json(&input).unwrap_err(),
+                AnswerSupportError::InvalidCitation("case_1".into()),
+                "{invalid}"
+            );
+        }
+        let too_large_revision = suite().replace(
+            "\\"revision_id\\":100",
+            "\\"revision_id\\":9223372036854775808",
+        );
+        assert!(matches!(
+            evaluate_answer_support_json(&too_large_revision),
+            Err(AnswerSupportError::InvalidCase(_))
+        ));
     }
 
     #[test]
