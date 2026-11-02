@@ -364,10 +364,10 @@ pub fn evaluate_answer_support_json(
     })
 }
 
-//// Strict benchmark mode: independently verify that every reviewer-labeled
-//// citation is an actual retrievable block of the supplied canonical article
-//// at the exact project/page/revision. This does not authenticate the corpus
-//// or reviewer, nor prove that a block factually entails the answer.
+/// Strict benchmark mode: independently verify that every reviewer-labeled
+/// citation is an actual retrievable block of the supplied canonical article
+/// at the exact project/page/revision. This does not authenticate the corpus
+/// or reviewer, nor prove that a block factually entails the answer.
 pub fn evaluate_answer_support_with_corpus_json(
     input: &str,
     articles: &[Article],
