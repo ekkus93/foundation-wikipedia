@@ -422,10 +422,23 @@ mod tests {
             .unwrap()
             .is_empty());
         let saved = answer_and_save_local_article(
+            &mut state, generation, &article, &question, &selected, &preview, true, None, &token,
+        )
+        .unwrap();
+        let SavedArticleChatOutcome::Supported {
+            thread_id, parts, ..
+        } = saved
+        else {
             panic!("expected supported answer");
         };
         assert_eq!(parts.len(), 2);
-        assert_eq!(state.chat_messages(&article.key, 12, thread_id, 10).unwrap().len(), 2);
+        assert_eq!(
+            state
+                .chat_messages(&article.key, 12, thread_id, 10)
+                .unwrap()
+                .len(),
+            2
+        );
         let requests = server.join().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(requests[0].starts_with("GET /api/tags HTTP/1.1\r\n"));
