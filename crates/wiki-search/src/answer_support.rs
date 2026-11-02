@@ -304,6 +304,9 @@ pub fn evaluate_answer_support_json(
     }
 
     let mut seen_cases = BTreeSet::new();
+    // Distinct case IDs must not let the same question/answer/revision
+    // contribute multiple times to aggregate benchmark quality scores.
+    let mut seen_case_payloads = BTreeSet::new();
     let mut cases = Vec::with_capacity(raw.cases.len());
     let mut totals = SupportCounts::default();
     for case in raw.cases {
@@ -327,6 +330,15 @@ pub fn evaluate_answer_support_json(
             return Err(AnswerSupportError::InvalidCase(case.id));
         }
         if !seen_cases.insert(case.id.clone()) {
+            return Err(AnswerSupportError::DuplicateCase(case.id));
+        }
+        if !seen_case_payloads.insert((
+            case.project.clone(),
+            case.page_id,
+            case.revision_id,
+            case.question.clone(),
+            case.answer.clone(),
+        )) {
             return Err(AnswerSupportError::DuplicateCase(case.id));
         }
         let (markers, visible_answer, occurrences) = answer_markers(&case.answer, &case.id)?;
@@ -743,6 +755,39 @@ mod tests {
         assert_eq!(report.cases[0].answer_sha256.len(), 64);
         assert_eq!(report.input_sha256, sha256(suite().as_bytes()));
         serde_json::to_string(&report).unwrap();
+    }
+
+    #[test]
+    fn duplicate_question_answer_revision_cannot_inflate_benchmark_scores() {
+        for version in [1, 2, 3] {
+            let mut data = if version == 1 {
+                serde_json::from_str::<serde_json::Value>(&suite()).unwrap()
+            } else {
+                suite_v2()
+            };
+            data["schema_version"] = serde_json::json!(version);
+            let mut replay = data["cases"][0].clone();
+            replay["id"] = serde_json::json!("replay_with_different_id");
+            data["cases"].as_array_mut().unwrap().push(replay);
+            assert_eq!(
+                evaluate_answer_support_json(&data.to_string()),
+                Err(AnswerSupportError::DuplicateCase("replay_with_different_id".into())),
+                "schema v{version}"
+            );
+
+            // Reusing a question for a genuinely different answer or exact
+            // revision is not a duplicate evaluation case.
+            data["cases"][1]["answer"] = serde_json::json!(
+                "Three moons [[cite:lead_0]]. An unsupported aside [[cite:sec_1]]."
+            );
+            data["cases"][1]["claims"][0]["text"] = serde_json::json!("Three moons");
+            assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+
+            data["cases"][1] = data["cases"][0].clone();
+            data["cases"][1]["id"] = serde_json::json!("replay_with_different_id");
+            data["cases"][1]["revision_id"] = serde_json::json!(101);
+            assert!(evaluate_answer_support_json(&data.to_string()).is_ok());
+        }
     }
 
     #[test]
