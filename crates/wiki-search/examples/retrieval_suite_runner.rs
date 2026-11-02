@@ -117,8 +117,8 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 // A bounded reader also caps FIFOs and files that grow after the metadata
 // check, rather than allocating the entire replacement before rejecting it.
 fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
-    let file = fs::File::open(path)
-        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let file =
+        fs::File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
     let size = file
         .metadata()
         .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
