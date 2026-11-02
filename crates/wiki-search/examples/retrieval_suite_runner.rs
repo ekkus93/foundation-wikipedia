@@ -1158,7 +1158,7 @@ mod tests {
             .unwrap();
         drop(catalog);
 
-        assert_eq!(read_snapshot_corpus(&root).unwrap(), vec![article]);
+        assert_eq!(read_snapshot_corpus(&root).unwrap(), vec![article.clone()]);
         let args = Args {
             corpus: None,
             pack: None,
