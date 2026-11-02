@@ -6,6 +6,8 @@
 //!   --suite reviewed_answers.json --output answer_support_report.json \
 //!   [--min-claim-support-per-mille 800] \
 //!   [--min-citation-precision-per-mille 800] [--corpus canonical_articles.json]
+//!   [--min-case-claim-support-per-mille 800]
+//!   [--min-case-citation-precision-per-mille 800]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -35,6 +37,8 @@ struct Args {
     output: PathBuf,
     min_claim_support_per_mille: u16,
     min_citation_precision_per_mille: u16,
+    min_case_claim_support_per_mille: u16,
+    min_case_citation_precision_per_mille: u16,
 }
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -43,6 +47,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut output = None;
     let mut claim_floor = 0;
     let mut citation_floor = 0;
+    let mut case_claim_floor = 0;
+    let mut case_citation_floor = 0;
     let mut seen = std::collections::BTreeSet::new();
     let mut values = values.into_iter();
     while let Some(flag) = values.next() {
@@ -62,10 +68,20 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
             "--min-citation-precision-per-mille" => {
                 citation_floor = value.parse::<u16>().map_err(|_| "invalid citation floor")?;
             }
+            "--min-case-claim-support-per-mille" => {
+                case_claim_floor = value.parse::<u16>().map_err(|_| "invalid case claim floor")?;
+            }
+            "--min-case-citation-precision-per-mille" => {
+                case_citation_floor = value.parse::<u16>().map_err(|_| "invalid case citation floor")?;
+            }
             _ => return Err(format!("unknown option: {flag}")),
         }
     }
-    if claim_floor > 1_000 || citation_floor > 1_000 {
+    if claim_floor > 1_000
+        || citation_floor > 1_000
+        || case_claim_floor > 1_000
+        || case_citation_floor > 1_000
+    {
         return Err("thresholds must be 0..=1000".into());
     }
     Ok(Args {
@@ -74,6 +90,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         output: output.ok_or("missing --output")?,
         min_claim_support_per_mille: claim_floor,
         min_citation_precision_per_mille: citation_floor,
+        min_case_claim_support_per_mille: case_claim_floor,
+        min_case_citation_precision_per_mille: case_citation_floor,
     })
 }
 
@@ -179,6 +197,32 @@ fn meets_floor(numerator: usize, denominator: usize, floor: u16) -> bool {
     denominator != 0 && (numerator as u128) * 1_000 >= (denominator as u128) * u128::from(floor)
 }
 
+fn per_case_gate(
+    cases: &[wiki_search::answer_support::CaseSupportScore],
+    floor: u16,
+    counts: impl Fn(&wiki_search::answer_support::SupportCounts) -> (usize, usize),
+) -> serde_json::Value {
+    let failed_case_ids: Vec<&str> = if floor == 0 {
+        Vec::new()
+    } else {
+        cases
+            .iter()
+            .filter(|case| {
+                let (numerator, denominator) = counts(&case.counts);
+                !meets_floor(numerator, denominator, floor)
+            })
+            .map(|case| case.id.as_str())
+            .collect()
+    };
+    serde_json::json!({
+        "enabled": floor > 0,
+        "min_per_mille": floor,
+        "evaluated_case_count": if floor > 0 { cases.len() } else { 0 },
+        "failed_case_ids": failed_case_ids,
+        "passed": failed_case_ids.is_empty() && (floor == 0 || !cases.is_empty())
+    })
+}
+
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
@@ -192,7 +236,19 @@ fn run(args: Args) -> Result<bool, String> {
             .map_err(|error| format!("invalid human-reviewed support suite: {error:?}"))?;
         (report, None)
     };
-    let passed = report.all_claims_reviewed
+    let case_claim_gate = per_case_gate(
+        &report.cases,
+        args.min_case_claim_support_per_mille,
+        |counts| (counts.supported_claims, counts.reviewed_claims),
+    );
+    let case_citation_gate = per_case_gate(
+        &report.cases,
+        args.min_case_citation_precision_per_mille,
+        |counts| (counts.supported_citations, counts.reviewed_citations),
+    );
+    let passed = case_claim_gate["passed"] == true
+        && case_citation_gate["passed"] == true
+        && report.all_claims_reviewed
         && report.all_citations_reviewed
         && meets_floor(
             report.totals.supported_claims,
@@ -212,6 +268,8 @@ fn run(args: Args) -> Result<bool, String> {
         "gate": {
             "min_claim_support_per_mille": args.min_claim_support_per_mille,
             "min_citation_precision_per_mille": args.min_citation_precision_per_mille,
+            "case_claim_support_gate": case_claim_gate,
+            "case_citation_precision_gate": case_citation_gate,
             "passed": passed
         },
         "disclaimer": "Caller-supplied human labels only; no authenticated provenance or automated factual entailment"
@@ -252,9 +310,21 @@ mod tests {
                 output: "b.json".into(),
                 min_claim_support_per_mille: 0,
                 min_citation_precision_per_mille: 0,
+                min_case_claim_support_per_mille: 0,
+                min_case_citation_precision_per_mille: 0,
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--min-case-claim-support-per-mille", "1001"
+        ])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--min-case-citation-precision-per-mille", "bad"
+        ])).is_err());
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z", "--min-case-claim-support-per-mille", "1",
+            "--min-case-claim-support-per-mille", "2"
+        ])).is_err());
         assert_eq!(
             parse_args(values(&[
                 "--suite", "x", "--output", "z", "--corpus", "a.json"
@@ -302,6 +372,54 @@ mod tests {
         assert!(validate_output(&suite, &suite).is_err());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn per_case_gates_expose_weak_case_masked_by_strong_case() {
+        use wiki_search::answer_support::evaluate_answer_support_json;
+        let suite = serde_json::json!({
+            "schema_version": 1, "suite_id": "case_floor_test",
+            "cases": [
+                {
+                    "id": "strong", "project": "enwiki", "page_id": 42,
+                    "revision_id": 100, "question": "Strong?",
+                    "answer": "Supported [[cite:wkb:enwiki:42:100:b0]]",
+                    "claims": [{
+                        "id": "c1", "text": "Supported", "verdict": "supported",
+                        "citations": [{"block_id": "wkb:enwiki:42:100:b0", "verdict": "supported"}]
+                    }]
+                },
+                {
+                    "id": "weak", "project": "enwiki", "page_id": 42,
+                    "revision_id": 100, "question": "Weak?",
+                    "answer": "Unsupported [[cite:wkb:enwiki:42:100:b0]]",
+                    "claims": [{
+                        "id": "c2", "text": "Unsupported", "verdict": "unsupported",
+                        "citations": [{"block_id": "wkb:enwiki:42:100:b0", "verdict": "unsupported"}]
+                    }]
+                }
+            ]
+        });
+        let report = evaluate_answer_support_json(&suite.to_string()).unwrap();
+        assert!(meets_floor(
+            report.totals.supported_claims,
+            report.totals.reviewed_claims,
+            500
+        ));
+        let claim_gate = per_case_gate(&report.cases, 800, |counts| {
+            (counts.supported_claims, counts.reviewed_claims)
+        });
+        let citation_gate = per_case_gate(&report.cases, 800, |counts| {
+            (counts.supported_citations, counts.reviewed_citations)
+        });
+        assert_eq!(claim_gate["failed_case_ids"], serde_json::json!(["weak"]));
+        assert_eq!(citation_gate["failed_case_ids"], serde_json::json!(["weak"]));
+        assert_eq!(claim_gate["passed"], false);
+        assert_eq!(citation_gate["passed"], false);
+        assert_eq!(per_case_gate(&report.cases, 0, |_| (0, 0))["passed"], true);
+        assert_eq!(per_case_gate(&[], 800, |_| (0, 0))["passed"], false);
+        assert_eq!(per_case_gate(&report.cases, 800, |_| (0, 0))["failed_case_ids"],
+            serde_json::json!(["strong", "weak"]));
     }
 
     #[test]
@@ -366,12 +484,16 @@ mod tests {
             output: output.clone(),
             min_claim_support_per_mille: 1_000,
             min_citation_precision_per_mille: 1_000,
+            min_case_claim_support_per_mille: 1_000,
+            min_case_citation_precision_per_mille: 1_000,
         };
         assert_eq!(run(args.clone()), Ok(true));
         let report: serde_json::Value =
             serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
         assert_eq!(report["evidence_membership_checked"], true);
         assert_eq!(report["gate"]["passed"], true);
+        assert_eq!(report["gate"]["case_claim_support_gate"]["passed"], true);
+        assert_eq!(report["gate"]["case_citation_precision_gate"]["passed"], true);
         assert_eq!(report["corpus_input_sha256"].as_str().unwrap().len(), 64);
 
         let mut stale = article;
