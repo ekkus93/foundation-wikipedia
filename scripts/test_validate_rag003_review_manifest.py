@@ -456,6 +456,43 @@ class TestEvidenceFiles(unittest.TestCase):
                 self.assertTrue(any("artifact exceeds" in e
                                     for e in validator.validate_manifest(data, evidence_root=folder)))
 
+
+    def test_same_path_cannot_represent_independent_artifacts(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            # A malicious manifest can re-label one local file as two distinct
+            # artifacts while supplying its matching digest for both.
+            data["execution"]["report_path"] = data["execution"]["corpus_path"]
+            data["execution"]["report_sha256"] = data["execution"]["corpus_sha256"]
+            errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(any("execution.report: same physical file as execution.corpus" in e
+                                for e in errors))
+
+    def test_hardlink_alias_cannot_represent_independent_artifacts(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            original = pathlib.Path(folder, "evidence", "corpus.bin")
+            alias = pathlib.Path(folder, "evidence", "report-alias.bin")
+            os.link(original, alias)
+            data["execution"]["report_path"] = "evidence/report-alias.bin"
+            data["execution"]["report_sha256"] = data["execution"]["corpus_sha256"]
+            errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(any("execution.report: same physical file as execution.corpus" in e
+                                for e in errors))
+
+    def test_distinct_files_with_identical_bytes_are_not_inode_aliases(self):
+        import tempfile
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            contents = pathlib.Path(folder, "evidence", "corpus.bin").read_bytes()
+            pathlib.Path(folder, "evidence", "report.bin").write_bytes(contents)
+            data["execution"]["report_sha256"] = hashlib.sha256(contents).hexdigest()
+            self.assertEqual(validator.validate_manifest(data, evidence_root=folder), [])
+
     def test_cli_evidence_flag_enforces_hashes(self):
         import contextlib
         import io

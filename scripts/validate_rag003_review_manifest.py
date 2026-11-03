@@ -151,7 +151,7 @@ def _secure_artifact_digest(root_fd, relative):
                     if bytes_read > MAX_ARTIFACT_BYTES:
                         raise ValueError("artifact exceeds 256 MiB")
                     hasher.update(block)
-            return hasher.hexdigest()
+            return hasher.hexdigest(), (metadata.st_dev, metadata.st_ino)
         finally:
             os.close(fd)
     finally:
@@ -184,13 +184,17 @@ def validate_artifact_files(data, evidence_root):
         root_fd = os.open(evidence_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except (OSError, TypeError, ValueError) as exc:
         return [f"invalid evidence root: {exc}"]
+    seen_files = {}
     try:
         for label, relative, expected in checks:
             if relative is None:
                 errors.append(f"{label}: artifact path required for evidence-root verification")
                 continue
             try:
-                actual = _secure_artifact_digest(root_fd, relative)
+                actual, file_identity = _secure_artifact_digest(root_fd, relative)
+                previous = seen_files.setdefault(file_identity, label)
+                if previous != label:
+                    errors.append(f"{label}: same physical file as {previous}; independent artifacts required")
                 if not hmac.compare_digest(actual, expected):
                     errors.append(f"{label}: SHA-256 mismatch")
             except (OSError, ValueError) as exc:
