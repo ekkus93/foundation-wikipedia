@@ -12,6 +12,7 @@
 //!   [--require-schema-v3] [--min-cases 100] [--min-distinct-articles 25]
 //!   [--min-project-claim-support-per-mille 800]
 //!   [--min-project-citation-precision-per-mille 800]
+//!   [--min-project-cases 10] [--min-project-distinct-articles 5]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -50,6 +51,8 @@ struct Args {
     min_project_citation_precision_per_mille: u16,
     min_cases: usize,
     min_distinct_articles: usize,
+    min_project_cases: usize,
+    min_project_distinct_articles: usize,
 }
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -67,6 +70,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut project_citation_floor = 0;
     let mut min_cases = 0;
     let mut min_distinct_articles = 0;
+    let mut min_project_cases = 0;
+    let mut min_project_distinct_articles = 0;
     let mut seen = std::collections::BTreeSet::new();
     let mut values = values.into_iter();
     while let Some(flag) = values.next() {
@@ -122,6 +127,12 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .parse::<usize>()
                     .map_err(|_| "invalid distinct article floor")?;
             }
+            "--min-project-cases" => {
+                min_project_cases = value.parse::<usize>().map_err(|_| "invalid project case floor")?;
+            }
+            "--min-project-distinct-articles" => {
+                min_project_distinct_articles = value.parse::<usize>().map_err(|_| "invalid project article floor")?;
+            }
             _ => return Err(format!("unknown option: {flag}")),
         }
     }
@@ -134,7 +145,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     {
         return Err("thresholds must be 0..=1000".into());
     }
-    if min_cases > 1_000 || min_distinct_articles > 1_000 {
+    if min_cases > 1_000 || min_distinct_articles > 1_000 || min_project_cases > 1_000 || min_project_distinct_articles > 1_000 {
         return Err("coverage floors must be 0..=1000".into());
     }
     if expected_suite_sha256.is_some() != expected_corpus_sha256.is_some() {
@@ -170,6 +181,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         min_project_citation_precision_per_mille: project_citation_floor,
         min_cases,
         min_distinct_articles,
+        min_project_cases,
+        min_project_distinct_articles,
     })
 }
 
@@ -369,6 +382,41 @@ fn coverage_gate(
     })
 }
 
+/// Enforce structural evaluation coverage independently for each observed project.
+fn project_coverage_gate(
+    cases: &[wiki_search::answer_support::CaseSupportScore],
+    min_cases: usize,
+    min_distinct_articles: usize,
+) -> serde_json::Value {
+    let mut projects = std::collections::BTreeMap::<&str, (usize, std::collections::BTreeSet<_>)>::new();
+    for case in cases {
+        let entry = projects.entry(case.project.as_str()).or_default();
+        entry.0 += 1;
+        entry.1.insert(case.page_id);
+    }
+    let failed_projects: Vec<&str> = projects.iter()
+        .filter(|(_, (count, articles))| *count < min_cases || articles.len() < min_distinct_articles)
+        .map(|(project, _)| *project)
+        .collect();
+    let project_coverage: Vec<serde_json::Value> = projects.iter()
+        .map(|(project, (count, articles))| serde_json::json!({
+            "project": project,
+            "observed_cases": count,
+            "observed_distinct_articles": articles.len(),
+            "passed": *count >= min_cases && articles.len() >= min_distinct_articles
+        }))
+        .collect();
+    serde_json::json!({
+        "enabled": min_cases > 0 || min_distinct_articles > 0,
+        "min_cases": min_cases,
+        "min_distinct_articles": min_distinct_articles,
+        "observed_projects": projects.len(),
+        "project_coverage": project_coverage,
+        "failed_projects": failed_projects,
+        "passed": failed_projects.is_empty() && ((min_cases == 0 && min_distinct_articles == 0) || !projects.is_empty())
+    })
+}
+
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
@@ -423,7 +471,8 @@ fn run(args: Args) -> Result<bool, String> {
         |counts| (counts.supported_citations, counts.reviewed_citations),
     );
     let coverage = coverage_gate(&report.cases, args.min_cases, args.min_distinct_articles);
-    let passed = coverage["passed"] == true
+    let project_coverage = project_coverage_gate(&report.cases, args.min_project_cases, args.min_project_distinct_articles);
+    let passed = project_coverage["passed"] == true && coverage["passed"] == true
         && case_claim_gate["passed"] == true
         && case_citation_gate["passed"] == true
         && project_claim_gate["passed"] == true
@@ -455,6 +504,7 @@ fn run(args: Args) -> Result<bool, String> {
             "project_claim_support_gate": project_claim_gate,
             "project_citation_precision_gate": project_citation_gate,
             "coverage_gate": coverage,
+            "project_coverage_gate": project_coverage,
             "passed": passed
         },
         "disclaimer": "Caller-supplied human labels only; no authenticated provenance or automated factual entailment"
@@ -504,6 +554,8 @@ mod tests {
                 min_project_citation_precision_per_mille: 0,
                 min_cases: 0,
                 min_distinct_articles: 0,
+                min_project_cases: 0,
+                min_project_distinct_articles: 0,
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
@@ -627,6 +679,8 @@ mod tests {
             ("--min-cases", "1001"),
             ("--min-distinct-articles", "-1"),
             ("--min-distinct-articles", "abc"),
+            ("--min-project-cases", "1001"),
+            ("--min-project-distinct-articles", "-1"),
         ] {
             assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
         }
@@ -798,6 +852,27 @@ mod tests {
     }
 
     #[test]
+    fn project_coverage_prevents_small_language_sample_masking() {
+        let suite = serde_json::json!({
+            "schema_version": 1, "suite_id": "project_coverage_test",
+            "cases": [
+                {"id":"en1","project":"enwiki","page_id":42,"revision_id":100,"question":"One?","answer":"Yes","claims":[{"id":"a","text":"Yes","verdict":"supported","citations":[]}]},
+                {"id":"en2","project":"enwiki","page_id":43,"revision_id":100,"question":"Two?","answer":"Yes","claims":[{"id":"b","text":"Yes","verdict":"supported","citations":[]}]},
+                {"id":"fr1","project":"frwiki","page_id":44,"revision_id":100,"question":"Trois?","answer":"Oui","claims":[{"id":"c","text":"Oui","verdict":"supported","citations":[]}]}
+            ]
+        });
+        let report = evaluate_answer_support_json(&suite.to_string()).unwrap();
+        assert_eq!(coverage_gate(&report.cases, 3, 3)["passed"], true);
+        let gate = project_coverage_gate(&report.cases, 2, 2);
+        assert_eq!(gate["passed"], false);
+        assert_eq!(gate["failed_projects"], serde_json::json!(["frwiki"]));
+        assert_eq!(gate["project_coverage"][0]["passed"], true);
+        assert_eq!(gate["project_coverage"][1]["observed_distinct_articles"], 1);
+        assert_eq!(project_coverage_gate(&report.cases, 0, 0)["passed"], true);
+        assert_eq!(project_coverage_gate(&[], 1, 1)["passed"], false);
+    }
+
+    #[test]
     fn strict_runner_scores_only_citations_present_in_exact_canonical_corpus() {
         use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
 
@@ -869,6 +944,8 @@ mod tests {
             min_project_citation_precision_per_mille: 0,
             min_cases: 0,
             min_distinct_articles: 0,
+            min_project_cases: 0,
+            min_project_distinct_articles: 0,
         };
         assert_eq!(run(args.clone()), Ok(true));
         let report: serde_json::Value =
