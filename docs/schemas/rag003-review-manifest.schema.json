@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ekkus93/foundation-wikipedia/blob/master/docs/schemas/rag003-review-manifest.schema.json",
+  "title": "RAG-003 independent qualification evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evaluation_id",
+    "preregistration",
+    "source_articles",
+    "reviews",
+    "execution"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "evaluation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "preregistration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registered_at",
+        "sampling_seed",
+        "required_projects",
+        "strata",
+        "minimum_cases_per_project",
+        "minimum_articles_per_project",
+        "plan_sha256"
+      ],
+      "properties": {
+        "registered_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sampling_seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "required_projects": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{1,31}$"
+          }
+        },
+        "strata": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "minimum_cases_per_project": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minimum_articles_per_project": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "plan_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "source_articles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "page_id",
+          "revision_id",
+          "source_url",
+          "acquired_at",
+          "generation_id",
+          "sha256",
+          "verification_method"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "minLength": 2
+          },
+          "page_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "revision_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "acquired_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "generation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "verification_method": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "reviewer_id",
+          "reviewed_at",
+          "rubric_version",
+          "claim_start_byte",
+          "claim_end_byte",
+          "verdict",
+          "source_project",
+          "source_page_id",
+          "source_revision_id",
+          "source_span",
+          "citation_valid"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rubric_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_start_byte": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claim_end_byte": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "verdict": {
+            "enum": [
+              "supported",
+              "contradicted",
+              "not_established",
+              "unreviewable"
+            ]
+          },
+          "source_project": {
+            "type": "string",
+            "minLength": 2
+          },
+          "source_page_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_revision_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_span": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citation_valid": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runner_commit",
+        "command",
+        "suite_sha256",
+        "corpus_sha256",
+        "report_sha256",
+        "model_config_sha256"
+      ],
+      "properties": {
+        "runner_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suite_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "corpus_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "report_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "model_config_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
