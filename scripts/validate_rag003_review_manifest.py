@@ -36,8 +36,6 @@ def validate(data):
             if identity not in identities:
                 errors.append(f"reviews[{i}]: unknown source revision")
             else:
-                cases.setdefault(identity[0], set()).add(review["case_id"])
-                reviewed_articles.setdefault(identity[0], set()).add(identity[1])
                 previous_project = case_projects.setdefault(review["case_id"], identity[0])
                 if previous_project != identity[0]:
                     errors.append(f"reviews[{i}]: case_id reused across projects")
@@ -52,6 +50,12 @@ def validate(data):
                 errors.append(f"reviews[{i}]: review predates registration")
             if identity in acquisition_times and reviewed < acquisition_times[identity]:
                 errors.append(f"reviews[{i}]: review predates source acquisition")
+            if (identity in acquisition_times and reviewed >= registered
+                    and reviewed >= acquisition_times[identity]
+                    and review["claim_start_byte"] >= 0
+                    and review["claim_end_byte"] > review["claim_start_byte"]):
+                cases.setdefault(identity[0], set()).add(review["case_id"])
+                reviewed_articles.setdefault(identity[0], set()).add(identity[1])
         for project in required:
             if len(reviewed_articles.get(project, set())) < plan["minimum_articles_per_project"]:
                 errors.append(f"{project}: insufficient distinct articles")

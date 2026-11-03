@@ -72,6 +72,21 @@ class TestManifest(unittest.TestCase):
         data["reviews"][0]["reviewed_at"] = "2026-11-02T02:00:00Z"
         self.assertEqual(validator.validate(data), [])
 
+    def test_premature_review_does_not_satisfy_coverage(self):
+        data = fixture()
+        data["reviews"][0]["reviewed_at"] = "2026-11-01T12:00:00Z"
+        errors = validator.validate(data)
+        self.assertTrue(any("predates source acquisition" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+        self.assertTrue(any("insufficient distinct articles" in e for e in errors))
+
+    def test_invalid_span_does_not_satisfy_coverage(self):
+        data = fixture()
+        data["reviews"][0]["claim_end_byte"] = 0
+        errors = validator.validate(data)
+        self.assertTrue(any("invalid claim byte span" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+
     def test_duplicate_json_key(self):
         with self.assertRaises(ValueError):
             validator.unique_object([("a", 1), ("a", 2)])
