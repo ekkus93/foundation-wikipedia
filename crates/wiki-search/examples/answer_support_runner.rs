@@ -699,6 +699,7 @@ mod tests {
             "--suite",
             "x",
 
+
             "--output",
             "z",
             "--expect-suite-sha256",
