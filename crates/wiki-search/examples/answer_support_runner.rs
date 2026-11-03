@@ -637,10 +637,16 @@ mod tests {
             assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
         }
         assert!(parse_args(values(&[
-            "--suite", "x", "--output", "z",
-            "--min-project-claim-support-per-mille", "500",
-            "--min-project-claim-support-per-mille", "800",
-        ])).is_err());
+            "--suite",
+            "x",
+            "--output",
+            "z",
+            "--min-project-claim-support-per-mille",
+            "500",
+            "--min-project-claim-support-per-mille",
+            "800",
+        ]))
+        .is_err());
         let coverage_args = parse_args(values(&[
             "--suite",
             "x",
@@ -758,25 +764,36 @@ mod tests {
             serde_json::json!("Unsupported [[cite:wkb:frwiki:42:100:b0]]");
         multilingual["cases"][1]["claims"][0]["citations"][0]["block_id"] =
             serde_json::json!("wkb:frwiki:42:100:b0");
-        let multilingual_report =
-            evaluate_answer_support_json(&multilingual.to_string()).unwrap();
+        let multilingual_report = evaluate_answer_support_json(&multilingual.to_string()).unwrap();
         let project_claim = per_project_gate(&multilingual_report.cases, 800, |counts| {
             (counts.supported_claims, counts.reviewed_claims)
         });
         let project_citation = per_project_gate(&multilingual_report.cases, 800, |counts| {
             (counts.supported_citations, counts.reviewed_citations)
         });
-        assert_eq!(project_claim["failed_projects"], serde_json::json!(["frwiki"]));
-        assert_eq!(project_citation["failed_projects"], serde_json::json!(["frwiki"]));
+        assert_eq!(
+            project_claim["failed_projects"],
+            serde_json::json!(["frwiki"])
+        );
+        assert_eq!(
+            project_citation["failed_projects"],
+            serde_json::json!(["frwiki"])
+        );
         assert_eq!(project_claim["observed_projects"], 2);
         assert_eq!(project_claim["project_scores"][0]["project"], "enwiki");
         assert_eq!(project_claim["project_scores"][0]["passed"], true);
         assert_eq!(project_claim["project_scores"][1]["project"], "frwiki");
         assert_eq!(project_claim["project_scores"][1]["passed"], false);
-        assert_eq!(per_project_gate(&multilingual_report.cases, 500, |counts| {
-            (counts.supported_claims, counts.reviewed_claims)
-        })["passed"], false);
-        assert_eq!(per_project_gate(&multilingual_report.cases, 0, |_| (0, 0))["passed"], true);
+        assert_eq!(
+            per_project_gate(&multilingual_report.cases, 500, |counts| {
+                (counts.supported_claims, counts.reviewed_claims)
+            })["passed"],
+            false
+        );
+        assert_eq!(
+            per_project_gate(&multilingual_report.cases, 0, |_| (0, 0))["passed"],
+            true
+        );
         assert_eq!(per_project_gate(&[], 800, |_| (0, 0))["passed"], false);
     }
 
@@ -994,8 +1011,14 @@ mod tests {
         let weak_report: serde_json::Value =
             serde_json::from_slice(&fs::read(&weak_output).unwrap()).unwrap();
         assert_eq!(weak_report["gate"]["passed"], false);
-        assert_eq!(weak_report["gate"]["project_claim_support_gate"]["failed_projects"], serde_json::json!(["enwiki"]));
-        assert_eq!(weak_report["gate"]["project_citation_precision_gate"]["failed_projects"], serde_json::json!(["enwiki"]));
+        assert_eq!(
+            weak_report["gate"]["project_claim_support_gate"]["failed_projects"],
+            serde_json::json!(["enwiki"])
+        );
+        assert_eq!(
+            weak_report["gate"]["project_citation_precision_gate"]["failed_projects"],
+            serde_json::json!(["enwiki"])
+        );
         assert_eq!(weak_report["gate"]["coverage_gate"]["observed_cases"], 2);
         assert_eq!(
             weak_report["gate"]["coverage_gate"]["observed_distinct_articles"],
