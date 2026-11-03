@@ -457,6 +457,50 @@ class TestEvidenceFiles(unittest.TestCase):
                                     for e in validator.validate_manifest(data, evidence_root=folder)))
 
 
+    def test_empty_artifact_cannot_qualify_with_matching_empty_hash(self):
+        import hashlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            path = pathlib.Path(folder, "evidence", "report.bin")
+            path.write_bytes(b"")
+            data["execution"]["report_sha256"] = hashlib.sha256(b"").hexdigest()
+            errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(any("execution.report: cannot verify artifact: artifact is empty" in e
+                                for e in errors), errors)
+
+    def test_artifact_mutated_after_read_cannot_qualify(self):
+        import hashlib
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            path = pathlib.Path(folder, "evidence", "plan.bin")
+            original_sha256 = hashlib.sha256
+            mutated = False
+
+            class HashWithConcurrentAppend:
+                def __init__(self):
+                    self.inner = original_sha256()
+
+                def update(self, block):
+                    nonlocal mutated
+                    self.inner.update(block)
+                    if not mutated:
+                        path.write_bytes(path.read_bytes() + b"!")
+                        mutated = True
+
+                def hexdigest(self):
+                    return self.inner.hexdigest()
+
+            with patch.object(validator.hashlib, "sha256",
+                              side_effect=HashWithConcurrentAppend):
+                errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(mutated)
+            self.assertTrue(any("preregistration: cannot verify artifact: "
+                                "artifact changed during verification" in e
+                                for e in errors), errors)
+
     def test_same_path_cannot_represent_independent_artifacts(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:

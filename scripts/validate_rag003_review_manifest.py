@@ -141,6 +141,8 @@ def _secure_artifact_digest(root_fd, relative):
             metadata = os.fstat(fd)
             if not stat.S_ISREG(metadata.st_mode):
                 raise ValueError("artifact is not a regular file")
+            if metadata.st_size == 0:
+                raise ValueError("artifact is empty")
             if metadata.st_size > MAX_ARTIFACT_BYTES:
                 raise ValueError("artifact exceeds 256 MiB")
             hasher = hashlib.sha256()
@@ -151,6 +153,16 @@ def _secure_artifact_digest(root_fd, relative):
                     if bytes_read > MAX_ARTIFACT_BYTES:
                         raise ValueError("artifact exceeds 256 MiB")
                     hasher.update(block)
+            # Bytes and metadata must still describe the opened object after
+            # streaming. This detects an append, truncate, or ordinary in-place
+            # rewrite during verification; it is not a filesystem lock.
+            verified = os.fstat(fd)
+            if (bytes_read != metadata.st_size or
+                    (verified.st_dev, verified.st_ino, verified.st_size,
+                     verified.st_mtime_ns, verified.st_ctime_ns) !=
+                    (metadata.st_dev, metadata.st_ino, metadata.st_size,
+                     metadata.st_mtime_ns, metadata.st_ctime_ns)):
+                raise ValueError("artifact changed during verification")
             return hasher.hexdigest(), (metadata.st_dev, metadata.st_ino)
         finally:
             os.close(fd)
