@@ -12,13 +12,51 @@ def fixture():
     return {
         "preregistration": {"registered_at": "2026-11-01T00:00:00Z", "required_projects": ["enwiki"], "minimum_cases_per_project": 1, "minimum_articles_per_project": 1},
         "source_articles": [{"project": "enwiki", "page_id": 1, "revision_id": 2, "acquired_at": "2026-11-02T00:00:00Z"}],
-        "reviews": [{"case_id": "c1", "reviewer_id": "r1", "rubric_version": "v1", "claim_start_byte": 0, "claim_end_byte": 2, "source_project": "enwiki", "source_page_id": 1, "source_revision_id": 2, "reviewed_at": "2026-11-02T01:00:00Z"}],
+        "reviews": [
+            {"case_id": "c1", "reviewer_id": reviewer, "rubric_version": "v1", "claim_start_byte": 0,
+             "claim_end_byte": 2, "source_project": "enwiki", "source_page_id": 1,
+             "source_revision_id": 2, "reviewed_at": "2026-11-02T01:00:00Z"}
+            for reviewer in ("r1", "r2")
+        ],
         "execution": {"runner_commit": "b" * 40, "suite_sha256": H, "corpus_sha256": H, "report_sha256": H, "model_config_sha256": H},
     }
 
 class TestManifest(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(validator.validate(fixture()), [])
+
+    def test_one_reviewer_does_not_qualify_case_or_article(self):
+        data = fixture()
+        data["reviews"].pop()
+        errors = validator.validate(data)
+        self.assertTrue(any("fewer than two distinct valid reviewers" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+        self.assertTrue(any("insufficient distinct articles" in e for e in errors))
+
+    def test_replaying_same_reviewer_does_not_count_as_second_reviewer(self):
+        data = fixture()
+        data["reviews"][1]["reviewer_id"] = "r1"
+        errors = validator.validate(data)
+        self.assertTrue(any("duplicate reviewer judgment" in e for e in errors))
+        self.assertTrue(any("fewer than two distinct valid reviewers" in e for e in errors))
+
+    def test_invalid_second_review_does_not_qualify_case(self):
+        data = fixture()
+        data["reviews"][1]["claim_end_byte"] = 0
+        errors = validator.validate(data)
+        self.assertTrue(any("invalid claim byte span" in e for e in errors))
+        self.assertTrue(any("fewer than two distinct valid reviewers" in e for e in errors))
+
+    def test_second_case_with_one_reviewer_does_not_qualify_coverage(self):
+        data = fixture()
+        data["preregistration"]["minimum_articles_per_project"] = 2
+        data["preregistration"]["minimum_cases_per_project"] = 2
+        data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
+        data["reviews"].append({**data["reviews"][0], "case_id": "c2", "source_page_id": 3, "source_revision_id": 4})
+        errors = validator.validate(data)
+        self.assertTrue(any("c2: fewer than two distinct valid reviewers" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+        self.assertTrue(any("insufficient distinct articles" in e for e in errors))
     def test_missing_project(self):
         data = fixture()
         data["preregistration"]["required_projects"].append("frwiki")
@@ -63,6 +101,7 @@ class TestManifest(unittest.TestCase):
         data["preregistration"]["minimum_articles_per_project"] = 2
         data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
         data["reviews"].append({**data["reviews"][0], "case_id": "c2", "source_page_id": 3, "source_revision_id": 4})
+        data["reviews"].append({**data["reviews"][1], "case_id": "c2", "source_page_id": 3, "source_revision_id": 4})
         self.assertEqual(validator.validate(data), [])
 
     def test_case_id_cannot_span_projects(self):
@@ -91,6 +130,7 @@ class TestManifest(unittest.TestCase):
         data["preregistration"]["minimum_articles_per_project"] = 2
         data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
         data["reviews"].append({**data["reviews"][0], "case_id": "c2", "reviewer_id": "r2", "source_page_id": 3, "source_revision_id": 4})
+        data["reviews"].append({**data["reviews"][1], "case_id": "c2", "reviewer_id": "r3", "source_page_id": 3, "source_revision_id": 4})
         self.assertEqual(validator.validate(data), [])
 
     def test_bad_span(self):
@@ -159,7 +199,7 @@ class TestManifest(unittest.TestCase):
 
     def test_two_reviewers_same_case_same_span_allowed(self):
         data = fixture()
-        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r3"})
         self.assertEqual(validator.validate(data), [])
 
     def test_reviewers_with_conflicting_rubrics_rejected(self):
@@ -170,7 +210,7 @@ class TestManifest(unittest.TestCase):
 
     def test_matching_rubrics_across_reviewers_allowed(self):
         data = fixture()
-        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r3"})
         self.assertEqual(validator.validate(data), [])
 
     def test_conflicting_rubric_cannot_qualify_second_case(self):
@@ -201,10 +241,11 @@ def complete_schema_fixture():
         "sha256": H,
         "verification_method": "fixture_only",
     })
-    data["reviews"][0].update({
-        "verdict": "supported", "source_span": "fixture passage",
-        "citation_valid": True,
-    })
+    for review in data["reviews"]:
+        review.update({
+            "verdict": "supported", "source_span": "fixture passage",
+            "citation_valid": True,
+        })
     data["execution"]["command"] = "synthetic test only"
     return data
 

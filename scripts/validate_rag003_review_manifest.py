@@ -26,6 +26,7 @@ def validate(data):
             errors.append("required_projects must be nonempty and unique")
         identities, acquisition_times, reviewed_articles, cases, judgments = set(), {}, {}, {}, set()
         duplicate_sources = set()
+        qualifying_reviewers = {}
         case_projects = {}
         case_sources = {}
         case_claim_spans = {}
@@ -80,8 +81,17 @@ def validate(data):
                     and review["claim_end_byte"] > review["claim_start_byte"]
                     and case_projects.get(review["case_id"]) == identity[0]
                     and case_sources.get(review["case_id"]) == identity):
-                cases.setdefault(identity[0], set()).add(review["case_id"])
-                reviewed_articles.setdefault(identity[0], set()).add(identity[1])
+                qualifying_reviewers.setdefault(review["case_id"], set()).add(review["reviewer_id"])
+        # A single review (or a replayed reviewer's judgment) cannot qualify a
+        # sampled case. Only distinct, individually valid reviewer IDs count;
+        # this is a minimum evidence check, not proof of human independence.
+        for case_id, source_identity in case_sources.items():
+            reviewers = qualifying_reviewers.get(case_id, set())
+            if len(reviewers) < 2:
+                errors.append(f"{case_id}: fewer than two distinct valid reviewers")
+                continue
+            cases.setdefault(source_identity[0], set()).add(case_id)
+            reviewed_articles.setdefault(source_identity[0], set()).add(source_identity[1])
         for project in required:
             if len(reviewed_articles.get(project, set())) < plan["minimum_articles_per_project"]:
                 errors.append(f"{project}: insufficient distinct articles")
