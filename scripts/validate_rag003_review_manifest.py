@@ -20,14 +20,16 @@ def validate(data):
         required = plan["required_projects"]
         if not required or len(required) != len(set(required)):
             errors.append("required_projects must be nonempty and unique")
-        identities, reviewed_articles, cases, judgments = set(), {}, {}, set()
+        identities, acquisition_times, reviewed_articles, cases, judgments = set(), {}, {}, {}, set()
         case_projects = {}
         for i, source in enumerate(sources):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
                 errors.append(f"source_articles[{i}]: duplicate revision")
             identities.add(identity)
-            if timestamp(source["acquired_at"]) < registered:
+            acquired = timestamp(source["acquired_at"])
+            acquisition_times[identity] = acquired
+            if acquired < registered:
                 errors.append(f"source_articles[{i}]: acquisition predates registration")
         for i, review in enumerate(reviews):
             identity = (review["source_project"], review["source_page_id"], review["source_revision_id"])
@@ -45,8 +47,11 @@ def validate(data):
             judgments.add(key)
             if review["claim_start_byte"] < 0 or review["claim_end_byte"] <= review["claim_start_byte"]:
                 errors.append(f"reviews[{i}]: invalid claim byte span")
-            if timestamp(review["reviewed_at"]) < registered:
+            reviewed = timestamp(review["reviewed_at"])
+            if reviewed < registered:
                 errors.append(f"reviews[{i}]: review predates registration")
+            if identity in acquisition_times and reviewed < acquisition_times[identity]:
+                errors.append(f"reviews[{i}]: review predates source acquisition")
         for project in required:
             if len(reviewed_articles.get(project, set())) < plan["minimum_articles_per_project"]:
                 errors.append(f"{project}: insufficient distinct articles")

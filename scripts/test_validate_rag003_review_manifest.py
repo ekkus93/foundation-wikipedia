@@ -62,6 +62,16 @@ class TestManifest(unittest.TestCase):
         data = fixture()
         data["reviews"][0]["reviewed_at"] = "2026-10-01T00:00:00Z"
         self.assertTrue(any("predates" in e for e in validator.validate(data)))
+    def test_review_before_source_acquisition(self):
+        data = fixture()
+        data["source_articles"][0]["acquired_at"] = "2026-11-02T02:00:00Z"
+        self.assertTrue(any("review predates source acquisition" in e for e in validator.validate(data)))
+
+    def test_review_after_source_acquisition(self):
+        data = fixture()
+        data["reviews"][0]["reviewed_at"] = "2026-11-02T02:00:00Z"
+        self.assertEqual(validator.validate(data), [])
+
     def test_duplicate_json_key(self):
         with self.assertRaises(ValueError):
             validator.unique_object([("a", 1), ("a", 2)])
