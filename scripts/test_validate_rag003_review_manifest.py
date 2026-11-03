@@ -12,7 +12,7 @@ def fixture():
     return {
         "preregistration": {"registered_at": "2026-11-01T00:00:00Z", "required_projects": ["enwiki"], "minimum_cases_per_project": 1, "minimum_articles_per_project": 1},
         "source_articles": [{"project": "enwiki", "page_id": 1, "revision_id": 2, "acquired_at": "2026-11-02T00:00:00Z"}],
-        "reviews": [{"case_id": "c1", "reviewer_id": "r1", "claim_start_byte": 0, "claim_end_byte": 2, "source_project": "enwiki", "source_page_id": 1, "source_revision_id": 2, "reviewed_at": "2026-11-02T01:00:00Z"}],
+        "reviews": [{"case_id": "c1", "reviewer_id": "r1", "rubric_version": "v1", "claim_start_byte": 0, "claim_end_byte": 2, "source_project": "enwiki", "source_page_id": 1, "source_revision_id": 2, "reviewed_at": "2026-11-02T01:00:00Z"}],
         "execution": {"runner_commit": "b" * 40, "suite_sha256": H, "corpus_sha256": H, "report_sha256": H, "model_config_sha256": H},
     }
 
@@ -144,6 +144,25 @@ class TestManifest(unittest.TestCase):
         data = fixture()
         data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})
         self.assertEqual(validator.validate(data), [])
+
+    def test_reviewers_with_conflicting_rubrics_rejected(self):
+        data = fixture()
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2", "rubric_version": "v2"})
+        errors = validator.validate(data)
+        self.assertTrue(any("conflicting rubric version" in e for e in errors))
+
+    def test_matching_rubrics_across_reviewers_allowed(self):
+        data = fixture()
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})
+        self.assertEqual(validator.validate(data), [])
+
+    def test_conflicting_rubric_cannot_qualify_second_case(self):
+        data = fixture()
+        data["preregistration"]["minimum_cases_per_project"] = 2
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2", "rubric_version": "v2"})
+        errors = validator.validate(data)
+        self.assertTrue(any("conflicting rubric version" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
 
     def test_duplicate_json_key(self):
         with self.assertRaises(ValueError):

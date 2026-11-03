@@ -24,6 +24,7 @@ def validate(data):
         case_projects = {}
         case_sources = {}
         case_claim_spans = {}
+        case_rubrics = {}
         for i, source in enumerate(sources):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
@@ -49,6 +50,11 @@ def validate(data):
             conflicting_span = previous_span != claim_span
             if conflicting_span:
                 errors.append(f"reviews[{i}]: case_id reused with conflicting claim span")
+            rubric = review["rubric_version"]
+            previous_rubric = case_rubrics.setdefault(review["case_id"], rubric)
+            conflicting_rubric = previous_rubric != rubric
+            if conflicting_rubric:
+                errors.append(f"reviews[{i}]: case_id reused with conflicting rubric version")
             key = (review["case_id"], review["reviewer_id"], review["claim_start_byte"], review["claim_end_byte"])
             duplicate_judgment = key in judgments
             if duplicate_judgment:
@@ -61,7 +67,7 @@ def validate(data):
                 errors.append(f"reviews[{i}]: review predates registration")
             if identity in acquisition_times and reviewed < acquisition_times[identity]:
                 errors.append(f"reviews[{i}]: review predates source acquisition")
-            if (not duplicate_judgment and not conflicting_span and identity in acquisition_times and reviewed >= registered
+            if (not duplicate_judgment and not conflicting_span and not conflicting_rubric and identity in acquisition_times and reviewed >= registered
                     and reviewed >= acquisition_times[identity]
                     and review["claim_start_byte"] >= 0
                     and review["claim_end_byte"] > review["claim_start_byte"]
