@@ -1059,6 +1059,7 @@ mod tests {
             min_distinct_articles: 0,
             min_project_cases: 0,
             min_project_distinct_articles: 0,
+            required_projects: vec![],
         };
         assert_eq!(run(args.clone()), Ok(true));
         let report: serde_json::Value =
