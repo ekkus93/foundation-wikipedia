@@ -698,8 +698,6 @@ mod tests {
         assert!(parse_args(values(&[
             "--suite",
             "x",
-
-
             "--output",
             "z",
             "--expect-suite-sha256",
