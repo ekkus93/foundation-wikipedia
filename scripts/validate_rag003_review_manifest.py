@@ -37,6 +37,8 @@ def validate(data):
                 errors.append(f"source_articles[{i}]: duplicate revision")
                 duplicate_sources.add(identity)
             identities.add(identity)
+            if source["project"] not in required:
+                errors.append(f"source_articles[{i}]: project outside preregistered required_projects")
             acquired = timestamp(source["acquired_at"])
             acquisition_times.setdefault(identity, acquired)
             if acquired < registered:
@@ -92,7 +94,11 @@ def validate(data):
                 continue
             cases.setdefault(source_identity[0], set()).add(case_id)
             reviewed_articles.setdefault(source_identity[0], set()).add(source_identity[1])
+        # A valid sampling plan cannot silently shrink a declared project to
+        # zero source articles or qualify a case from an unplanned project.
         for project in required:
+            if not any(identity[0] == project for identity in identities):
+                errors.append(f"{project}: no acquired source articles")
             if len(reviewed_articles.get(project, set())) < plan["minimum_articles_per_project"]:
                 errors.append(f"{project}: insufficient distinct articles")
             if len(cases.get(project, set())) < plan["minimum_cases_per_project"]:

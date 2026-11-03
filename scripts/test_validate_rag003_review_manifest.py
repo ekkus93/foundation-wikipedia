@@ -57,6 +57,28 @@ class TestManifest(unittest.TestCase):
         self.assertTrue(any("c2: fewer than two distinct valid reviewers" in e for e in errors))
         self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
         self.assertTrue(any("insufficient distinct articles" in e for e in errors))
+    def test_source_project_outside_preregistered_plan_rejected(self):
+        data = fixture()
+        data["source_articles"].append({**data["source_articles"][0], "project": "frwiki"})
+        errors = validator.validate(data)
+        self.assertTrue(any("project outside preregistered required_projects" in e for e in errors))
+
+    def test_required_project_without_acquired_sources_rejected(self):
+        data = fixture()
+        data["preregistration"]["required_projects"].append("frwiki")
+        errors = validator.validate(data)
+        self.assertTrue(any("frwiki: no acquired source articles" in e for e in errors))
+
+    def test_source_project_added_to_plan_is_accepted_when_qualified(self):
+        data = fixture()
+        data["preregistration"]["required_projects"].append("frwiki")
+        data["source_articles"].append({**data["source_articles"][0], "project": "frwiki"})
+        data["reviews"].extend([
+            {**review, "case_id": "c2", "source_project": "frwiki"}
+            for review in data["reviews"]
+        ])
+        self.assertEqual(validator.validate(data), [])
+
     def test_missing_project(self):
         data = fixture()
         data["preregistration"]["required_projects"].append("frwiki")
