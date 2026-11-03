@@ -698,6 +698,7 @@ mod tests {
         assert!(parse_args(values(&[
             "--suite",
             "x",
+
             "--output",
             "z",
             "--expect-suite-sha256",
@@ -708,7 +709,6 @@ mod tests {
         .is_err());
         assert!(parse_args(values(&[
             "--suite",
-
             "x",
             "--output",
             "z",
@@ -745,7 +745,6 @@ mod tests {
         for (flag, value) in [
             ("--min-cases", "1001"),
             ("--min-distinct-articles", "-1"),
-
             ("--min-distinct-articles", "abc"),
             ("--min-project-cases", "1001"),
             ("--min-project-distinct-articles", "-1"),
