@@ -126,6 +126,19 @@ class TestManifest(unittest.TestCase):
         self.assertTrue(any("case_id reused across projects" in e for e in errors))
         self.assertTrue(any("frwiki: insufficient reviewed cases" in e for e in errors))
 
+    def test_same_reviewer_conflicting_claim_span_rejected(self):
+        data = fixture()
+        data["preregistration"]["minimum_cases_per_project"] = 2
+        data["reviews"].append({**data["reviews"][0], "claim_start_byte": 2, "claim_end_byte": 4})
+        errors = validator.validate(data)
+        self.assertTrue(any("conflicting claim span" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+
+    def test_two_reviewers_same_case_same_span_allowed(self):
+        data = fixture()
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})
+        self.assertEqual(validator.validate(data), [])
+
     def test_duplicate_json_key(self):
         with self.assertRaises(ValueError):
             validator.unique_object([("a", 1), ("a", 2)])
