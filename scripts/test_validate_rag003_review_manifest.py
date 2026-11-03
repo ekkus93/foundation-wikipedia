@@ -35,6 +35,23 @@ class TestManifest(unittest.TestCase):
         data = fixture()
         data["source_articles"].append(copy.deepcopy(data["source_articles"][0]))
         self.assertTrue(any("duplicate revision" in e for e in validator.validate(data)))
+    def test_duplicate_source_cannot_qualify_coverage(self):
+        data = fixture()
+        data["source_articles"].append(copy.deepcopy(data["source_articles"][0]))
+        errors = validator.validate(data)
+        self.assertTrue(any("duplicate revision" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+        self.assertTrue(any("insufficient distinct articles" in e for e in errors))
+
+    def test_duplicate_source_cannot_replace_acquisition_time(self):
+        data = fixture()
+        duplicate = copy.deepcopy(data["source_articles"][0])
+        duplicate["acquired_at"] = "2026-11-02T02:00:00Z"
+        data["source_articles"].append(duplicate)
+        errors = validator.validate(data)
+        self.assertTrue(any("duplicate revision" in e for e in errors))
+        self.assertFalse(any("review predates source acquisition" in e for e in errors))
+
     def test_unreviewed_source_does_not_satisfy_article_floor(self):
         data = fixture()
         data["preregistration"]["minimum_articles_per_project"] = 2

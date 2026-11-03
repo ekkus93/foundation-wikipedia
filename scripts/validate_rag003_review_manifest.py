@@ -21,6 +21,7 @@ def validate(data):
         if not required or len(required) != len(set(required)):
             errors.append("required_projects must be nonempty and unique")
         identities, acquisition_times, reviewed_articles, cases, judgments = set(), {}, {}, {}, set()
+        duplicate_sources = set()
         case_projects = {}
         case_sources = {}
         case_claim_spans = {}
@@ -29,9 +30,10 @@ def validate(data):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
                 errors.append(f"source_articles[{i}]: duplicate revision")
+                duplicate_sources.add(identity)
             identities.add(identity)
             acquired = timestamp(source["acquired_at"])
-            acquisition_times[identity] = acquired
+            acquisition_times.setdefault(identity, acquired)
             if acquired < registered:
                 errors.append(f"source_articles[{i}]: acquisition predates registration")
         for i, review in enumerate(reviews):
@@ -67,7 +69,8 @@ def validate(data):
                 errors.append(f"reviews[{i}]: review predates registration")
             if identity in acquisition_times and reviewed < acquisition_times[identity]:
                 errors.append(f"reviews[{i}]: review predates source acquisition")
-            if (not duplicate_judgment and not conflicting_span and not conflicting_rubric and identity in acquisition_times and reviewed >= registered
+            if (not duplicate_judgment and not conflicting_span and not conflicting_rubric
+                    and identity not in duplicate_sources and identity in acquisition_times and reviewed >= registered
                     and reviewed >= acquisition_times[identity]
                     and review["claim_start_byte"] >= 0
                     and review["claim_end_byte"] > review["claim_start_byte"]
