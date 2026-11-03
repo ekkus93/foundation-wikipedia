@@ -434,6 +434,19 @@ class TestEvidenceFiles(unittest.TestCase):
             self.assertTrue(any("preregistration: cannot verify artifact" in e
                                 for e in validator.validate_manifest(data, evidence_root=folder)))
 
+
+    def test_backslash_and_nul_paths_rejected_by_guard(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            root_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                for relative in ("evidence" + chr(92) + "plan.bin", "evidence/" + chr(0) + "plan.bin"):
+                    with self.assertRaisesRegex(ValueError, "invalid relative artifact path"):
+                        validator._secure_artifact_digest(root_fd, relative)
+            finally:
+                os.close(root_fd)
+
     def test_oversize_artifact_rejected_without_unbounded_read(self):
         import tempfile
         from unittest.mock import patch

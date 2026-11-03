@@ -122,7 +122,7 @@ def validate(data):
 def _secure_artifact_digest(root_fd, relative):
     """Hash a regular artifact below the operator-selected root, without following symlinks."""
     if (not isinstance(relative, str) or not 0 < len(relative) <= 512
-            or relative.startswith("/") or "\\\\" in relative or "\\x00" in relative):
+            or relative.startswith("/") or "\\" in relative or "\u0000" in relative):
         raise ValueError("invalid relative artifact path")
     parts = relative.split("/")
     if any(part in ("", ".", "..") for part in parts):
