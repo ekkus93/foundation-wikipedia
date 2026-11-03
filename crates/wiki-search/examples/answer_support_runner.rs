@@ -876,9 +876,9 @@ mod tests {
         let suite = serde_json::json!({
             "schema_version": 1, "suite_id": "project_coverage_test",
             "cases": [
-                {"id":"en1","project":"enwiki","page_id":42,"revision_id":100,"question":"One?","answer":"Yes","claims":[{"id":"a","text":"Yes","verdict":"supported","citations":[]}]},
-                {"id":"en2","project":"enwiki","page_id":43,"revision_id":100,"question":"Two?","answer":"Yes","claims":[{"id":"b","text":"Yes","verdict":"supported","citations":[]}]},
-                {"id":"fr1","project":"frwiki","page_id":44,"revision_id":100,"question":"Trois?","answer":"Oui","claims":[{"id":"c","text":"Oui","verdict":"supported","citations":[]}]}
+                {"id":"en1","project":"enwiki","page_id":42,"revision_id":100,"question":"One?","answer":"Yes [[cite:wkb:enwiki:42:100:b0]]","claims":[{"id":"en1claim","text":"Yes","verdict":"supported","citations":[{"block_id":"wkb:enwiki:42:100:b0","verdict":"supported"}]}]},
+                {"id":"en2","project":"enwiki","page_id":43,"revision_id":100,"question":"Two?","answer":"Yes [[cite:wkb:enwiki:43:100:b0]]","claims":[{"id":"en2claim","text":"Yes","verdict":"supported","citations":[{"block_id":"wkb:enwiki:43:100:b0","verdict":"supported"}]}]},
+                {"id":"fr1","project":"frwiki","page_id":44,"revision_id":100,"question":"Trois?","answer":"Oui [[cite:wkb:frwiki:44:100:b0]]","claims":[{"id":"fr1claim","text":"Oui","verdict":"supported","citations":[{"block_id":"wkb:frwiki:44:100:b0","verdict":"supported"}]}]}
             ]
         });
         let report = evaluate_answer_support_json(&suite.to_string()).unwrap();
