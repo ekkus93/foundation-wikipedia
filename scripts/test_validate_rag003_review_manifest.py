@@ -54,6 +54,28 @@ class TestManifest(unittest.TestCase):
         data["reviews"].append({**data["reviews"][0], "source_project": "frwiki", "reviewer_id": "r2"})
         self.assertTrue(any("case_id reused across projects" in e for e in validator.validate(data)))
 
+    def test_case_id_cannot_span_articles_within_project(self):
+        data = fixture()
+        data["preregistration"]["minimum_articles_per_project"] = 2
+        data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2", "source_page_id": 3, "source_revision_id": 4})
+        errors = validator.validate(data)
+        self.assertTrue(any("case_id reused across source revisions" in e for e in errors))
+        self.assertTrue(any("insufficient distinct articles" in e for e in errors))
+
+    def test_case_id_cannot_span_revisions_of_same_article(self):
+        data = fixture()
+        data["source_articles"].append({**data["source_articles"][0], "revision_id": 5})
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2", "source_revision_id": 5})
+        self.assertTrue(any("case_id reused across source revisions" in e for e in validator.validate(data)))
+
+    def test_different_case_ids_can_reference_different_articles(self):
+        data = fixture()
+        data["preregistration"]["minimum_articles_per_project"] = 2
+        data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
+        data["reviews"].append({**data["reviews"][0], "case_id": "c2", "reviewer_id": "r2", "source_page_id": 3, "source_revision_id": 4})
+        self.assertEqual(validator.validate(data), [])
+
     def test_bad_span(self):
         data = fixture()
         data["reviews"][0]["claim_end_byte"] = 0

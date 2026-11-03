@@ -22,6 +22,7 @@ def validate(data):
             errors.append("required_projects must be nonempty and unique")
         identities, acquisition_times, reviewed_articles, cases, judgments = set(), {}, {}, {}, set()
         case_projects = {}
+        case_sources = {}
         for i, source in enumerate(sources):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
@@ -36,6 +37,9 @@ def validate(data):
             if identity not in identities:
                 errors.append(f"reviews[{i}]: unknown source revision")
             else:
+                previous_source = case_sources.setdefault(review["case_id"], identity)
+                if previous_source != identity:
+                    errors.append(f"reviews[{i}]: case_id reused across source revisions")
                 previous_project = case_projects.setdefault(review["case_id"], identity[0])
                 if previous_project != identity[0]:
                     errors.append(f"reviews[{i}]: case_id reused across projects")
@@ -55,7 +59,8 @@ def validate(data):
                     and reviewed >= acquisition_times[identity]
                     and review["claim_start_byte"] >= 0
                     and review["claim_end_byte"] > review["claim_start_byte"]
-                    and case_projects.get(review["case_id"]) == identity[0]):
+                    and case_projects.get(review["case_id"]) == identity[0]
+                    and case_sources.get(review["case_id"]) == identity):
                 cases.setdefault(identity[0], set()).add(review["case_id"])
                 reviewed_articles.setdefault(identity[0], set()).add(identity[1])
         for project in required:
