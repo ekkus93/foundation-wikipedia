@@ -37,10 +37,14 @@ jobs:
         run: |
           set -o pipefail
           cargo run -p wiki-store --example codec_probe --locked 2>&1 | tee codec-probe.log
+      - name: Install pinned RAG-003 JSON Schema validator
+        run: |
+          python3 -m venv .rag003-venv
+          .rag003-venv/bin/python -m pip install --disable-pip-version-check -r scripts/requirements-rag003.txt
       - name: Verify fixture provenance
-        run: python3 -m unittest discover -s scripts && python3 scripts/verify_fixture_provenance.py
-      - name: RAG-003 semantic review manifest regression gate
-        run: python3 -m unittest discover -s scripts -p 'test_validate_rag003_review_manifest.py' -v
+        run: .rag003-venv/bin/python -m unittest discover -s scripts && .rag003-venv/bin/python scripts/verify_fixture_provenance.py
+      - name: RAG-003 structural and semantic review manifest regression gate
+        run: .rag003-venv/bin/python -m unittest discover -s scripts -p 'test_validate_rag003_review_manifest.py' -v
       - name: Source staging verifier negative tests
         run: python3 -m unittest discover -s scripts -p 'test_verify_source_staging.py'
       - name: Preserve test evidence

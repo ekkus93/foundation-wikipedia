@@ -5,6 +5,10 @@ import datetime
 import json
 import re
 import sys
+from pathlib import Path
+
+MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'docs' / 'schemas' / 'rag003-review-manifest.schema.json'
 
 def timestamp(value):
     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -92,6 +96,35 @@ def validate(data):
         errors.append(f"invalid manifest: {exc}")
     return errors
 
+
+def validate_structure(data):
+    """Assert checked-in Draft 2020-12 rules, including date-time/URI formats.
+
+    This checks structure, not source authenticity or review independence.
+    Missing jsonschema is a fatal configuration error, never a skipped gate.
+    """
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+    except ImportError as exc:
+        raise RuntimeError("RAG-003 schema validation requires jsonschema==4.23.0") from exc
+    with SCHEMA_PATH.open(encoding="utf-8") as handle:
+        schema = json.load(handle, object_pairs_hook=unique_object)
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    errors = []
+    for issue in validator.iter_errors(data):
+        location = ".".join(str(part) for part in issue.absolute_path) or "<root>"
+        errors.append(f"schema {location}: {issue.message[:300]}")
+        if len(errors) >= 20:
+            errors.append("additional schema errors suppressed")
+            break
+    return errors
+
+def validate_manifest(data):
+    """Reject structurally invalid objects before running semantic checks."""
+    problems = validate_structure(data)
+    return problems if problems else validate(data)
+
 def unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -105,9 +138,13 @@ def main():
     parser.add_argument("manifest")
     args = parser.parse_args()
     try:
-        with open(args.manifest, encoding="utf-8") as handle:
-            errors = validate(json.load(handle, object_pairs_hook=unique_object))
-    except (OSError, ValueError) as exc:
+        with open(args.manifest, "rb") as handle:
+            raw = handle.read(MAX_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_MANIFEST_BYTES:
+            raise ValueError("manifest exceeds 2 MiB")
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+        errors = validate_manifest(data)
+    except (OSError, ValueError, UnicodeError, RuntimeError) as exc:
         errors = [str(exc)]
     for error in errors:
         print(error, file=sys.stderr)

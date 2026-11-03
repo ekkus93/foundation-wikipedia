@@ -185,5 +185,103 @@ class TestManifest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validator.unique_object([("a", 1), ("a", 2)])
 
+
+def complete_schema_fixture():
+    """Structurally valid fixture: synthetic, NOT evidence of real reviewers."""
+    data = fixture()
+    data["schema_version"] = 1
+    data["evaluation_id"] = "synthetic_review_validation"
+    data["preregistration"].update({
+        "sampling_seed": 42, "strata": ["factual"],
+        "plan_sha256": H,
+    })
+    data["source_articles"][0].update({
+        "source_url": "https://en.wikipedia.org/wiki/Example",
+        "generation_id": "synthetic_generation",
+        "sha256": H,
+        "verification_method": "fixture_only",
+    })
+    data["reviews"][0].update({
+        "verdict": "supported", "source_span": "fixture passage",
+        "citation_valid": True,
+    })
+    data["execution"]["command"] = "synthetic test only"
+    return data
+
+class TestManifestStructure(unittest.TestCase):
+    def test_full_manifest_accepts_structural_and_semantic_validation(self):
+        self.assertEqual(validator.validate_structure(complete_schema_fixture()), [])
+        self.assertEqual(validator.validate_manifest(complete_schema_fixture()), [])
+
+    def test_missing_field_rejected_even_if_semantic_fields_exist(self):
+        data = complete_schema_fixture()
+        del data["source_articles"][0]["source_url"]
+        self.assertTrue(any("schema" in error and "source_url" in error
+                            for error in validator.validate_manifest(data)))
+
+    def test_unknown_field_and_bad_types_rejected(self):
+        data = complete_schema_fixture()
+        data["execution"]["extra_undeclared"] = 123
+        self.assertTrue(any("extra_undeclared" in error
+                            for error in validator.validate_manifest(data)))
+        data = complete_schema_fixture()
+        data["reviews"][0]["citation_valid"] = "yes"
+        self.assertTrue(any("citation_valid" in error
+                            for error in validator.validate_manifest(data)))
+
+    def test_format_assertions_reject_invalid_timestamp_and_url(self):
+        data = complete_schema_fixture()
+        data["source_articles"][0]["acquired_at"] = "2026-99-99T00:00:00Z"
+        self.assertTrue(any("acquired_at" in error
+                            for error in validator.validate_manifest(data)))
+        data = complete_schema_fixture()
+        data["source_articles"][0]["source_url"] = "http://localhost/source"
+        self.assertTrue(any("source_url" in error
+                            for error in validator.validate_manifest(data)))
+
+    def test_semantic_errors_still_reported_for_schema_valid_data(self):
+        data = complete_schema_fixture()
+        data["reviews"][0]["source_revision_id"] = 999
+        self.assertEqual(validator.validate_structure(data), [])
+        self.assertTrue(any("unknown source revision" in error
+                            for error in validator.validate_manifest(data)))
+
+    def test_main_rejects_invalid_structure_and_accepts_valid_fixture(self):
+        import contextlib
+        import io
+        import json
+        import sys
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "manifest.json"
+            with patch.object(sys, "argv", ["validator", str(path)]):
+                path.write_text(json.dumps(complete_schema_fixture()), encoding="utf-8")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertFalse(validator.main())
+                malformed = complete_schema_fixture()
+                malformed["schema_version"] = 999
+                path.write_text(json.dumps(malformed), encoding="utf-8")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertTrue(validator.main())
+                path.write_text('{"schema_version":1,"schema_version":1}', encoding="utf-8")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertTrue(validator.main())
+
+    def test_size_limit_rejects_oversized_file(self):
+        import contextlib
+        import io
+        import sys
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "oversize.json"
+            path.write_bytes(b"x" * (validator.MAX_MANIFEST_BYTES + 1))
+            with patch.object(sys, "argv", ["validator", str(path)]):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertTrue(validator.main())
+
 if __name__ == "__main__":
     unittest.main()
