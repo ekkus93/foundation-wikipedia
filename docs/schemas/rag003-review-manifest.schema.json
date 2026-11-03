@@ -70,6 +70,11 @@
         },
         "plan_sha256": {
           "$ref": "#/$defs/sha256"
+        },
+        "plan_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         }
       }
     },
@@ -121,6 +126,11 @@
           "verification_method": {
             "type": "string",
             "minLength": 1
+          },
+          "artifact_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
           }
         }
       }
@@ -231,6 +241,26 @@
         },
         "model_config_sha256": {
           "$ref": "#/$defs/sha256"
+        },
+        "suite_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "corpus_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "report_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "model_config_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         }
       }
     }

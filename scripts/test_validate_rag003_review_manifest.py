@@ -346,5 +346,121 @@ class TestManifestStructure(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()):
                     self.assertTrue(validator.main())
 
+
+def evidence_fixture(folder):
+    """Materialize fake local artifacts; their byte digests are genuine, not publisher evidence."""
+    import hashlib
+    from pathlib import Path
+
+    data = complete_schema_fixture()
+    entries = {
+        "plan": b"fake preregistered plan bytes",
+        "suite": b"fake independently reviewed suite bytes",
+        "corpus": b"fake exact canonical corpus bytes",
+        "report": b"fake report bytes",
+        "model_config": b"fake model config bytes",
+        "source": b"fake revision source bytes",
+    }
+    for name, content in entries.items():
+        relative = f"evidence/{name}.bin"
+        location = Path(folder, relative)
+        location.parent.mkdir(parents=True, exist_ok=True)
+        location.write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
+        if name == "plan":
+            data["preregistration"]["plan_path"] = relative
+            data["preregistration"]["plan_sha256"] = digest
+        elif name == "source":
+            data["source_articles"][0]["artifact_path"] = relative
+            data["source_articles"][0]["sha256"] = digest
+        else:
+            data["execution"][f"{name}_path"] = relative
+            data["execution"][f"{name}_sha256"] = digest
+    return data
+
+
+class TestEvidenceFiles(unittest.TestCase):
+    def test_real_local_byte_hashes_match_all_six_artifacts(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            self.assertEqual(validator.validate_manifest(data, evidence_root=folder), [])
+
+    def test_mismatch_and_missing_file_are_fail_closed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            (pathlib.Path(folder) / "evidence" / "corpus.bin").write_bytes(b"tampered")
+            errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(any("execution.corpus: SHA-256 mismatch" in e for e in errors))
+            (pathlib.Path(folder) / "evidence" / "source.bin").unlink()
+            errors = validator.validate_manifest(data, evidence_root=folder)
+            self.assertTrue(any("source_articles[0]: cannot verify artifact" in e for e in errors))
+
+    def test_missing_path_cannot_skip_evidence_verification(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            del data["execution"]["report_path"]
+            self.assertTrue(any("execution.report: artifact path required" in e
+                                for e in validator.validate_manifest(data, evidence_root=folder)))
+
+    def test_path_traversal_absolute_and_backslash_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            for relative in ("../outside.bin", "/etc/passwd", "evidence/../plan.bin",
+                             "evidence//plan.bin", "evidence\\\\plan.bin", "./evidence/plan.bin"):
+                data["preregistration"]["plan_path"] = relative
+                errors = validator.validate_manifest(data, evidence_root=folder)
+                self.assertTrue(any("preregistration: cannot verify artifact" in e for e in errors),
+                                f"accepted unsafe path: {relative}")
+
+    @unittest.skipUnless(hasattr(__import__("os"), "symlink"), "symlinks unavailable")
+    def test_symlinked_file_and_intermediate_directory_rejected(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            linked = pathlib.Path(folder, "linked")
+            os.symlink(pathlib.Path(folder, "evidence"), linked, target_is_directory=True)
+            data["preregistration"]["plan_path"] = "linked/plan.bin"
+            self.assertTrue(any("preregistration: cannot verify artifact" in e
+                                for e in validator.validate_manifest(data, evidence_root=folder)))
+            data["preregistration"]["plan_path"] = "evidence/plan.bin"
+            file_link = pathlib.Path(folder, "evidence", "alias.bin")
+            os.symlink(pathlib.Path(folder, "evidence", "plan.bin"), file_link)
+            data["preregistration"]["plan_path"] = "evidence/alias.bin"
+            self.assertTrue(any("preregistration: cannot verify artifact" in e
+                                for e in validator.validate_manifest(data, evidence_root=folder)))
+
+    def test_oversize_artifact_rejected_without_unbounded_read(self):
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            with patch.object(validator, "MAX_ARTIFACT_BYTES", 10):
+                self.assertTrue(any("artifact exceeds" in e
+                                    for e in validator.validate_manifest(data, evidence_root=folder)))
+
+    def test_cli_evidence_flag_enforces_hashes(self):
+        import contextlib
+        import io
+        import json
+        import sys
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            data = evidence_fixture(folder)
+            manifest = pathlib.Path(folder, "manifest.json")
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+            with patch.object(sys, "argv", ["validator", str(manifest), "--evidence-root", folder]):
+                with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    self.assertFalse(validator.main())
+                self.assertIn("SHA-256 bytes passed", stdout.getvalue())
+                (pathlib.Path(folder) / "evidence" / "suite.bin").write_bytes(b"tamper")
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertTrue(validator.main())
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,17 @@
 """RAG-003 semantic manifest checks; not a substitute for JSON Schema or authentication."""
 import argparse
 import datetime
+import hashlib
+import hmac
+import os
+import stat
 import json
 import re
 import sys
 from pathlib import Path
 
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / 'docs' / 'schemas' / 'rag003-review-manifest.schema.json'
 
 def timestamp(value):
@@ -113,6 +118,88 @@ def validate(data):
     return errors
 
 
+
+def _secure_artifact_digest(root_fd, relative):
+    """Hash a regular artifact below the operator-selected root, without following symlinks."""
+    if (not isinstance(relative, str) or not 0 < len(relative) <= 512
+            or relative.startswith("/") or "\\\\" in relative or "\\x00" in relative):
+        raise ValueError("invalid relative artifact path")
+    parts = relative.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("invalid relative artifact path")
+    directory = root_fd
+    try:
+        for part in parts[:-1]:
+            new_directory = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=directory)
+            if directory != root_fd:
+                os.close(directory)
+            directory = new_directory
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory)
+        try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("artifact is not a regular file")
+            if metadata.st_size > MAX_ARTIFACT_BYTES:
+                raise ValueError("artifact exceeds 256 MiB")
+            hasher = hashlib.sha256()
+            bytes_read = 0
+            with os.fdopen(fd, "rb", closefd=False) as handle:
+                while block := handle.read(64 * 1024):
+                    bytes_read += len(block)
+                    if bytes_read > MAX_ARTIFACT_BYTES:
+                        raise ValueError("artifact exceeds 256 MiB")
+                    hasher.update(block)
+            return hasher.hexdigest()
+        finally:
+            os.close(fd)
+    finally:
+        if directory != root_fd:
+            os.close(directory)
+
+
+def validate_artifact_files(data, evidence_root):
+    """Compare pinned manifest digests against local file *bytes*, not publisher identity."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return ["artifact verification requires secure POSIX openat support"]
+    checks = [("preregistration", data["preregistration"].get("plan_path"),
+               data["preregistration"]["plan_sha256"])]
+    fields = {
+        "suite": "suite_sha256",
+        "corpus": "corpus_sha256",
+        "report": "report_sha256",
+        "model_config": "model_config_sha256",
+    }
+    checks.extend(
+        (f"execution.{name}", data["execution"].get(f"{name}_path"), data["execution"][sha_field])
+        for name, sha_field in fields.items()
+    )
+    checks.extend(
+        (f"source_articles[{i}]", source.get("artifact_path"), source["sha256"])
+        for i, source in enumerate(data["source_articles"])
+    )
+    errors = []
+    try:
+        root_fd = os.open(evidence_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except (OSError, TypeError, ValueError) as exc:
+        return [f"invalid evidence root: {exc}"]
+    try:
+        for label, relative, expected in checks:
+            if relative is None:
+                errors.append(f"{label}: artifact path required for evidence-root verification")
+                continue
+            try:
+                actual = _secure_artifact_digest(root_fd, relative)
+                if not hmac.compare_digest(actual, expected):
+                    errors.append(f"{label}: SHA-256 mismatch")
+            except (OSError, ValueError) as exc:
+                errors.append(f"{label}: cannot verify artifact: {exc}")
+    finally:
+        os.close(root_fd)
+    return errors
+
+
 def validate_structure(data):
     """Assert checked-in Draft 2020-12 rules, including date-time/URI formats.
 
@@ -136,10 +223,15 @@ def validate_structure(data):
             break
     return errors
 
-def validate_manifest(data):
-    """Reject structurally invalid objects before running semantic checks."""
+def validate_manifest(data, evidence_root=None):
+    """Enforce schema, semantic consistency, and optional strict local byte receipts."""
     problems = validate_structure(data)
-    return problems if problems else validate(data)
+    if problems:
+        return problems
+    problems = validate(data)
+    if problems:
+        return problems
+    return validate_artifact_files(data, evidence_root) if evidence_root is not None else []
 
 def unique_object(pairs):
     result = {}
@@ -152,6 +244,8 @@ def unique_object(pairs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest")
+    parser.add_argument("--evidence-root", metavar="DIR",
+                        help="Require and verify every pinned source, plan, corpus, suite, report and config file")
     args = parser.parse_args()
     try:
         with open(args.manifest, "rb") as handle:
@@ -159,13 +253,16 @@ def main():
         if len(raw) > MAX_MANIFEST_BYTES:
             raise ValueError("manifest exceeds 2 MiB")
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
-        errors = validate_manifest(data)
+        errors = validate_manifest(data, evidence_root=args.evidence_root)
     except (OSError, ValueError, UnicodeError, RuntimeError) as exc:
         errors = [str(exc)]
     for error in errors:
         print(error, file=sys.stderr)
     if not errors:
-        print("Semantic checks passed; provenance and reviewer authenticity NOT established")
+        if args.evidence_root is None:
+            print("Structure and semantics passed; artifact SHA-256 bytes NOT checked (pass --evidence-root)")
+        else:
+            print("Structure, semantics and local SHA-256 bytes passed; source and reviewer authenticity NOT established")
     return bool(errors)
 
 if __name__ == "__main__":
