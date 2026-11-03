@@ -87,6 +87,23 @@ class TestManifest(unittest.TestCase):
         self.assertTrue(any("invalid claim byte span" in e for e in errors))
         self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
 
+    def test_duplicate_judgment_does_not_inflate_case_coverage(self):
+        data = fixture()
+        data["preregistration"]["minimum_cases_per_project"] = 2
+        data["reviews"].append(copy.deepcopy(data["reviews"][0]))
+        errors = validator.validate(data)
+        self.assertTrue(any("duplicate reviewer judgment" in e for e in errors))
+        self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
+
+    def test_cross_project_case_does_not_count_for_second_project(self):
+        data = fixture()
+        data["preregistration"]["required_projects"].append("frwiki")
+        data["source_articles"].append({**data["source_articles"][0], "project": "frwiki"})
+        data["reviews"].append({**data["reviews"][0], "source_project": "frwiki", "reviewer_id": "r2"})
+        errors = validator.validate(data)
+        self.assertTrue(any("case_id reused across projects" in e for e in errors))
+        self.assertTrue(any("frwiki: insufficient reviewed cases" in e for e in errors))
+
     def test_duplicate_json_key(self):
         with self.assertRaises(ValueError):
             validator.unique_object([("a", 1), ("a", 2)])

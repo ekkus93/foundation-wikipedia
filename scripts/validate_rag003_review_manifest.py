@@ -40,7 +40,8 @@ def validate(data):
                 if previous_project != identity[0]:
                     errors.append(f"reviews[{i}]: case_id reused across projects")
             key = (review["case_id"], review["reviewer_id"], review["claim_start_byte"], review["claim_end_byte"])
-            if key in judgments:
+            duplicate_judgment = key in judgments
+            if duplicate_judgment:
                 errors.append(f"reviews[{i}]: duplicate reviewer judgment")
             judgments.add(key)
             if review["claim_start_byte"] < 0 or review["claim_end_byte"] <= review["claim_start_byte"]:
@@ -50,10 +51,11 @@ def validate(data):
                 errors.append(f"reviews[{i}]: review predates registration")
             if identity in acquisition_times and reviewed < acquisition_times[identity]:
                 errors.append(f"reviews[{i}]: review predates source acquisition")
-            if (identity in acquisition_times and reviewed >= registered
+            if (not duplicate_judgment and identity in acquisition_times and reviewed >= registered
                     and reviewed >= acquisition_times[identity]
                     and review["claim_start_byte"] >= 0
-                    and review["claim_end_byte"] > review["claim_start_byte"]):
+                    and review["claim_end_byte"] > review["claim_start_byte"]
+                    and case_projects.get(review["case_id"]) == identity[0]):
                 cases.setdefault(identity[0], set()).add(review["case_id"])
                 reviewed_articles.setdefault(identity[0], set()).add(identity[1])
         for project in required:
