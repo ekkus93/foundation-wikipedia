@@ -134,6 +134,12 @@ class TestManifest(unittest.TestCase):
         self.assertTrue(any("conflicting claim span" in e for e in errors))
         self.assertTrue(any("insufficient reviewed cases" in e for e in errors))
 
+    def test_two_reviewers_conflicting_claim_span_rejected(self):
+        data = fixture()
+        data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2", "claim_start_byte": 2, "claim_end_byte": 4})
+        errors = validator.validate(data)
+        self.assertTrue(any("conflicting claim span" in e for e in errors))
+
     def test_two_reviewers_same_case_same_span_allowed(self):
         data = fixture()
         data["reviews"].append({**data["reviews"][0], "reviewer_id": "r2"})

@@ -23,7 +23,7 @@ def validate(data):
         identities, acquisition_times, reviewed_articles, cases, judgments = set(), {}, {}, {}, set()
         case_projects = {}
         case_sources = {}
-        reviewer_cases = {}
+        case_claim_spans = {}
         for i, source in enumerate(sources):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
@@ -44,12 +44,11 @@ def validate(data):
                 previous_project = case_projects.setdefault(review["case_id"], identity[0])
                 if previous_project != identity[0]:
                     errors.append(f"reviews[{i}]: case_id reused across projects")
-            reviewer_case = (review["case_id"], review["reviewer_id"])
-            source_and_span = (identity, review["claim_start_byte"], review["claim_end_byte"])
-            previous_span = reviewer_cases.setdefault(reviewer_case, source_and_span)
-            conflicting_span = previous_span != source_and_span
+            claim_span = (review["claim_start_byte"], review["claim_end_byte"])
+            previous_span = case_claim_spans.setdefault(review["case_id"], claim_span)
+            conflicting_span = previous_span != claim_span
             if conflicting_span:
-                errors.append(f"reviews[{i}]: reviewer reused case_id with conflicting claim span")
+                errors.append(f"reviews[{i}]: case_id reused with conflicting claim span")
             key = (review["case_id"], review["reviewer_id"], review["claim_start_byte"], review["claim_end_byte"])
             duplicate_judgment = key in judgments
             if duplicate_judgment:
