@@ -128,10 +128,14 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .map_err(|_| "invalid distinct article floor")?;
             }
             "--min-project-cases" => {
-                min_project_cases = value.parse::<usize>().map_err(|_| "invalid project case floor")?;
+                min_project_cases = value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid project case floor")?;
             }
             "--min-project-distinct-articles" => {
-                min_project_distinct_articles = value.parse::<usize>().map_err(|_| "invalid project article floor")?;
+                min_project_distinct_articles = value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid project article floor")?;
             }
             _ => return Err(format!("unknown option: {flag}")),
         }
@@ -145,7 +149,11 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     {
         return Err("thresholds must be 0..=1000".into());
     }
-    if min_cases > 1_000 || min_distinct_articles > 1_000 || min_project_cases > 1_000 || min_project_distinct_articles > 1_000 {
+    if min_cases > 1_000
+        || min_distinct_articles > 1_000
+        || min_project_cases > 1_000
+        || min_project_distinct_articles > 1_000
+    {
         return Err("coverage floors must be 0..=1000".into());
     }
     if expected_suite_sha256.is_some() != expected_corpus_sha256.is_some() {
@@ -388,23 +396,30 @@ fn project_coverage_gate(
     min_cases: usize,
     min_distinct_articles: usize,
 ) -> serde_json::Value {
-    let mut projects = std::collections::BTreeMap::<&str, (usize, std::collections::BTreeSet<_>)>::new();
+    let mut projects =
+        std::collections::BTreeMap::<&str, (usize, std::collections::BTreeSet<_>)>::new();
     for case in cases {
         let entry = projects.entry(case.project.as_str()).or_default();
         entry.0 += 1;
         entry.1.insert(case.page_id);
     }
-    let failed_projects: Vec<&str> = projects.iter()
-        .filter(|(_, (count, articles))| *count < min_cases || articles.len() < min_distinct_articles)
+    let failed_projects: Vec<&str> = projects
+        .iter()
+        .filter(|(_, (count, articles))| {
+            *count < min_cases || articles.len() < min_distinct_articles
+        })
         .map(|(project, _)| *project)
         .collect();
-    let project_coverage: Vec<serde_json::Value> = projects.iter()
-        .map(|(project, (count, articles))| serde_json::json!({
-            "project": project,
-            "observed_cases": count,
-            "observed_distinct_articles": articles.len(),
-            "passed": *count >= min_cases && articles.len() >= min_distinct_articles
-        }))
+    let project_coverage: Vec<serde_json::Value> = projects
+        .iter()
+        .map(|(project, (count, articles))| {
+            serde_json::json!({
+                "project": project,
+                "observed_cases": count,
+                "observed_distinct_articles": articles.len(),
+                "passed": *count >= min_cases && articles.len() >= min_distinct_articles
+            })
+        })
         .collect();
     serde_json::json!({
         "enabled": min_cases > 0 || min_distinct_articles > 0,
@@ -471,8 +486,13 @@ fn run(args: Args) -> Result<bool, String> {
         |counts| (counts.supported_citations, counts.reviewed_citations),
     );
     let coverage = coverage_gate(&report.cases, args.min_cases, args.min_distinct_articles);
-    let project_coverage = project_coverage_gate(&report.cases, args.min_project_cases, args.min_project_distinct_articles);
-    let passed = project_coverage["passed"] == true && coverage["passed"] == true
+    let project_coverage = project_coverage_gate(
+        &report.cases,
+        args.min_project_cases,
+        args.min_project_distinct_articles,
+    );
+    let passed = project_coverage["passed"] == true
+        && coverage["passed"] == true
         && case_claim_gate["passed"] == true
         && case_citation_gate["passed"] == true
         && project_claim_gate["passed"] == true
