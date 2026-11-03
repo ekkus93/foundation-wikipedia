@@ -20,13 +20,13 @@ def validate(data):
         required = plan["required_projects"]
         if not required or len(required) != len(set(required)):
             errors.append("required_projects must be nonempty and unique")
-        identities, articles, cases, judgments = set(), {}, {}, set()
+        identities, reviewed_articles, cases, judgments = set(), {}, {}, set()
+        case_projects = {}
         for i, source in enumerate(sources):
             identity = (source["project"], source["page_id"], source["revision_id"])
             if identity in identities:
                 errors.append(f"source_articles[{i}]: duplicate revision")
             identities.add(identity)
-            articles.setdefault(identity[0], set()).add(identity[1])
             if timestamp(source["acquired_at"]) < registered:
                 errors.append(f"source_articles[{i}]: acquisition predates registration")
         for i, review in enumerate(reviews):
@@ -35,6 +35,10 @@ def validate(data):
                 errors.append(f"reviews[{i}]: unknown source revision")
             else:
                 cases.setdefault(identity[0], set()).add(review["case_id"])
+                reviewed_articles.setdefault(identity[0], set()).add(identity[1])
+                previous_project = case_projects.setdefault(review["case_id"], identity[0])
+                if previous_project != identity[0]:
+                    errors.append(f"reviews[{i}]: case_id reused across projects")
             key = (review["case_id"], review["reviewer_id"], review["claim_start_byte"], review["claim_end_byte"])
             if key in judgments:
                 errors.append(f"reviews[{i}]: duplicate reviewer judgment")
@@ -44,7 +48,7 @@ def validate(data):
             if timestamp(review["reviewed_at"]) < registered:
                 errors.append(f"reviews[{i}]: review predates registration")
         for project in required:
-            if len(articles.get(project, set())) < plan["minimum_articles_per_project"]:
+            if len(reviewed_articles.get(project, set())) < plan["minimum_articles_per_project"]:
                 errors.append(f"{project}: insufficient distinct articles")
             if len(cases.get(project, set())) < plan["minimum_cases_per_project"]:
                 errors.append(f"{project}: insufficient reviewed cases")

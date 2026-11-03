@@ -35,6 +35,25 @@ class TestManifest(unittest.TestCase):
         data = fixture()
         data["source_articles"].append(copy.deepcopy(data["source_articles"][0]))
         self.assertTrue(any("duplicate revision" in e for e in validator.validate(data)))
+    def test_unreviewed_source_does_not_satisfy_article_floor(self):
+        data = fixture()
+        data["preregistration"]["minimum_articles_per_project"] = 2
+        data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
+        self.assertTrue(any("insufficient distinct articles" in e for e in validator.validate(data)))
+
+    def test_reviewed_second_article_satisfies_floor(self):
+        data = fixture()
+        data["preregistration"]["minimum_articles_per_project"] = 2
+        data["source_articles"].append({**data["source_articles"][0], "page_id": 3, "revision_id": 4})
+        data["reviews"].append({**data["reviews"][0], "case_id": "c2", "source_page_id": 3, "source_revision_id": 4})
+        self.assertEqual(validator.validate(data), [])
+
+    def test_case_id_cannot_span_projects(self):
+        data = fixture()
+        data["source_articles"].append({**data["source_articles"][0], "project": "frwiki"})
+        data["reviews"].append({**data["reviews"][0], "source_project": "frwiki", "reviewer_id": "r2"})
+        self.assertTrue(any("case_id reused across projects" in e for e in validator.validate(data)))
+
     def test_bad_span(self):
         data = fixture()
         data["reviews"][0]["claim_end_byte"] = 0
