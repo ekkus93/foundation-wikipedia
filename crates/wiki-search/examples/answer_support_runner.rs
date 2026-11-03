@@ -132,9 +132,16 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
             }
             "--required-projects" => {
                 let projects: Vec<_> = value.split(',').collect();
-                if projects.is_empty() || projects.len() > 32 || projects.iter().any(|project| {
-                    project.len() < 2 || project.len() > 32 || !project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-                }) {
+                if projects.is_empty()
+                    || projects.len() > 32
+                    || projects.iter().any(|project| {
+                        project.len() < 2
+                            || project.len() > 32
+                            || !project
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    })
+                {
                     return Err("required projects must be 1..=32 comma-separated canonical lowercase project IDs".into());
                 }
                 let unique: std::collections::BTreeSet<_> = projects.iter().copied().collect();
@@ -453,8 +460,12 @@ fn required_project_gate(
     cases: &[wiki_search::answer_support::CaseSupportScore],
     required: &[String],
 ) -> serde_json::Value {
-    let observed: std::collections::BTreeSet<_> = cases.iter().map(|case| case.project.as_str()).collect();
-    let missing: Vec<_> = required.iter().filter(|project| !observed.contains(project.as_str())).collect();
+    let observed: std::collections::BTreeSet<_> =
+        cases.iter().map(|case| case.project.as_str()).collect();
+    let missing: Vec<_> = required
+        .iter()
+        .filter(|project| !observed.contains(project.as_str()))
+        .collect();
     serde_json::json!({
         "enabled": !required.is_empty(),
         "required_projects": required,
@@ -610,7 +621,6 @@ mod tests {
                 min_distinct_articles: 0,
                 min_project_cases: 0,
                 min_project_distinct_articles: 0,
-            required_projects: vec![],
                 required_projects: vec![],
             }
         );
@@ -698,6 +708,7 @@ mod tests {
         .is_err());
         assert!(parse_args(values(&[
             "--suite",
+
             "x",
             "--output",
             "z",
@@ -795,10 +806,24 @@ mod tests {
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
         };
-        for invalid in ["", "enwiki,", ",enwiki", "enwiki,enwiki", "Enwiki", "en-wiki", "a"] {
+        for invalid in [
+            "",
+            "enwiki,",
+            ",enwiki",
+            "enwiki,enwiki",
+            "Enwiki",
+            "en-wiki",
+            "a",
+        ] {
             assert!(parse_args(values(&["--required-projects", invalid])).is_err());
         }
-        assert!(parse_args(values(&["--required-projects", "enwiki", "--required-projects", "frwiki"])).is_err());
+        assert!(parse_args(values(&[
+            "--required-projects",
+            "enwiki",
+            "--required-projects",
+            "frwiki"
+        ]))
+        .is_err());
         let parsed = parse_args(values(&["--required-projects", "frwiki,enwiki"])).unwrap();
         assert_eq!(parsed.required_projects, vec!["enwiki", "frwiki"]);
         let suite = serde_json::json!({
@@ -813,7 +838,10 @@ mod tests {
         assert_eq!(gate["missing_projects"], serde_json::json!(["frwiki"]));
         assert_eq!(gate["passed"], false);
         assert_eq!(required_project_gate(&report.cases, &[])["passed"], true);
-        assert_eq!(required_project_gate(&report.cases, &["enwiki".into()])["passed"], true);
+        assert_eq!(
+            required_project_gate(&report.cases, &["enwiki".into()])["passed"],
+            true
+        );
     }
 
     #[test]
