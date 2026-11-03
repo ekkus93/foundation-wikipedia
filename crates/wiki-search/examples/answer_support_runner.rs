@@ -10,6 +10,8 @@
 //!   [--min-case-citation-precision-per-mille 800]
 //!   [--expect-suite-sha256 64-lowercase-hex --expect-corpus-sha256 64-lowercase-hex]
 //!   [--require-schema-v3] [--min-cases 100] [--min-distinct-articles 25]
+//!   [--min-project-claim-support-per-mille 800]
+//!   [--min-project-citation-precision-per-mille 800]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -44,6 +46,8 @@ struct Args {
     min_citation_precision_per_mille: u16,
     min_case_claim_support_per_mille: u16,
     min_case_citation_precision_per_mille: u16,
+    min_project_claim_support_per_mille: u16,
+    min_project_citation_precision_per_mille: u16,
     min_cases: usize,
     min_distinct_articles: usize,
 }
@@ -59,6 +63,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut citation_floor = 0;
     let mut case_claim_floor = 0;
     let mut case_citation_floor = 0;
+    let mut project_claim_floor = 0;
+    let mut project_citation_floor = 0;
     let mut min_cases = 0;
     let mut min_distinct_articles = 0;
     let mut seen = std::collections::BTreeSet::new();
@@ -96,6 +102,16 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .parse::<u16>()
                     .map_err(|_| "invalid case citation floor")?;
             }
+            "--min-project-claim-support-per-mille" => {
+                project_claim_floor = value
+                    .parse::<u16>()
+                    .map_err(|_| "invalid project claim floor")?;
+            }
+            "--min-project-citation-precision-per-mille" => {
+                project_citation_floor = value
+                    .parse::<u16>()
+                    .map_err(|_| "invalid project citation floor")?;
+            }
             "--min-cases" => {
                 min_cases = value
                     .parse::<usize>()
@@ -113,6 +129,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         || citation_floor > 1_000
         || case_claim_floor > 1_000
         || case_citation_floor > 1_000
+        || project_claim_floor > 1_000
+        || project_citation_floor > 1_000
     {
         return Err("thresholds must be 0..=1000".into());
     }
@@ -148,6 +166,8 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         min_citation_precision_per_mille: citation_floor,
         min_case_claim_support_per_mille: case_claim_floor,
         min_case_citation_precision_per_mille: case_citation_floor,
+        min_project_claim_support_per_mille: project_claim_floor,
+        min_project_citation_precision_per_mille: project_citation_floor,
         min_cases,
         min_distinct_articles,
     })
@@ -281,6 +301,51 @@ fn per_case_gate(
     })
 }
 
+/// Group all cases by canonical Wikimedia project so a large high-scoring
+/// language cannot hide poor answer support in a smaller project. This grades
+/// only caller-supplied human labels; it does not authenticate them.
+fn per_project_gate(
+    cases: &[wiki_search::answer_support::CaseSupportScore],
+    floor: u16,
+    counts: impl Fn(&wiki_search::answer_support::SupportCounts) -> (usize, usize),
+) -> serde_json::Value {
+    let mut projects = std::collections::BTreeMap::<&str, (usize, usize)>::new();
+    for case in cases {
+        let (numerator, denominator) = counts(&case.counts);
+        let totals = projects.entry(case.project.as_str()).or_default();
+        totals.0 += numerator;
+        totals.1 += denominator;
+    }
+    let failed_projects: Vec<&str> = if floor == 0 {
+        Vec::new()
+    } else {
+        projects
+            .iter()
+            .filter(|(_, (numerator, denominator))| !meets_floor(*numerator, *denominator, floor))
+            .map(|(project, _)| *project)
+            .collect()
+    };
+    let project_scores: Vec<serde_json::Value> = projects
+        .iter()
+        .map(|(project, (numerator, denominator))| {
+            serde_json::json!({
+                "project": project,
+                "supported": numerator,
+                "reviewed": denominator,
+                "passed": floor == 0 || meets_floor(*numerator, *denominator, floor)
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "enabled": floor > 0,
+        "min_per_mille": floor,
+        "observed_projects": projects.len(),
+        "project_scores": project_scores,
+        "failed_projects": failed_projects,
+        "passed": failed_projects.is_empty() && (floor == 0 || !projects.is_empty())
+    })
+}
+
 /// An independently reviewed benchmark should span more than one question
 /// and more than one article. Multiple revisions or questions for the same
 /// project/page ID do not count as distinct articles. These are structural
@@ -347,10 +412,22 @@ fn run(args: Args) -> Result<bool, String> {
         args.min_case_citation_precision_per_mille,
         |counts| (counts.supported_citations, counts.reviewed_citations),
     );
+    let project_claim_gate = per_project_gate(
+        &report.cases,
+        args.min_project_claim_support_per_mille,
+        |counts| (counts.supported_claims, counts.reviewed_claims),
+    );
+    let project_citation_gate = per_project_gate(
+        &report.cases,
+        args.min_project_citation_precision_per_mille,
+        |counts| (counts.supported_citations, counts.reviewed_citations),
+    );
     let coverage = coverage_gate(&report.cases, args.min_cases, args.min_distinct_articles);
     let passed = coverage["passed"] == true
         && case_claim_gate["passed"] == true
         && case_citation_gate["passed"] == true
+        && project_claim_gate["passed"] == true
+        && project_citation_gate["passed"] == true
         && report.all_claims_reviewed
         && report.all_citations_reviewed
         && meets_floor(
@@ -375,6 +452,8 @@ fn run(args: Args) -> Result<bool, String> {
             "min_citation_precision_per_mille": args.min_citation_precision_per_mille,
             "case_claim_support_gate": case_claim_gate,
             "case_citation_precision_gate": case_citation_gate,
+            "project_claim_support_gate": project_claim_gate,
+            "project_citation_precision_gate": project_citation_gate,
             "coverage_gate": coverage,
             "passed": passed
         },
@@ -421,6 +500,8 @@ mod tests {
                 min_citation_precision_per_mille: 0,
                 min_case_claim_support_per_mille: 0,
                 min_case_citation_precision_per_mille: 0,
+                min_project_claim_support_per_mille: 0,
+                min_project_citation_precision_per_mille: 0,
                 min_cases: 0,
                 min_distinct_articles: 0,
             }
@@ -549,6 +630,17 @@ mod tests {
         ] {
             assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
         }
+        for (flag, value) in [
+            ("--min-project-claim-support-per-mille", "1001"),
+            ("--min-project-citation-precision-per-mille", "invalid"),
+        ] {
+            assert!(parse_args(values(&["--suite", "x", "--output", "z", flag, value])).is_err());
+        }
+        assert!(parse_args(values(&[
+            "--suite", "x", "--output", "z",
+            "--min-project-claim-support-per-mille", "500",
+            "--min-project-claim-support-per-mille", "800",
+        ])).is_err());
         let coverage_args = parse_args(values(&[
             "--suite",
             "x",
@@ -658,6 +750,34 @@ mod tests {
             per_case_gate(&report.cases, 800, |_| (0, 0))["failed_case_ids"],
             serde_json::json!(["strong", "weak"])
         );
+        // Strong enwiki results cannot mask weak frwiki results when a
+        // per-project gate is enabled, even if aggregate scores pass.
+        let mut multilingual = suite.clone();
+        multilingual["cases"][1]["project"] = serde_json::json!("frwiki");
+        multilingual["cases"][1]["answer"] =
+            serde_json::json!("Unsupported [[cite:wkb:frwiki:42:100:b0]]");
+        multilingual["cases"][1]["claims"][0]["citations"][0]["block_id"] =
+            serde_json::json!("wkb:frwiki:42:100:b0");
+        let multilingual_report =
+            evaluate_answer_support_json(&multilingual.to_string()).unwrap();
+        let project_claim = per_project_gate(&multilingual_report.cases, 800, |counts| {
+            (counts.supported_claims, counts.reviewed_claims)
+        });
+        let project_citation = per_project_gate(&multilingual_report.cases, 800, |counts| {
+            (counts.supported_citations, counts.reviewed_citations)
+        });
+        assert_eq!(project_claim["failed_projects"], serde_json::json!(["frwiki"]));
+        assert_eq!(project_citation["failed_projects"], serde_json::json!(["frwiki"]));
+        assert_eq!(project_claim["observed_projects"], 2);
+        assert_eq!(project_claim["project_scores"][0]["project"], "enwiki");
+        assert_eq!(project_claim["project_scores"][0]["passed"], true);
+        assert_eq!(project_claim["project_scores"][1]["project"], "frwiki");
+        assert_eq!(project_claim["project_scores"][1]["passed"], false);
+        assert_eq!(per_project_gate(&multilingual_report.cases, 500, |counts| {
+            (counts.supported_claims, counts.reviewed_claims)
+        })["passed"], false);
+        assert_eq!(per_project_gate(&multilingual_report.cases, 0, |_| (0, 0))["passed"], true);
+        assert_eq!(per_project_gate(&[], 800, |_| (0, 0))["passed"], false);
     }
 
     #[test]
@@ -728,6 +848,8 @@ mod tests {
             min_citation_precision_per_mille: 1_000,
             min_case_claim_support_per_mille: 1_000,
             min_case_citation_precision_per_mille: 1_000,
+            min_project_claim_support_per_mille: 0,
+            min_project_citation_precision_per_mille: 0,
             min_cases: 0,
             min_distinct_articles: 0,
         };
@@ -863,6 +985,8 @@ mod tests {
                 min_citation_precision_per_mille: 500,
                 min_case_claim_support_per_mille: 800,
                 min_case_citation_precision_per_mille: 800,
+                min_project_claim_support_per_mille: 800,
+                min_project_citation_precision_per_mille: 800,
                 ..args.clone()
             }),
             Ok(false)
@@ -870,6 +994,8 @@ mod tests {
         let weak_report: serde_json::Value =
             serde_json::from_slice(&fs::read(&weak_output).unwrap()).unwrap();
         assert_eq!(weak_report["gate"]["passed"], false);
+        assert_eq!(weak_report["gate"]["project_claim_support_gate"]["failed_projects"], serde_json::json!(["enwiki"]));
+        assert_eq!(weak_report["gate"]["project_citation_precision_gate"]["failed_projects"], serde_json::json!(["enwiki"]));
         assert_eq!(weak_report["gate"]["coverage_gate"]["observed_cases"], 2);
         assert_eq!(
             weak_report["gate"]["coverage_gate"]["observed_distinct_articles"],
