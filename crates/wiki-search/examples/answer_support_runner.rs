@@ -13,6 +13,7 @@
 //!   [--min-project-claim-support-per-mille 800]
 //!   [--min-project-citation-precision-per-mille 800]
 //!   [--min-project-cases 10] [--min-project-distinct-articles 5]
+//!   [--required-projects enwiki,frwiki]
 //! Without --corpus, only reviewer-label/ID syntax is checked. With --corpus,
 //! each citation must exist in an exact validated article revision; source and
 //! human-label authenticity still require independent verification.
@@ -53,6 +54,7 @@ struct Args {
     min_distinct_articles: usize,
     min_project_cases: usize,
     min_project_distinct_articles: usize,
+    required_projects: Vec<String>,
 }
 
 fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> {
@@ -72,6 +74,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut min_distinct_articles = 0;
     let mut min_project_cases = 0;
     let mut min_project_distinct_articles = 0;
+    let mut required_projects = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut values = values.into_iter();
     while let Some(flag) = values.next() {
@@ -126,6 +129,19 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
                 min_distinct_articles = value
                     .parse::<usize>()
                     .map_err(|_| "invalid distinct article floor")?;
+            }
+            "--required-projects" => {
+                let projects: Vec<_> = value.split(',').collect();
+                if projects.is_empty() || projects.len() > 32 || projects.iter().any(|project| {
+                    project.len() < 2 || project.len() > 32 || !project.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                }) {
+                    return Err("required projects must be 1..=32 comma-separated canonical lowercase project IDs".into());
+                }
+                let unique: std::collections::BTreeSet<_> = projects.iter().copied().collect();
+                if unique.len() != projects.len() {
+                    return Err("duplicate required project".into());
+                }
+                required_projects = unique.into_iter().map(str::to_owned).collect();
             }
             "--min-project-cases" => {
                 min_project_cases = value
@@ -191,6 +207,7 @@ fn parse_args(values: impl IntoIterator<Item = String>) -> Result<Args, String> 
         min_distinct_articles,
         min_project_cases,
         min_project_distinct_articles,
+        required_projects,
     })
 }
 
@@ -432,6 +449,20 @@ fn project_coverage_gate(
     })
 }
 
+fn required_project_gate(
+    cases: &[wiki_search::answer_support::CaseSupportScore],
+    required: &[String],
+) -> serde_json::Value {
+    let observed: std::collections::BTreeSet<_> = cases.iter().map(|case| case.project.as_str()).collect();
+    let missing: Vec<_> = required.iter().filter(|project| !observed.contains(project.as_str())).collect();
+    serde_json::json!({
+        "enabled": !required.is_empty(),
+        "required_projects": required,
+        "missing_projects": missing,
+        "passed": missing.is_empty()
+    })
+}
+
 fn run(args: Args) -> Result<bool, String> {
     validate_output(&args.suite, &args.output)?;
     let raw = read_suite(&args.suite)?;
@@ -491,7 +522,9 @@ fn run(args: Args) -> Result<bool, String> {
         args.min_project_cases,
         args.min_project_distinct_articles,
     );
-    let passed = project_coverage["passed"] == true
+    let required_projects = required_project_gate(&report.cases, &args.required_projects);
+    let passed = required_projects["passed"] == true
+        && project_coverage["passed"] == true
         && coverage["passed"] == true
         && case_claim_gate["passed"] == true
         && case_citation_gate["passed"] == true
@@ -525,6 +558,7 @@ fn run(args: Args) -> Result<bool, String> {
             "project_citation_precision_gate": project_citation_gate,
             "coverage_gate": coverage,
             "project_coverage_gate": project_coverage,
+            "required_project_gate": required_projects,
             "passed": passed
         },
         "disclaimer": "Caller-supplied human labels only; no authenticated provenance or automated factual entailment"
@@ -576,6 +610,8 @@ mod tests {
                 min_distinct_articles: 0,
                 min_project_cases: 0,
                 min_project_distinct_articles: 0,
+            required_projects: vec![],
+                required_projects: vec![],
             }
         );
         assert!(parse_args(values(&["--suite", "x"])).is_err());
@@ -698,6 +734,7 @@ mod tests {
         for (flag, value) in [
             ("--min-cases", "1001"),
             ("--min-distinct-articles", "-1"),
+
             ("--min-distinct-articles", "abc"),
             ("--min-project-cases", "1001"),
             ("--min-project-distinct-articles", "-1"),
@@ -747,6 +784,36 @@ mod tests {
             "2",
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn required_projects_reject_missing_editions_and_invalid_lists() {
+        let values = |extra: &[&str]| {
+            ["--suite", "a.json", "--output", "b.json"]
+                .into_iter()
+                .chain(extra.iter().copied())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        for invalid in ["", "enwiki,", ",enwiki", "enwiki,enwiki", "Enwiki", "en-wiki", "a"] {
+            assert!(parse_args(values(&["--required-projects", invalid])).is_err());
+        }
+        assert!(parse_args(values(&["--required-projects", "enwiki", "--required-projects", "frwiki"])).is_err());
+        let parsed = parse_args(values(&["--required-projects", "frwiki,enwiki"])).unwrap();
+        assert_eq!(parsed.required_projects, vec!["enwiki", "frwiki"]);
+        let suite = serde_json::json!({
+            "schema_version": 1, "suite_id": "required_projects",
+            "cases": [{"id":"en1","project":"enwiki","page_id":42,"revision_id":100,
+                "question":"One?","answer":"Yes [[cite:wkb:enwiki:42:100:b0]]",
+                "claims":[{"id":"claim","text":"Yes","verdict":"supported",
+                    "citations":[{"block_id":"wkb:enwiki:42:100:b0","verdict":"supported"}]}]}]
+        });
+        let report = evaluate_answer_support_json(&suite.to_string()).unwrap();
+        let gate = required_project_gate(&report.cases, &parsed.required_projects);
+        assert_eq!(gate["missing_projects"], serde_json::json!(["frwiki"]));
+        assert_eq!(gate["passed"], false);
+        assert_eq!(required_project_gate(&report.cases, &[])["passed"], true);
+        assert_eq!(required_project_gate(&report.cases, &["enwiki".into()])["passed"], true);
     }
 
     #[test]
