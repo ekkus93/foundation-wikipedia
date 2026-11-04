@@ -32,7 +32,12 @@ def read_pinned_input(path, budget):
 
 
 def _positive(value):
-    return type(value) is int and 0 < value <= 100_000
+    """Positive Wikimedia source IDs are not inventory-size budgets."""
+    return type(value) is int and 0 < value <= (1 << 63) - 1
+
+
+def _bounded_floor(value):
+    return type(value) is int and 0 < value <= MAX_CANDIDATES
 
 
 def _project(value):
@@ -66,7 +71,7 @@ def build_roster(plan, inventory):
     if not expected.issubset(plan) or type(plan["schema_version"]) is not int or plan["schema_version"] != 1:
         raise ValueError("missing fields or unsupported sampling plan version")
     seed, floor = plan["sampling_seed"], plan["minimum_articles_per_project"]
-    if type(seed) is not int or not 0 <= seed < (1 << 64) or not _positive(floor):
+    if type(seed) is not int or not 0 <= seed < (1 << 64) or not _bounded_floor(floor):
         raise ValueError("invalid sampling seed or minimum article floor")
     projects, strata = plan["required_projects"], plan["strata"]
     if not _distinct_strings(projects, _project):

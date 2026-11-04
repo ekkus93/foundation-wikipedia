@@ -72,6 +72,28 @@ class TestSampling(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "too few eligible"):
             build_roster(p, candidates())
 
+    def test_large_wikimedia_source_ids(self):
+        items = candidates()
+        items[0] = {**items[0], "page_id": 12_345_678,
+                    "revision_id": 1_234_567_890}
+        roster = build_roster(plan(), items)
+        self.assertEqual(roster["counts"]["enwiki"]["covered_strata"],
+                         ["factual", "table"])
+        p = plan()
+        p["excluded_page_keys"].append({"project": "enwiki", "page_id": 12_345_678})
+        self.assertFalse(any(x["page_id"] == 12_345_678
+                             for x in build_roster(p, items)["selected"]))
+
+    def test_out_of_range_source_ids_and_floor(self):
+        items = candidates()
+        items[0] = {**items[0], "revision_id": 1 << 64}
+        with self.assertRaisesRegex(ValueError, "invalid or out-of-plan"):
+            build_roster(plan(), items)
+        p = plan()
+        p["minimum_articles_per_project"] = 100_001
+        with self.assertRaisesRegex(ValueError, "invalid sampling seed or minimum"):
+            build_roster(p, candidates())
+
     def test_invalid_exclusions_and_seed(self):
         p = plan()
         p["excluded_page_keys"] *= 2
