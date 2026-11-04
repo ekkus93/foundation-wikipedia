@@ -73,7 +73,10 @@ pub(crate) fn valid_model_id(id: &str) -> bool {
                     '\u{00ad}'
                         | '\u{034f}'
                         | '\u{061c}'
+                        | '\u{115f}'..='\u{1160}'
                         | '\u{180e}'
+                        | '\u{3164}'
+                        | '\u{ffa0}'
                         | '\u{200b}'..='\u{200f}'
                         | '\u{2028}'..='\u{202e}'
                         | '\u{2060}'..='\u{206f}'
@@ -148,6 +151,7 @@ pub trait LlmProvider: Send + Sync {
 
     fn stream(
         &self,
+
         request: &GenerateRequest,
         cancellation: &CancellationToken,
         on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
@@ -299,6 +303,7 @@ mod tests {
         }
     }
 
+
     #[test]
     fn streams_typed_events_without_ui_or_provider_specific_protocols() {
         let provider: Box<dyn LlmProvider> = Box::new(FakeProvider(Outcome::Success));
@@ -448,6 +453,7 @@ mod tests {
             Locality::OnDevice
         }
 
+
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities {
                 discover_models: false,
@@ -538,6 +544,10 @@ mod tests {
             "qwen\u{2028}3:8b",
             "qwen\u{fe0f}3:8b",
             "qwen\u{e0100}3:8b",
+            "qwen\u{115f}3:8b",
+            "qwen\u{1160}3:8b",
+            "qwen\u{3164}3:8b",
+            "qwen\u{ffa0}3:8b",
         ] {
             let mut request = request();
             request.model = id.into();
