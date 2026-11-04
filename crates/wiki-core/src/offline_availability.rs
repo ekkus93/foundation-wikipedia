@@ -106,4 +106,47 @@ mod tests {
         );
         assert!(!absent.may_delete_unowned_saved_object());
     }
+    #[test]
+    fn ownership_and_connectivity_exhaustive_policy_matrix() {
+        // Every ownership combination must remain usable offline whenever
+        // local bytes exist. Connectivity must never override a local owner.
+        for pack_owners in [0, 1, u32::MAX] {
+            for saved in [false, true] {
+                for cached in [false, true] {
+                    let copies = ArticleCopies {
+                        pack_owners,
+                        saved,
+                        cached,
+                    };
+                    let expected_local = if pack_owners > 0 {
+                        Some(ArticleAvailability::PackOwned)
+                    } else if saved {
+                        Some(ArticleAvailability::SavedOffline)
+                    } else if cached {
+                        Some(ArticleAvailability::Cached)
+                    } else {
+                        None
+                    };
+                    for network_allowed in [false, true] {
+                        let expected = expected_local.unwrap_or(if network_allowed {
+                            ArticleAvailability::RequiresOnlineFetch
+                        } else {
+                            ArticleAvailability::MissingOffline
+                        });
+                        assert_eq!(
+                            copies.availability(network_allowed),
+                            expected,
+                            "pack_owners={pack_owners}, saved={saved}, cached={cached}, network_allowed={network_allowed}"
+                        );
+                    }
+                    assert_eq!(
+                        copies.may_delete_unowned_saved_object(),
+                        saved && pack_owners == 0 && !cached,
+                        "pack_owners={pack_owners}, saved={saved}, cached={cached}"
+                    );
+                }
+            }
+        }
+    }
+
 }
