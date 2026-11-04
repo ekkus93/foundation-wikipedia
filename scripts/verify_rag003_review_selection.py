@@ -6,7 +6,8 @@ import sys
 
 from sample_rag003_articles import (MAX_INVENTORY_BYTES, MAX_PLAN_BYTES,
                                     build_roster, read_pinned_input)
-from validate_rag003_review_manifest import MAX_MANIFEST_BYTES, validate_manifest
+from validate_rag003_review_manifest import (MAX_MANIFEST_BYTES, validate_manifest,
+                                            validate_structure)
 from verify_rag003_sample_roster import MAX_RECEIPT_BYTES
 
 
@@ -40,9 +41,13 @@ def verify_review_selection(manifest_path, plan_path, inventory_path, receipt_pa
                             evidence_root=None):
     """Replay from single bounded input reads and bind the complete review manifest."""
     manifest, _ = read_pinned_input(manifest_path, MAX_MANIFEST_BYTES)
+    # Structural failures can make downstream fields unsafe to access. For a
+    # structurally valid manifest, collect semantic failures AND selection
+    # mismatches; neither one is allowed to conceal the other in diagnostics.
+    structural = validate_structure(manifest)
+    if structural:
+        return structural
     problems = validate_manifest(manifest, evidence_root=evidence_root)
-    if problems:
-        return problems
     plan, plan_hash = read_pinned_input(plan_path, MAX_PLAN_BYTES)
     inventory, inventory_hash = read_pinned_input(inventory_path, MAX_INVENTORY_BYTES)
     receipt, _ = read_pinned_input(receipt_path, MAX_RECEIPT_BYTES)
@@ -54,7 +59,7 @@ def verify_review_selection(manifest_path, plan_path, inventory_path, receipt_pa
                                         ensure_ascii=False)
     if not isinstance(receipt, dict) or canonical(receipt) != canonical(replayed):
         raise ValueError("sampling receipt does not match deterministic replay and exact input hashes")
-    return validate_review_selection(manifest, plan, replayed)
+    return problems + validate_review_selection(manifest, plan, replayed)
 
 
 def main(argv=None):
