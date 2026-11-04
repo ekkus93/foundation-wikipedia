@@ -303,7 +303,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn streams_typed_events_without_ui_or_provider_specific_protocols() {
         let provider: Box<dyn LlmProvider> = Box::new(FakeProvider(Outcome::Success));
@@ -452,7 +451,6 @@ mod tests {
         fn locality(&self) -> Locality {
             Locality::OnDevice
         }
-
 
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities {
