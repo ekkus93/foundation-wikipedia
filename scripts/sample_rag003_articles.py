@@ -123,16 +123,24 @@ def build_roster(plan, inventory):
                 raise ValueError(f"{project}: missing eligible stratum {stratum}")
         missing = set(strata)
         selected = []
-        while missing or len(selected) < floor:
-            def order(candidate):
-                identity = f'{seed}:{candidate["project"]}:{candidate["page_id"]}:{candidate["revision_id"]}'
-                digest = hashlib.sha256(identity.encode("ascii")).hexdigest()
-                return (-len(missing.intersection(candidate["strata"])), digest,
-                        candidate["page_id"], candidate["revision_id"])
-            choice = min(pool, key=order)
-            pool.remove(choice)
+        # Compute stable SHA-256 tie ranks once. After stratum coverage is
+        # satisfied, sorting the remainder avoids quadratic floor filling.
+        def tie_rank(candidate):
+            identity = f'{seed}:{candidate["project"]}:{candidate["page_id"]}:{candidate["revision_id"]}'
+            return (hashlib.sha256(identity.encode("ascii")).hexdigest(),
+                    candidate["page_id"], candidate["revision_id"])
+
+        ranked = sorted(((tie_rank(item), item) for item in pool),
+                        key=lambda pair: pair[0])
+        while missing:
+            index = min(range(len(ranked)),
+                        key=lambda i: (-len(missing.intersection(ranked[i][1]["strata"])),
+                                       ranked[i][0]))
+            _, choice = ranked.pop(index)
             selected.append(choice)
             missing.difference_update(choice["strata"])
+        # Remaining candidates are already in deterministic tie order.
+        selected.extend(item for _, item in ranked[:max(0, floor - len(selected))])
         counts[project] = {"selected_articles": len(selected),
                            "covered_strata": sorted(set(strata) - missing)}
         selections.extend(selected)

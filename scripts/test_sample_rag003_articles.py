@@ -45,6 +45,28 @@ class TestSampling(unittest.TestCase):
         self.assertFalse(any(item["project"] == "enwiki" and item["page_id"] == 99
                              for item in expected["selected"]))
 
+    def test_large_floor_is_order_independent(self):
+        p = {"schema_version": 1, "sampling_seed": 3,
+             "required_projects": ["enwiki"], "strata": ["article"],
+             "minimum_articles_per_project": 4000}
+        items = [{"project": "enwiki", "page_id": i, "revision_id": i + 100000,
+                  "strata": ["article"]} for i in range(1, 5001)]
+        first = build_roster(p, items)
+        self.assertEqual(len(first["selected"]), 4000)
+        self.assertEqual(first, build_roster(p, list(reversed(items))))
+        self.assertEqual(len({row["page_id"] for row in first["selected"]}), 4000)
+
+    def test_coverage_can_exceed_floor(self):
+        p = {"schema_version": 1, "sampling_seed": 7,
+             "required_projects": ["enwiki"], "strata": ["a", "b", "c"],
+             "minimum_articles_per_project": 1}
+        items = [{"project": "enwiki", "page_id": i, "revision_id": i,
+                  "strata": [tag]} for i, tag in enumerate(("a", "b", "c"), 1)]
+        selected = build_roster(p, items)["selected"]
+        self.assertEqual(len(selected), 3)
+        self.assertEqual({tag for item in selected for tag in item["strata"]},
+                         {"a", "b", "c"})
+
     def test_duplicates_and_competing_revisions_rejected(self):
         with self.assertRaisesRegex(ValueError, "duplicate page"):
             build_roster(plan(), candidates() + [candidates()[0]])
