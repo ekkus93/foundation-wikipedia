@@ -155,3 +155,7 @@ well-formed UTF-8 text, not just the quoted substring. A stateful decoder
 handles multibyte characters crossing 64 KiB streaming boundaries and rejects
 invalid sequences or truncated characters at EOF. This does not require
 buffering full source files, and does not authenticate their publisher.
+
+Strict local evidence paths also reject Unicode invisible-format characters,
+bidirectional overrides, and control characters so an operator cannot mistake
+a visually spoofed evidence path for a different source or answer file.

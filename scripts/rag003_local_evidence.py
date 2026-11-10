@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import os
 import stat
+import unicodedata
 
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_ANSWER_BYTES = 16 * 1024 * 1024
@@ -19,6 +20,12 @@ def _read_regular(root_fd, relative, limit, capture, needles=(), validate_utf8=F
     if (not isinstance(relative, str) or not 0 < len(relative) <= 512
             or relative.startswith("/") or "\\" in relative or "\0" in relative):
         raise ValueError("invalid relative evidence path")
+    # A local inventory is operator-controlled, but misleading path labels can
+    # conceal which evidence was checked in receipts or terminal diagnostics.
+    # Reject invisible formatting, bidi controls and non-printable components.
+    if any(unicodedata.category(char) in ("Cc", "Cf", "Cs")
+           for char in relative):
+        raise ValueError("evidence path contains invisible or control characters")
     parts = relative.split("/")
     if any(part in ("", ".", "..") for part in parts):
         raise ValueError("invalid relative evidence path")

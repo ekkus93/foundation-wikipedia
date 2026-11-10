@@ -409,6 +409,16 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.strict_verify(), 1)
 
+    def test_strict_rejects_invisible_or_control_evidence_paths(self):
+        self.strict_fixture()
+        for path in ("sources/revision\u202etxt", "sources/revision\u200b.txt",
+                     "sources/revision\n.txt", "sources/revision\x7f.txt"):
+            with self.subTest(path=repr(path)):
+                self.artifacts["sources"][0]["path"] = path
+                self.save_map()
+                self.assertEqual(self.strict_verify(report=True), 1)
+                self.assertFalse(self.report.exists())
+
     def test_evidence_map_scope_is_exact(self):
         self.strict_fixture()
         self.artifacts["answers"].append({"case_id": "unreviewed", "path": "answers/answer.txt"})
