@@ -8,10 +8,12 @@ from export_rag003_reviewer_packet import main as export_main
 from verify_rag003_reviewer_packet import main as verify_main
 
 
-class TestPacketVerification(TestReviewWorklist):
+class TestPacketVerification(unittest.TestCase):
     def setUp(self):
-        super().setUp()
-        self.run_valid()
+        # Reuse fixture construction without inheriting the worklist test cases:
+        # those tests require an absent output, while packet setup creates one.
+        TestReviewWorklist.setUp(self)
+        TestReviewWorklist.run_valid(self)
         self.packet_path = self.paths["output"].with_suffix(".packet")
         self.packet_args = [value for name in ("plan", "inventory", "receipt", "reviewers", "worklist")
                             for value in ("--" + name,
