@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import build_rag003_review_worklist as worklist_module
 
 from sample_rag003_articles import build_roster
 from build_rag003_review_worklist import build_worklist, main
@@ -124,6 +126,27 @@ class TestReviewWorklist(unittest.TestCase):
         result = build_worklist(*(values[name] for name in values),
                                 *(digest[name] for name in values))
         self.assertEqual(result["review_slots"], 16)
+        # Exercise the capacity guard with a lowered ceiling rather than
+        # allocating a 10,001-article synthetic fixture.
+        with patch.object(worklist_module, "MAX_ASSIGNED_ARTICLES", 7):
+            with self.assertRaisesRegex(ValueError, "exceeds 10,000"):
+                build_worklist(*(values[name] for name in values),
+                               *(digest[name] for name in values))
+            self.assertEqual(main(self.args()), 1)
+            self.assertFalse(self.paths["output"].exists())
+
+    def test_reviewer_roster_changes_require_new_pinned_worklist(self):
+        original = self.run_valid()
+        self.paths["output"].unlink()
+        self.reviewers = {"reviewer_ids": ["reviewer_a", "reviewer_b"]}
+        self.save()
+        changed = self.run_valid()
+        self.assertNotEqual(original["reviewer_roster_sha256"],
+                            changed["reviewer_roster_sha256"])
+        for assignment in changed["assignments"]:
+            self.assertEqual(set(assignment["assigned_reviewer_ids"]),
+                             {"reviewer_a", "reviewer_b"})
+            self.assertEqual(assignment["independent_reviews"], "pending")
 
 
 if __name__ == "__main__":
