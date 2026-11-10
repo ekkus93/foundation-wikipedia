@@ -61,7 +61,7 @@ def validate_submission(packet, packet_sha256, submission, submission_sha256):
         raise ValueError("require 1-50,000 explicit reviewer judgments")
     assigned = {(row["project"], row["page_id"], row["revision_id"])
                 for row in packet["assignments"]}
-    seen_claims, cases, sources = set(), {}, {}
+    seen_claims, cases, sources, case_intervals = set(), {}, {}, {}
     covered = set()
     for index, item in enumerate(records):
         prefix = f"judgments[{index}]"
@@ -101,6 +101,10 @@ def validate_submission(packet, packet_sha256, submission, submission_sha256):
         claim_key = (item["case_id"], start, end)
         if claim_key in seen_claims:
             raise ValueError(f"{prefix}: duplicate reviewed claim span")
+        if any(start < prior_end and prior_start < end
+               for prior_start, prior_end in case_intervals.get(item["case_id"], ())):
+            raise ValueError(f"{prefix}: overlapping reviewed claim spans")
+        case_intervals.setdefault(item["case_id"], []).append((start, end))
         seen_claims.add(claim_key)
         covered.add(identity)
     return {

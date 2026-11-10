@@ -125,6 +125,13 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.verify(), 1)
 
+    def test_overlapping_claim_spans_refused(self):
+        other = self.record.copy()
+        other["claim_start_byte"], other["claim_end_byte"] = 5, 18
+        self.data["judgments"].append(other)
+        self.save_submission()
+        self.assertEqual(self.verify(), 1)
+
     def test_source_digest_conflict_refused(self):
         row = self.record.copy()
         row["case_id"] = "case_2"
@@ -182,7 +189,7 @@ class TestReviewerSubmission(unittest.TestCase):
         root.mkdir(exist_ok=True)
         (root / "sources").mkdir(exist_ok=True)
         (root / "answers").mkdir(exist_ok=True)
-        source_bytes = b"Source text about an astronomical object."
+        source_bytes = b"Source text about an astronomical object. A cited source sentence."
         answer_bytes = "The Sun is a star. ⭐".encode("utf-8")
         (root / "sources" / "revision.txt").write_bytes(source_bytes)
         (root / "answers" / "answer.txt").write_bytes(answer_bytes)
@@ -231,6 +238,13 @@ class TestReviewerSubmission(unittest.TestCase):
                 target.write_bytes(target.read_bytes() + b" tamper")
                 self.assertEqual(self.strict_verify(report=True), 1)
                 self.assertFalse(self.report.exists())
+
+    def test_source_span_must_occur_verbatim_in_source_file(self):
+        self.strict_fixture()
+        self.data["judgments"][0]["source_span"] = "Unrelated invented citation"
+        self.save_submission()
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
 
     def test_claim_out_of_bounds_rejected_after_matching_answer_hash(self):
         self.strict_fixture()

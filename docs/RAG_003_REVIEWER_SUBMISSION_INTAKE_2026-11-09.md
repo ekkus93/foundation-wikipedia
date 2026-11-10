@@ -102,3 +102,13 @@ source text entails the answer, that the reviewer exists, or that human
 judgment was independent. Both modes retain `qualification_status:
 "not_qualified"`; the existing authenticated source, reviewer and
 human evaluation gates remain mandatory.
+
+### Exact source quotation and disjoint claim checks
+
+Strict local evidence mode also requires each reviewer-supplied `source_span` to
+appear **verbatim as UTF-8 bytes** in the corresponding locally verified source
+artifact. This is a literal-presence check only, **not** entailment, citation
+correctness, or proof of publisher authenticity. Submissions with overlapping
+claim byte intervals for the same case are rejected in both modes to prevent
+double-counting partially duplicated claim reviews. Adjacent intervals remain
+valid. Non-text source artifacts are not supported by this strict quotation gate.

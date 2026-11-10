@@ -111,13 +111,16 @@ def verify_local_bytes(submission, artifact_map, root):
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     seen_inodes = {}
     try:
+        source_bytes = {}
         for key, path in sources.items():
-            actual, inode, _ = _read_regular(root_fd, path, MAX_SOURCE_BYTES, False)
+            actual, inode, raw = _read_regular(root_fd, path, MAX_SOURCE_BYTES, True)
             if inode in seen_inodes:
                 raise ValueError("evidence files alias the same physical inode")
             seen_inodes[inode] = ("source", key)
             if not hmac.compare_digest(actual, expected_source_digests[key]):
                 raise ValueError("source artifact SHA-256 mismatch")
+            raw.decode("utf-8")
+            source_bytes[key] = raw
         answer_bytes = {}
         for key, path in answers.items():
             actual, inode, raw = _read_regular(root_fd, path, MAX_ANSWER_BYTES, True)
@@ -140,6 +143,10 @@ def verify_local_bytes(submission, artifact_map, root):
                 raise ValueError(f"judgments[{index}]: claim splits UTF-8 character") from exc
             if not any(char.isalnum() for char in span):
                 raise ValueError(f"judgments[{index}]: claim contains no lexical content")
+            source_key = (item["project"], item["page_id"], item["revision_id"])
+            literal = item["source_span"].encode("utf-8")
+            if literal not in source_bytes[source_key]:
+                raise ValueError(f"judgments[{index}]: quoted source span absent from source bytes")
     finally:
         os.close(root_fd)
     return len(sources), len(answers), len(records)
