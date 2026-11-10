@@ -182,14 +182,14 @@ class TestReviewerSubmission(unittest.TestCase):
     def test_spoofed_or_nonlexical_review_text_rejected(self):
         for field, value in (
                 ("source_span", "..."),
-                ("source_span", "A\\u202eB"),
-                ("source_span", "A\\u200bB"),
-                ("source_span", "A\\nB"),
+                ("source_span", "A\u202eB"),
+                ("source_span", "A\u200bB"),
+                ("source_span", "A\nB"),
                 ("source_span", "A" * 4097),
                 ("source_span", "é" * 2049),
                 ("source_span", " A cited source sentence"),
-                ("rubric_version", "v1\\u202e"),
-                ("rubric_version", "v1\\n"),
+                ("rubric_version", "v1\u202e"),
+                ("rubric_version", "v1\n"),
                 ("rubric_version", "é" * 33),
                 ("rubric_version", "...")):
             with self.subTest(field=field, value=value[:20]):
