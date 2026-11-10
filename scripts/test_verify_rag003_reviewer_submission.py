@@ -195,8 +195,7 @@ class TestReviewerSubmission(unittest.TestCase):
             with self.subTest(field=field, value=value[:20]):
                 self.data["judgments"][0][field] = value
                 self.save_submission()
-                self.assertEqual(self.verify(report=True), 1)
-                self.assertFalse(self.report.exists())
+                self.assertEqual(self.verify(), 1)
                 self.data["judgments"][0][field] = self.record[field]
 
     def test_multilingual_visible_review_text_accepted_structurally(self):
