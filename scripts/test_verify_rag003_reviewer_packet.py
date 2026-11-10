@@ -75,6 +75,39 @@ class TestPacketVerification(unittest.TestCase):
         self.paths["output"].write_text(self.paths["output"].read_text() + " ")
         self.assertEqual(verify_main(self.verify_args()), 1)
 
+    def test_each_pinned_input_byte_change_is_rejected(self):
+        for name in ("plan", "inventory", "receipt", "reviewers"):
+            with self.subTest(input=name):
+                original = self.paths[name].read_bytes()
+                try:
+                    self.paths[name].write_bytes(original + b" ")
+                    self.assertEqual(verify_main(self.verify_args()), 1)
+                finally:
+                    self.paths[name].write_bytes(original)
+
+    def test_packet_assignment_count_forgery_is_rejected(self):
+        packet = json.loads(self.packet_path.read_text(encoding="utf-8"))
+        packet["assignment_count"] += 1
+        self.packet_path.write_text(json.dumps(packet), encoding="utf-8")
+        self.assertEqual(verify_main(self.verify_args()), 1)
+
+    def test_nested_duplicate_json_key_is_rejected(self):
+        original = self.packet_path.read_text(encoding="utf-8")
+        packet = json.loads(original)
+        first = packet["assignments"][0]
+        key = next(iter(first))
+        encoded = json.dumps(key, ensure_ascii=False)
+        # Insert a duplicate into the first assignment without changing its value.
+        needle = encoded + ":"
+        start = original.index('"assignments"')
+        position = original.index(needle, start)
+        value = json.dumps(first[key], ensure_ascii=False)
+        self.packet_path.write_text(
+            original[:position] + encoded + ":" + value + "," + original[position:],
+            encoding="utf-8",
+        )
+        self.assertEqual(verify_main(self.verify_args()), 1)
+
     def test_unknown_reviewer(self):
         packet = json.loads(self.packet_path.read_text())
         packet["reviewer_id"] = "outsider"
