@@ -419,6 +419,27 @@ class TestReviewerSubmission(unittest.TestCase):
                 self.assertEqual(self.strict_verify(report=True), 1)
                 self.assertFalse(self.report.exists())
 
+    def test_strict_rejects_excess_distinct_quotations_before_reading_source(self):
+        self.strict_fixture()
+        # Keep each record individually valid; exceed the per-source search
+        # budget with 1,025 unique lexical quotations.
+        original = self.data["judgments"][0]
+        self.data["judgments"] = []
+        for i in range(1025):
+            row = original.copy()
+            row["case_id"] = "case_" + str(i)
+            row["claim_start_byte"] = 0
+            row["claim_end_byte"] = 3
+            row["source_span"] = "Source quotation " + str(i)
+            self.data["judgments"].append(row)
+        self.artifacts["answers"] = [
+            {"case_id": "case_" + str(i), "path": "answers/answer.txt"}
+            for i in range(1025)]
+        self.save_map()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
     def test_evidence_map_scope_is_exact(self):
         self.strict_fixture()
         self.artifacts["answers"].append({"case_id": "unreviewed", "path": "answers/answer.txt"})

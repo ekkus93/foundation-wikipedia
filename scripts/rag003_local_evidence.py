@@ -136,6 +136,15 @@ def verify_local_bytes(submission, artifact_map, root):
     for item in records:
         key = (item["project"], item["page_id"], item["revision_id"])
         quotations.setdefault(key, set()).add(item["source_span"].encode("utf-8"))
+    # Literal-search work scales with distinct quotations times source blocks.
+    # Fail before opening any evidence files if an adversarial submission
+    # requests an unbounded number of comparisons against a 256 MiB source.
+    MAX_DISTINCT_QUOTES_PER_SOURCE = 1024
+    MAX_QUOTE_BYTES_PER_SOURCE = 1024 * 1024
+    for key, spans in quotations.items():
+        if (len(spans) > MAX_DISTINCT_QUOTES_PER_SOURCE or
+                sum(map(len, spans)) > MAX_QUOTE_BYTES_PER_SOURCE):
+            raise ValueError("source quotation search budget exceeded")
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     seen_inodes = {}
     try:

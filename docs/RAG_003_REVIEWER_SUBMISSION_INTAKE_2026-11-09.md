@@ -159,3 +159,14 @@ buffering full source files, and does not authenticate their publisher.
 Strict local evidence paths also reject Unicode invisible-format characters,
 bidirectional overrides, and control characters so an operator cannot mistake
 a visually spoofed evidence path for a different source or answer file.
+
+### Per-source quotation search budget
+
+Strict evidence mode rejects more than 1,024 distinct reviewer quotations or
+more than 1 MiB of total distinct quotation UTF-8 bytes against one source
+revision, before opening evidence files. Streaming literal search otherwise
+scales with the number of quotations multiplied by source blocks (up to
+256 MiB per revision). This explicit per-revision limit prevents an
+adversarial 50,000-judgment submission from inducing unbounded quotation
+comparison work. Structural-only intake retains its existing limits. The
+budget is a local verifier resource guard, not a review-quality threshold.
