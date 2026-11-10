@@ -114,3 +114,13 @@ double-counting partially duplicated claim reviews. Adjacent intervals remain
 valid. Non-text source artifacts are not supported by this strict quotation gate.
 
 The structural overlap check sorts claim intervals per case and rejects intersecting half-open ranges in O(n log n) time rather than scanning every previous claim. This keeps large valid reviewer submissions within the declared 50,000-judgment budget; adjacent intervals are permitted.
+
+### Reviewer quotation and rubric text safety
+
+Structural intake now requires `source_span` (at most 4,096 **UTF-8 bytes**)
+and `rubric_version` (at most 64 UTF-8 bytes) to contain visible lexical
+characters and no leading/trailing whitespace, control characters, Unicode
+format controls (including bidi overrides and zero-width marks), or surrogate
+code points. Ordinary multilingual quotations and rubric names remain valid.
+These checks reduce invisible/spoofed evidence labels; they do **not** establish
+quotation truth or reviewer authenticity. RAG-003 remains incomplete.

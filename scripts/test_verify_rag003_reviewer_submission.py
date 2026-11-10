@@ -179,6 +179,32 @@ class TestReviewerSubmission(unittest.TestCase):
                 self.assertEqual(self.verify(), 1)
                 self.data["judgments"][0][key] = previous
 
+    def test_spoofed_or_nonlexical_review_text_rejected(self):
+        for field, value in (
+                ("source_span", "..."),
+                ("source_span", "A\\u202eB"),
+                ("source_span", "A\\u200bB"),
+                ("source_span", "A\\nB"),
+                ("source_span", "A" * 4097),
+                ("source_span", "é" * 2049),
+                ("source_span", " A cited source sentence"),
+                ("rubric_version", "v1\\u202e"),
+                ("rubric_version", "v1\\n"),
+                ("rubric_version", "é" * 33),
+                ("rubric_version", "...")):
+            with self.subTest(field=field, value=value[:20]):
+                self.data["judgments"][0][field] = value
+                self.save_submission()
+                self.assertEqual(self.verify(report=True), 1)
+                self.assertFalse(self.report.exists())
+                self.data["judgments"][0][field] = self.record[field]
+
+    def test_multilingual_visible_review_text_accepted_structurally(self):
+        self.data["judgments"][0]["source_span"] = "المصدر يحتوي على معلومات"
+        self.data["judgments"][0]["rubric_version"] = "نسخة١"
+        self.save_submission()
+        self.assertEqual(self.verify(), 0)
+
     def test_unexpected_peer_identity_or_completion_claim_refused(self):
         for key, value in (("assigned_reviewer_ids", ["reviewer_b"]),
                            ("review_complete", True)):

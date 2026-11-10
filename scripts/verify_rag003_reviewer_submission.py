@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 from rag003_local_evidence import verify_local_bytes
 import sys
+import unicodedata
 
 from rag003_private_output import publish_private_bytes
 from sample_rag003_articles import read_pinned_input
@@ -41,6 +42,15 @@ def _timestamp(value):
 
 def _digest(value):
     return isinstance(value, str) and SHA256.fullmatch(value) is not None
+
+
+def _safe_review_text(value, max_bytes, label):
+    """Reject spoofable/invisible control text and non-evidentiary quotations."""
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or len(value.encode("utf-8")) > max_bytes
+            or not any(char.isalnum() for char in value)
+            or any(unicodedata.category(char) in ("Cc", "Cf", "Cs") for char in value)):
+        raise ValueError(f"invalid {label}: require visible lexical UTF-8 text")
 
 
 def validate_submission(packet, packet_sha256, submission, submission_sha256):
@@ -83,13 +93,8 @@ def validate_submission(packet, packet_sha256, submission, submission_sha256):
         if (item["verdict"] not in VERDICTS or
                 type(item["citation_valid"]) is not bool):
             raise ValueError(f"{prefix}: invalid verdict or citation-validity flag")
-        if (not isinstance(item["rubric_version"], str) or
-                not 0 < len(item["rubric_version"]) <= 64 or
-                not item["rubric_version"].strip() == item["rubric_version"] or
-                not isinstance(item["source_span"], str) or
-                not 0 < len(item["source_span"]) <= 4096 or
-                not item["source_span"].strip()):
-            raise ValueError(f"{prefix}: invalid review rubric or source span")
+        _safe_review_text(item["rubric_version"], 64, f"{prefix} rubric version")
+        _safe_review_text(item["source_span"], 4096, f"{prefix} source quotation")
         _timestamp(item["reviewed_at"])
         case_key = (identity, item["answer_sha256"], item["rubric_version"])
         prior = cases.setdefault(item["case_id"], case_key)
