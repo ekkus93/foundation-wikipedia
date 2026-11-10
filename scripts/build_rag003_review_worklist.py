@@ -3,7 +3,7 @@
 import argparse
 import hashlib
 import json
-import os
+from rag003_private_output import publish_private_bytes
 import re
 import sys
 from pathlib import Path
@@ -87,15 +87,7 @@ def main(argv=None):
                                inventory_hash, receipt_hash, reviewers_hash)
         payload = (json.dumps(queue, sort_keys=True, separators=(",", ":"),
                               ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
-        with args.output.open("xb") as output:
-            try:
-                output.write(payload)
-                output.flush()
-                os.fsync(output.fileno())
-            except BaseException:
-                output.close()
-                args.output.unlink()
-                raise
+        publish_private_bytes(args.output, payload)
         print(f'Prepared {queue["source_count"]} source records and '
               f'{queue["review_slots"]} pending review slots; no judgments created')
         return 0

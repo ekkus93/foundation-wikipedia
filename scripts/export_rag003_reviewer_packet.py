@@ -3,7 +3,7 @@
 import argparse
 import hashlib
 import json
-import os
+from rag003_private_output import publish_private_bytes
 import sys
 from pathlib import Path
 
@@ -43,15 +43,7 @@ def main(argv=None):
         packet = build_packet(worklist, worklist_hash, args.reviewer_id)
         payload = (json.dumps(packet, sort_keys=True, ensure_ascii=False,
                               allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
-        with args.output.open("xb") as stream:
-            try:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            except BaseException:
-                stream.close()
-                args.output.unlink()
-                raise
+        publish_private_bytes(args.output, payload)
         print(f'Prepared {packet["assignment_count"]} pending assignments for reviewer')
         return 0
     except (OSError, ValueError, TypeError, UnicodeError, OverflowError, KeyError) as exc:

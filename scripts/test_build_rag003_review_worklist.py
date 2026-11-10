@@ -1,6 +1,8 @@
 """Synthetic checks for reproducible preregistered RAG-003 reviewer assignments."""
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 import tempfile
 import unittest
@@ -96,6 +98,21 @@ class TestReviewWorklist(unittest.TestCase):
                 self.save()
                 self.assertEqual(main(self.args()), 1)
                 self.assertFalse(self.paths["output"].exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions")
+    def test_worklist_is_private_under_permissive_umask(self):
+        previous = os.umask(0)
+        try:
+            self.run_valid()
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE(self.paths["output"].stat().st_mode), 0o600)
+
+    def test_failed_publication_leaves_no_worklist_or_temporary_file(self):
+        with patch("rag003_private_output.os.link", side_effect=OSError("publish failure")):
+            self.assertEqual(main(self.args()), 1)
+        self.assertFalse(self.paths["output"].exists())
+        self.assertEqual(list(self.paths["output"].parent.glob(".rag003-private-*")), [])
 
     def test_never_overwrites_existing_output(self):
         self.paths["output"].write_text("existing", encoding="utf-8")

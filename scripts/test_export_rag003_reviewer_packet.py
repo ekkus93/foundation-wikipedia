@@ -1,5 +1,8 @@
 """Private reviewer packet export, pinned replay and fail-closed regression."""
 import json
+import os
+import stat
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -37,6 +40,35 @@ class TestReviewerPacket(TestReviewWorklist):
         self.paths["output"].write_text(json.dumps(value))
         self.assertEqual(main(self.packet_args()), 1)
         self.assertFalse(self.paths["output"].with_suffix(".packet").exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions")
+    def test_packet_is_private_under_permissive_umask(self):
+        self.run_valid()
+        previous = os.umask(0)
+        try:
+            self.assertEqual(main(self.packet_args()), 0)
+        finally:
+            os.umask(previous)
+        packet = self.paths["output"].with_suffix(".packet")
+        self.assertEqual(stat.S_IMODE(packet.stat().st_mode), 0o600)
+        self.assertEqual(json.loads(packet.read_text())["reviewer_id"], "reviewer_a")
+
+    def test_failed_publication_cleans_private_temporary_file(self):
+        self.run_valid()
+        with patch("rag003_private_output.os.link", side_effect=OSError("publish failure")):
+            self.assertEqual(main(self.packet_args()), 1)
+        self.assertFalse(self.paths["output"].with_suffix(".packet").exists())
+        self.assertEqual(list(self.paths["output"].parent.glob(".rag003-private-*")), [])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symbolic links unavailable")
+    def test_existing_symlink_is_not_followed_or_replaced(self):
+        self.run_valid()
+        target = self.paths["output"].parent / "existing.txt"
+        target.write_text("untouched")
+        self.paths["output"].with_suffix(".packet").symlink_to(target)
+        self.assertEqual(main(self.packet_args()), 1)
+        self.assertEqual(target.read_text(), "untouched")
+        self.assertTrue(self.paths["output"].with_suffix(".packet").is_symlink())
 
     def test_packet_does_not_overwrite_existing_file(self):
         self.run_valid()

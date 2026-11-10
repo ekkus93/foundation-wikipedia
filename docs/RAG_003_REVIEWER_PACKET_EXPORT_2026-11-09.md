@@ -28,3 +28,12 @@ authenticated Wikimedia acquisition. The reviewer ID is not an authenticated
 identity, and distributing separate packets does not prove independence.
 No review judgments, factual entailment, publisher provenance, preregistration
 timing or physical-device acceptance are asserted.
+
+**Private local publication (POSIX):** Reviewer packets and the complete
+reviewer-assignment worklist use a same-directory 0600 temporary file, fsync
+its bytes, then atomically hard-link to a previously absent destination.
+A permissive process umask does not expose reviewer identities or assignments.
+Existing files and symlinks are never overwritten, and failed publication
+removes the private temporary file. Restrict access to the containing directory
+and distribute reviewer packets through an authenticated, access-controlled
+channel. This does not authenticate the reviewer or guarantee power-loss durability.
