@@ -136,7 +136,11 @@ def verify_local_bytes(submission, artifact_map, root):
                 raise ValueError("source artifact SHA-256 mismatch")
             if not all(matched.values()):
                 raise ValueError("quoted source span absent from source bytes")
-        answer_bytes = {}
+        # Keep at most one answer in memory at a time, rather than retaining
+        # every case's 16 MiB payload for the duration of the submission.
+        case_claims = {}
+        for index, item in enumerate(records):
+            case_claims.setdefault(item["case_id"], []).append((index, item))
         for key, path in answers.items():
             actual, inode, raw, _ = _read_regular(root_fd, path, MAX_ANSWER_BYTES, True)
             if inode in seen_inodes:
@@ -144,20 +148,18 @@ def verify_local_bytes(submission, artifact_map, root):
             seen_inodes[inode] = ("answer", key)
             if not hmac.compare_digest(actual, expected_answer_digests[key]):
                 raise ValueError("answer artifact SHA-256 mismatch")
-            # Complete UTF-8 decode ensures offsets refer to a valid text payload.
+            # Decode the complete answer before inspecting any of its claims.
             raw.decode("utf-8")
-            answer_bytes[key] = raw
-        for index, item in enumerate(records):
-            raw = answer_bytes[item["case_id"]]
-            start, end = item["claim_start_byte"], item["claim_end_byte"]
-            if end > len(raw):
-                raise ValueError(f"judgments[{index}]: claim exceeds actual answer bytes")
-            try:
-                span = raw[start:end].decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ValueError(f"judgments[{index}]: claim splits UTF-8 character") from exc
-            if not any(char.isalnum() for char in span):
-                raise ValueError(f"judgments[{index}]: claim contains no lexical content")
+            for index, item in case_claims[key]:
+                start, end = item["claim_start_byte"], item["claim_end_byte"]
+                if end > len(raw):
+                    raise ValueError(f"judgments[{index}]: claim exceeds actual answer bytes")
+                try:
+                    span = raw[start:end].decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(f"judgments[{index}]: claim splits UTF-8 character") from exc
+                if not any(char.isalnum() for char in span):
+                    raise ValueError(f"judgments[{index}]: claim contains no lexical content")
     finally:
         os.close(root_fd)
     return len(sources), len(answers), len(records)

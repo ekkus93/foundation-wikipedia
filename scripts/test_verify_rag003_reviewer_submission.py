@@ -338,6 +338,24 @@ class TestReviewerSubmission(unittest.TestCase):
         self.assertEqual(self.strict_verify(report=True), 1)
         self.assertFalse(self.report.exists())
 
+
+    def test_strict_multiple_cases_validate_separately(self):
+        self.strict_fixture()
+        second = self.data["judgments"][0].copy()
+        second["case_id"] = "case_2"
+        second["answer_sha256"] = hashlib.sha256(b"Another valid answer.").hexdigest()
+        second["claim_start_byte"], second["claim_end_byte"] = 0, 7
+        self.data["judgments"].append(second)
+        (self.evidence_root / "answers" / "answer_2.txt").write_bytes(b"Another valid answer.")
+        self.artifacts["answers"].append({"case_id": "case_2", "path": "answers/answer_2.txt"})
+        self.save_submission()
+        self.save_map()
+        self.assertEqual(self.strict_verify(), 0)
+        second["claim_end_byte"] = 200
+        self.save_submission()
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
     def test_claim_out_of_bounds_rejected_after_matching_answer_hash(self):
         self.strict_fixture()
         self.data["judgments"][0]["claim_start_byte"] = 20

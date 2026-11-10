@@ -142,3 +142,8 @@ same opened file descriptor. It does not retain entire source artifacts in
 memory (which may be up to 256 MiB each). Answer artifacts remain bounded to
 16 MiB per case for UTF-8 claim byte slicing. This reduces source-file
 buffering but does not establish publisher authenticity or answer entailment.
+
+Strict mode also processes verified answer files **one case at a time**; it
+retains at most one bounded answer payload for UTF-8 and claim-span checks,
+rather than accumulating every submitted answer in memory. This remains a
+local consistency check, not evidence of independent review or authenticity.
