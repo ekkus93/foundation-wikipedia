@@ -348,6 +348,30 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.strict_verify(), 1)
 
+    def test_quotations_found_early_still_verify_complete_source_bytes(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"A cited source sentence." + b"x" * (65536 * 2)
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 0)
+        # Quotation matched in the first block, but later bytes must still
+        # be hashed and the exact artifact digest enforced.
+        source.write_bytes(raw[:-1] + b"y")
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
+    def test_quotations_found_early_still_validate_late_utf8(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"A cited source sentence." + b"x" * 65536 + b"\\xff"
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
     def test_multiple_source_quotations_same_revision(self):
         self.strict_fixture()
         second = self.data["judgments"][0].copy()

@@ -170,3 +170,13 @@ scales with the number of quotations multiplied by source blocks (up to
 adversarial 50,000-judgment submission from inducing unbounded quotation
 comparison work. Structural-only intake retains its existing limits. The
 budget is a local verifier resource guard, not a review-quality threshold.
+
+### Source quotation search short-circuit
+
+The bounded-memory streaming verifier removes each literal quotation from the
+active search set as soon as it is found. When all quotations have been found,
+it stops building quotation-search windows, but **continues hashing and
+validating UTF-8 through the entire source file**. A matching early quotation
+cannot hide later file tampering or invalid source encoding. The strict mode
+still requires all requested quotations to occur verbatim and does not
+authenticate their publisher or establish entailment.

@@ -49,7 +49,8 @@ def _read_regular(root_fd, relative, limit, capture, needles=(), validate_utf8=F
             # Search source quotations incrementally; do not buffer 256 MiB
             # per source revision. Retain only the longest needle's boundary.
             matches = {needle: False for needle in needles}
-            overlap = max((len(needle) for needle in needles), default=1) - 1
+            remaining = set(matches)
+            overlap = max((len(needle) for needle in remaining), default=1) - 1
             tail = b""
             total = 0
             while True:
@@ -62,12 +63,15 @@ def _read_regular(root_fd, relative, limit, capture, needles=(), validate_utf8=F
                 digest.update(block)
                 if decoder is not None:
                     decoder.decode(block, final=False)
-                if matches:
+                if remaining:
                     window = tail + block
-                    for needle in matches:
-                        if not matches[needle] and needle in window:
+                    for needle in tuple(remaining):
+                        if needle in window:
                             matches[needle] = True
-                    tail = window[-overlap:] if overlap else b""
+                            remaining.remove(needle)
+                    # Once all quotations are found, stop constructing search
+                    # windows while still hashing and validating the full file.
+                    tail = window[-overlap:] if remaining and overlap else b""
                 if capture:
                     chunks.append(block)
             if decoder is not None:
