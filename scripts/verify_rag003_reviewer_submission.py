@@ -5,7 +5,7 @@ This validates submission structure and local assignment provenance, NOT
 reviewer identity, source authenticity, answer entailment, or human independence.
 """
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -38,6 +38,10 @@ def _timestamp(value):
         raise ValueError("invalid reviewed_at timestamp") from exc
     if result.utcoffset() is None:
         raise ValueError("reviewed_at timestamp lacks timezone")
+    # A structural receipt cannot validate an event that has not happened.
+    # Permit bounded clock skew, not fabricated future-dated human review.
+    if result.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise ValueError("reviewed_at timestamp is in the future")
 
 
 def _digest(value):

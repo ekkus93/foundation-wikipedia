@@ -124,3 +124,12 @@ format controls (including bidi overrides and zero-width marks), or surrogate
 code points. Ordinary multilingual quotations and rubric names remain valid.
 These checks reduce invisible/spoofed evidence labels; they do **not** establish
 quotation truth or reviewer authenticity. RAG-003 remains incomplete.
+
+### Review timestamp sanity
+
+Structural intake rejects reviewer `reviewed_at` timestamps more than five
+minutes ahead of the verifier's current UTC clock, including timestamps with
+non-UTC offsets. This tolerates minor clock skew but prevents a private receipt
+from treating a future event as already performed. Calendar-invalid dates also
+fail. This is **not** a trusted timestamp, proof of human presence, or evidence
+that a claimed review occurred; reviewer authentication remains external.

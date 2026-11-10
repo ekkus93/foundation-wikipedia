@@ -166,6 +166,22 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.verify(), 1)
 
+    def test_future_review_timestamp_refused_without_private_receipt(self):
+        self.data["judgments"][0]["reviewed_at"] = "2999-01-01T00:00:00+00:00"
+        self.save_submission()
+        self.assertEqual(self.verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
+    def test_future_review_timestamp_with_offset_refused(self):
+        self.data["judgments"][0]["reviewed_at"] = "2998-12-31T16:00:00-08:00"
+        self.save_submission()
+        self.assertEqual(self.verify(), 1)
+
+    def test_impossible_calendar_review_timestamp_refused(self):
+        self.data["judgments"][0]["reviewed_at"] = "2026-02-30T12:00:00Z"
+        self.save_submission()
+        self.assertEqual(self.verify(), 1)
+
     def test_malformed_spans_verdict_time_and_flags_refused(self):
         for key, value in (("claim_start_byte", True), ("claim_end_byte", 0),
                            ("verdict", "passed"), ("citation_valid", 1),
