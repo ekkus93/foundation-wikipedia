@@ -52,3 +52,11 @@ test("reader titles follow the current article without mutating other tabs", () 
   assert.equal(titleReaderTab(renamed, 1, "x".repeat(200)).tabs[0].title.length, 72);
   assert.equal(titleReaderTab(renamed, 1, null).tabs[0].title, "New tab");
 });
+
+test("long Unicode titles do not split surrogate pairs", () => {
+  const state = initialReaderTabs();
+  const title = "A".repeat(71) + "📚" + "B".repeat(20);
+  const renamed = titleReaderTab(state, 1, title);
+  assert.equal(renamed.tabs[0].title, "A".repeat(71) + "📚");
+  assert.equal(Array.from(renamed.tabs[0].title).length, 72);
+});
