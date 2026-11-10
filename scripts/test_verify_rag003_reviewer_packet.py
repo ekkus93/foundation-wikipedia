@@ -9,6 +9,12 @@ from verify_rag003_reviewer_packet import main as verify_main
 
 
 class TestPacketVerification(unittest.TestCase):
+    # Borrow fixture helpers explicitly without inheriting TestReviewWorklist's
+    # test_* methods (which assume that the worklist output does not yet exist).
+    save = TestReviewWorklist.save
+    args = TestReviewWorklist.args
+    run_valid = TestReviewWorklist.run_valid
+
     def setUp(self):
         # Reuse fixture construction without inheriting the worklist test cases:
         # those tests require an absent output, while packet setup creates one.
