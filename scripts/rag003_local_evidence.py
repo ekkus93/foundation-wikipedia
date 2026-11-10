@@ -158,6 +158,6 @@ def verify_local_bytes(submission, artifact_map, root):
                 raise ValueError(f"judgments[{index}]: claim splits UTF-8 character") from exc
             if not any(char.isalnum() for char in span):
                 raise ValueError(f"judgments[{index}]: claim contains no lexical content")
-     finally:
+    finally:
         os.close(root_fd)
     return len(sources), len(answers), len(records)
