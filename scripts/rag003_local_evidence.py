@@ -13,7 +13,7 @@ MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_ANSWER_BYTES = 16 * 1024 * 1024
 
 
-def _read_regular(root_fd, relative, limit, capture):
+def _read_regular(root_fd, relative, limit, capture, needles=()):
     """Secure openat walk and bounded single-descriptor hash; refuse symlinks."""
     if (not isinstance(relative, str) or not 0 < len(relative) <= 512
             or relative.startswith("/") or "\\" in relative or "\0" in relative):
@@ -37,6 +37,11 @@ def _read_regular(root_fd, relative, limit, capture):
                 raise ValueError("empty, oversized or non-regular evidence file")
             digest = hashlib.sha256()
             chunks = [] if capture else None
+            # Search source quotations incrementally; do not buffer 256 MiB
+            # per source revision. Retain only the longest needle's boundary.
+            matches = {needle: False for needle in needles}
+            overlap = max((len(needle) for needle in needles), default=1) - 1
+            tail = b""
             total = 0
             while True:
                 block = os.read(fd, min(65536, limit - total + 1))
@@ -46,6 +51,12 @@ def _read_regular(root_fd, relative, limit, capture):
                 if total > limit:
                     raise ValueError("evidence file exceeds byte budget")
                 digest.update(block)
+                if matches:
+                    window = tail + block
+                    for needle in matches:
+                        if not matches[needle] and needle in window:
+                            matches[needle] = True
+                    tail = window[-overlap:] if overlap else b""
                 if capture:
                     chunks.append(block)
             after = os.fstat(fd)
@@ -54,7 +65,7 @@ def _read_regular(root_fd, relative, limit, capture):
                                                for f in fields):
                 raise ValueError("evidence file changed while being verified")
             return digest.hexdigest(), (after.st_dev, after.st_ino), (
-                b"".join(chunks) if capture else None)
+                b"".join(chunks) if capture else None), matches
         finally:
             os.close(fd)
     finally:
@@ -108,22 +119,26 @@ def verify_local_bytes(submission, artifact_map, root):
                                item["source_artifact_sha256"] for item in records}
     expected_answer_digests = {item["case_id"]: item["answer_sha256"]
                               for item in records}
+    quotations = {}
+    for item in records:
+        key = (item["project"], item["page_id"], item["revision_id"])
+        quotations.setdefault(key, set()).add(item["source_span"].encode("utf-8"))
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     seen_inodes = {}
     try:
-        source_bytes = {}
         for key, path in sources.items():
-            actual, inode, raw = _read_regular(root_fd, path, MAX_SOURCE_BYTES, True)
+            actual, inode, _, matched = _read_regular(
+                root_fd, path, MAX_SOURCE_BYTES, False, quotations[key])
             if inode in seen_inodes:
                 raise ValueError("evidence files alias the same physical inode")
             seen_inodes[inode] = ("source", key)
             if not hmac.compare_digest(actual, expected_source_digests[key]):
                 raise ValueError("source artifact SHA-256 mismatch")
-            raw.decode("utf-8")
-            source_bytes[key] = raw
+            if not all(matched.values()):
+                raise ValueError("quoted source span absent from source bytes")
         answer_bytes = {}
         for key, path in answers.items():
-            actual, inode, raw = _read_regular(root_fd, path, MAX_ANSWER_BYTES, True)
+            actual, inode, raw, _ = _read_regular(root_fd, path, MAX_ANSWER_BYTES, True)
             if inode in seen_inodes:
                 raise ValueError("evidence files alias the same physical inode")
             seen_inodes[inode] = ("answer", key)
@@ -143,10 +158,6 @@ def verify_local_bytes(submission, artifact_map, root):
                 raise ValueError(f"judgments[{index}]: claim splits UTF-8 character") from exc
             if not any(char.isalnum() for char in span):
                 raise ValueError(f"judgments[{index}]: claim contains no lexical content")
-            source_key = (item["project"], item["page_id"], item["revision_id"])
-            literal = item["source_span"].encode("utf-8")
-            if literal not in source_bytes[source_key]:
-                raise ValueError(f"judgments[{index}]: quoted source span absent from source bytes")
-    finally:
+     finally:
         os.close(root_fd)
     return len(sources), len(answers), len(records)

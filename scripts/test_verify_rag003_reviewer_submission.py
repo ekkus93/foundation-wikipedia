@@ -306,6 +306,31 @@ class TestReviewerSubmission(unittest.TestCase):
                 self.assertEqual(self.strict_verify(report=True), 1)
                 self.assertFalse(self.report.exists())
 
+    def test_source_quotation_crosses_streaming_chunk_boundary(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"x" * (65536 - 4) + b"target phrase" + b"y" * 50
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.data["judgments"][0]["source_span"] = "target phrase"
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 0)
+        self.data["judgments"][0]["source_span"] = "target phrasE"
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_multiple_source_quotations_same_revision(self):
+        self.strict_fixture()
+        second = self.data["judgments"][0].copy()
+        second["claim_start_byte"], second["claim_end_byte"] = 12, 18
+        second["source_span"] = "astronomical object"
+        self.data["judgments"].append(second)
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 0)
+        second["source_span"] = "missing source quotation"
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
     def test_source_span_must_occur_verbatim_in_source_file(self):
         self.strict_fixture()
         self.data["judgments"][0]["source_span"] = "Unrelated invented citation"

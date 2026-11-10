@@ -133,3 +133,12 @@ non-UTC offsets. This tolerates minor clock skew but prevents a private receipt
 from treating a future event as already performed. Calendar-invalid dates also
 fail. This is **not** a trusted timestamp, proof of human presence, or evidence
 that a claimed review occurred; reviewer authentication remains external.
+
+### Bounded-memory source quotation verification
+
+The strict verifier streams source revision files in 64 KiB blocks and checks
+all submitted literal quotations across block boundaries while hashing the
+same opened file descriptor. It does not retain entire source artifacts in
+memory (which may be up to 256 MiB each). Answer artifacts remain bounded to
+16 MiB per case for UTF-8 claim byte slicing. This reduces source-file
+buffering but does not establish publisher authenticity or answer entailment.
