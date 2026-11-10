@@ -60,3 +60,45 @@ an existing path. A valid submission is **not** imported into the qualified
 manifest automatically. A separate authenticated source-artifact verification,
 actual reviewer authentication/independence checks, reviewer evidence review,
 and the preexisting RAG-003 manifest/answer-score gates remain mandatory.
+
+
+## Opt-in strict local evidence-byte checks
+
+Provide `--evidence-root` and `--artifact-map` together to
+require every submitted source SHA-256 and answer SHA-256 to match the **actual**
+nonempty regular files inside the selected local directory, without following
+symbolic links or `..` path components. Each source revision and each
+reviewed case must have exactly one independently stored file. The verifier
+rejects hard-linked aliases, changed files during reads, missing or extra map
+entries, oversized files, and invalid UTF-8/empty/nonlexical claim byte ranges.
+
+The JSON map uses the following schema:
+
+```json
+{
+  "schema_version": 1,
+  "sources": [
+    {"project":"enwiki","page_id":123,"revision_id":456,"path":"sources/123.txt"}
+  ],
+  "answers": [
+    {"case_id":"case_1","path":"answers/case_1.txt"}
+  ]
+}
+```
+
+Example strict command (append to the structural invocation above):
+
+```sh
+  --evidence-root path/to/local-evidence \
+  --artifact-map artifact-map.json
+```
+
+The private receipt distinguishes the stronger local checks by setting
+`source_artifact_hashes_verified`, `answer_artifact_hashes_verified`
+and `claim_byte_spans_verified` to true, and pins the map's exact
+input-byte SHA-256. **This means local byte/digest consistency only.** It
+does not prove the bytes came from Wikimedia or the model, that the claimed
+source text entails the answer, that the reviewer exists, or that human
+judgment was independent. Both modes retain `qualification_status:
+"not_qualified"`; the existing authenticated source, reviewer and
+human evaluation gates remain mandatory.

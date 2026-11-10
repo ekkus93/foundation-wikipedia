@@ -177,6 +177,136 @@ class TestReviewerSubmission(unittest.TestCase):
             os.umask(saved_umask)
         self.assertEqual(stat.S_IMODE(self.report.stat().st_mode), 0o600)
 
+    def strict_fixture(self):
+        root = self.paths["output"].parent / "evidence"
+        root.mkdir(exist_ok=True)
+        (root / "sources").mkdir(exist_ok=True)
+        (root / "answers").mkdir(exist_ok=True)
+        source_bytes = b"Source text about an astronomical object."
+        answer_bytes = "The Sun is a star. ⭐".encode("utf-8")
+        (root / "sources" / "revision.txt").write_bytes(source_bytes)
+        (root / "answers" / "answer.txt").write_bytes(answer_bytes)
+        item = self.data["judgments"][0]
+        item["source_artifact_sha256"] = hashlib.sha256(source_bytes).hexdigest()
+        item["answer_sha256"] = hashlib.sha256(answer_bytes).hexdigest()
+        self.save_submission()
+        self.evidence_root = root
+        self.evidence_map = root.parent / "evidence-map.json"
+        self.artifacts = {"schema_version": 1, "sources": [{
+            "project": item["project"], "page_id": item["page_id"],
+            "revision_id": item["revision_id"], "path": "sources/revision.txt"
+        }], "answers": [{"case_id": item["case_id"], "path": "answers/answer.txt"}]}
+        self.save_map()
+
+    def save_map(self):
+        self.evidence_map.write_text(json.dumps(self.artifacts), encoding="utf-8")
+
+    def strict_verify(self, report=False):
+        args = self.base_args + ["--packet", str(self.packet),
+                                 "--submission", str(self.submission),
+                                 "--evidence-root", str(self.evidence_root),
+                                 "--artifact-map", str(self.evidence_map)]
+        if report:
+            args += ["--report", str(self.report)]
+        return submit_main(args)
+
+    def test_strict_local_bytes_and_claim_span_receipt_still_not_qualified(self):
+        self.strict_fixture()
+        self.assertEqual(self.strict_verify(report=True), 0)
+        data = json.loads(self.report.read_text())
+        self.assertTrue(data["source_artifact_hashes_verified"])
+        self.assertTrue(data["answer_artifact_hashes_verified"])
+        self.assertTrue(data["claim_byte_spans_verified"])
+        self.assertEqual(data["verification_scope"],
+                         "structure-assignment-and-local-evidence-bytes")
+        self.assertEqual(data["qualification_status"], "not_qualified")
+        self.assertFalse(data["reviewer_identity_authenticated"])
+        self.assertFalse(data["independent_human_review_certified"])
+
+    def test_changed_source_or_answer_bytes_rejected_without_report(self):
+        for path in ("sources/revision.txt", "answers/answer.txt"):
+            with self.subTest(path=path):
+                self.strict_fixture()
+                target = self.evidence_root / path
+                target.write_bytes(target.read_bytes() + b" tamper")
+                self.assertEqual(self.strict_verify(report=True), 1)
+                self.assertFalse(self.report.exists())
+
+    def test_claim_out_of_bounds_rejected_after_matching_answer_hash(self):
+        self.strict_fixture()
+        self.data["judgments"][0]["claim_start_byte"] = 20
+        self.data["judgments"][0]["claim_end_byte"] = 50
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_mid_utf8_character_boundary_is_rejected(self):
+        self.strict_fixture()
+        raw = (self.evidence_root / "answers/answer.txt").read_bytes()
+        beginning = raw.index("⭐".encode("utf-8"))
+        self.data["judgments"][0]["claim_start_byte"] = beginning + 1
+        self.data["judgments"][0]["claim_end_byte"] = beginning + 4
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_nonlexical_answer_span_rejected(self):
+        self.strict_fixture()
+        # Only spaces in the answer substring, despite a valid SHA-256.
+        self.data["judgments"][0]["claim_start_byte"] = 3
+        self.data["judgments"][0]["claim_end_byte"] = 4
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_evidence_map_scope_is_exact(self):
+        self.strict_fixture()
+        self.artifacts["answers"].append({"case_id": "unreviewed", "path": "answers/answer.txt"})
+        self.save_map()
+        self.assertEqual(self.strict_verify(), 1)
+        self.artifacts["answers"].pop()
+        self.artifacts["sources"].clear()
+        self.save_map()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_duplicate_evidence_map_keys_rejected(self):
+        self.strict_fixture()
+        self.evidence_map.write_text(
+            self.evidence_map.read_text().replace('"schema_version": 1',
+                                                  '"schema_version": 1, "schema_version": 1'))
+        self.assertEqual(self.strict_verify(), 1)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX secure openat required")
+    def test_symlink_and_parent_traversal_rejected(self):
+        self.strict_fixture()
+        path = self.evidence_root / "sources" / "revision.txt"
+        path.rename(path.with_suffix(".original"))
+        path.symlink_to(path.with_suffix(".original"))
+        self.assertEqual(self.strict_verify(), 1)
+        path.unlink()
+        path.with_suffix(".original").rename(path)
+        self.artifacts["sources"][0]["path"] = "../submission.json"
+        self.save_map()
+        self.assertEqual(self.strict_verify(), 1)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX inode checks required")
+    def test_hardlinked_answer_source_alias_rejected(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        answer = self.evidence_root / "answers" / "answer.txt"
+        answer.unlink()
+        os.link(source, answer)
+        item = self.data["judgments"][0]
+        item["answer_sha256"] = item["source_artifact_sha256"]
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
+    def test_strict_flag_pair_required_and_no_receipt(self):
+        self.strict_fixture()
+        opts = self.base_args + ["--packet", str(self.packet),
+                                 "--submission", str(self.submission),
+                                 "--report", str(self.report)]
+        self.assertEqual(submit_main(opts + ["--evidence-root", str(self.evidence_root)]), 1)
+        self.assertEqual(submit_main(opts + ["--artifact-map", str(self.evidence_map)]), 1)
+        self.assertFalse(self.report.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

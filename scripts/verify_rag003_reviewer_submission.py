@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+from rag003_local_evidence import verify_local_bytes
 import sys
 
 from rag003_private_output import publish_private_bytes
@@ -113,6 +114,9 @@ def validate_submission(packet, packet_sha256, submission, submission_sha256):
         "sources_with_submitted_judgments": len(covered),
         "reviewer_identity_authenticated": False,
         "source_artifact_hashes_verified": False,
+        "answer_artifact_hashes_verified": False,
+        "claim_byte_spans_verified": False,
+        "local_evidence_map_sha256": None,
         "answer_claims_factually_verified": False,
         "independent_human_review_certified": False,
         "qualification_status": "not_qualified",
@@ -126,6 +130,10 @@ def main(argv=None):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--report", type=Path,
                         help="Optional exclusive private structural receipt (not qualification)")
+    parser.add_argument("--evidence-root", type=Path,
+                        help="Strict local SHA-256 and UTF-8 claim byte verification root")
+    parser.add_argument("--artifact-map", type=Path,
+                        help="JSON map of exactly the reviewed source and answer files")
     args = parser.parse_args(argv)
     try:
         verify_packet(args.plan, args.inventory, args.receipt, args.reviewers,
@@ -133,6 +141,16 @@ def main(argv=None):
         packet, packet_hash = read_pinned_input(args.packet, MAX_PACKET_BYTES)
         submission, submission_hash = read_pinned_input(args.submission, MAX_SUBMISSION_BYTES)
         result = validate_submission(packet, packet_hash, submission, submission_hash)
+        if (args.evidence_root is None) != (args.artifact_map is None):
+            raise ValueError("--evidence-root and --artifact-map must be provided together")
+        if args.evidence_root is not None:
+            artifact_map, map_hash = read_pinned_input(args.artifact_map, 2 * 1024 * 1024)
+            verify_local_bytes(submission, artifact_map, args.evidence_root)
+            result["verification_scope"] = "structure-assignment-and-local-evidence-bytes"
+            result["local_evidence_map_sha256"] = map_hash
+            result["source_artifact_hashes_verified"] = True
+            result["answer_artifact_hashes_verified"] = True
+            result["claim_byte_spans_verified"] = True
         if args.report is not None:
             payload = (json.dumps(result, sort_keys=True, separators=(",", ":"),
                                   ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
@@ -140,7 +158,7 @@ def main(argv=None):
         print(f'Validated {result["judgment_count"]} structurally bound claims '
               f'across {result["sources_with_submitted_judgments"]}/'
               f'{result["assigned_source_count"]} assigned sources; '
-              'no human attribution, source authentication or entailment certified')
+              'no human attribution, publisher source authentication or entailment certified')
         return 0
     except (OSError, ValueError, TypeError, KeyError, OverflowError, UnicodeError) as exc:
         print(f"reviewer submission validation failed: {exc}", file=sys.stderr)
