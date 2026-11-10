@@ -112,3 +112,5 @@ correctness, or proof of publisher authenticity. Submissions with overlapping
 claim byte intervals for the same case are rejected in both modes to prevent
 double-counting partially duplicated claim reviews. Adjacent intervals remain
 valid. Non-text source artifacts are not supported by this strict quotation gate.
+
+The structural overlap check sorts claim intervals per case and rejects intersecting half-open ranges in O(n log n) time rather than scanning every previous claim. This keeps large valid reviewer submissions within the declared 50,000-judgment budget; adjacent intervals are permitted.

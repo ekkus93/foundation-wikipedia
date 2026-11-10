@@ -132,6 +132,32 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.verify(), 1)
 
+    def test_out_of_order_adjacent_claims_allowed(self):
+        second = self.record.copy()
+        second["claim_start_byte"], second["claim_end_byte"] = 12, 24
+        self.data["judgments"].insert(0, second)
+        self.save_submission()
+        self.assertEqual(self.verify(), 0)
+
+    def test_nonadjacent_overlap_detected_after_sorting(self):
+        for start, end in ((0, 3), (12, 16), (3, 12), (15, 19)):
+            item = self.record.copy()
+            item["claim_start_byte"], item["claim_end_byte"] = start, end
+            self.data["judgments"].append(item)
+        self.data["judgments"].pop(0)
+        self.save_submission()
+        self.assertEqual(self.verify(), 1)
+
+    def test_many_disjoint_claims(self):
+        self.data["judgments"] = []
+        for i in range(2000):
+            item = self.record.copy()
+            item["claim_start_byte"] = i * 3
+            item["claim_end_byte"] = i * 3 + 2
+            self.data["judgments"].append(item)
+        self.save_submission()
+        self.assertEqual(self.verify(), 0)
+
     def test_source_digest_conflict_refused(self):
         row = self.record.copy()
         row["case_id"] = "case_2"

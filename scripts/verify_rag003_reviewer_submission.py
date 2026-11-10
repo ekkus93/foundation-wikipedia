@@ -101,12 +101,16 @@ def validate_submission(packet, packet_sha256, submission, submission_sha256):
         claim_key = (item["case_id"], start, end)
         if claim_key in seen_claims:
             raise ValueError(f"{prefix}: duplicate reviewed claim span")
-        if any(start < prior_end and prior_start < end
-               for prior_start, prior_end in case_intervals.get(item["case_id"], ())):
-            raise ValueError(f"{prefix}: overlapping reviewed claim spans")
-        case_intervals.setdefault(item["case_id"], []).append((start, end))
+        case_intervals.setdefault(item["case_id"], []).append((start, end, index))
         seen_claims.add(claim_key)
         covered.add(identity)
+    # Sorting once per case avoids quadratic work on valid 50,000-claim inputs.
+    # Adjacent half-open spans are allowed; intersecting spans fail closed.
+    for intervals in case_intervals.values():
+        intervals.sort()
+        for previous, current in zip(intervals, intervals[1:]):
+            if current[0] < previous[1]:
+                raise ValueError(f"judgments[{current[2]}]: overlapping reviewed claim spans")
     return {
         "schema_version": 1,
         "verification_scope": "structure-and-pinned-assignment-only",
