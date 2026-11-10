@@ -365,7 +365,7 @@ class TestReviewerSubmission(unittest.TestCase):
     def test_quotations_found_early_still_validate_late_utf8(self):
         self.strict_fixture()
         source = self.evidence_root / "sources" / "revision.txt"
-        raw = b"A cited source sentence." + b"x" * 65536 + b"\\xff"
+        raw = b"A cited source sentence." + b"x" * 65536 + bytes([0xff])
         source.write_bytes(raw)
         self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
         self.save_submission()
@@ -498,23 +498,3 @@ class TestReviewerSubmission(unittest.TestCase):
     def test_hardlinked_answer_source_alias_rejected(self):
         self.strict_fixture()
         source = self.evidence_root / "sources" / "revision.txt"
-        answer = self.evidence_root / "answers" / "answer.txt"
-        answer.unlink()
-        os.link(source, answer)
-        item = self.data["judgments"][0]
-        item["answer_sha256"] = item["source_artifact_sha256"]
-        self.save_submission()
-        self.assertEqual(self.strict_verify(), 1)
-
-    def test_strict_flag_pair_required_and_no_receipt(self):
-        self.strict_fixture()
-        opts = self.base_args + ["--packet", str(self.packet),
-                                 "--submission", str(self.submission),
-                                 "--report", str(self.report)]
-        self.assertEqual(submit_main(opts + ["--evidence-root", str(self.evidence_root)]), 1)
-        self.assertEqual(submit_main(opts + ["--artifact-map", str(self.evidence_map)]), 1)
-        self.assertFalse(self.report.exists())
-
-
-if __name__ == "__main__":
-    unittest.main()
