@@ -33,6 +33,26 @@ class TestPacketVerification(unittest.TestCase):
     def test_valid_packet(self):
         self.assertEqual(verify_main(self.verify_args()), 0)
 
+    def test_packet_contains_no_peer_roster_or_assignment_identifiers(self):
+        packet = json.loads(self.packet_path.read_text(encoding="utf-8"))
+        self.assertEqual(packet["reviewer_id"], "reviewer_a")
+        self.assertNotIn("reviewer_ids", packet)
+        self.assertNotIn("assigned_reviewer_ids", self.packet_path.read_text(encoding="utf-8"))
+        for row in packet["assignments"]:
+            self.assertNotIn("assigned_reviewer_ids", row)
+            self.assertEqual(row["source_acquisition"], "pending")
+            self.assertEqual(row["independent_review"], "pending")
+        self.assertEqual(verify_main(self.verify_args()), 0)
+
+    def test_truncated_packet_is_rejected(self):
+        self.packet_path.write_text('{"schema_version":1,"assignments":[',
+                                    encoding="utf-8")
+        self.assertEqual(verify_main(self.verify_args()), 1)
+
+    def test_missing_packet_is_rejected(self):
+        self.packet_path.unlink()
+        self.assertEqual(verify_main(self.verify_args()), 1)
+
     def test_forged_completion(self):
         packet = json.loads(self.packet_path.read_text())
         packet["assignments"][0]["independent_review"] = "completed"
