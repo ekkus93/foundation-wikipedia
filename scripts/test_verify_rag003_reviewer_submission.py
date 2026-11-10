@@ -319,6 +319,35 @@ class TestReviewerSubmission(unittest.TestCase):
         self.save_submission()
         self.assertEqual(self.strict_verify(), 1)
 
+
+    def test_strict_source_rejects_invalid_utf8_even_when_quote_and_hash_match(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"A cited source sentence.\xff"
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(report=True), 1)
+        self.assertFalse(self.report.exists())
+
+    def test_strict_source_accepts_multibyte_utf8_split_across_blocks(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"x" * (65536 - 1) + "é".encode("utf-8") + b" A cited source sentence."
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 0)
+
+    def test_strict_source_rejects_truncated_utf8_sequence_at_eof(self):
+        self.strict_fixture()
+        source = self.evidence_root / "sources" / "revision.txt"
+        raw = b"A cited source sentence.\xe2\x82"
+        source.write_bytes(raw)
+        self.data["judgments"][0]["source_artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_submission()
+        self.assertEqual(self.strict_verify(), 1)
+
     def test_multiple_source_quotations_same_revision(self):
         self.strict_fixture()
         second = self.data["judgments"][0].copy()

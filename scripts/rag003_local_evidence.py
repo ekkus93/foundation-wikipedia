@@ -4,6 +4,7 @@ The caller provides a separate inventory mapping reviewed source identities and
 case IDs to local files. These files are not trusted merely because they match a
 reviewer's SHA-256 claims; exact pinned acquisition provenance remains external.
 """
+import codecs
 import hashlib
 import hmac
 import os
@@ -13,7 +14,7 @@ MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_ANSWER_BYTES = 16 * 1024 * 1024
 
 
-def _read_regular(root_fd, relative, limit, capture, needles=()):
+def _read_regular(root_fd, relative, limit, capture, needles=(), validate_utf8=False):
     """Secure openat walk and bounded single-descriptor hash; refuse symlinks."""
     if (not isinstance(relative, str) or not 0 < len(relative) <= 512
             or relative.startswith("/") or "\\" in relative or "\0" in relative):
@@ -36,6 +37,7 @@ def _read_regular(root_fd, relative, limit, capture, needles=()):
             if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= limit:
                 raise ValueError("empty, oversized or non-regular evidence file")
             digest = hashlib.sha256()
+            decoder = codecs.getincrementaldecoder("utf-8")("strict") if validate_utf8 else None
             chunks = [] if capture else None
             # Search source quotations incrementally; do not buffer 256 MiB
             # per source revision. Retain only the longest needle's boundary.
@@ -51,6 +53,8 @@ def _read_regular(root_fd, relative, limit, capture, needles=()):
                 if total > limit:
                     raise ValueError("evidence file exceeds byte budget")
                 digest.update(block)
+                if decoder is not None:
+                    decoder.decode(block, final=False)
                 if matches:
                     window = tail + block
                     for needle in matches:
@@ -59,6 +63,8 @@ def _read_regular(root_fd, relative, limit, capture, needles=()):
                     tail = window[-overlap:] if overlap else b""
                 if capture:
                     chunks.append(block)
+            if decoder is not None:
+                decoder.decode(b"", final=True)
             after = os.fstat(fd)
             fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
             if total != before.st_size or any(getattr(before, f) != getattr(after, f)
@@ -128,7 +134,7 @@ def verify_local_bytes(submission, artifact_map, root):
     try:
         for key, path in sources.items():
             actual, inode, _, matched = _read_regular(
-                root_fd, path, MAX_SOURCE_BYTES, False, quotations[key])
+                root_fd, path, MAX_SOURCE_BYTES, False, quotations[key], validate_utf8=True)
             if inode in seen_inodes:
                 raise ValueError("evidence files alias the same physical inode")
             seen_inodes[inode] = ("source", key)

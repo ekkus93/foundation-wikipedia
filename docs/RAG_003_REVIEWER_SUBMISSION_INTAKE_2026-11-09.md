@@ -147,3 +147,11 @@ Strict mode also processes verified answer files **one case at a time**; it
 retains at most one bounded answer payload for UTF-8 and claim-span checks,
 rather than accumulating every submitted answer in memory. This remains a
 local consistency check, not evidence of independent review or authenticity.
+
+### Streaming UTF-8 source validation
+
+Strict local evidence mode now validates the **entire** source artifact as
+well-formed UTF-8 text, not just the quoted substring. A stateful decoder
+handles multibyte characters crossing 64 KiB streaming boundaries and rejects
+invalid sequences or truncated characters at EOF. This does not require
+buffering full source files, and does not authenticate their publisher.
