@@ -38,10 +38,13 @@ export function closeReaderTab(state: ReaderTabsState, id: number): ReaderTabsSt
   return { ...state, tabs: remaining, activeId };
 }
 
+const titleSegments = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 /** Article labels are display-only; never interpret titles as URLs or HTML. */
 export function titleReaderTab(state: ReaderTabsState, id: number, articleTitle: string | null): ReaderTabsState {
-  // Count Unicode code points, not UTF-16 units, to avoid splitting surrogate pairs.
-  const title = Array.from(articleTitle?.trim().replace(/\s+/gu, " ") ?? "").slice(0, 72).join("") || "New tab";
+  // Limit visible grapheme clusters, preserving combining marks and emoji sequences.
+  const normalized = articleTitle?.trim().replace(/\s+/gu, " ") ?? "";
+  const title = Array.from(titleSegments.segment(normalized), ({ segment }) => segment).slice(0, 72).join("") || "New tab";
   const tab = state.tabs.find((candidate) => candidate.id === id);
   if (!tab || tab.title === title) return state;
   return { ...state, tabs: state.tabs.map((candidate) => candidate.id === id ? { ...candidate, title } : candidate) };

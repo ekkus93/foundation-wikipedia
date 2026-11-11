@@ -60,3 +60,11 @@ test("long Unicode titles do not split surrogate pairs", () => {
   assert.equal(renamed.tabs[0].title, "A".repeat(71) + "📚");
   assert.equal(Array.from(renamed.tabs[0].title).length, 72);
 });
+
+test("title truncation preserves combining marks and joined emoji graphemes", () => {
+  const state = initialReaderTabs();
+  assert.equal(titleReaderTab(state, 1, "A".repeat(71) + "e\u0301" + "Z").tabs[0].title, "A".repeat(71) + "e\u0301");
+  const family = "👩‍👩‍👧‍👦";
+  assert.equal(titleReaderTab(state, 1, "A".repeat(71) + family + "Z").tabs[0].title, "A".repeat(71) + family);
+  assert.equal(titleReaderTab(state, 1, "e\u0301".repeat(80)).tabs[0].title, "e\u0301".repeat(72));
+});
