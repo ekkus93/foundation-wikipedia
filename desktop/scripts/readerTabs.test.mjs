@@ -101,3 +101,12 @@ test("only a real removable tab may release mounted reader resources", () => {
   assert.equal(canCloseReaderTab(multiple, 99), false);
   assert.equal(canCloseReaderTab(closeReaderTab(multiple, 2), 1), false);
 });
+
+
+test("tab labels cannot spoof neighboring UI with bidi overrides or control characters", () => {
+  const state = initialReaderTabs();
+  assert.equal(titleReaderTab(state, 1, "  Alpha\\u202eBeta\\u202c  ").tabs[0].title, "Alpha Beta");
+  assert.equal(titleReaderTab(state, 1, "A\\u0000B\\u000aC").tabs[0].title, "A B C");
+  assert.equal(titleReaderTab(state, 1, "مرحبا بالعالم").tabs[0].title, "مرحبا بالعالم");
+  assert.equal(titleReaderTab(state, 1, "\\u202e\\u2066").tabs[0].title, "New tab");
+});
