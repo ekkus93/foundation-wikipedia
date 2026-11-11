@@ -27,6 +27,10 @@ export function selectReaderTab(state: ReaderTabsState, id: number): ReaderTabsS
   return { ...state, activeId: id };
 }
 
+export function canCloseReaderTab(state: ReaderTabsState, id: number): boolean {
+  return state.tabs.length > 1 && state.tabs.some((tab) => tab.id === id);
+}
+
 export function closeReaderTab(state: ReaderTabsState, id: number): ReaderTabsState {
   const index = state.tabs.findIndex((tab) => tab.id === id);
   // Always retain one available reader, and never close an unknown tab.

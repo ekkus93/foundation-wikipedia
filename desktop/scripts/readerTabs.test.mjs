@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_READER_TABS, adjacentReaderTabId, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab,
+  MAX_READER_TABS, adjacentReaderTabId, addReaderTab, canCloseReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab,
 } from "../src/readerTabs.ts";
 
 test("reader tabs are independent and IDs are never reused on close", () => {
@@ -88,4 +88,16 @@ test("keyboard tab navigation wraps and skips closed IDs", () => {
   assert.equal(adjacentReaderTabId(state, 2, "Home"), null);
   assert.equal(adjacentReaderTabId(state, 1, "Escape"), null);
   assert.equal(adjacentReaderTabId(initialReaderTabs(), 1, "ArrowLeft"), 1);
+});
+
+
+test("only a real removable tab may release mounted reader resources", () => {
+  const single = initialReaderTabs();
+  assert.equal(canCloseReaderTab(single, 1), false);
+  assert.equal(canCloseReaderTab(single, 99), false);
+  const multiple = addReaderTab(single);
+  assert.equal(canCloseReaderTab(multiple, 1), true);
+  assert.equal(canCloseReaderTab(multiple, 2), true);
+  assert.equal(canCloseReaderTab(multiple, 99), false);
+  assert.equal(canCloseReaderTab(closeReaderTab(multiple, 2), 1), false);
 });

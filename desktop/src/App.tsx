@@ -4,7 +4,7 @@ import ReaderChatHistory from "./ReaderChatHistory";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
-import { MAX_READER_TABS, adjacentReaderTabId, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
+import { MAX_READER_TABS, adjacentReaderTabId, addReaderTab, canCloseReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
@@ -388,6 +388,9 @@ export default function App() {
   }
 
   function closeTab(id: number) {
+    // Closing the sole tab (or a stale ID) must not discard its live reader
+    // context, scroll position or open conversation.
+    if (!canCloseReaderTab(readerTabs, id)) return;
     rememberTabScroll();
     tabScrollRef.current.delete(id);
     tabArticleRef.current.delete(id);
