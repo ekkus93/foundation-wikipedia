@@ -68,3 +68,11 @@ test("title truncation preserves combining marks and joined emoji graphemes", ()
   assert.equal(titleReaderTab(state, 1, "A".repeat(71) + family + "Z").tabs[0].title, "A".repeat(71) + family);
   assert.equal(titleReaderTab(state, 1, "e\u0301".repeat(80)).tabs[0].title, "e\u0301".repeat(72));
 });
+
+
+test("long source titles retain only the first 72 graphemes", () => {
+  const state = initialReaderTabs();
+  const prefix = "📚".repeat(71) + "e\u0301";
+  const renamed = titleReaderTab(state, 1, prefix + "Z".repeat(100_000));
+  assert.equal(renamed.tabs[0].title, prefix);
+});

@@ -44,7 +44,15 @@ const titleSegments = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 export function titleReaderTab(state: ReaderTabsState, id: number, articleTitle: string | null): ReaderTabsState {
   // Limit visible grapheme clusters, preserving combining marks and emoji sequences.
   const normalized = articleTitle?.trim().replace(/\s+/gu, " ") ?? "";
-  const title = Array.from(titleSegments.segment(normalized), ({ segment }) => segment).slice(0, 72).join("") || "New tab";
+  // Stop after the visible prefix instead of materializing every grapheme in
+  // an arbitrarily long source title.
+  let title = "";
+  let count = 0;
+  for (const { segment } of titleSegments.segment(normalized)) {
+    if (count++ === 72) break;
+    title += segment;
+  }
+  title ||= "New tab";
   const tab = state.tabs.find((candidate) => candidate.id === id);
   if (!tab || tab.title === title) return state;
   return { ...state, tabs: state.tabs.map((candidate) => candidate.id === id ? { ...candidate, title } : candidate) };
