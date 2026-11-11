@@ -4,7 +4,7 @@ import ReaderChatHistory from "./ReaderChatHistory";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
-import { MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
+import { MAX_READER_TABS, adjacentReaderTabId, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
 import { READER_ACTIONS, type ReaderAction } from "./readerActions";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settingsSections";
 import { THEMES, isTheme, type Theme } from "./theme";
@@ -248,6 +248,7 @@ export default function App() {
 
   useEffect(() => {
     if (destination === "settings") settingsBackRef.current?.focus();
+
     if (destination === "article" && returnFocusRef.current) {
       mainActionRef.current?.focus();
       returnFocusRef.current = false;
@@ -465,10 +466,22 @@ export default function App() {
         <main>
           <p className="eyebrow">FOUNDATION WIKIPEDIA</p>
           <h1 id="overview">Wikipedia reader preview</h1>
-          <nav className="reader-tabs" aria-label="Open article tabs">
+          <nav className="reader-tabs" aria-label="Open article tabs" onKeyDown={(event) => {
+            if (!(event.target instanceof HTMLButtonElement)) return;
+            const idText = event.target.dataset.readerTabId;
+            if (!idText) return; // Close and New tab buttons keep native keyboard behavior.
+            const targetId = adjacentReaderTabId(readerTabs, Number(idText), event.key);
+            if (targetId === null) return;
+            event.preventDefault();
+            selectTab(targetId);
+            const target = event.currentTarget.querySelector<HTMLButtonElement>(
+              `button[data-reader-tab-id="${targetId}"]`,
+            );
+            target?.focus();
+          }}>
             {readerTabs.tabs.map((tab) => (
               <div className="reader-tab" key={tab.id}>
-                <button type="button" aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
+                <button type="button" data-reader-tab-id={tab.id} aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
                   onClick={() => selectTab(tab.id)}>
                   {tab.title}
                 </button>
@@ -498,6 +511,7 @@ export default function App() {
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">
+
         <button className="settings-back" ref={settingsBackRef} onClick={leaveSettings}>
           ← {settingsSection === null ? "Return to article" : "All settings"}
         </button>

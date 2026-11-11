@@ -38,6 +38,17 @@ export function closeReaderTab(state: ReaderTabsState, id: number): ReaderTabsSt
   return { ...state, tabs: remaining, activeId };
 }
 
+/** Keyboard navigation for the article tab strip; wraps only for arrow keys. */
+export function adjacentReaderTabId(state: ReaderTabsState, currentId: number, key: string): number | null {
+  const index = state.tabs.findIndex((tab) => tab.id === currentId);
+  if (index < 0 || state.tabs.length === 0) return null;
+  if (key === "Home") return state.tabs[0].id;
+  if (key === "End") return state.tabs[state.tabs.length - 1].id;
+  if (key === "ArrowRight") return state.tabs[(index + 1) % state.tabs.length].id;
+  if (key === "ArrowLeft") return state.tabs[(index + state.tabs.length - 1) % state.tabs.length].id;
+  return null;
+}
+
 const titleSegments = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Article labels are display-only; never interpret titles as URLs or HTML. */

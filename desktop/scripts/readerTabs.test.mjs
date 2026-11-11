@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAX_READER_TABS, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab,
+  MAX_READER_TABS, adjacentReaderTabId, addReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab,
 } from "../src/readerTabs.ts";
 
 test("reader tabs are independent and IDs are never reused on close", () => {
@@ -75,4 +75,17 @@ test("long source titles retain only the first 72 graphemes", () => {
   const prefix = "📚".repeat(71) + "e\u0301";
   const renamed = titleReaderTab(state, 1, prefix + "Z".repeat(100_000));
   assert.equal(renamed.tabs[0].title, prefix);
+});
+
+test("keyboard tab navigation wraps and skips closed IDs", () => {
+  let state = addReaderTab(addReaderTab(initialReaderTabs()));
+  state = closeReaderTab(state, 2);
+  assert.equal(adjacentReaderTabId(state, 1, "ArrowRight"), 3);
+  assert.equal(adjacentReaderTabId(state, 3, "ArrowRight"), 1);
+  assert.equal(adjacentReaderTabId(state, 1, "ArrowLeft"), 3);
+  assert.equal(adjacentReaderTabId(state, 3, "Home"), 1);
+  assert.equal(adjacentReaderTabId(state, 1, "End"), 3);
+  assert.equal(adjacentReaderTabId(state, 2, "Home"), null);
+  assert.equal(adjacentReaderTabId(state, 1, "Escape"), null);
+  assert.equal(adjacentReaderTabId(initialReaderTabs(), 1, "ArrowLeft"), 1);
 });
