@@ -84,7 +84,22 @@ jobs:
         uses: actions/checkout@v4
       - name: Install Tauri Linux prerequisites
         run: |
-          sudo apt-get update
+          # GitHub-hosted runners may route apt through an unreachable Azure mirror.
+          # Use canonical Ubuntu HTTPS repositories for reproducible dependency installs.
+          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'SOURCES'
+          Types: deb
+          URIs: https://archive.ubuntu.com/ubuntu
+          Suites: noble noble-updates noble-backports
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: https://security.ubuntu.com/ubuntu
+          Suites: noble-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          SOURCES
+          sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@master
