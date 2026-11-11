@@ -110,3 +110,14 @@ test("tab labels cannot spoof neighboring UI with bidi overrides or control char
   assert.equal(titleReaderTab(state, 1, "مرحبا بالعالم").tabs[0].title, "مرحبا بالعالم");
   assert.equal(titleReaderTab(state, 1, control(0x202e) + control(0x2066)).tabs[0].title, "New tab");
 });
+
+
+test("tab titles neutralize invisible separators and deprecated bidi controls without breaking joined scripts", () => {
+  const state = initialReaderTabs();
+  const code = (value) => String.fromCodePoint(value);
+  for (const point of [0x200b, 0x2060, 0xfeff, 0x2028, 0x2029, 0x206a, 0x206f, 0x0085]) {
+    assert.equal(titleReaderTab(state, 1, "Alpha" + code(point) + "Beta").tabs[0].title, "Alpha Beta");
+  }
+  assert.equal(titleReaderTab(state, 1, "👩‍👩‍👧‍👦").tabs[0].title, "👩‍👩‍👧‍👦");
+  assert.equal(titleReaderTab(state, 1, "می‌روم").tabs[0].title, "می‌روم");
+});

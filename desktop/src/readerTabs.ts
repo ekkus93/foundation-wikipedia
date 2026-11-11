@@ -58,7 +58,7 @@ const titleSegments = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 /** Article labels are display-only; never interpret titles as URLs or HTML. */
 export function titleReaderTab(state: ReaderTabsState, id: number, articleTitle: string | null): ReaderTabsState {
   // Limit visible grapheme clusters, preserving combining marks and emoji sequences.
-  const normalized = articleTitle?.replace(/[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u0000-\u001f\u007f]/gu, " ").trim().replace(/\s+/gu, " ") ?? "";
+  const normalized = articleTitle?.replace(/[\u202a-\u202e\u2066-\u206f\u200e\u200f\u061c\u200b\u2060\ufeff\u2028\u2029\u0000-\u001f\u007f-\u009f]/gu, " ").trim().replace(/\s+/gu, " ") ?? "";
   // Stop after the visible prefix instead of materializing every grapheme in
   // an arbitrarily long source title.
   let title = "";
