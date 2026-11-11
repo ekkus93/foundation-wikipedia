@@ -49,6 +49,7 @@ export default function App() {
       return "system";
     }
   });
+  const pendingTabFocusRef = useRef<number | null>(null);
   const tabScrollRef = useRef(new Map<number, number>());
   const tabArticleRef = useRef(new Map<number, ReaderArticleContext>());
   const bookmarkInFlightRef = useRef(new ReaderBookmarkInFlight());
@@ -237,6 +238,16 @@ export default function App() {
     }
   }, [theme]);
 
+  // A closed tab may contain the focused Close button. Move focus to a
+  // surviving article tab after React commits the replacement DOM.
+  useLayoutEffect(() => {
+    const id = pendingTabFocusRef.current;
+    if (id === null) return;
+    pendingTabFocusRef.current = null;
+    const target = document.querySelector<HTMLButtonElement>(`button[data-reader-tab-id="${id}"]`);
+    target?.focus();
+  }, [readerTabs]);
+
   // Restore the outer reading position after switching tabs or returning from Settings.
   // The sandboxed iframe has its own scroll state and is deliberately not given
   // allow-same-origin merely to inspect its internal scroll offset.
@@ -392,6 +403,7 @@ export default function App() {
     // context, scroll position or open conversation.
     if (!canCloseReaderTab(readerTabs, id)) return;
     rememberTabScroll();
+    pendingTabFocusRef.current = closeReaderTab(readerTabs, id).activeId;
     tabScrollRef.current.delete(id);
     tabArticleRef.current.delete(id);
     if (id === readerTabs.activeId) setChatOpen(false);
