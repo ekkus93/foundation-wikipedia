@@ -481,7 +481,7 @@ export default function App() {
         <main>
           <p className="eyebrow">FOUNDATION WIKIPEDIA</p>
           <h1 id="overview">Wikipedia reader preview</h1>
-          <nav className="reader-tabs" aria-label="Open article tabs" onKeyDown={(event) => {
+          <nav className="reader-tabs" role="tablist" aria-label="Open article tabs" onKeyDown={(event) => {
             if (!(event.target instanceof HTMLButtonElement)) return;
             const idText = event.target.dataset.readerTabId;
             if (!idText) return; // Close and New tab buttons keep native keyboard behavior.
@@ -496,7 +496,7 @@ export default function App() {
           }}>
             {readerTabs.tabs.map((tab) => (
               <div className="reader-tab" key={tab.id}>
-                <button type="button" data-reader-tab-id={tab.id} aria-current={readerTabs.activeId === tab.id ? "page" : undefined}
+                <button type="button" role="tab" id={`reader-tab-${tab.id}`} aria-controls={`reader-panel-${tab.id}`} aria-selected={readerTabs.activeId === tab.id} tabIndex={readerTabs.activeId === tab.id ? 0 : -1} data-reader-tab-id={tab.id}
                   onClick={() => selectTab(tab.id)}>
                   {tab.title}
                 </button>
@@ -509,7 +509,7 @@ export default function App() {
               onClick={addTab}>+ New tab</button>
           </nav>
           {readerTabs.tabs.map((tab) => (
-            <section key={`${readerSessionId}:${tab.id}`} aria-label={`Article tab ${tab.id}`}
+            <section key={`${readerSessionId}:${tab.id}`} role="tabpanel" id={`reader-panel-${tab.id}`} aria-labelledby={`reader-tab-${tab.id}`} tabIndex={0}
               hidden={readerTabs.activeId !== tab.id}>
               <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
                 const previous = tabArticleRef.current.get(tab.id);
