@@ -566,7 +566,10 @@ mod interruption_tests {
                 ActivationError::CandidateNotStaged
             ))
         ));
-        assert!(!invoked, "unstaged candidate must not invoke reader verification");
+        assert!(
+            !invoked,
+            "unstaged candidate must not invoke reader verification"
+        );
         assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
 
         // The same rule applies to a completely missing candidate.
