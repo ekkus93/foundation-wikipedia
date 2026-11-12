@@ -1265,6 +1265,57 @@ mod interruption_tests {
     }
 
     #[test]
+    fn rollback_backup_sync_failure_never_publishes_candidate() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-selector-backup-sync-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let path = root.join("snapshots").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("manifest.json"), "{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let original = fs::read(root.join("current")).unwrap();
+        let mut sync_calls = 0;
+        let mut precommit_called = false;
+        let result = store.switch_with_precommit_and_sync(
+            "new",
+            || {
+                precommit_called = true;
+                Ok(())
+            },
+            |_| {
+                sync_calls += 1;
+                Err(io::Error::other("injected backup directory sync failure"))
+            },
+        );
+        assert!(matches!(result, Err(ActivationError::Io(_))));
+        assert_eq!(sync_calls, 1);
+        assert!(!precommit_called, "candidate must not reach commit gate");
+        assert_eq!(fs::read(root.join("current")).unwrap(), original);
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with(".current.") || name.starts_with(".previous.")
+                })
+                .count(),
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn failed_rollback_sync_reports_uncertain_durability() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
