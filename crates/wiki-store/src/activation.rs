@@ -248,6 +248,7 @@ impl ActiveSnapshotStore {
     /// The snapshot tree must remain immutable and exclusively owned by the
     /// installer; this does not defend against non-cooperating filesystem swaps.
     pub fn switch_to_manifest_verified_with_bound_pack_media(
+
         &self,
         id: &str,
         store: &MediaObjectStore,
@@ -476,6 +477,45 @@ mod interruption_tests {
     }
 
     #[test]
+    fn first_activation_precommit_failure_leaves_no_selector_or_private_files() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-first-activation-reject-{}-{stamp}",
+            std::process::id()
+        ));
+        let candidate = root.join("snapshots/new");
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        assert_eq!(store.current().unwrap(), None);
+
+        let mut invoked = false;
+        let result = store.switch_with_precommit_gate("new", || {
+            invoked = true;
+            Err(ActivationError::Io(io::Error::other(
+                "injected first activation precommit failure",
+            )))
+        });
+        assert!(invoked);
+        assert!(matches!(result, Err(ActivationError::Io(_))));
+        assert_eq!(store.current().unwrap(), None);
+        assert!(!root.join("current").exists());
+        for entry in fs::read_dir(&root).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".current.") && !name.starts_with(".previous."),
+                "orphaned private selector file: {name}"
+            );
+        }
+        assert!(candidate.join("manifest.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn snapshot_ids_reject_windows_device_names_before_filesystem_access() {
         // The snapshot ID becomes a directory component. Enforce the same
         // portable path policy on Linux and Android, not only on Windows.
@@ -498,6 +538,7 @@ mod interruption_tests {
     fn manifest_verified_activation_binds_catalog_index_shards_and_media_to_candidate() {
         use crate::catalog::SnapshotCatalog;
         use crate::media_install::install_bound_owned_media;
+
         use crate::media_ownership::MediaNotice;
         use crate::record_codec::append_record_frame;
         use crate::search_index::OfflineSearchIndex;
@@ -748,6 +789,7 @@ mod interruption_tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
+
             "wiki-activation-unstaged-gate-{}-{stamp}",
             std::process::id()
         ));
@@ -998,6 +1040,7 @@ mod interruption_tests {
         let candidate = root.join("snapshots/old");
         fs::create_dir_all(&candidate).unwrap();
         fs::write(candidate.join("manifest.json"), "{}").unwrap();
+
         let canonical = ActiveSnapshotStore::new(&root);
         canonical.switch_to_prevalidated("old").unwrap();
         assert_eq!(canonical.current().unwrap(), Some("old".into()));
@@ -1248,6 +1291,7 @@ mod interruption_tests {
     }
 
     #[test]
+
     fn post_rename_sync_failure_restores_old_or_absent_selector() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1497,6 +1541,7 @@ mod interruption_tests {
         drop(registry);
         fs::remove_dir_all(root).unwrap();
     }
+
 
     #[test]
     fn inactive_pack_release_fails_closed_for_corrupt_active_pointer_or_manifest() {
