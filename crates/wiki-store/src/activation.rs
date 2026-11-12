@@ -1436,6 +1436,52 @@ mod interruption_tests {
     }
 
     #[test]
+    fn first_activation_failed_rollback_sync_reports_uncertain_durability() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-first-selector-uncertain-{}-{stamp}",
+            std::process::id()
+        ));
+        let candidate = root.join("snapshots/new");
+        fs::create_dir_all(&candidate).unwrap();
+        fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        assert_eq!(store.current().unwrap(), None);
+
+        let mut calls = 0;
+        let result = store.switch_with_precommit_and_sync(
+            "new",
+            || Ok(()),
+            |_| {
+                calls += 1;
+                Err(io::Error::other("injected directory sync failure"))
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(ActivationError::RollbackFailed { .. })
+        ));
+        assert_eq!(calls, 2, "commit and rollback must both request durability");
+        // Logical removal is observable, but the failed rollback fsync means
+        // power-loss survival cannot be asserted as successful.
+        assert_eq!(store.current().unwrap(), None);
+        assert!(!root.join("current").exists());
+        assert!(candidate.join("manifest.json").exists());
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(".current."))
+                .count(),
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn failed_rollback_sync_reports_uncertain_durability() {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
