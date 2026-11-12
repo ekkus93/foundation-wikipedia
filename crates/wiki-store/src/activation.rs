@@ -269,7 +269,8 @@ impl ActiveSnapshotStore {
         // The final pointer switch repeats this check.
         self.ensure_root()
             .map_err(PackMediaActivationError::Activation)?;
-        if !self.candidate_is_staged(id)
+        if !self
+            .candidate_is_staged(id)
             .map_err(PackMediaActivationError::Activation)?
         {
             return Err(PackMediaActivationError::Activation(
