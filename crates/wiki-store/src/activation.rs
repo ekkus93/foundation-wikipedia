@@ -198,7 +198,6 @@ impl ActiveSnapshotStore {
         self.switch_with_precommit_gate(id, || Ok(()))
     }
 
-
     /// Activate a PREVALIDATED snapshot only if its pack owner has exactly
     /// the caller-authenticated required-media inventory, all object bytes
     /// rehash correctly, and the registry is bound to the supplied media root.
@@ -399,7 +398,6 @@ impl ActiveSnapshotStore {
                 drop(backup);
                 sync_parent(&self.root)?;
             }
-
 
             precommit()?;
             // The precommit verifier may have invalidated or removed staging.
