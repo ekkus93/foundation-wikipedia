@@ -604,8 +604,6 @@ mod interruption_tests {
         fs::write(&object, bytes).unwrap();
 
         let activated_bytes = snapshot_store
-
-
             .switch_to_prevalidated_with_bound_pack_media("new", &store, &registry, &required)
             .unwrap();
         assert_eq!(activated_bytes, bytes.len() as u64);
