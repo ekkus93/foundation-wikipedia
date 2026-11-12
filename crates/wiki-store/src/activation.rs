@@ -412,6 +412,102 @@ mod interruption_tests {
     }
 
     #[test]
+    fn verified_activation_preserves_old_pointer_on_reader_failure() {
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+        use sha2::{Digest, Sha256};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-activation-reader-gate-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshots = ActiveSnapshotStore::new(&root);
+        snapshots.switch_to_prevalidated("old").unwrap();
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(&root.join("registry.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let bytes = b"mandatory candidate image";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let required = [RequiredMedia {
+            digest: digest.clone(),
+            bytes: bytes.len() as u64,
+        }];
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Candidate.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        install_bound_owned_media(
+            &store,
+            &mut registry,
+            bytes,
+            &notice,
+            OwnerKind::Pack,
+            "new",
+        )
+        .unwrap();
+
+        let mut invoked = false;
+        let result = snapshots.switch_to_verified_with_bound_pack_media(
+            "new",
+            &store,
+            &registry,
+            &required,
+            || {
+                invoked = true;
+                Err(crate::offline_reader::ReaderError::InvalidCatalog)
+            },
+        );
+        assert!(invoked);
+        assert!(matches!(result, Err(PackMediaActivationError::Reader(_))));
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+
+        let object = media_root.join(&digest[..2]).join(&digest);
+        fs::write(&object, b"corrupt").unwrap();
+        invoked = false;
+        let result = snapshots.switch_to_verified_with_bound_pack_media(
+            "new",
+            &store,
+            &registry,
+            &required,
+            || {
+                invoked = true;
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(PackMediaActivationError::Media(_))));
+        assert!(!invoked, "reader must not run after mandatory media failure");
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+        fs::write(&object, bytes).unwrap();
+
+        let verified = snapshots
+            .switch_to_verified_with_bound_pack_media(
+                "new",
+                &store,
+                &registry,
+                &required,
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(verified, bytes.len() as u64);
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("new"));
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn bound_pack_activation_refuses_missing_wrong_root_and_corrupt_media() {
         use crate::media_install::install_bound_owned_media;
         use crate::media_ownership::MediaNotice;
@@ -557,6 +653,7 @@ mod interruption_tests {
             "new",
         )
         .unwrap();
+
         let required = [RequiredMedia {
             digest: digest.clone(),
             bytes: bytes.len() as u64,
