@@ -248,7 +248,6 @@ impl ActiveSnapshotStore {
     /// The snapshot tree must remain immutable and exclusively owned by the
     /// installer; this does not defend against non-cooperating filesystem swaps.
     pub fn switch_to_manifest_verified_with_bound_pack_media(
-
         &self,
         id: &str,
         store: &MediaObjectStore,
@@ -789,7 +788,6 @@ mod interruption_tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-
             "wiki-activation-unstaged-gate-{}-{stamp}",
             std::process::id()
         ));
@@ -1541,7 +1539,6 @@ mod interruption_tests {
         drop(registry);
         fs::remove_dir_all(root).unwrap();
     }
-
 
     #[test]
     fn inactive_pack_release_fails_closed_for_corrupt_active_pointer_or_manifest() {
