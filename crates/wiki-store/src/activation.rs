@@ -1445,7 +1445,6 @@ mod interruption_tests {
         store.switch_to_prevalidated("old").unwrap();
         let error = store.switch_with_precommit_gate("new", || {
             Err(ActivationError::Io(io::Error::other(
-
                 "injected interruption",
             )))
         });
@@ -1847,7 +1846,6 @@ mod interruption_tests {
         assert!(matches!(
             result,
             Err(InactivePackReleaseError::Activation(
-
                 ActivationError::CorruptCurrentPointer
             ))
         ));
