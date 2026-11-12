@@ -238,6 +238,37 @@ impl ActiveSnapshotStore {
         })
     }
 
+    /// Verify the candidate's own on-disk catalog, complete manifest-pinned
+    /// article shards, and persisted search index before publishing its pointer.
+    /// The layout is snapshots/<id>/{catalog.sqlite,search.sqlite,*shards}.
+    /// Verification and required pack-media checks share one media lease.
+    ///
+    /// The caller MUST authenticate the manifest and the complete shard/media
+    /// inventories independently. A matching digest is not publisher trust.
+    /// The snapshot tree must remain immutable and exclusively owned by the
+    /// installer; this does not defend against non-cooperating filesystem swaps.
+    pub fn switch_to_manifest_verified_with_bound_pack_media(
+        &self,
+        id: &str,
+        store: &MediaObjectStore,
+        registry: &MediaRegistry,
+        required: &[RequiredMedia],
+        expected_shards: &std::collections::BTreeMap<String, (u64, String)>,
+    ) -> Result<u64, PackMediaActivationError> {
+        let candidate = self.root.join("snapshots").join(id);
+        self.switch_to_verified_with_bound_pack_media(id, store, registry, required, || {
+            let reader =
+                crate::offline_reader::VerifiedOfflineCatalogReader::open_with_manifest_shards(
+                    &candidate.join("catalog.sqlite"),
+                    &candidate.join("search.sqlite"),
+                    &candidate,
+                    expected_shards,
+                )?;
+            drop(reader);
+            Ok(())
+        })
+    }
+
     fn switch_with_bound_pack_media_and_gate(
         &self,
         id: &str,
@@ -421,6 +452,135 @@ mod interruption_tests {
         ] {
             assert!(safe_id(id), "{id}");
         }
+    }
+
+    #[test]
+    fn manifest_verified_activation_binds_catalog_index_shards_and_media_to_candidate() {
+        use crate::catalog::SnapshotCatalog;
+        use crate::media_install::install_bound_owned_media;
+        use crate::media_ownership::MediaNotice;
+        use crate::record_codec::append_record_frame;
+        use crate::search_index::OfflineSearchIndex;
+        use sha2::{Digest, Sha256};
+        use wiki_model::{Article, ArticleKey, PageRecord, Revision, ARTICLE_SCHEMA_VERSION};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-manifest-bound-activation-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        for id in ["old", "new"] {
+            let path = root.join("snapshots").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("manifest.json"), b"{}").unwrap();
+        }
+        let snapshots = ActiveSnapshotStore::new(&root);
+        snapshots.switch_to_prevalidated("old").unwrap();
+        let candidate = root.join("snapshots/new");
+        let page = PageRecord::Article(Box::new(Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id: 42,
+            },
+            revision: Revision {
+                revision_id: 1042,
+                timestamp: "2026-11-11T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: "Earth".into(),
+            display_title: "Earth".into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article>Earth</article>".into(),
+            is_disambiguation: false,
+        }));
+        let mut shard = Vec::new();
+        append_record_frame(&mut shard, &page).unwrap();
+        fs::write(candidate.join("articles.shard"), &shard).unwrap();
+        let catalog_path = candidate.join("catalog.sqlite");
+        let mut catalog = SnapshotCatalog::open(&catalog_path).unwrap();
+        catalog
+            .insert_verified(&candidate, "articles.shard", 0, shard.len() as u64)
+            .unwrap();
+        let index_path = candidate.join("search.sqlite");
+        let expected_shards = std::collections::BTreeMap::from([(
+            "articles.shard".to_owned(),
+            (shard.len() as u64, format!("{:x}", Sha256::digest(&shard))),
+        )]);
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(&root.join("registry.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+        let image = b"required image for candidate";
+        let digest = format!("{:x}", Sha256::digest(image));
+        let notice = MediaNotice {
+            mime: "image/png".into(),
+            source_url: "https://commons.wikimedia.org/wiki/File:Earth.png".into(),
+            creator: "Author".into(),
+            license: "CC BY-SA 4.0".into(),
+        };
+        install_bound_owned_media(
+            &store,
+            &mut registry,
+            image,
+            &notice,
+            OwnerKind::Pack,
+            "new",
+        )
+        .unwrap();
+        let required = [RequiredMedia {
+            digest,
+            bytes: image.len() as u64,
+        }];
+
+        // No actual derived index: a valid manifest and media cannot activate.
+        let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
+            "new", &store, &registry, &required, &expected_shards,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+
+        OfflineSearchIndex::replace_persisted_from_catalog(&index_path, &catalog, &candidate)
+            .unwrap();
+        let mut wrong_shards = expected_shards.clone();
+        wrong_shards.get_mut("articles.shard").unwrap().1 = "0".repeat(64);
+        let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
+            "new", &store, &registry, &required, &wrong_shards,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+
+        // An altered immutable shard must also preserve the previous pointer.
+        fs::write(candidate.join("articles.shard"), b"corrupt shard").unwrap();
+        let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
+            "new", &store, &registry, &required, &expected_shards,
+        );
+        assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+        fs::write(candidate.join("articles.shard"), &shard).unwrap();
+
+        let verified = snapshots
+            .switch_to_manifest_verified_with_bound_pack_media(
+                "new", &store, &registry, &required, &expected_shards,
+            )
+            .unwrap();
+        assert_eq!(verified, image.len() as u64);
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("new"));
+        drop(catalog);
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
