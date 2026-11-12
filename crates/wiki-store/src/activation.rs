@@ -218,7 +218,6 @@ impl ActiveSnapshotStore {
         registry: &MediaRegistry,
         required: &[RequiredMedia],
     ) -> Result<u64, PackMediaActivationError> {
-
         self.switch_with_bound_pack_media_and_gate(id, store, registry, required, || {})
     }
 
@@ -439,7 +438,6 @@ impl ActiveSnapshotStore {
 #[cfg(test)]
 mod interruption_tests {
     use super::*;
-
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -703,7 +701,6 @@ mod interruption_tests {
             title: "Earth".into(),
             display_title: "Earth".into(),
             language: "en".into(),
-
             namespace: 0,
             aliases: vec![],
             wikidata_id: None,
@@ -924,7 +921,6 @@ mod interruption_tests {
         let old = root.join("snapshots/old");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("manifest.json"), b"{}").unwrap();
-
         let snapshots = ActiveSnapshotStore::new(&root);
         snapshots.switch_to_prevalidated("old").unwrap();
 
@@ -1145,7 +1141,6 @@ mod interruption_tests {
         contender
             .execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
             .unwrap();
-
         assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
         drop(registry);
         fs::remove_dir_all(root).unwrap();
@@ -1366,7 +1361,6 @@ mod interruption_tests {
             std::process::id()
         ));
         let candidate = root.join("snapshots/new");
-
         fs::create_dir_all(&candidate).unwrap();
         fs::write(candidate.join("manifest.json"), "{}").unwrap();
         let store = ActiveSnapshotStore::new(&root);
@@ -1587,7 +1581,6 @@ mod interruption_tests {
         for id in ["old", "new"] {
             let path = root.join("snapshots").join(id);
             fs::create_dir_all(&path).unwrap();
-
             fs::write(path.join("manifest.json"), "{}").unwrap();
         }
         let store = ActiveSnapshotStore::new(&root);
@@ -1808,7 +1801,6 @@ mod interruption_tests {
                 ActivationError::CorruptCurrentPointer
             ))
         ));
-
         assert_eq!(
             registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
             1
