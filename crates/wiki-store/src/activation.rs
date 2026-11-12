@@ -515,6 +515,44 @@ mod interruption_tests {
     }
 
     #[test]
+    fn orphaned_private_selector_files_are_not_adopted_or_overwritten() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-orphaned-selector-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        // Simulate files left by a process killed before publication.
+        // They must not be interpreted as either an active or rollback selector.
+        let orphan_current = root.join(".current.orphan.tmp");
+        let orphan_previous = root.join(".previous.orphan.tmp");
+        fs::write(&orphan_current, b"attacker-controlled candidate").unwrap();
+        fs::write(&orphan_previous, b"attacker-controlled backup").unwrap();
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+
+        store.switch_to_prevalidated("new").unwrap();
+        assert_eq!(store.current().unwrap().as_deref(), Some("new"));
+        assert_eq!(
+            fs::read(&orphan_current).unwrap(),
+            b"attacker-controlled candidate"
+        );
+        assert_eq!(
+            fs::read(&orphan_previous).unwrap(),
+            b"attacker-controlled backup"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn snapshot_ids_reject_windows_device_names_before_filesystem_access() {
         // The snapshot ID becomes a directory component. Enforce the same
         // portable path policy on Linux and Android, not only on Windows.
