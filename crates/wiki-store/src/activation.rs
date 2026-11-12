@@ -93,7 +93,7 @@ fn real_file(path: &Path) -> Result<bool, io::Error> {
             {
                 Ok(true)
             }
-        },
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
