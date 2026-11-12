@@ -400,6 +400,11 @@ impl ActiveSnapshotStore {
             }
 
             precommit()?;
+            // The precommit verifier may have invalidated or removed staging.
+            // Never publish a selector pointing at a missing candidate.
+            if !self.candidate_is_staged(id)? {
+                return Err(ActivationError::CandidateNotStaged);
+            }
             let current = self.root.join("current");
             fs::rename(&temp, &current)?;
             if let Err(commit_error) = sync_parent(&self.root) {
@@ -511,6 +516,45 @@ mod interruption_tests {
             );
         }
         assert!(candidate.join("manifest.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn candidate_removed_at_precommit_cannot_become_active() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-candidate-removed-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let path = root.join("snapshots").join(id);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("manifest.json"), b"{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let candidate = root.join("snapshots/new");
+        let result = store.switch_with_precommit_gate("new", || {
+            fs::remove_file(candidate.join("manifest.json")).unwrap();
+            Ok(())
+        });
+        assert!(matches!(result, Err(ActivationError::CandidateNotStaged)));
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with(".current.") || name.starts_with(".previous.")
+                })
+                .count(),
+            0
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
