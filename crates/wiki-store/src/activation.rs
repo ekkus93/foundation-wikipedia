@@ -467,7 +467,10 @@ mod interruption_tests {
             &required,
             || {
                 invoked = true;
-                Err(crate::offline_reader::ReaderError::StaleRevision { expected: 1, actual: 2 })
+                Err(crate::offline_reader::ReaderError::StaleRevision {
+                    expected: 1,
+                    actual: 2,
+                })
             },
         );
         assert!(invoked);
@@ -488,7 +491,10 @@ mod interruption_tests {
             },
         );
         assert!(matches!(result, Err(PackMediaActivationError::Media(_))));
-        assert!(!invoked, "reader must not run after mandatory media failure");
+        assert!(
+            !invoked,
+            "reader must not run after mandatory media failure"
+        );
         assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
         fs::write(&object, bytes).unwrap();
 
@@ -598,6 +604,7 @@ mod interruption_tests {
         fs::write(&object, bytes).unwrap();
 
         let activated_bytes = snapshot_store
+
 
             .switch_to_prevalidated_with_bound_pack_media("new", &store, &registry, &required)
             .unwrap();
