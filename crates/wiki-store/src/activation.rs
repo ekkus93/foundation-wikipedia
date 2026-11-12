@@ -178,7 +178,6 @@ impl ActiveSnapshotStore {
             fs::symlink_metadata(&pointer).map_err(|_| ActivationError::CorruptCurrentPointer)?;
         if bytes.len() > 129
             || bytes.len() as u64 != opened_meta.len()
-
             || !same_pointer_snapshot(&opened_meta, &after)
             || !same_pointer_snapshot(&after, &path_after)
         {
@@ -266,9 +265,8 @@ impl ActiveSnapshotStore {
                 ActivationError::InvalidSnapshotId,
             ));
         }
-        // Fail before touching the media registry or invoking a reader verifier
-        // when the requested candidate is not a staged snapshot. The final
-        // switch still repeats these checks to reject changes in between.
+        // Reject an unstaged candidate before costly media verification.
+        // The final pointer switch repeats this check.
         self.ensure_root()
             .map_err(PackMediaActivationError::Activation)?;
         if !self.candidate_is_staged(id)
@@ -371,7 +369,6 @@ impl ActiveSnapshotStore {
 
             precommit()?;
             let current = self.root.join("current");
-
             fs::rename(&temp, &current)?;
             if let Err(commit_error) = sync_parent(&self.root) {
                 let restore = match &rollback_temp {
@@ -552,7 +549,6 @@ mod interruption_tests {
         }
         let snapshot_store = ActiveSnapshotStore::new(&root);
         snapshot_store.switch_to_prevalidated("old").unwrap();
-
         let store = MediaObjectStore::new(&media_root);
         let wrong_store = MediaObjectStore::new(&other_root);
         let db = root.join("ownership.sqlite");
@@ -732,7 +728,6 @@ mod interruption_tests {
 
         fs::remove_dir_all(base).unwrap();
     }
-
 
     #[cfg(unix)]
     #[test]
@@ -914,7 +909,6 @@ mod interruption_tests {
         let candidate = root.join("snapshots/new");
         fs::create_dir_all(&candidate).unwrap();
         fs::write(candidate.join("manifest.json"), "{}").unwrap();
-
         let store = ActiveSnapshotStore::new(&root);
         let next = NEXT_TEMP.load(Ordering::Relaxed);
         let abandoned: Vec<_> = (next..next + 32)
@@ -1095,7 +1089,6 @@ mod interruption_tests {
 
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
@@ -1276,7 +1269,6 @@ mod interruption_tests {
         ));
         assert_eq!(
             registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
-
             1
         );
         drop(registry);
