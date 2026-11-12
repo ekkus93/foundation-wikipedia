@@ -78,7 +78,22 @@ fn real_directory(path: &Path) -> Result<bool, io::Error> {
 
 fn real_file(path: &Path) -> Result<bool, io::Error> {
     match fs::symlink_metadata(path) {
-        Ok(meta) => Ok(meta.file_type().is_file() && !meta.file_type().is_symlink()),
+        Ok(meta) => {
+            if !meta.file_type().is_file() || meta.file_type().is_symlink() {
+                return Ok(false);
+            }
+            // A hardlinked manifest can be modified through an unrelated path,
+            // violating the installer's exclusive ownership of staged bytes.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                Ok(meta.nlink() == 1)
+            }
+            #[cfg(not(unix))]
+            {
+                Ok(true)
+            }
+        },
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
@@ -439,6 +454,36 @@ impl ActiveSnapshotStore {
 mod interruption_tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinked_candidate_manifest_cannot_become_active() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-hardlinked-manifest-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("snapshots/old")).unwrap();
+        fs::create_dir_all(root.join("snapshots/new")).unwrap();
+        fs::write(root.join("snapshots/old/manifest.json"), b"{}").unwrap();
+        fs::write(root.join("snapshots/new/manifest.json"), b"{}").unwrap();
+        let snapshots = ActiveSnapshotStore::new(&root);
+        snapshots.switch_to_prevalidated("old").unwrap();
+        let outside = root.join("outside-manifest");
+        fs::hard_link(root.join("snapshots/new/manifest.json"), &outside).unwrap();
+        assert!(matches!(
+            snapshots.switch_to_prevalidated("new"),
+            Err(ActivationError::CandidateNotStaged)
+        ));
+        assert_eq!(snapshots.current().unwrap(), Some("old".into()));
+        fs::remove_file(outside).unwrap();
+        snapshots.switch_to_prevalidated("new").unwrap();
+        assert_eq!(snapshots.current().unwrap(), Some("new".into()));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn precommit_rejection_preserves_old_selector_and_cleans_private_files() {
