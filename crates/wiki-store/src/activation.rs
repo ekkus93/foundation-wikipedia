@@ -1514,3 +1514,12 @@ mod interruption_tests {
                 10
             ),
             Err(InactivePackReleaseError::ActiveSnapshot)
+        ));
+        assert_eq!(
+            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
+            1
+        );
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
