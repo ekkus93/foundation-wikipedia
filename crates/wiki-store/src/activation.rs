@@ -436,6 +436,44 @@ mod interruption_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn precommit_rejection_preserves_old_selector_and_cleans_private_files() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-precommit-reject-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let before = fs::read(root.join("current")).unwrap();
+        let mut invoked = false;
+        let result = store.switch_with_precommit_gate("new", || {
+            invoked = true;
+            Err(ActivationError::Io(io::Error::other("injected precommit failure")))
+        });
+        assert!(invoked);
+        assert!(matches!(result, Err(ActivationError::Io(_))));
+        assert_eq!(fs::read(root.join("current")).unwrap(), before);
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        for entry in fs::read_dir(&root).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.starts_with(".current.") && !name.starts_with(".previous."),
+                "orphaned private selector file: {name}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn snapshot_ids_reject_windows_device_names_before_filesystem_access() {
         // The snapshot ID becomes a directory component. Enforce the same
         // portable path policy on Linux and Android, not only on Windows.
