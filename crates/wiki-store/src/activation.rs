@@ -218,6 +218,7 @@ impl ActiveSnapshotStore {
         registry: &MediaRegistry,
         required: &[RequiredMedia],
     ) -> Result<u64, PackMediaActivationError> {
+
         self.switch_with_bound_pack_media_and_gate(id, store, registry, required, || {})
     }
 
@@ -438,6 +439,7 @@ impl ActiveSnapshotStore {
 #[cfg(test)]
 mod interruption_tests {
     use super::*;
+
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -558,6 +560,49 @@ mod interruption_tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn precommit_symlinked_candidate_manifest_cannot_become_active() {
+        use std::os::unix::fs::symlink;
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-precommit-manifest-symlink-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        let manifest = root.join("snapshots/new/manifest.json");
+        let result = store.switch_with_precommit_gate("new", || {
+            fs::rename(&manifest, manifest.with_extension("saved")).unwrap();
+            symlink("manifest.saved", &manifest).unwrap();
+            Ok(())
+        });
+        assert!(matches!(result, Err(ActivationError::CandidateNotStaged)));
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        assert_eq!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with(".current.") || name.starts_with(".previous.")
+                })
+                .count(),
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn orphaned_private_selector_files_are_not_adopted_or_overwritten() {
         let stamp = SystemTime::now()
@@ -658,6 +703,7 @@ mod interruption_tests {
             title: "Earth".into(),
             display_title: "Earth".into(),
             language: "en".into(),
+
             namespace: 0,
             aliases: vec![],
             wikidata_id: None,
@@ -878,6 +924,7 @@ mod interruption_tests {
         let old = root.join("snapshots/old");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("manifest.json"), b"{}").unwrap();
+
         let snapshots = ActiveSnapshotStore::new(&root);
         snapshots.switch_to_prevalidated("old").unwrap();
 
@@ -1098,6 +1145,7 @@ mod interruption_tests {
         contender
             .execute_batch("BEGIN EXCLUSIVE; ROLLBACK;")
             .unwrap();
+
         assert_eq!(snapshot_store.current().unwrap(), Some("new".into()));
         drop(registry);
         fs::remove_dir_all(root).unwrap();
@@ -1318,6 +1366,7 @@ mod interruption_tests {
             std::process::id()
         ));
         let candidate = root.join("snapshots/new");
+
         fs::create_dir_all(&candidate).unwrap();
         fs::write(candidate.join("manifest.json"), "{}").unwrap();
         let store = ActiveSnapshotStore::new(&root);
@@ -1538,6 +1587,7 @@ mod interruption_tests {
         for id in ["old", "new"] {
             let path = root.join("snapshots").join(id);
             fs::create_dir_all(&path).unwrap();
+
             fs::write(path.join("manifest.json"), "{}").unwrap();
         }
         let store = ActiveSnapshotStore::new(&root);
@@ -1758,6 +1808,7 @@ mod interruption_tests {
                 ActivationError::CorruptCurrentPointer
             ))
         ));
+
         assert_eq!(
             registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
             1
