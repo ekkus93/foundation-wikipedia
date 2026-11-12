@@ -456,7 +456,9 @@ mod interruption_tests {
         let mut invoked = false;
         let result = store.switch_with_precommit_gate("new", || {
             invoked = true;
-            Err(ActivationError::Io(io::Error::other("injected precommit failure")))
+            Err(ActivationError::Io(io::Error::other(
+                "injected precommit failure",
+            )))
         });
         assert!(invoked);
         assert!(matches!(result, Err(ActivationError::Io(_))));
