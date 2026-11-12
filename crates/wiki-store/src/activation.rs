@@ -547,7 +547,11 @@ mod interruption_tests {
 
         // No actual derived index: a valid manifest and media cannot activate.
         let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
-            "new", &store, &registry, &required, &expected_shards,
+            "new",
+            &store,
+            &registry,
+            &required,
+            &expected_shards,
         );
         assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
         assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
@@ -557,7 +561,11 @@ mod interruption_tests {
         let mut wrong_shards = expected_shards.clone();
         wrong_shards.get_mut("articles.shard").unwrap().1 = "0".repeat(64);
         let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
-            "new", &store, &registry, &required, &wrong_shards,
+            "new",
+            &store,
+            &registry,
+            &required,
+            &wrong_shards,
         );
         assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
         assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
@@ -565,7 +573,11 @@ mod interruption_tests {
         // An altered immutable shard must also preserve the previous pointer.
         fs::write(candidate.join("articles.shard"), b"corrupt shard").unwrap();
         let attempt = snapshots.switch_to_manifest_verified_with_bound_pack_media(
-            "new", &store, &registry, &required, &expected_shards,
+            "new",
+            &store,
+            &registry,
+            &required,
+            &expected_shards,
         );
         assert!(matches!(attempt, Err(PackMediaActivationError::Reader(_))));
         assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
@@ -573,7 +585,11 @@ mod interruption_tests {
 
         let verified = snapshots
             .switch_to_manifest_verified_with_bound_pack_media(
-                "new", &store, &registry, &required, &expected_shards,
+                "new",
+                &store,
+                &registry,
+                &required,
+                &expected_shards,
             )
             .unwrap();
         assert_eq!(verified, image.len() as u64);
@@ -1498,12 +1514,3 @@ mod interruption_tests {
                 10
             ),
             Err(InactivePackReleaseError::ActiveSnapshot)
-        ));
-        assert_eq!(
-            registry.owned_media(OwnerKind::Pack, "old").unwrap().len(),
-            1
-        );
-        drop(registry);
-        fs::remove_dir_all(root).unwrap();
-    }
-}
