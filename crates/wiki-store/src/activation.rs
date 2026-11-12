@@ -526,6 +526,74 @@ mod interruption_tests {
     }
 
     #[test]
+    fn verified_activation_rejects_unstaged_candidate_without_reader_callback() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-activation-unstaged-gate-{}-{stamp}",
+            std::process::id()
+        ));
+        let media_root = root.join("media");
+        fs::create_dir_all(&media_root).unwrap();
+        let old = root.join("snapshots/old");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("manifest.json"), b"{}").unwrap();
+        let snapshots = ActiveSnapshotStore::new(&root);
+        snapshots.switch_to_prevalidated("old").unwrap();
+
+        let store = MediaObjectStore::new(&media_root);
+        let mut registry = MediaRegistry::open(&root.join("registry.sqlite")).unwrap();
+        registry.bind_media_root(&media_root).unwrap();
+
+        // A directory without a manifest is not staged, even when it exists.
+        fs::create_dir_all(root.join("snapshots/new")).unwrap();
+        let mut invoked = false;
+        let result = snapshots.switch_to_verified_with_bound_pack_media(
+            "new",
+            &store,
+            &registry,
+            &[],
+            || {
+                invoked = true;
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PackMediaActivationError::Activation(
+                ActivationError::CandidateNotStaged
+            ))
+        ));
+        assert!(!invoked, "unstaged candidate must not invoke reader verification");
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+
+        // The same rule applies to a completely missing candidate.
+        let result = snapshots.switch_to_verified_with_bound_pack_media(
+            "missing",
+            &store,
+            &registry,
+            &[],
+            || {
+                invoked = true;
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(PackMediaActivationError::Activation(
+                ActivationError::CandidateNotStaged
+            ))
+        ));
+        assert!(!invoked);
+        assert_eq!(snapshots.current().unwrap().as_deref(), Some("old"));
+
+        drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn bound_pack_activation_refuses_missing_wrong_root_and_corrupt_media() {
         use crate::media_install::install_bound_owned_media;
         use crate::media_ownership::MediaNotice;
