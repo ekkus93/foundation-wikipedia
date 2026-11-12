@@ -233,13 +233,9 @@ impl ActiveSnapshotStore {
         required: &[RequiredMedia],
         verify_reader: impl FnOnce() -> Result<(), crate::offline_reader::ReaderError>,
     ) -> Result<u64, PackMediaActivationError> {
-        self.switch_with_bound_pack_media_and_verification(
-            id,
-            store,
-            registry,
-            required,
-            || verify_reader().map_err(PackMediaActivationError::Reader),
-        )
+        self.switch_with_bound_pack_media_and_verification(id, store, registry, required, || {
+            verify_reader().map_err(PackMediaActivationError::Reader)
+        })
     }
 
     fn switch_with_bound_pack_media_and_gate(
