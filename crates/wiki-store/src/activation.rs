@@ -45,6 +45,7 @@ pub enum PackMediaActivationError {
     Lease(MediaLeaseError),
     Registry(MediaRegistryError),
     Media(MediaInstallError),
+    Reader(crate::offline_reader::ReaderError),
 }
 
 #[derive(Clone, Debug)]
@@ -220,6 +221,24 @@ impl ActiveSnapshotStore {
         self.switch_with_bound_pack_media_and_gate(id, store, registry, required, || {})
     }
 
+    /// Verify the caller-authenticated immutable catalog, shards and search index
+    /// while holding the same media lease as mandatory media verification and
+    /// pointer publication. The callback must check the candidate identified by
+    /// `id`; this API does not authenticate the upstream publisher.
+    pub fn switch_to_verified_with_bound_pack_media(
+        &self,
+        id: &str,
+        store: &MediaObjectStore,
+        registry: &MediaRegistry,
+        required: &[RequiredMedia],
+        verify_reader: impl FnOnce() -> Result<(), crate::offline_reader::ReaderError>,
+    ) -> Result<u64, PackMediaActivationError> {
+        self.switch_with_bound_pack_media_and_verification(
+            id, store, registry, required,
+            || verify_reader().map_err(PackMediaActivationError::Reader),
+        )
+    }
+
     fn switch_with_bound_pack_media_and_gate(
         &self,
         id: &str,
@@ -227,6 +246,20 @@ impl ActiveSnapshotStore {
         registry: &MediaRegistry,
         required: &[RequiredMedia],
         after_verification: impl FnOnce(),
+    ) -> Result<u64, PackMediaActivationError> {
+        self.switch_with_bound_pack_media_and_verification(
+            id, store, registry, required,
+            || { after_verification(); Ok(()) },
+        )
+    }
+
+    fn switch_with_bound_pack_media_and_verification(
+        &self,
+        id: &str,
+        store: &MediaObjectStore,
+        registry: &MediaRegistry,
+        required: &[RequiredMedia],
+        verify: impl FnOnce() -> Result<(), PackMediaActivationError>,
     ) -> Result<u64, PackMediaActivationError> {
         if !safe_id(id) {
             return Err(PackMediaActivationError::Activation(
@@ -242,7 +275,7 @@ impl ActiveSnapshotStore {
         let verified_bytes =
             verify_required_owner_media_unlocked(store, registry, OwnerKind::Pack, id, required)
                 .map_err(PackMediaActivationError::Media)?;
-        after_verification();
+        verify()?;
         self.switch_to_prevalidated(id)
             .map_err(PackMediaActivationError::Activation)?;
         Ok(verified_bytes)
