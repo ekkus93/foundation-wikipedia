@@ -37,10 +37,11 @@ impl ApiKey {
     }
 
     /// The single header carrying the key for `provider`.
-    pub fn header(&self, provider: HostedProvider) -> (&'static str, &str) {
+    pub fn header(&self, provider: HostedProvider) -> (&'static str, String) {
         match provider {
-            HostedProvider::Anthropic => ("x-api-key", &self.0),
-            HostedProvider::Gemini => ("x-goog-api-key", &self.0),
+            HostedProvider::Anthropic => ("x-api-key", self.0.clone()),
+            HostedProvider::Gemini => ("x-goog-api-key", self.0.clone()),
+            HostedProvider::OpenAi => ("authorization", format!("Bearer {}", self.0)),
         }
     }
 }
@@ -55,6 +56,9 @@ impl std::fmt::Debug for ApiKey {
 pub enum HostedProvider {
     Anthropic,
     Gemini,
+    /// Hosted OpenAI Chat Completions (same stream format as local
+    /// OpenAI-compatible servers, decoded by `openai_stream`).
+    OpenAi,
 }
 
 /// Leading system messages become the provider's system field; the rest
@@ -529,7 +533,11 @@ data: {data}
         assert!(!format!("{:?}", Some(&key)).contains("secret"));
         assert_eq!(
             key.header(HostedProvider::Anthropic),
-            ("x-api-key", "sk-ant-secret-123")
+            ("x-api-key", "sk-ant-secret-123".to_owned())
+        );
+        assert_eq!(
+            key.header(HostedProvider::OpenAi),
+            ("authorization", "Bearer sk-ant-secret-123".to_owned())
         );
         assert_eq!(key.header(HostedProvider::Gemini).0, "x-goog-api-key");
         for bad in ["", "has space", "line\r\nX-Injected: 1", "tab\t", "é"] {

@@ -5,6 +5,7 @@
 //! transports off the UI thread and honor the cancellation token.
 
 pub mod hosted_codec;
+pub mod hosted_http;
 pub mod local_endpoint;
 pub mod local_http;
 pub mod local_http_stream;

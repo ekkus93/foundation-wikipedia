@@ -47,6 +47,28 @@ class LicenseAuditTests(unittest.TestCase):
         ]
         self.assertEqual(check(packages), [])
 
+    def test_hosted_https_dependency_licenses_are_approved(self):
+        packages = [
+            {"name": "ring", "version": "0.17.14", "license": "Apache-2.0 AND ISC"},
+            {"name": "rustls", "version": "0.23.46", "license": "Apache-2.0 OR ISC OR MIT"},
+            {"name": "walkdir", "version": "2.5.0", "license": "Unlicense/MIT"},
+            {
+                "name": "wasi",
+                "version": "0.11.1+wasi-snapshot-preview1",
+                "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+            },
+            {"name": "webpki-root-certs", "version": "1.0.12", "license": "CDLA-Permissive-2.0"},
+        ]
+        self.assertEqual(check(packages), [])
+
+    def test_unlisted_licenses_still_fail_closed(self):
+        packages = [
+            {"name": "copyleft", "version": "1.0.0", "license": "GPL-3.0-only"},
+            {"name": "unknown", "version": "1.0.0", "license": None},
+            {"name": "near-miss", "version": "1.0.0", "license": "ISC AND GPL-3.0-only"},
+        ]
+        self.assertEqual(len(check(packages)), 3)
+
     def test_html_sanitizer_dependency_licenses_are_approved(self):
         packages = [
             {"name": "cssparser", "version": "0.38.0", "license": "MPL-2.0"},

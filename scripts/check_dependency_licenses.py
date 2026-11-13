@@ -23,6 +23,17 @@ ALLOWED = {
     # SPDX bzip2-1.0.6: permissive redistribution with retained notice;
     # see https://spdx.org/licenses/bzip2-1.0.6.html
     "bzip2-1.0.6",
+    # AI-003 hosted HTTPS (rustls + OS certificate verification). The first
+    # four are combinations of licenses already allowed individually.
+    "Apache-2.0 AND ISC",  # ring
+    "Apache-2.0 OR ISC OR MIT",  # rustls, rustls-native-certs
+    "Unlicense/MIT",  # Legacy spelling of "Unlicense OR MIT" (walkdir, same-file)
+    "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",  # wasi
+    # Owner-approved 2026-11-13: permissive data license for Mozilla's root
+    # certificate list (webpki-root-certs). Only a wasm32 dependency of
+    # rustls-platform-verifier, never compiled into the desktop/Android apps;
+    # see https://spdx.org/licenses/CDLA-Permissive-2.0.html
+    "CDLA-Permissive-2.0",
 }
 
 

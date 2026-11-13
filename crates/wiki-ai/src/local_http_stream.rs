@@ -37,28 +37,7 @@ pub fn stream_chat(
         .split('/')
         .next()
         .ok_or(ProviderError::InvalidRequest)?;
-    let messages: Vec<_> = request
-        .messages
-        .iter()
-        .map(|m| {
-            json!({
-                "role": match m.role {
-                    MessageRole::System => "system",
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                },
-                "content": m.content,
-            })
-        })
-        .collect();
-    let body = json!({
-        "model": request.model,
-        "messages": messages,
-        "max_tokens": request.max_output_tokens,
-        "stream": true,
-        "stream_options": { "include_usage": true },
-    })
-    .to_string();
+    let body = openai_chat_body(request);
     if body.len() > MAX_REQUEST_BYTES {
         return Err(ProviderError::InvalidRequest);
     }
@@ -78,8 +57,89 @@ pub fn stream_chat(
     socket.write_all(header.as_bytes()).map_err(map_io)?;
     socket.write_all(body.as_bytes()).map_err(map_io)?;
     let mut reader = BufReader::new(socket);
-    let mode = read_headers(&mut reader, cancellation, deadline)?;
-    let mut decoder = OpenAiStreamDecoder::new();
+    read_event_stream(
+        &mut reader,
+        &mut OpenAiStreamDecoder::new(),
+        cancellation,
+        deadline,
+        on_event,
+    )
+}
+
+/// OpenAI Chat Completions streaming request body (local or hosted).
+pub(crate) fn openai_chat_body(request: &GenerateRequest) -> String {
+    let messages: Vec<_> = request
+        .messages
+        .iter()
+        .map(|m| {
+            json!({
+                "role": match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                },
+                "content": m.content,
+            })
+        })
+        .collect();
+    json!({
+        "model": request.model,
+        "messages": messages,
+        "max_tokens": request.max_output_tokens,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+    })
+    .to_string()
+}
+
+/// Incremental decoder for one provider's streamed response body.
+pub(crate) trait ChatStreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamEvent>, ProviderError>;
+    /// Called once at a clean end of body. A decoder whose protocol signals
+    /// completion only at EOF returns its terminal event here.
+    fn finish_stream(&mut self) -> Result<Option<StreamEvent>, ProviderError>;
+}
+
+impl ChatStreamDecoder for OpenAiStreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        OpenAiStreamDecoder::push(self, bytes)
+    }
+    fn finish_stream(&mut self) -> Result<Option<StreamEvent>, ProviderError> {
+        self.finish().map(|()| None)
+    }
+}
+
+impl ChatStreamDecoder for crate::hosted_codec::AnthropicStreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        crate::hosted_codec::AnthropicStreamDecoder::push(self, bytes)
+    }
+    fn finish_stream(&mut self) -> Result<Option<StreamEvent>, ProviderError> {
+        self.finish().map(|()| None)
+    }
+}
+
+impl ChatStreamDecoder for crate::hosted_codec::GeminiStreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
+        crate::hosted_codec::GeminiStreamDecoder::push(self, bytes)
+    }
+    fn finish_stream(&mut self) -> Result<Option<StreamEvent>, ProviderError> {
+        self.finish().map(Some)
+    }
+}
+
+/// Read a bounded HTTP/1.1 `200 text/event-stream` response after the
+/// request was written: headers, then a chunked, length-delimited or
+/// close-delimited body fed through `decoder`. Exactly one terminal event
+/// is delivered, and only after the body and decoder both end cleanly.
+/// Shared by the local (plain TCP) and hosted (TLS) transports.
+pub(crate) fn read_event_stream<R: Read>(
+    reader: &mut R,
+    decoder: &mut dyn ChatStreamDecoder,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+    on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+) -> Result<(), ProviderError> {
+    let mode = read_headers(reader, cancellation, deadline)?;
     let mut pending_completion = None;
     let mut relay = |event: StreamEvent| {
         if matches!(event, StreamEvent::Completed { .. }) {
@@ -94,13 +154,13 @@ pub fn stream_chat(
     let mut total = 0usize;
     match mode {
         BodyMode::Chunked => loop {
-            let size_line = read_line(&mut reader, 64, cancellation, deadline)?;
+            let size_line = read_line(reader, 64, cancellation, deadline)?;
             let size = std::str::from_utf8(&size_line)
                 .ok()
                 .and_then(|s| usize::from_str_radix(s, 16).ok())
                 .ok_or(ProviderError::InvalidResponse)?;
             if size == 0 {
-                if !read_line(&mut reader, MAX_LINE, cancellation, deadline)?.is_empty() {
+                if !read_line(reader, MAX_LINE, cancellation, deadline)?.is_empty() {
                     return Err(ProviderError::InvalidResponse);
                 }
                 break;
@@ -108,33 +168,19 @@ pub fn stream_chat(
             if size > MAX_BODY - total {
                 return Err(ProviderError::InvalidResponse);
             }
-            read_body(
-                &mut reader,
-                size,
-                &mut decoder,
-                cancellation,
-                deadline,
-                &mut relay,
-            )?;
+            read_body(reader, size, decoder, cancellation, deadline, &mut relay)?;
             total += size;
-            if !read_line(&mut reader, 2, cancellation, deadline)?.is_empty() {
+            if !read_line(reader, 2, cancellation, deadline)?.is_empty() {
                 return Err(ProviderError::InvalidResponse);
             }
         },
         BodyMode::Length(size) => {
-            read_body(
-                &mut reader,
-                size,
-                &mut decoder,
-                cancellation,
-                deadline,
-                &mut relay,
-            )?;
+            read_body(reader, size, decoder, cancellation, deadline, &mut relay)?;
         }
         BodyMode::UntilClose => {
             let mut buffer = [0u8; 8192];
             loop {
-                let n = checked_read(&mut reader, &mut buffer, cancellation, deadline)?;
+                let n = checked_read(reader, &mut buffer, cancellation, deadline)?;
                 if n == 0 {
                     break;
                 }
@@ -142,14 +188,16 @@ pub fn stream_chat(
                     .checked_add(n)
                     .filter(|n| *n <= MAX_BODY)
                     .ok_or(ProviderError::InvalidResponse)?;
-                feed(&mut decoder, &buffer[..n], cancellation, &mut relay)?;
+                feed(decoder, &buffer[..n], cancellation, &mut relay)?;
             }
         }
     }
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
-    decoder.finish()?;
+    if let Some(event) = decoder.finish_stream()? {
+        relay(event)?;
+    }
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
@@ -164,7 +212,7 @@ pub fn stream_chat(
 fn read_body<R: Read>(
     reader: &mut R,
     size: usize,
-    decoder: &mut OpenAiStreamDecoder,
+    decoder: &mut dyn ChatStreamDecoder,
     cancellation: &CancellationToken,
     deadline: Instant,
     on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
@@ -184,7 +232,7 @@ fn read_body<R: Read>(
 }
 
 fn feed(
-    decoder: &mut OpenAiStreamDecoder,
+    decoder: &mut dyn ChatStreamDecoder,
     bytes: &[u8],
     cancellation: &CancellationToken,
     on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
@@ -198,7 +246,7 @@ fn feed(
     Ok(())
 }
 
-fn checked_read<R: Read>(
+pub(crate) fn checked_read<R: Read>(
     reader: &mut R,
     buffer: &mut [u8],
     cancellation: &CancellationToken,
@@ -329,7 +377,7 @@ fn read_headers<R: Read>(
     }
 }
 
-fn map_io(error: std::io::Error) -> ProviderError {
+pub(crate) fn map_io(error: std::io::Error) -> ProviderError {
     match error.kind() {
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => ProviderError::Timeout,
         _ => ProviderError::Transport,
