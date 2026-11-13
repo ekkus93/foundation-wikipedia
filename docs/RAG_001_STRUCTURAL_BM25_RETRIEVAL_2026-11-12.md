@@ -65,3 +65,7 @@ Local verification (Rust 1.85.1, `umask 022`): fmt, clippy `-D warnings`, worksp
 - Whether a model's answer is supported is decided by the answer-support validator, not by retrieval.
 - Chat orchestration (AI-005) does not call `retrieve` yet.
 - RAG-001's acceptance ("labeled Q&A retrieves relevant source blocks without a vector DB") is shown only on this small synthetic set. **RAG-001 stays unchecked.**
+
+## Follow-up (`09a5f0fb`)
+
+Wiring `retrieve` into chat context (AI-005) exposed a false abstention. A term present in every block was always discounted, so a question about the article's own pervasive subject ("gravity" in an article whose every block mentions gravity) got `NoEvidence`. Such terms are now discounted only when the question also contains a content term that is **not** in every block. "Who painted the tower portrait?" still abstains, while "tower" asked of a tower article retrieves evidence (`the_articles_own_subject_term_is_answerable`).
