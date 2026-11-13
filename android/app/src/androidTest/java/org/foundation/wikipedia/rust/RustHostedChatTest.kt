@@ -29,7 +29,7 @@ class RustHostedChatTest {
     private val hosted = RustHostedAi(context)
 
     @Before
-    fun setUp() = runBlocking {
+    fun setUp(): Unit = runBlocking {
         keyDir.deleteRecursively()
         dataDir = File(context.filesDir, "chat-test-${System.nanoTime()}")
         pack = File(context.cacheDir, "chat-sample-v2.wpack")
@@ -51,7 +51,7 @@ class RustHostedChatTest {
     }
 
     @Test
-    fun aPreviewDisclosesPassagesAndDestinationAndNeedsConsent() = runBlocking {
+    fun aPreviewDisclosesPassagesAndDestinationAndNeedsConsent(): Unit = runBlocking {
         assertThrows(HostedAiKeyMissingException::class.java) {
             runBlocking { prepare() }
         }
@@ -70,7 +70,7 @@ class RustHostedChatTest {
      * deliberately invalid key. Nothing is shown or saved.
      */
     @Test
-    fun aConsentedQuestionReachesTheProviderThroughSharedRust() = runBlocking {
+    fun aConsentedQuestionReachesTheProviderThroughSharedRust(): Unit = runBlocking {
         hosted.saveKey(HostedAiProvider.ANTHROPIC, "sk-ant-invalid-instrumented-test-key")
         val chat = prepare()
         try {
