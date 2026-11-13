@@ -466,6 +466,53 @@ pub fn snapshot_pack_metadata(
     })
 }
 
+const MAX_INSTALLED_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reopen an installed snapshot's pinned shard inventory from the
+/// installer-owned `manifest.json`, for verified opening after a restart.
+/// Index files and the attribution object are excluded exactly as at install
+/// time. The manifest is bounded, must be a regular file, and every entry is
+/// revalidated; the returned inventory is then rehashed by the verified
+/// reader, so a tampered manifest cannot make altered shards verify.
+pub fn installed_shard_inventory(snapshot: &Path) -> Result<ShardInventory, PackInstallError> {
+    let path = snapshot.join(MANIFEST_FILE);
+    let meta = fs::symlink_metadata(&path)?;
+    if !meta.is_file() || meta.len() > MAX_INSTALLED_MANIFEST_BYTES {
+        return Err(PackInstallError::UnsupportedObject(MANIFEST_FILE.into()));
+    }
+    let invalid = || PackInstallError::UnsupportedObject(MANIFEST_FILE.into());
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path)?).map_err(|_| invalid())?;
+    let mut skip: Vec<&str> = value["indexes"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .map(|index| index["path"].as_str().ok_or_else(invalid))
+        .collect::<Result<_, _>>()?;
+    if let Some(attribution) = value["license"]["attribution_object"].as_str() {
+        skip.push(attribution);
+    }
+    let mut shards = ShardInventory::new();
+    for object in value["objects"].as_array().ok_or_else(invalid)? {
+        let path = object["path"].as_str().ok_or_else(invalid)?;
+        let sha256 = object["sha256"].as_str().ok_or_else(invalid)?;
+        let bytes = object["bytes"].as_u64().ok_or_else(invalid)?;
+        if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid());
+        }
+        if skip.contains(&path) {
+            continue;
+        }
+        if shards
+            .insert(path.to_owned(), (bytes, sha256.to_ascii_lowercase()))
+            .is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(shards)
+}
+
 /// The installer, not the pack, owns `manifest.json`: it records the verified
 /// envelope identity and object inventory the snapshot was installed from.
 fn write_snapshot_manifest(staged: &Path, manifest: &Manifest) -> io::Result<()> {
@@ -1042,6 +1089,42 @@ mod tests {
             "attribution.json"
         );
         assert_eq!(manifest["indexes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn installed_inventory_reopens_the_verified_snapshot() {
+        let dir = test_dir("inventory");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3018, true);
+        fs::write(tree.join("attribution.json"), b"[]").unwrap();
+        let mut metadata = metadata_for(&tree);
+        metadata.license.attribution_object = Some("attribution.json".into());
+        let installed = install(&root, &pack_with(&tree, "reopen", metadata)).unwrap();
+        let inventory = installed_shard_inventory(&installed.path).unwrap();
+        assert_eq!(inventory, installed.shards);
+        assert_eq!(open_revision(&installed), 3018);
+
+        // A tampered manifest digest cannot make the shard verify.
+        let manifest_path = installed.path.join(MANIFEST_FILE);
+        let original = fs::read_to_string(&manifest_path).unwrap();
+        let shard_digest = &installed.shards["articles.shard"].1;
+        fs::write(
+            &manifest_path,
+            original.replace(shard_digest.as_str(), &"0".repeat(64)),
+        )
+        .unwrap();
+        let forged = installed_shard_inventory(&installed.path).unwrap();
+        assert!(VerifiedOfflineCatalogReader::open_with_manifest_shards(
+            &installed.path.join(CATALOG_OBJECT),
+            &installed.path.join(SEARCH_OBJECT),
+            &installed.path,
+            &forged,
+        )
+        .is_err());
+        fs::write(&manifest_path, "{not json").unwrap();
+        assert!(installed_shard_inventory(&installed.path).is_err());
     }
 
     #[test]

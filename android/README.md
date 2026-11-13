@@ -28,38 +28,43 @@ The opt-in task uses NDK clang for API 26 and copies the output to
 `app/src/main/jniLibs/arm64-v8a/libwiki_ffi.so`. That directory is ignored
 by Git. The task deliberately does not run on ordinary `assembleDebug` yet.
 
-A dedicated [Android Rust ABI qualification workflow](../.github/workflows/android-native-abi.yml)
-cross-compiles `wiki-ffi` for arm64 with Android NDK 27.2.12479018
-and API 26, verifies the ELF target, and retains the `.so` as a CI artifact.
-The workflow is path-filtered to native dependencies and can be triggered
-manually. **This is an ABI-target build check, not a callable FFI contract.**
-The workspace's strict `unsafe_code = "forbid"` lint currently prevents
-exporting unmangled C symbols without a separately reviewed safety boundary.
-Normal debug APK assembly does not build Rust unless explicitly requested.
+`RUST_ANDROID_ABIS` selects ABIs (default `arm64-v8a`; add `x86_64` for the
+emulator, which needs `rustup target add x86_64-linux-android`). The
+[Android Rust ABI qualification workflow](../.github/workflows/android-native-abi.yml)
+cross-compiles `wiki-ffi` for arm64 with Android NDK 27.2.12479018 and API 26
+and verifies the ELF target. Normal debug APK assembly does not build Rust.
 
-### UniFFI code-generation integration stub
+### Shared Rust bridge (MOB-001)
 
-A versioned bootstrap UDL now lives at
-`crates/wiki-ffi/src/foundation_wikipedia.udl`. It intentionally exports no
-callable functions yet. To exercise the Android build integration with an
-explicit, pinned `uniffi-bindgen` executable:
+`wiki-ffi` exports a Kotlin-callable API through UniFFI 0.31 proc macros:
+`OfflineLibrary` installs a custom `.wpack`, activates a snapshot, and searches
+and opens articles through the shared verified offline reader (no network).
+Per the owner decision of 2026-11-13, `wiki-ffi` alone relaxes the workspace
+`unsafe_code = "forbid"` to `"deny"` so UniFFI's generated scaffolding compiles;
+hand-written `unsafe` is rejected by `scripts/test_ffi_unsafe_boundary.py`.
+
+The generated bindings are committed at
+`app/src/main/java/uniffi/wiki_ffi/wiki_ffi.kt`, so the app compiles without a
+Rust toolchain. Regenerate them after changing the Rust exports:
 
 ```sh
-export UNIFFI_BINDGEN=/path/to/pinned/uniffi-bindgen
-gradle :app:generateUniFfiKotlin
+bash android/scripts/generate-uniffi-kotlin.sh   # or: gradle :app:generateUniFfiKotlin
 ```
 
-The Gradle task calls `android/scripts/generate-uniffi-kotlin.sh` and writes to
-`app/build/generated/source/uniffi`. The generator is caller-supplied during
-BOOT-002 so this scaffold does not silently add or update Rust dependencies.
-Automated tests exercise the task's UDL/output arguments with a fake generator
-and its fail-closed missing-tool path.
+This builds the host `wiki-ffi` library and runs the workspace-pinned
+`tools/uniffi-bindgen` in library mode with formatting disabled, so output is
+deterministic; CI fails if the committed bindings drift. App code uses the
+coroutine wrapper `org.foundation.wikipedia.rust.RustOfflineLibrary`, which runs
+every call on `Dispatchers.IO`, refuses main-thread calls, and surfaces typed
+`LibraryException`s. The bindings load `libwiki_ffi.so` through JNA, so a call
+fails at runtime unless the library was built into `jniLibs`.
 
-**Not a working UniFFI runtime integration:** generated Kotlin is not compiled
-into the app, the Rust library has no UniFFI scaffolding/exported API, and
-there are no versioned DTOs, coroutine adapters, cancellation bridge or
-device-tested Rust calls. MOB-001 owns that production boundary. An APK or
-generated Kotlin file alone is not proof of a native bridge.
+The [Android FFI bridge workflow](../.github/workflows/android-ffi-bridge.yml)
+builds the x86_64 library, checks binding drift, and runs the instrumented test
+`RustOfflineLibraryTest` on an API 35 emulator. It installs the committed
+fixture pack `fixtures/synthetic/wpack/android-sample-v2.wpack`, then searches
+and opens articles through Rust. A physical-device run is still required for
+MOB-001.
 
 The Android development shell has native Compose **Settings** categories,
 System/Light/Dark appearance, a versioned private **Work offline** preference

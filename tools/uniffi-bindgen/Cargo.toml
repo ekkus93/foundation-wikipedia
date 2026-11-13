@@ -1,0 +1,15 @@
+[package]
+name = "uniffi-bindgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Pinned to the same UniFFI as wiki-ffi so generated Kotlin matches the
+# exported scaffolding (MOB-001).
+[dependencies]
+uniffi = { version = "0.31", features = ["cli"] }

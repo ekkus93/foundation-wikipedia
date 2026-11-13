@@ -1,41 +1,49 @@
 #!/usr/bin/env bash
-# Opt-in UniFFI Kotlin binding generation stub for Android.
+# Generate the committed Kotlin bindings for wiki-ffi (MOB-001).
 #
-# A real uniffi-bindgen executable is deliberately supplied by the caller so
-# the root Rust workspace lockfile is not silently changed by this bootstrap
-# task. MOB-001 will pin the production UniFFI toolchain with the FFI crate.
+# UniFFI "library mode": the exported API is read from the host-built
+# wiki-ffi library, and the workspace-pinned tools/uniffi-bindgen writes
+# Kotlin with formatting disabled so output is deterministic. CI regenerates
+# and fails if the committed bindings drift from the Rust exports.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-UDL="$ROOT/crates/wiki-ffi/src/foundation_wikipedia.udl"
-OUT="${UNIFFI_OUT_DIR:-$ROOT/android/app/build/generated/source/uniffi}"
-BINDGEN="${UNIFFI_BINDGEN:-uniffi-bindgen}"
+OUT="${UNIFFI_OUT_DIR:-$ROOT/android/app/src/main/java}"
 
 if [[ "${1:-}" == "--help" ]]; then
-  printf 'Usage: UNIFFI_BINDGEN=/path/to/uniffi-bindgen gradle :app:generateUniFfiKotlin\n'
-  printf 'Generates provisional Kotlin sources from %s into %s.\n' "$UDL" "$OUT"
+  printf 'Usage: bash android/scripts/generate-uniffi-kotlin.sh\n'
+  printf 'Regenerates uniffi/wiki_ffi/wiki_ffi.kt under %s from the wiki-ffi exports.\n' "$OUT"
   exit 0
 fi
 if [[ $# -ne 0 ]]; then
   echo "Unexpected argument: $1" >&2
   exit 2
 fi
-if [[ ! -f "$UDL" ]]; then
-  echo "Missing UniFFI UDL: $UDL" >&2
+
+if [[ -n "${UNIFFI_LIBRARY:-}" ]]; then
+  LIB="$UNIFFI_LIBRARY"
+else
+  cargo build --manifest-path "$ROOT/Cargo.toml" --package wiki-ffi --locked
+  case "$(uname -s)" in
+    Darwin) LIB="$ROOT/target/debug/libwiki_ffi.dylib" ;;
+    *) LIB="$ROOT/target/debug/libwiki_ffi.so" ;;
+  esac
+fi
+if [[ ! -f "$LIB" ]]; then
+  echo "Missing host wiki-ffi library: $LIB" >&2
   exit 2
 fi
 
-if [[ "$BINDGEN" == */* ]]; then
-  if [[ ! -x "$BINDGEN" ]]; then
-    echo "UNIFFI_BINDGEN is not executable: $BINDGEN" >&2
+if [[ -n "${UNIFFI_BINDGEN:-}" ]]; then
+  if [[ ! -x "$UNIFFI_BINDGEN" ]]; then
+    echo "UNIFFI_BINDGEN is not executable: $UNIFFI_BINDGEN" >&2
     exit 2
   fi
-elif ! command -v "$BINDGEN" >/dev/null 2>&1; then
-  echo "UniFFI generator not found. Set UNIFFI_BINDGEN to a pinned uniffi-bindgen executable." >&2
-  exit 2
+  BINDGEN=("$UNIFFI_BINDGEN")
+else
+  BINDGEN=(cargo run --quiet --manifest-path "$ROOT/Cargo.toml" --package uniffi-bindgen --locked --)
 fi
 
 mkdir -p "$OUT"
-"$BINDGEN" generate "$UDL" --language kotlin --out-dir "$OUT"
-printf 'Generated provisional UniFFI Kotlin bindings in %s\n' "$OUT"
-printf 'NOTICE: generated source is not yet compiled into the app or a callable MOB-001 bridge.\n'
+"${BINDGEN[@]}" generate --library "$LIB" --language kotlin --no-format --out-dir "$OUT"
+printf 'Generated UniFFI Kotlin bindings for wiki-ffi in %s\n' "$OUT"

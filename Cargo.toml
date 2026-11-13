@@ -11,6 +11,7 @@ members = [
     "crates/wiki-pack-builder",
     "crates/wiki-ffi",
     "tools/wiki-pack",
+    "tools/uniffi-bindgen",
 ]
 
 [workspace.package]

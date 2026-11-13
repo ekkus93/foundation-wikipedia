@@ -9,8 +9,12 @@ rust-version.workspace = true
 # rlib keeps workspace tests and Rust consumers usable; cdylib is the Android ABI artifact.
 crate-type = ["rlib", "cdylib"]
 
-[lints]
-workspace = true
+# MOB-001 owner decision (2026-11-13): this crate alone relaxes the workspace
+# `unsafe_code = "forbid"` to "deny", so UniFFI-generated FFI scaffolding can
+# be allowed in the single `android` export module. Hand-written `unsafe` is
+# still rejected (see scripts/test_ffi_unsafe_boundary.py).
+[lints.rust]
+unsafe_code = "deny"
 
 [dependencies]
 wiki-model = { path = "../wiki-model" }
@@ -20,3 +24,4 @@ wiki-source = { path = "../wiki-source" }
 wiki-search = { path = "../wiki-search" }
 wiki-ai = { path = "../wiki-ai" }
 wiki-pack-format = { path = "../wiki-pack-format" }
+uniffi = { version = "0.31", default-features = false }
