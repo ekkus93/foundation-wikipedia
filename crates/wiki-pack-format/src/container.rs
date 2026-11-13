@@ -1,4 +1,4 @@
-//! Deterministic, stream-verified provisional .wpack framing.
+//! Deterministic, stream-verified .wpack framing (ADR 0007, accepted).
 //!
 //! Format: eight-byte magic, big-endian u32 canonical manifest-transcript
 //! length, transcript, then raw object bytes in canonical path order.

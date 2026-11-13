@@ -1,6 +1,6 @@
 # ADR 0007 — `.wpack` container framing and streamed install
 
-**Status:** Proposed. This documents the implemented `FWPACK01` framing (`wiki-pack-format::container`). Owner acceptance is pending. The format module still calls the framing provisional until archive framing and mobile benchmarks are final.  
+**Status:** Accepted (owner decision, 2026-11-12) as the v0.1 `.wpack` framing, as implemented in `wiki-pack-format::container` (`FWPACK01`, manifest identity transcript v1).  
 **Date:** 2026-11-12  
 **Requirements:** PACK-001, TRUST-001, TRUST-003, MOBPACK-002, STORE-003
 
@@ -8,7 +8,7 @@
 
 PACK-001 asks for a portable, versioned `.wpack` container, an evaluation of safe streamed export and install on Android, and an ADR recording the chosen archive and serialization. Android imports custom packs through the system document picker (MOBPACK-002, spec §18), which yields an **unseekable** content-provider stream. Packs are untrusted input until TRUST-001 exists (spec §8, §21).
 
-## Decision (as implemented)
+## Decision
 
 **Envelope:**
 
@@ -82,7 +82,6 @@ Any failure removes the partial tree durably.
 
 ## Not yet established
 
-- Owner acceptance of this framing as the v0.1 format. Until then this ADR stays **Proposed**.
 - The PACK-001 acceptance criterion: a round trip through an **independent** desktop or Android-compatible importer. The emulator probe uses the same Rust implementation, not an independent one.
 - A real Android document-picker stream (MOBPACK-002), physical devices, and pack sizes beyond the probe.
 - Signatures (TRUST-001), licensing fields and source or definition hashes in the manifest (the first PACK-001 subtask).
