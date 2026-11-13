@@ -137,6 +137,39 @@ impl SavedCitation {
         Ok(())
     }
 
+    /// The user-state row form (schema v3) of this citation.
+    pub fn to_stored(&self) -> wiki_store::user_state::StoredCitation {
+        wiki_store::user_state::StoredCitation {
+            block_id: self.block_id.clone(),
+            snapshot_id: self.snapshot_id.clone(),
+            heading_path: self.heading_path.clone(),
+            excerpt: self.excerpt.clone(),
+            excerpt_sha256: self.excerpt_sha256.clone(),
+        }
+    }
+
+    /// Rebuild a citation loaded from a chat thread of `key` at
+    /// `revision_id`, validating it as if it had just been deserialized.
+    pub fn from_stored(
+        key: &ArticleKey,
+        revision_id: u64,
+        stored: &wiki_store::user_state::StoredCitation,
+    ) -> Result<Self, SavedCitationError> {
+        let saved = Self {
+            schema_version: SAVED_CITATION_SCHEMA,
+            project: key.project.clone(),
+            page_id: key.page_id,
+            revision_id,
+            snapshot_id: stored.snapshot_id.clone(),
+            block_id: stored.block_id.clone(),
+            heading_path: stored.heading_path.clone(),
+            excerpt: stored.excerpt.clone(),
+            excerpt_sha256: stored.excerpt_sha256.clone(),
+        };
+        saved.validate()?;
+        Ok(saved)
+    }
+
     /// The evidence exactly as it was supplied, for display "as cited".
     pub fn as_cited(&self) -> EvidenceHit {
         EvidenceHit {

@@ -256,3 +256,57 @@ fn stored_records_round_trip_and_tampering_is_rejected() {
         );
     }
 }
+
+#[test]
+fn citations_saved_with_a_chat_resolve_after_an_update() {
+    use wiki_store::user_state::UserState;
+    let article = original();
+    let citation = saved(&article, "The tail always");
+    let mut state = UserState::in_memory().unwrap();
+    let generation = state.personal_generation().unwrap();
+    let answer = format!(
+        "It points away from the Sun. [[cite:{}]]",
+        citation.block_id
+    );
+    let (thread, _, message) = state
+        .save_cited_chat_exchange_for_generation(
+            generation,
+            &article.key,
+            100,
+            None,
+            "Which way does the tail point?",
+            &answer,
+            &[citation.to_stored()],
+        )
+        .unwrap()
+        .unwrap();
+    let loaded: Vec<SavedCitation> = state
+        .chat_citations(&article.key, 100, thread, message)
+        .unwrap()
+        .iter()
+        .map(|stored| SavedCitation::from_stored(&article.key, 100, stored).unwrap())
+        .collect();
+    assert_eq!(loaded, vec![citation.clone()]);
+
+    let updated = article_with_tail_rewritten();
+    assert!(matches!(
+        resolve_saved_citation(&updated, &loaded[0]).unwrap(),
+        CitationStatus::Stale {
+            cited_revision: 100,
+            current_revision: 105,
+            same_text_in_current: None,
+        }
+    ));
+    // A stored row claimed for another revision fails validation.
+    assert_eq!(
+        SavedCitation::from_stored(&article.key, 101, &citation.to_stored()),
+        Err(SavedCitationError::InconsistentIdentity)
+    );
+}
+
+fn article_with_tail_rewritten() -> Article {
+    article(
+        105,
+        vec![("Tail", vec!["A comet's tail is shaped by the solar wind."])],
+    )
+}

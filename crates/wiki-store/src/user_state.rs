@@ -8,7 +8,12 @@ use std::path::Path;
 use std::time::Duration;
 use wiki_model::ArticleKey;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
+/// Bounds on citations stored with one assistant chat message (schema v3).
+pub const MAX_CITATIONS_PER_MESSAGE: usize = 64;
+pub const MAX_CITATION_EXCERPT_BYTES: usize = 64 * 1024;
+const MAX_CITATION_FIELD_BYTES: usize = 4096;
+const MAX_CITATION_HEADING_DEPTH: usize = 32;
 
 const PERSONAL_GENERATION_KEY: &str = "internal.personal_generation";
 
@@ -47,6 +52,58 @@ pub struct ChatMessage {
     pub id: i64,
     pub role: String,
     pub content: String,
+}
+
+/// Exact evidence block cited by one assistant message (schema v3). The
+/// store checks that the block belongs to the thread's article revision and
+/// that the excerpt matches its SHA-256; `wiki-search::saved_citation`
+/// converts it to and from `SavedCitation` for resolution after updates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredCitation {
+    pub block_id: String,
+    /// Installed snapshot the evidence came from; `None` when read online.
+    pub snapshot_id: Option<String>,
+    pub heading_path: Vec<String>,
+    pub excerpt: String,
+    pub excerpt_sha256: String,
+}
+
+fn valid_citation_snapshot_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+fn citation_block_prefix(project: &str, page_id: i64, revision_id: i64) -> String {
+    format!("wkb:{project}:{page_id}:{revision_id}:")
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// Field rules shared by citation writes and the persisted-row audit.
+fn valid_stored_citation(citation: &StoredCitation, prefix: &str) -> bool {
+    citation.block_id.len() <= MAX_CITATION_FIELD_BYTES
+        && citation.block_id.starts_with(prefix)
+        && citation.block_id.len() > prefix.len()
+        && !citation.block_id.contains('\0')
+        && citation
+            .snapshot_id
+            .as_deref()
+            .is_none_or(valid_citation_snapshot_id)
+        && citation.heading_path.len() <= MAX_CITATION_HEADING_DEPTH
+        && citation
+            .heading_path
+            .iter()
+            .all(|heading| heading.len() <= MAX_CITATION_FIELD_BYTES && !heading.contains('\0'))
+        && !citation.excerpt.is_empty()
+        && citation.excerpt.len() <= MAX_CITATION_EXCERPT_BYTES
+        && !citation.excerpt.contains('\0')
+        && citation.excerpt_sha256 == sha256_hex(&citation.excerpt)
 }
 
 /// One complete, chronologically ordered question and validated answer.
@@ -150,8 +207,24 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
         ("settings", &[("key", "TEXT"), ("value", "TEXT")]),
         ("pack_owners", &[("pack_id", "TEXT"), ("digest", "TEXT")]),
         ("builder_jobs", &[("job_id", "TEXT"), ("status", "TEXT")]),
+        (
+            "chat_citations",
+            &[
+                ("message_id", "INTEGER"),
+                ("ordinal", "INTEGER"),
+                ("block_id", "TEXT"),
+                ("snapshot_id", "TEXT"),
+                ("heading_path", "TEXT"),
+                ("excerpt", "TEXT"),
+                ("excerpt_sha256", "TEXT"),
+            ],
+        ),
     ];
     for &(table, expected) in TABLE_COLUMNS {
+        // Citations were introduced by schema version 3.
+        if table == "chat_citations" && version < 3 {
+            continue;
+        }
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
             params![table],
@@ -186,6 +259,8 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
                 ("pack_owners", "digest") => 2,
                 ("history" | "chat_threads" | "chat_messages", "id") => 1,
                 ("settings", "key") | ("builder_jobs", "job_id") => 1,
+                ("chat_citations", "message_id") => 1,
+                ("chat_citations", "ordinal") => 2,
                 _ => 0,
             };
             // SQLite reports NOT NULL=0 for an INTEGER PRIMARY KEY and for
@@ -195,6 +270,7 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
                 ("history" | "chat_threads" | "chat_messages", "id")
                     | ("settings", "key")
                     | ("builder_jobs", "job_id")
+                    | ("chat_citations", "snapshot_id")
             ) {
                 0
             } else {
@@ -226,6 +302,18 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
     )?;
     if cascade != 1 {
         return Err(UserStateError::InvalidValue);
+    }
+    if version >= 3 {
+        let citation_cascade: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('chat_citations')
+             WHERE \"table\"='chat_messages' AND \"from\"='message_id'
+               AND \"to\"='id' AND on_delete='CASCADE'",
+            [],
+            |row| row.get(0),
+        )?;
+        if citation_cascade != 1 {
+            return Err(UserStateError::InvalidValue);
+        }
     }
     if version >= 2 {
         // Name-only checks can accept a forged index with different query
@@ -408,7 +496,90 @@ fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
             }
         }
     }
+    validate_persisted_citations(conn)?;
 
+    Ok(())
+}
+
+// Schema-v3 citation rows: bound sizes in SQL before decoding, require an
+// assistant message in a thread whose article revision the block ID names,
+// then recheck every field and the excerpt digest in Rust.
+fn validate_persisted_citations(conn: &Connection) -> Result<(), UserStateError> {
+    let present: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_citations'",
+        [],
+        |row| row.get(0),
+    )?;
+    if present == 0 {
+        return Ok(());
+    }
+    let invalid: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM chat_citations
+             WHERE ordinal < 0 OR ordinal >= ?1
+                OR length(CAST(block_id AS BLOB)) > ?2
+                OR length(CAST(snapshot_id AS BLOB)) > 128
+                OR length(CAST(heading_path AS BLOB)) > ?3
+                OR length(CAST(excerpt AS BLOB)) NOT BETWEEN 1 AND ?4
+                OR length(CAST(excerpt_sha256 AS BLOB)) != 64
+             LIMIT 1",
+            params![
+                MAX_CITATIONS_PER_MESSAGE as i64,
+                MAX_CITATION_FIELD_BYTES as i64,
+                (MAX_CITATION_FIELD_BYTES * (MAX_CITATION_HEADING_DEPTH + 1)) as i64,
+                MAX_CITATION_EXCERPT_BYTES as i64
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if invalid.is_some() {
+        return Err(UserStateError::InvalidValue);
+    }
+    let mut statement = conn.prepare(
+        "SELECT c.block_id, c.snapshot_id, c.heading_path, c.excerpt, c.excerpt_sha256,
+                m.role, t.project, t.page_id, t.revision_id
+         FROM chat_citations c
+         JOIN chat_messages m ON m.id = c.message_id
+         JOIN chat_threads t ON t.id = m.thread_id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+            row.get::<_, i64>(7)?,
+            row.get::<_, i64>(8)?,
+        ))
+    })?;
+    let mut audited = 0i64;
+    for row in rows {
+        let (block_id, snapshot_id, headings, excerpt, digest, role, project, page, revision) =
+            row?;
+        let heading_path: Vec<String> =
+            serde_json::from_str(&headings).map_err(|_| UserStateError::InvalidValue)?;
+        let citation = StoredCitation {
+            block_id,
+            snapshot_id,
+            heading_path,
+            excerpt,
+            excerpt_sha256: digest,
+        };
+        if role != "assistant"
+            || !valid_stored_citation(&citation, &citation_block_prefix(&project, page, revision))
+        {
+            return Err(UserStateError::InvalidValue);
+        }
+        audited += 1;
+    }
+    // Every citation row must have joined to a message and thread.
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM chat_citations", [], |row| row.get(0))?;
+    if total != audited {
+        return Err(UserStateError::InvalidValue);
+    }
     Ok(())
 }
 
@@ -689,7 +860,8 @@ impl UserState {
             )?;
             transaction.pragma_update(None, "user_version", 1)?;
         }
-        if version == 1 {
+        if (1..SCHEMA_VERSION).contains(&version) {
+            // Audit an older schema exactly as written before migrating it.
             validate_schema_shape(&transaction, version)?;
             validate_persisted_checks(&transaction)?;
         }
@@ -704,7 +876,25 @@ impl UserState {
                  CREATE INDEX chat_messages_thread_idx ON chat_messages(thread_id, id);
                  CREATE INDEX pack_owners_digest_idx ON pack_owners(digest, pack_id);",
             )?;
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            transaction.pragma_update(None, "user_version", 2)?;
+        }
+        if version < 3 {
+            // Exact evidence cited by assistant messages; removed with its
+            // message, thread or a personal-data reset through the cascade.
+            transaction.execute_batch(
+                "CREATE TABLE chat_citations (
+                   message_id INTEGER NOT NULL
+                     REFERENCES chat_messages(id) ON DELETE CASCADE,
+                   ordinal INTEGER NOT NULL,
+                   block_id TEXT NOT NULL,
+                   snapshot_id TEXT,
+                   heading_path TEXT NOT NULL,
+                   excerpt TEXT NOT NULL,
+                   excerpt_sha256 TEXT NOT NULL,
+                   PRIMARY KEY(message_id, ordinal)
+                 );",
+            )?;
+            transaction.pragma_update(None, "user_version", 3)?;
         }
         // Validate even a claimed-current schema before exposing user state.
         validate_schema_shape(&transaction, SCHEMA_VERSION)?;
@@ -1450,7 +1640,41 @@ impl UserState {
         question: &str,
         validated_answer: &str,
     ) -> Result<Option<(i64, i64, i64)>, UserStateError> {
+        self.save_cited_chat_exchange_for_generation(
+            generation,
+            key,
+            revision_id,
+            thread_id,
+            question,
+            validated_answer,
+            &[],
+        )
+    }
+
+    /// Like `save_chat_exchange_for_generation`, also storing the exact
+    /// evidence blocks the validated answer cites, in citation order, in the
+    /// same transaction. Every citation must name a block of this article
+    /// revision and carry an excerpt matching its SHA-256; at most 64.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_cited_chat_exchange_for_generation(
+        &mut self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: Option<i64>,
+        question: &str,
+        validated_answer: &str,
+        citations: &[StoredCitation],
+    ) -> Result<Option<(i64, i64, i64)>, UserStateError> {
         let (page, revision) = Self::ids(key, revision_id)?;
+        let prefix = citation_block_prefix(&key.project, page, revision);
+        if citations.len() > MAX_CITATIONS_PER_MESSAGE
+            || !citations
+                .iter()
+                .all(|citation| valid_stored_citation(citation, &prefix))
+        {
+            return Err(UserStateError::InvalidValue);
+        }
         if generation > i64::MAX as u64
             || thread_id.is_some_and(|id| id <= 0)
             || question.is_empty()
@@ -1509,8 +1733,84 @@ impl UserState {
             params![id, validated_answer],
         )?;
         let answer_id = tx.last_insert_rowid();
+        for (ordinal, citation) in citations.iter().enumerate() {
+            let headings = serde_json::to_string(&citation.heading_path)
+                .map_err(|_| UserStateError::InvalidValue)?;
+            tx.execute(
+                "INSERT INTO chat_citations
+                   (message_id,ordinal,block_id,snapshot_id,heading_path,excerpt,excerpt_sha256)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![
+                    answer_id,
+                    ordinal as i64,
+                    citation.block_id,
+                    citation.snapshot_id,
+                    headings,
+                    citation.excerpt,
+                    citation.excerpt_sha256
+                ],
+            )?;
+        }
         tx.commit()?;
         Ok(Some((id, question_id, answer_id)))
+    }
+
+    /// Citations stored with one assistant message of an exact-revision
+    /// thread, in citation order. Rows are revalidated before return.
+    pub fn chat_citations(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        thread_id: i64,
+        message_id: i64,
+    ) -> Result<Vec<StoredCitation>, UserStateError> {
+        self.check_chat_thread(key, revision_id, thread_id)?;
+        let (page, revision) = Self::ids(key, revision_id)?;
+        let in_thread: i64 = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE id=?1 AND thread_id=?2)",
+            params![message_id, thread_id],
+            |row| row.get(0),
+        )?;
+        if in_thread != 1 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let mut statement = self.conn.prepare(
+            "SELECT block_id,snapshot_id,heading_path,excerpt,excerpt_sha256
+             FROM chat_citations WHERE message_id=?1 ORDER BY ordinal ASC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![message_id, MAX_CITATIONS_PER_MESSAGE as i64 + 1],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )?;
+        let prefix = citation_block_prefix(&key.project, page, revision);
+        let mut citations = Vec::new();
+        for row in rows {
+            let (block_id, snapshot_id, headings, excerpt, excerpt_sha256) = row?;
+            let citation = StoredCitation {
+                block_id,
+                snapshot_id,
+                heading_path: serde_json::from_str(&headings)
+                    .map_err(|_| UserStateError::InvalidValue)?,
+                excerpt,
+                excerpt_sha256,
+            };
+            if !valid_stored_citation(&citation, &prefix) {
+                return Err(UserStateError::InvalidValue);
+            }
+            citations.push(citation);
+        }
+        if citations.len() > MAX_CITATIONS_PER_MESSAGE {
+            return Err(UserStateError::InvalidValue);
+        }
+        Ok(citations)
     }
 
     /// Append to an existing exact-revision thread; both rows commit together.
@@ -3124,7 +3424,8 @@ mod tests {
         state
             .conn
             .execute_batch(
-                "DROP INDEX history_recent_idx;
+                "DROP TABLE chat_citations;
+                 DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
                  DROP INDEX pack_owners_digest_idx;
@@ -3308,7 +3609,8 @@ mod tests {
         // existing data, as would be found after upgrading an older install.
         old.conn
             .execute_batch(
-                "DROP INDEX history_recent_idx;
+                "DROP TABLE chat_citations;
+                 DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
                  DROP INDEX pack_owners_digest_idx;
@@ -3602,7 +3904,8 @@ mod tests {
         old.add_pack_owner("physics", &"b".repeat(64)).unwrap();
         old.conn
             .execute_batch(
-                "DROP INDEX history_recent_idx;
+                "DROP TABLE chat_citations;
+                 DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
                  DROP INDEX pack_owners_digest_idx;
@@ -4049,5 +4352,233 @@ mod tests {
             UserState::initialize(connection),
             Err(UserStateError::UnsupportedSchema(99))
         ));
+    }
+
+    fn citation_root(label: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-user-state-citations-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn citation(revision: u64, block: &str, excerpt: &str) -> StoredCitation {
+        StoredCitation {
+            block_id: format!("wkb:enwiki:42:{revision}:{block}"),
+            snapshot_id: Some("science-2026-11".into()),
+            heading_path: vec!["Orbit".into(), "Kepler".into()],
+            excerpt: excerpt.into(),
+            excerpt_sha256: sha256_hex(excerpt),
+        }
+    }
+
+    fn save_cited(
+        state: &mut UserState,
+        citations: &[StoredCitation],
+    ) -> Result<Option<(i64, i64, i64)>, UserStateError> {
+        let generation = state.personal_generation().unwrap();
+        state.save_cited_chat_exchange_for_generation(
+            generation,
+            &key(),
+            7,
+            None,
+            "Why do comets have tails?",
+            "Solar wind pushes gas away. [[cite:wkb:enwiki:42:7:1:b0]]",
+            citations,
+        )
+    }
+
+    #[test]
+    fn cited_exchanges_round_trip_in_citation_order() {
+        let mut state = UserState::in_memory().unwrap();
+        let cited = vec![
+            citation(7, "1:b0", "Solar wind pushes the gas away from the Sun."),
+            citation(7, "b0", "A comet is an icy body."),
+        ];
+        let (thread, question, answer) = save_cited(&mut state, &cited).unwrap().unwrap();
+        assert_eq!(
+            state.chat_citations(&key(), 7, thread, answer).unwrap(),
+            cited
+        );
+        assert!(state
+            .chat_citations(&key(), 7, thread, question)
+            .unwrap()
+            .is_empty());
+        // The uncited API still works and stores no citations.
+        let generation = state.personal_generation().unwrap();
+        let (_, _, plain) = state
+            .save_chat_exchange_for_generation(generation, &key(), 7, Some(thread), "q", "a")
+            .unwrap()
+            .unwrap();
+        assert!(state
+            .chat_citations(&key(), 7, thread, plain)
+            .unwrap()
+            .is_empty());
+        // Another thread's message or another revision is refused.
+        assert!(state.chat_citations(&key(), 8, thread, answer).is_err());
+    }
+
+    #[test]
+    fn invalid_citations_are_refused_before_any_write() {
+        let mut state = UserState::in_memory().unwrap();
+        let good = citation(7, "b0", "A comet is an icy body.");
+        let mut tampered = good.clone();
+        tampered.excerpt.push('!');
+        let mut other_revision = good.clone();
+        other_revision.block_id = "wkb:enwiki:42:8:b0".into();
+        let mut other_page = good.clone();
+        other_page.block_id = "wkb:enwiki:43:7:b0".into();
+        let mut bare_prefix = good.clone();
+        bare_prefix.block_id = "wkb:enwiki:42:7:".into();
+        let mut bad_snapshot = good.clone();
+        bad_snapshot.snapshot_id = Some("../x".into());
+        let mut deep = good.clone();
+        deep.heading_path = vec!["h".into(); MAX_CITATION_HEADING_DEPTH + 1];
+        let mut huge = good.clone();
+        huge.excerpt = "x".repeat(MAX_CITATION_EXCERPT_BYTES + 1);
+        huge.excerpt_sha256 = sha256_hex(&huge.excerpt);
+        for (label, citations) in [
+            ("tampered", vec![tampered]),
+            ("other revision", vec![other_revision]),
+            ("other page", vec![other_page]),
+            ("bare prefix", vec![bare_prefix]),
+            ("bad snapshot", vec![bad_snapshot]),
+            ("too deep", vec![deep]),
+            ("too large", vec![huge]),
+            (
+                "too many",
+                vec![good.clone(); MAX_CITATIONS_PER_MESSAGE + 1],
+            ),
+        ] {
+            assert!(
+                matches!(
+                    save_cited(&mut state, &citations),
+                    Err(UserStateError::InvalidValue)
+                ),
+                "{label}"
+            );
+        }
+        let threads: i64 = state
+            .conn
+            .query_row("SELECT COUNT(*) FROM chat_threads", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(threads, 0, "a refused exchange writes nothing");
+    }
+
+    #[test]
+    fn citations_are_removed_with_their_thread_and_personal_reset() {
+        let mut state = UserState::in_memory().unwrap();
+        let cited = [citation(7, "b0", "A comet is an icy body.")];
+        let (thread, _, _) = save_cited(&mut state, &cited).unwrap().unwrap();
+        save_cited(&mut state, &cited).unwrap().unwrap();
+        let count = |state: &UserState| -> i64 {
+            state
+                .conn
+                .query_row("SELECT COUNT(*) FROM chat_citations", [], |row| row.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(&state), 2);
+        assert!(state.delete_chat_thread(&key(), 7, thread).unwrap());
+        assert_eq!(count(&state), 1);
+        state.clear_personal_reading_data().unwrap();
+        assert_eq!(count(&state), 0);
+    }
+
+    #[test]
+    fn v2_state_migrates_to_v3_in_place() {
+        let root = citation_root("migrate");
+        let db = root.join("user.sqlite");
+        {
+            let state = UserState::open(&db).unwrap();
+            state.set_bookmark(&key(), 7, "kept").unwrap();
+            state
+                .conn
+                .execute_batch("DROP TABLE chat_citations; PRAGMA user_version=2;")
+                .unwrap();
+        }
+        let mut state = UserState::open(&db).unwrap();
+        let version: i64 = state
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        assert_eq!(state.bookmark(&key()).unwrap(), Some((7, "kept".into())));
+        let cited = [citation(7, "b0", "A comet is an icy body.")];
+        let (thread, _, answer) = save_cited(&mut state, &cited).unwrap().unwrap();
+        drop(state);
+        let reopened = UserState::open(&db).unwrap();
+        assert_eq!(
+            reopened.chat_citations(&key(), 7, thread, answer).unwrap(),
+            cited
+        );
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tampered_citation_rows_are_rejected_on_open_and_restore() {
+        let root = citation_root("tamper");
+        let db = root.join("user.sqlite");
+        let mut state = UserState::open(&db).unwrap();
+        let cited = [citation(7, "b0", "A comet is an icy body.")];
+        let (_, question, answer) = save_cited(&mut state, &cited).unwrap().unwrap();
+        let backup = root.join("good-backup.sqlite");
+        state.backup_to_path(&backup).unwrap();
+        let restored = root.join("restored.sqlite");
+        UserState::restore_backup_to_new_path(&backup, &restored).unwrap();
+        assert_eq!(
+            UserState::open(&restored)
+                .unwrap()
+                .chat_citations(&key(), 7, 1, answer)
+                .unwrap(),
+            cited
+        );
+        drop(state);
+
+        let cases = [
+            (
+                "edited excerpt",
+                "UPDATE chat_citations SET excerpt='A comet is a rock.'".to_owned(),
+            ),
+            (
+                "other revision",
+                "UPDATE chat_citations SET block_id='wkb:enwiki:42:8:b0'".to_owned(),
+            ),
+            (
+                "user message",
+                format!("UPDATE chat_citations SET message_id={question}"),
+            ),
+            (
+                "bad headings",
+                "UPDATE chat_citations SET heading_path='{}'".to_owned(),
+            ),
+            (
+                "bad ordinal",
+                "UPDATE chat_citations SET ordinal=64".to_owned(),
+            ),
+        ];
+        for (n, (label, sql)) in cases.iter().enumerate() {
+            let copy = root.join(format!("tampered-{n}.sqlite"));
+            fs::copy(&db, &copy).unwrap();
+            let raw = Connection::open(&copy).unwrap();
+            raw.execute_batch(sql).unwrap();
+            drop(raw);
+            assert!(
+                matches!(UserState::open(&copy), Err(UserStateError::InvalidValue)),
+                "{label}: open"
+            );
+            let target = root.join(format!("restore-{n}.sqlite"));
+            assert!(
+                UserState::restore_backup_to_new_path(&copy, &target).is_err(),
+                "{label}: restore"
+            );
+            assert!(!target.exists(), "{label}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
