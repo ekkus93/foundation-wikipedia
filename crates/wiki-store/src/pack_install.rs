@@ -170,6 +170,41 @@ fn sync_dir(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
 
+/// Remove staging residue an interrupted install left behind: `install-*`
+/// directories and `.wpack-spool-*` files in the private `staging/`
+/// directory. Anything else there is left untouched and counted as retained.
+///
+/// The caller MUST guarantee no install is running against `root` (the same
+/// exclusive-ownership precondition the installer has), for example by
+/// calling this once at startup before any install. A staged tree is never
+/// adopted: published snapshots live only under `snapshots/`, which this
+/// never touches. Returns `(removed, retained)`.
+pub fn reclaim_abandoned_staging(root: &Path) -> Result<(usize, usize), PackInstallError> {
+    let (_, staging) = prepare_root(root)?;
+    let mut removed = 0;
+    let mut retained = 0;
+    for entry in fs::read_dir(&staging)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // file_type does not follow symlinks.
+        let kind = entry.file_type()?;
+        if name.starts_with("install-") && kind.is_dir() {
+            fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        } else if name.starts_with(".wpack-spool-") && kind.is_file() {
+            fs::remove_file(entry.path())?;
+            removed += 1;
+        } else {
+            retained += 1;
+        }
+    }
+    if removed > 0 {
+        sync_dir(&staging)?;
+    }
+    Ok((removed, retained))
+}
+
 fn install_with(
     root: &Path,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
@@ -727,6 +762,41 @@ mod tests {
             install_custom_pack_stream(&root, &mut bytes.as_slice(), 1 << 30, |_| true).unwrap();
         assert_eq!(open_revision(&installed), 3013);
         assert_eq!(staging_entries(&root), 0);
+    }
+
+    #[test]
+    fn reclaim_removes_only_install_residue() {
+        let dir = test_dir("reclaim");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3015, true);
+        let installed = install(&root, &pack_bytes(&tree, "kept")).unwrap();
+
+        let staging = root.join("staging");
+        fs::create_dir_all(staging.join("install-1-2-3/nested")).unwrap();
+        fs::write(staging.join("install-1-2-3/nested/articles.shard"), b"x").unwrap();
+        fs::write(staging.join(".wpack-spool-1-2-3"), b"partial").unwrap();
+        fs::write(staging.join("operator-note"), b"not ours").unwrap();
+        #[cfg(unix)]
+        {
+            let outside = dir.0.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join("keep"), b"keep").unwrap();
+            std::os::unix::fs::symlink(&outside, staging.join("install-link")).unwrap();
+        }
+
+        let (removed, retained) = reclaim_abandoned_staging(&root).unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(retained, if cfg!(unix) { 2 } else { 1 });
+        assert!(!staging.join("install-1-2-3").exists());
+        assert!(!staging.join(".wpack-spool-1-2-3").exists());
+        assert!(staging.join("operator-note").exists());
+        #[cfg(unix)]
+        assert_eq!(fs::read(dir.0.join("outside/keep")).unwrap(), b"keep");
+        // Published snapshots are never touched.
+        assert_eq!(open_revision(&installed), 3015);
+        assert_eq!(reclaim_abandoned_staging(&root).unwrap().0, 0);
     }
 
     #[test]
