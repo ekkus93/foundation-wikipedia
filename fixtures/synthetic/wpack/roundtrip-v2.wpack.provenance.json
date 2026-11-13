@@ -1,0 +1,6 @@
+{
+  "source": "synthetic",
+  "description": "FWPACK01 manifest-v2 envelope written by the Rust wiki-pack-format writer for the cross-implementation importer round trip (PACK-001); regenerate with WPACK_WRITE_FIXTURE=1 cargo test -p wiki-pack-format --test independent_importer_fixture",
+  "license": "CC0-1.0",
+  "sha256": "18ebfa8fc4cbb30011cd66a0fa497d4616de4e3cb5d1c49b5428093a6ba03222"
+}
