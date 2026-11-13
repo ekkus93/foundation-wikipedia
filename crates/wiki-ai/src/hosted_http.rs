@@ -40,6 +40,7 @@ use crate::{
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Short socket read timeout so cancellation is noticed promptly.
 const READ_POLL: Duration = Duration::from_millis(250);
 const MAX_DURATION: Duration = Duration::from_secs(180);
@@ -178,6 +179,42 @@ impl HostedChatProvider {
     }
 }
 
+/// Finish the TLS handshake (including certificate verification) before
+/// anything is written. The socket's short read-poll timeout makes each
+/// wait return `WouldBlock`/`TimedOut`; those are retried until the
+/// handshake deadline, checking cancellation, so a slow server hello is not
+/// mistaken for a failure. A verification failure is a transport error.
+fn complete_handshake(
+    tls: &mut StreamOwned<ClientConnection, TcpStream>,
+    cancellation: &CancellationToken,
+    deadline: Instant,
+) -> Result<(), ProviderError> {
+    let handshake_deadline = deadline.min(Instant::now() + HANDSHAKE_TIMEOUT);
+    while tls.conn.is_handshaking() {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled);
+        }
+        if Instant::now() >= handshake_deadline {
+            return Err(ProviderError::Timeout);
+        }
+        match tls.conn.complete_io(&mut tls.sock) {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(error) => return Err(map_io(error)),
+        }
+    }
+    if cancellation.is_cancelled() {
+        return Err(ProviderError::Cancelled);
+    }
+    Ok(())
+}
+
 impl LlmProvider for HostedChatProvider {
     fn locality(&self) -> Locality {
         Locality::Cloud
@@ -235,11 +272,7 @@ impl LlmProvider for HostedChatProvider {
         let connection = ClientConnection::new(Arc::clone(&self.target.tls), name)
             .map_err(|_| ProviderError::Transport)?;
         let mut tls = StreamOwned::new(connection, socket);
-        if cancellation.is_cancelled() {
-            return Err(ProviderError::Cancelled);
-        }
-        // The handshake (including certificate verification) runs on the
-        // first write; a verification failure surfaces as a transport error.
+        complete_handshake(&mut tls, cancellation, deadline)?;
         tls.write_all(head.as_bytes()).map_err(map_io)?;
         tls.write_all(body.as_bytes()).map_err(map_io)?;
         tls.flush().map_err(map_io)?;
@@ -273,6 +306,12 @@ mod tests {
 
     /// One-shot local TLS server for `localhost` with a fresh test CA.
     fn serve(response: String) -> TestServer {
+        serve_after(response, Duration::ZERO)
+    }
+
+    /// Like `serve`, but the server waits `delay` before answering the
+    /// client's hello, as a slow or distant provider does.
+    fn serve_after(response: String, delay: Duration) -> TestServer {
         let ca_key = rcgen::KeyPair::generate().unwrap();
         let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -305,6 +344,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let handle = thread::spawn(move || {
             let (socket, _) = listener.accept().unwrap();
+            thread::sleep(delay);
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
@@ -414,6 +454,72 @@ mod tests {
         "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n",
         "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
     );
+
+    /// Regression: the handshake used to run inside the first write with the
+    /// 250 ms read-poll timeout already set, so a server hello slower than
+    /// that failed as `Timeout` (seen on the Android emulator).
+    #[test]
+    fn a_slow_tls_handshake_is_awaited_rather_than_reported_as_timeout() {
+        let server = serve_after(event_stream(ANTHROPIC_OK), READ_POLL * 4);
+        let hosted = HostedChatProvider::with_test_target(
+            HostedProvider::Anthropic,
+            key(),
+            "localhost",
+            server.port,
+            server.client_tls,
+        );
+        let mut text = String::new();
+        stream_selected(
+            &hosted,
+            &request(),
+            &CancellationToken::default(),
+            OutboundPolicy::AllowCloud,
+            &mut |event| {
+                if let StreamEvent::TextDelta(delta) = event {
+                    text.push_str(&delta);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(text, "Hello");
+        assert!(server.handle.join().unwrap().contains("x-api-key"));
+    }
+
+    #[test]
+    fn cancellation_interrupts_a_slow_handshake() {
+        let server = serve_after(event_stream(ANTHROPIC_OK), Duration::from_secs(2));
+        let hosted = HostedChatProvider::with_test_target(
+            HostedProvider::Anthropic,
+            key(),
+            "localhost",
+            server.port,
+            server.client_tls,
+        );
+        let cancellation = CancellationToken::default();
+        let canceller = cancellation.clone();
+        let timer = thread::spawn(move || {
+            thread::sleep(READ_POLL * 2);
+            canceller.cancel();
+        });
+        let started = Instant::now();
+        let result = stream_selected(
+            &hosted,
+            &request(),
+            &cancellation,
+            OutboundPolicy::AllowCloud,
+            &mut |_| Ok(()),
+        );
+        timer.join().unwrap();
+        assert_eq!(result, Err(ProviderError::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        // The server never received a request, and so never the key.
+        assert!(!server
+            .handle
+            .join()
+            .unwrap()
+            .contains("sk-test-secret-value"));
+    }
 
     #[test]
     fn anthropic_over_tls_streams_text_with_key_only_in_its_header() {
