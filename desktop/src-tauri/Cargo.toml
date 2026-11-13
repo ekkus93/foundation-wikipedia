@@ -21,6 +21,10 @@ wiki-model = { path = "../../crates/wiki-model" }
 wiki-ai = { path = "../../crates/wiki-ai" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# OS secret storage for hosted AI keys (macOS Keychain, Windows Credential
+# Manager, Linux Secret Service). Without these features keyring silently
+# uses an in-memory mock store.
+keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 # Separate from the platform-neutral root workspace.
 [workspace]

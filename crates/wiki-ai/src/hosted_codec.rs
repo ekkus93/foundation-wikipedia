@@ -37,6 +37,12 @@ impl ApiKey {
         Ok(Self(secret))
     }
 
+    /// The raw key, only for writing it to OS secret storage. Never log,
+    /// display, serialize or place it in a URL.
+    pub fn expose_for_storage(&self) -> &str {
+        &self.0
+    }
+
     /// The single header carrying the key for `provider`.
     pub fn header(&self, provider: HostedProvider) -> (&'static str, String) {
         match provider {

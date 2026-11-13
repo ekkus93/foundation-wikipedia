@@ -1,6 +1,7 @@
 //! Thin desktop Tauri adapter around the shared revision-safe Rust source API.
 //! Host-only HTTPS transport uses system curl and never qualifies offline media.
 
+mod hosted_ai_keys;
 mod local_ai;
 mod local_ai_profiles;
 
@@ -1606,6 +1607,10 @@ pub fn run() {
             local_ai_profiles::activate_local_ai_profile,
             local_ai_profiles::deactivate_local_ai_profile,
             local_ai_profiles::remove_local_ai_profile,
+            hosted_ai_keys::save_hosted_ai_key,
+            hosted_ai_keys::hosted_ai_key_configured,
+            hosted_ai_keys::delete_hosted_ai_key,
+            hosted_ai_keys::check_hosted_ai_connection,
             open_wikipedia_title,
             open_wikipedia_page,
             toggle_reader_bookmark,
