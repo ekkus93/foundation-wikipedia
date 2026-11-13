@@ -2,13 +2,19 @@ package org.foundation.wikipedia.rust
 
 import android.os.Looper
 import java.io.File
+import java.io.InputStream
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import uniffi.wiki_ffi.ArticlePage
+import uniffi.wiki_ffi.InstallReviewer
 import uniffi.wiki_ffi.InstalledPack
+import uniffi.wiki_ffi.InstalledSnapshot
 import uniffi.wiki_ffi.LibraryException
 import uniffi.wiki_ffi.OfflineLibrary
+import uniffi.wiki_ffi.PackReview
+import uniffi.wiki_ffi.PackSource
 import uniffi.wiki_ffi.SearchHit
 
 /**
@@ -26,6 +32,9 @@ class RustOfflineLibrary private constructor(
 ) : AutoCloseable {
 
     companion object {
+        /** Spool limit for one imported pack (8 GiB, the Rust maximum). */
+        const val DEFAULT_MAX_PACK_BYTES: Long = 8L shl 30
+
         /** Open (creating if needed) the library in an app-private directory. */
         suspend fun open(
             dataDir: File,
@@ -42,6 +51,39 @@ class RustOfflineLibrary private constructor(
      */
     suspend fun installPack(pack: File, acceptCustomPack: Boolean): InstalledPack =
         call { it.installPack(pack.absolutePath, acceptCustomPack) }
+
+    /**
+     * Import a pack from a stream (e.g. an Android document-picker URI),
+     * without a temporary copy. Rust fully verifies it, then calls [approve]
+     * with the verified review; the pack is published only if it returns
+     * true. [approve] may suspend (e.g. to show a dialog and wait).
+     */
+    suspend fun importPack(
+        input: InputStream,
+        maxBytes: Long = DEFAULT_MAX_PACK_BYTES,
+        approve: suspend (PackReview) -> Boolean,
+    ): InstalledPack {
+        require(maxBytes > 0) { "maxBytes must be positive" }
+        val source = object : PackSource {
+            override fun read(maxBytes: UInt): ByteArray {
+                val buffer = ByteArray(maxBytes.toInt())
+                val count = input.read(buffer)
+                return if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+            }
+        }
+        // Rust calls back on this (I/O) thread; wait for the UI's decision.
+        // (Bind the lambda first: inside the object `approve` is the override.)
+        val decide = approve
+        val reviewer = object : InstallReviewer {
+            override fun approve(review: PackReview): Boolean = runBlocking { decide(review) }
+        }
+        return call { it.installPackStream(source, reviewer, maxBytes.toULong()) }
+    }
+
+    suspend fun listPacks(): List<InstalledSnapshot> = call { it.listPacks() }
+
+    /** Remove an inactive pack; the active pack is refused. */
+    suspend fun removePack(snapshotId: String) = call { it.removePack(snapshotId) }
 
     suspend fun activate(snapshotId: String) = call { it.activate(snapshotId) }
 

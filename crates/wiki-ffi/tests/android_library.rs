@@ -241,3 +241,196 @@ fn committed_android_fixture_matches_the_builder() {
     }
     assert_eq!(fs::read(android_fixture_path()).unwrap(), bytes);
 }
+
+mod streamed {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use wiki_ffi::android::{InstallReviewer, PackReview, PackSource};
+
+    /// In-memory stand-in for an Android document-picker stream.
+    struct BytesSource {
+        bytes: Vec<u8>,
+        position: Mutex<usize>,
+        overrun: bool,
+    }
+
+    impl BytesSource {
+        fn new(bytes: Vec<u8>) -> Arc<Self> {
+            Arc::new(Self {
+                bytes,
+                position: Mutex::new(0),
+                overrun: false,
+            })
+        }
+    }
+
+    impl PackSource for BytesSource {
+        fn read(&self, max_bytes: u32) -> Result<Vec<u8>, LibraryError> {
+            let mut position = self.position.lock().unwrap();
+            let take = if self.overrun {
+                max_bytes as usize + 1
+            } else {
+                max_bytes as usize
+            };
+            let end = (*position + take).min(self.bytes.len());
+            let chunk = self.bytes[*position..end].to_vec();
+            *position = end;
+            Ok(chunk)
+        }
+    }
+
+    struct Reviewer {
+        approve: bool,
+        seen: Mutex<Vec<PackReview>>,
+    }
+
+    impl Reviewer {
+        fn new(approve: bool) -> Arc<Self> {
+            Arc::new(Self {
+                approve,
+                seen: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    impl InstallReviewer for Reviewer {
+        fn approve(&self, review: PackReview) -> bool {
+            self.seen.lock().unwrap().push(review);
+            self.approve
+        }
+    }
+
+    #[test]
+    fn streamed_import_reviews_then_installs_and_dedups() {
+        let dir = test_dir("stream");
+        let bytes = fs::read(build_pack(&dir.0, "moon-pack")).unwrap();
+        let library = library(&dir.0);
+
+        let declined = Reviewer::new(false);
+        assert_eq!(
+            library.install_pack_stream(BytesSource::new(bytes.clone()), declined.clone(), 1 << 30),
+            Err(LibraryError::ConfirmationRequired)
+        );
+        let review = declined.seen.lock().unwrap()[0].clone();
+        assert_eq!(review.snapshot_id, "moon-pack");
+        assert_eq!(review.trust_label, "Custom — integrity verified");
+        assert_eq!(review.articles, 2);
+        assert!(library.list_packs().unwrap().is_empty());
+
+        let approved = Reviewer::new(true);
+        let installed = library
+            .install_pack_stream(BytesSource::new(bytes.clone()), approved, 1 << 30)
+            .unwrap();
+        assert_eq!(installed.trust_label, "Custom — integrity verified");
+        // Importing the same pack again never duplicates it.
+        let again = Reviewer::new(true);
+        assert_eq!(
+            library.install_pack_stream(BytesSource::new(bytes), again.clone(), 1 << 30),
+            Err(LibraryError::AlreadyInstalled)
+        );
+        assert_eq!(library.list_packs().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tampered_truncated_or_overrunning_streams_are_rejected() {
+        let dir = test_dir("tamper");
+        let bytes = fs::read(build_pack(&dir.0, "moon-pack")).unwrap();
+        let library = library(&dir.0);
+        let mut tampered = bytes.clone();
+        let middle = tampered.len() / 2;
+        tampered[middle] ^= 0x01;
+        for (label, source) in [
+            ("tampered", BytesSource::new(tampered)),
+            (
+                "truncated",
+                BytesSource::new(bytes[..bytes.len() - 7].to_vec()),
+            ),
+            (
+                "overrun",
+                Arc::new(BytesSource {
+                    bytes: bytes.clone(),
+                    position: Mutex::new(0),
+                    overrun: true,
+                }),
+            ),
+        ] {
+            let reviewer = Reviewer::new(true);
+            let result = library.install_pack_stream(source, reviewer.clone(), 1 << 30);
+            assert!(
+                matches!(
+                    result,
+                    Err(LibraryError::VerificationFailed | LibraryError::Storage)
+                ),
+                "{label}: {result:?}"
+            );
+            assert!(
+                reviewer.seen.lock().unwrap().is_empty(),
+                "{label}: no review"
+            );
+        }
+        // A spool budget smaller than the pack is refused.
+        assert!(library
+            .install_pack_stream(BytesSource::new(bytes), Reviewer::new(true), 100)
+            .is_err());
+        assert_eq!(
+            library.install_pack_stream(BytesSource::new(vec![]), Reviewer::new(true), 0),
+            Err(LibraryError::InvalidInput)
+        );
+        assert!(library.list_packs().unwrap().is_empty());
+    }
+
+    #[test]
+    fn packs_are_listed_and_only_inactive_ones_removed() {
+        let dir = test_dir("manage");
+        let library = library(&dir.0);
+        for id in ["moon-pack", "tide-pack"] {
+            let bytes = fs::read(build_pack(&dir.0, id)).unwrap();
+            library
+                .install_pack_stream(BytesSource::new(bytes), Reviewer::new(true), 1 << 30)
+                .unwrap();
+        }
+        library.activate("moon-pack".into()).unwrap();
+        let listed = library.list_packs().unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|p| (p.snapshot_id.as_str(), p.active))
+                .collect::<Vec<_>>(),
+            [("moon-pack", true), ("tide-pack", false)]
+        );
+        assert_eq!(
+            library.remove_pack("moon-pack".into()),
+            Err(LibraryError::SnapshotActive)
+        );
+        library.remove_pack("tide-pack".into()).unwrap();
+        assert_eq!(
+            library.remove_pack("tide-pack".into()),
+            Err(LibraryError::NotInstalled)
+        );
+        assert_eq!(library.list_packs().unwrap().len(), 1);
+        // The remaining active pack still searches.
+        assert_eq!(library.search("moon".into(), 5).unwrap().len(), 2);
+    }
+}
+
+/// Android app directories live under /data/user/0, a symlink to /data/data.
+#[cfg(unix)]
+#[test]
+fn library_opens_through_a_symlinked_app_directory() {
+    let dir = test_dir("symlink");
+    let real = dir.0.join("data");
+    fs::create_dir_all(real.join("app/files")).unwrap();
+    let user0 = dir.0.join("user0");
+    std::os::unix::fs::symlink(&real, &user0).unwrap();
+    let through_link = user0.join("app/files/offline-library");
+    let library = OfflineLibrary::new(through_link.to_string_lossy().into_owned()).unwrap();
+    let pack = build_pack(&dir.0, "moon-pack");
+    library
+        .install_pack(pack.to_string_lossy().into(), true)
+        .unwrap();
+    library.activate("moon-pack".into()).unwrap();
+    assert_eq!(library.search("moon".into(), 5).unwrap().len(), 2);
+    assert!(real
+        .join("app/files/offline-library/snapshots/moon-pack")
+        .is_dir());
+}

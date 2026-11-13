@@ -1,0 +1,4 @@
+[bindings.kotlin]
+# Android minSdk is 26. java.lang.ref.Cleaner and android.system.SystemCleaner
+# both need API 33 (and fail Android lint), so always use JNA's cleaner.
+disable_java_cleaner = true

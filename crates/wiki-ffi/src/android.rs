@@ -11,6 +11,7 @@
 //! generated scaffolding carries its own scoped allowance (see Cargo.toml).
 
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -18,8 +19,9 @@ use wiki_model::{Article, ArticleKey};
 use wiki_store::activation::ActiveSnapshotStore;
 use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
 use wiki_store::pack_install::{
-    install_custom_pack, installed_shard_inventory, reclaim_abandoned_staging, PackInstallError,
-    CATALOG_OBJECT, SEARCH_OBJECT,
+    install_custom_pack, install_custom_pack_stream, installed_shard_inventory,
+    list_installed_snapshots, reclaim_abandoned_staging, remove_installed_snapshot,
+    PackInstallError, CATALOG_OBJECT, SEARCH_OBJECT,
 };
 
 const MAX_PACK_BYTES: u64 = 8 << 30;
@@ -44,6 +46,16 @@ pub enum LibraryError {
     MediaNotSupported,
     /// Filesystem or database failure.
     Storage,
+    /// The snapshot is active; activate another before removing it.
+    SnapshotActive,
+    /// The app-side pack source failed while being read.
+    SourceFailed,
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for LibraryError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::SourceFailed
+    }
 }
 
 impl std::fmt::Display for LibraryError {
@@ -61,6 +73,9 @@ impl From<PackInstallError> for LibraryError {
             PackInstallError::Declined => Self::ConfirmationRequired,
             PackInstallError::AlreadyInstalled => Self::AlreadyInstalled,
             PackInstallError::MediaNotSupported => Self::MediaNotSupported,
+            PackInstallError::SnapshotActive => Self::SnapshotActive,
+            PackInstallError::NotInstalled => Self::NotInstalled,
+            PackInstallError::InvalidSnapshotId => Self::InvalidInput,
             PackInstallError::Io(_) | PackInstallError::UnsafeRoot => Self::Storage,
             _ => Self::VerificationFailed,
         }
@@ -74,6 +89,64 @@ pub struct InstalledPack {
     /// Accessible trust text, e.g. "Custom — integrity verified".
     pub trust_label: String,
     pub articles: u64,
+}
+
+/// What the user reviews before an import is published.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PackReview {
+    pub snapshot_id: String,
+    pub project: String,
+    /// Always "Custom — integrity verified" for an installable pack; never
+    /// a publisher-verified label (official packs are refused).
+    pub trust_label: String,
+    pub articles: u64,
+    pub declared_bytes: u64,
+}
+
+/// An installed snapshot as listed for the pack manager.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InstalledSnapshot {
+    pub snapshot_id: String,
+    pub project: String,
+    pub trust_label: String,
+    pub articles: u64,
+    pub active: bool,
+    /// Its installer manifest is unreadable; it can only be removed.
+    pub damaged: bool,
+}
+
+/// App-supplied pack bytes (e.g. an Android document-picker stream).
+/// `read` returns at most `max_bytes`; an empty result means end of stream.
+#[uniffi::export(with_foreign)]
+pub trait PackSource: Send + Sync {
+    fn read(&self, max_bytes: u32) -> Result<Vec<u8>, LibraryError>;
+}
+
+/// Asked once, after full verification and before publication. Returning
+/// false discards the staged pack. Called on the installing thread.
+#[uniffi::export(with_foreign)]
+pub trait InstallReviewer: Send + Sync {
+    fn approve(&self, review: PackReview) -> bool;
+}
+
+const SOURCE_CHUNK: usize = 64 * 1024;
+
+/// Adapts a foreign `PackSource` to `std::io::Read`.
+struct SourceReader(Arc<dyn PackSource>);
+
+impl Read for SourceReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let want = buf.len().min(SOURCE_CHUNK);
+        let chunk = self
+            .0
+            .read(want as u32)
+            .map_err(|_| std::io::Error::other("pack source failed"))?;
+        if chunk.len() > want {
+            return Err(std::io::Error::other("pack source overran its request"));
+        }
+        buf[..chunk.len()].copy_from_slice(&chunk);
+        Ok(chunk.len())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -140,11 +213,15 @@ impl OfflineLibrary {
     /// directory. Clears residue an interrupted install left in staging.
     #[uniffi::constructor]
     pub fn new(data_dir: String) -> Result<Arc<Self>, LibraryError> {
-        let root = PathBuf::from(&data_dir);
-        if !root.is_absolute() || data_dir.contains('\0') {
+        let requested = PathBuf::from(&data_dir);
+        if !requested.is_absolute() || data_dir.contains('\0') {
             return Err(LibraryError::InvalidInput);
         }
-        std::fs::create_dir_all(root.join("snapshots")).map_err(|_| LibraryError::Storage)?;
+        std::fs::create_dir_all(requested.join("snapshots")).map_err(|_| LibraryError::Storage)?;
+        // Resolve the app-supplied path once. Android's app directories sit
+        // under /data/user/0, a system symlink to /data/data; the store
+        // rejects symlinked ancestors, so it must be given the real path.
+        let root = std::fs::canonicalize(&requested).map_err(|_| LibraryError::Storage)?;
         reclaim_abandoned_staging(&root)?;
         ActiveSnapshotStore::new(&root)
             .reclaim_orphaned_selector_files()
@@ -177,6 +254,65 @@ impl OfflineLibrary {
             trust_label: installed.trust.label().to_owned(),
             articles: installed.manifest.metadata.counts.articles,
         })
+    }
+
+    /// Verify and install a pack streamed by the app (no seeking needed),
+    /// spooling at most `max_bytes`. `reviewer` sees the verified pack and
+    /// must approve before it is published as an inactive snapshot.
+    pub fn install_pack_stream(
+        &self,
+        source: Arc<dyn PackSource>,
+        reviewer: Arc<dyn InstallReviewer>,
+        max_bytes: u64,
+    ) -> Result<InstalledPack, LibraryError> {
+        if max_bytes == 0 || max_bytes > MAX_PACK_BYTES {
+            return Err(LibraryError::InvalidInput);
+        }
+        let mut reader = SourceReader(source);
+        let installed = install_custom_pack_stream(&self.root, &mut reader, max_bytes, |review| {
+            reviewer.approve(PackReview {
+                snapshot_id: review.manifest.pack_id.clone(),
+                project: review.manifest.project.clone(),
+                trust_label: review.trust.label().to_owned(),
+                articles: review.manifest.metadata.counts.articles,
+                declared_bytes: review.declared_bytes,
+            })
+        })?;
+        Ok(InstalledPack {
+            snapshot_id: installed.snapshot_id,
+            project: installed.manifest.project.clone(),
+            trust_label: installed.trust.label().to_owned(),
+            articles: installed.manifest.metadata.counts.articles,
+        })
+    }
+
+    /// Installed snapshots in ID order, with the active one marked.
+    pub fn list_packs(&self) -> Result<Vec<InstalledSnapshot>, LibraryError> {
+        let active = self.active_snapshot()?;
+        Ok(list_installed_snapshots(&self.root)?
+            .into_iter()
+            .map(|info| InstalledSnapshot {
+                active: active.as_deref() == Some(info.snapshot_id.as_str()),
+                snapshot_id: info.snapshot_id,
+                project: info.project,
+                trust_label: info.trust_label,
+                articles: info.articles,
+                damaged: info.damaged,
+            })
+            .collect())
+    }
+
+    /// Remove an inactive installed snapshot (refused while active).
+    pub fn remove_pack(&self, snapshot_id: String) -> Result<(), LibraryError> {
+        remove_installed_snapshot(&self.root, &snapshot_id)?;
+        let mut open = self.open.lock().map_err(|_| LibraryError::Storage)?;
+        if open
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.id == snapshot_id)
+        {
+            *open = None;
+        }
+        Ok(())
     }
 
     /// Make an installed snapshot the active one, after verified opening.

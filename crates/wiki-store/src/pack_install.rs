@@ -92,6 +92,10 @@ pub enum PackInstallError {
     Reader(ReaderError),
     AlreadyInstalled,
     Declined,
+    /// The snapshot is the active selection and cannot be removed.
+    SnapshotActive,
+    /// No installed snapshot has this ID.
+    NotInstalled,
     /// The manifest declares media; pack media installation is not built yet.
     MediaNotSupported,
     /// Declared article/redirect counts disagree with the verified catalog.
@@ -182,8 +186,8 @@ fn sync_dir(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
 }
 
-/// Remove staging residue an interrupted install left behind: `install-*`
-/// directories and `.wpack-spool-*` files in the private `staging/`
+/// Remove staging residue an interrupted install or removal left behind:
+/// `install-*` and `remove-*` directories and `.wpack-spool-*` files in the private `staging/`
 /// directory. Anything else there is left untouched and counted as retained.
 ///
 /// The caller MUST guarantee no install is running against `root` (the same
@@ -201,7 +205,7 @@ pub fn reclaim_abandoned_staging(root: &Path) -> Result<(usize, usize), PackInst
         let name = name.to_string_lossy();
         // file_type does not follow symlinks.
         let kind = entry.file_type()?;
-        if name.starts_with("install-") && kind.is_dir() {
+        if (name.starts_with("install-") || name.starts_with("remove-")) && kind.is_dir() {
             fs::remove_dir_all(entry.path())?;
             removed += 1;
         } else if name.starts_with(".wpack-spool-") && kind.is_file() {
@@ -467,6 +471,110 @@ pub fn snapshot_pack_metadata(
 }
 
 const MAX_INSTALLED_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
+
+/// One installed snapshot as recorded by the installer's `manifest.json`.
+/// `damaged` marks a snapshot whose manifest cannot be read; it is listed
+/// (never hidden) so the user can remove it, and it can never be activated
+/// because verified opening fails.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledSnapshotInfo {
+    pub snapshot_id: String,
+    pub project: String,
+    pub trust_label: String,
+    pub articles: u64,
+    pub damaged: bool,
+}
+
+/// List installed snapshots in ID order. Never adopts staging residue.
+pub fn list_installed_snapshots(
+    root: &Path,
+) -> Result<Vec<InstalledSnapshotInfo>, PackInstallError> {
+    let (snapshots, _) = prepare_root(root)?;
+    let mut listed = Vec::new();
+    for entry in fs::read_dir(&snapshots)? {
+        let entry = entry?;
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() || !safe_id(&id) {
+            continue;
+        }
+        let parsed = fs::symlink_metadata(entry.path().join(MANIFEST_FILE))
+            .ok()
+            .filter(|meta| meta.is_file() && meta.len() <= MAX_INSTALLED_MANIFEST_BYTES)
+            .and_then(|_| fs::read(entry.path().join(MANIFEST_FILE)).ok())
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| {
+                Some((
+                    value["project"].as_str()?.to_owned(),
+                    value["trust"].as_str()?.to_owned(),
+                    value["counts"]["articles"].as_u64()?,
+                ))
+            });
+        listed.push(match parsed {
+            Some((project, trust_label, articles)) => InstalledSnapshotInfo {
+                snapshot_id: id,
+                project,
+                trust_label,
+                articles,
+                damaged: false,
+            },
+            None => InstalledSnapshotInfo {
+                snapshot_id: id,
+                project: String::new(),
+                trust_label: TrustStatus::VerificationFailed.label().to_owned(),
+                articles: 0,
+                damaged: true,
+            },
+        });
+    }
+    listed.sort_by(|a, b| a.snapshot_id.cmp(&b.snapshot_id));
+    Ok(listed)
+}
+
+/// Remove an installed, inactive snapshot. The directory is first renamed
+/// into the private staging area (atomic on one filesystem) and both
+/// directories are synced, so a crash can only leave `remove-*` residue in
+/// staging — never a partially deleted snapshot that still looks installed.
+/// The active snapshot is refused. The caller must own `root` exclusively.
+pub fn remove_installed_snapshot(root: &Path, snapshot_id: &str) -> Result<(), PackInstallError> {
+    remove_installed_snapshot_with_sync(root, snapshot_id, sync_dir)
+}
+
+fn remove_installed_snapshot_with_sync(
+    root: &Path,
+    snapshot_id: &str,
+    mut sync: impl FnMut(&Path) -> io::Result<()>,
+) -> Result<(), PackInstallError> {
+    if !safe_id(snapshot_id) {
+        return Err(PackInstallError::InvalidSnapshotId);
+    }
+    let (snapshots, staging) = prepare_root(root)?;
+    let target = snapshots.join(snapshot_id);
+    if !real_directory(&target)? {
+        return Err(PackInstallError::NotInstalled);
+    }
+    let active = crate::activation::ActiveSnapshotStore::new(root)
+        .current()
+        .map_err(|_| PackInstallError::UnsafeRoot)?;
+    if active.as_deref() == Some(snapshot_id) {
+        return Err(PackInstallError::SnapshotActive);
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let doomed = staging.join(format!(
+        "remove-{}-{nonce}-{}",
+        std::process::id(),
+        NEXT_STAGE_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::rename(&target, &doomed)?;
+    sync(&snapshots)?;
+    sync(&staging)?;
+    fs::remove_dir_all(&doomed)?;
+    sync(&staging)?;
+    Ok(())
+}
 
 /// Reopen an installed snapshot's pinned shard inventory from the
 /// installer-owned `manifest.json`, for verified opening after a restart.
@@ -1125,6 +1233,83 @@ mod tests {
         .is_err());
         fs::write(&manifest_path, "{not json").unwrap();
         assert!(installed_shard_inventory(&installed.path).is_err());
+    }
+
+    #[test]
+    fn listing_and_safe_removal_of_installed_snapshots() {
+        let dir = test_dir("remove");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        for (id, revision) in [("alpha", 3020), ("beta", 3021)] {
+            let tree = dir.0.join(id);
+            snapshot_tree(&tree, revision, true);
+            install(&root, &pack_bytes(&tree, id)).unwrap();
+        }
+        let listed = list_installed_snapshots(&root).unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|s| s.snapshot_id.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(listed[0].trust_label, "Custom — integrity verified");
+        assert_eq!((listed[0].articles, listed[0].damaged), (1, false));
+
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("alpha").unwrap();
+        assert!(matches!(
+            remove_installed_snapshot(&root, "alpha"),
+            Err(PackInstallError::SnapshotActive)
+        ));
+        assert!(matches!(
+            remove_installed_snapshot(&root, "gamma"),
+            Err(PackInstallError::NotInstalled)
+        ));
+        assert!(matches!(
+            remove_installed_snapshot(&root, "../alpha"),
+            Err(PackInstallError::InvalidSnapshotId)
+        ));
+        remove_installed_snapshot(&root, "beta").unwrap();
+        assert!(!root.join("snapshots/beta").exists());
+        assert_eq!(staging_entries(&root), 0);
+        assert_eq!(store.current().unwrap().as_deref(), Some("alpha"));
+        assert_eq!(list_installed_snapshots(&root).unwrap().len(), 1);
+
+        // A damaged snapshot is listed, not hidden, and can be removed.
+        let tree = dir.0.join("gamma");
+        snapshot_tree(&tree, 3022, true);
+        install(&root, &pack_bytes(&tree, "gamma")).unwrap();
+        fs::write(root.join("snapshots/gamma").join(MANIFEST_FILE), "{").unwrap();
+        let gamma = list_installed_snapshots(&root)
+            .unwrap()
+            .into_iter()
+            .find(|s| s.snapshot_id == "gamma")
+            .unwrap();
+        assert!(gamma.damaged);
+        assert_eq!(gamma.trust_label, "Verification failed");
+        remove_installed_snapshot(&root, "gamma").unwrap();
+    }
+
+    #[test]
+    fn interrupted_removal_leaves_only_reclaimable_staging_residue() {
+        let dir = test_dir("remove-crash");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3023, true);
+        install(&root, &pack_bytes(&tree, "doomed")).unwrap();
+        // Fail the first sync after the rename: the snapshot is already out
+        // of snapshots/ and only staging residue remains.
+        let result = remove_installed_snapshot_with_sync(&root, "doomed", |_| {
+            Err(io::Error::from(io::ErrorKind::StorageFull))
+        });
+        assert!(matches!(result, Err(PackInstallError::Io(_))));
+        assert!(!root.join("snapshots/doomed").exists());
+        assert!(list_installed_snapshots(&root).unwrap().is_empty());
+        assert_eq!(staging_entries(&root), 1);
+        assert_eq!(reclaim_abandoned_staging(&root).unwrap(), (1, 0));
+        assert_eq!(staging_entries(&root), 0);
     }
 
     #[test]

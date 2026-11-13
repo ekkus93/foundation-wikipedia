@@ -429,9 +429,10 @@ private fun FoundationApp() {
                                 else "Offline mode is off. Online article fetching is not implemented yet.",
                             )
                             Text(
-                                "No verified Wikipedia pack is installed. This development WebView never " +
-                                    "requests network resources, even when Work offline is off.",
+                                "This development WebView never requests network resources, " +
+                                    "even when Work offline is off.",
                             )
+                            OfflinePacksSection()
                             Text(
                                 "The offline choice persists across app restarts. It does not download " +
                                     "articles, enable bookmarks, or certify missing images and attribution.",
