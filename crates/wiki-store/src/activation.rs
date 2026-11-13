@@ -512,6 +512,79 @@ impl ActiveSnapshotStore {
         }
         result
     }
+
+    /// Remove private selector files an interrupted switch left in the
+    /// snapshot root: regular files named exactly `.current.<pid>.<n>.tmp`
+    /// or `.previous.<pid>.<n>.tmp`, the only names the switch creates.
+    /// Anything else, including symlinks and directories with those names,
+    /// is left in place and counted as retained. Returns `(removed, retained)`.
+    ///
+    /// Such a file is never an active selector: `current` is replaced only by
+    /// an atomic rename, and a `.previous.*` backup is consumed by rollback
+    /// before it could matter. Removing one therefore cannot change which
+    /// snapshot is active. The caller MUST guarantee no switch is running
+    /// against this root (for example by calling this once at startup).
+    /// PIDs are reused, so liveness is never inferred from the name.
+    ///
+    /// A corrupt selector is refused rather than cleaned around, so the
+    /// leftovers remain available for inspection and manual recovery.
+    pub fn reclaim_orphaned_selector_files(&self) -> Result<(usize, usize), ActivationError> {
+        self.reclaim_orphaned_selector_files_with_sync(|path| File::open(path)?.sync_all())
+    }
+
+    fn reclaim_orphaned_selector_files_with_sync(
+        &self,
+        mut sync_parent: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(usize, usize), ActivationError> {
+        let before = self.current()?;
+        let mut removed = 0;
+        let mut retained = 0;
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(".current.") && !name.starts_with(".previous.") {
+                continue;
+            }
+            // file_type does not follow symlinks.
+            if entry.file_type()?.is_file() && private_selector_name(name) {
+                fs::remove_file(entry.path())?;
+                removed += 1;
+            } else {
+                retained += 1;
+            }
+        }
+        if removed > 0 {
+            sync_parent(&self.root)?;
+        }
+        // Defense in depth: reclamation must never change the selection.
+        if self.current()? != before {
+            return Err(ActivationError::CorruptCurrentPointer);
+        }
+        Ok((removed, retained))
+    }
+}
+
+/// `.current.<digits>.<digits>.tmp` or `.previous.<digits>.<digits>.tmp`.
+fn private_selector_name(name: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix(".current.")
+        .or_else(|| name.strip_prefix(".previous."))
+    else {
+        return false;
+    };
+    let Some(rest) = rest.strip_suffix(".tmp") else {
+        return false;
+    };
+    let mut parts = rest.split('.');
+    let numeric = |part: Option<&str>| {
+        part.is_some_and(|p| {
+            !p.is_empty() && p.len() <= 20 && p.bytes().all(|b| b.is_ascii_digit())
+        })
+    };
+    numeric(parts.next()) && numeric(parts.next()) && parts.next().is_none()
 }
 
 #[cfg(test)]
@@ -2168,5 +2241,147 @@ mod interruption_tests {
         assert_eq!(store.current().unwrap().as_deref(), Some("old"));
         assert_eq!(private_selector_files(&root), 0);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod reclaim_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestRoot(PathBuf);
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn staged_root(label: &str) -> TestRoot {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-reclaim-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        for id in ["old", "new"] {
+            let candidate = root.join("snapshots").join(id);
+            fs::create_dir_all(&candidate).unwrap();
+            fs::write(candidate.join("manifest.json"), b"{}").unwrap();
+        }
+        TestRoot(root)
+    }
+
+    #[test]
+    fn private_selector_names_match_only_switch_output() {
+        for name in [
+            ".current.1.0.tmp",
+            ".previous.4242.18446744073709551615.tmp",
+        ] {
+            assert!(private_selector_name(name), "{name}");
+        }
+        for name in [
+            ".current.orphan.tmp",
+            ".current.1.tmp",
+            ".current.1.2.3.tmp",
+            ".current..2.tmp",
+            ".current.1.2.tmp.bak",
+            ".current.1.2",
+            ".current.+1.2.tmp",
+            ".previous.1.123456789012345678901.tmp",
+            "current",
+            ".latest.1.2.tmp",
+        ] {
+            assert!(!private_selector_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn reclaim_removes_switch_orphans_without_changing_selection() {
+        let guard = staged_root("orphans");
+        let root = &guard.0;
+        let store = ActiveSnapshotStore::new(root);
+        store.switch_to_prevalidated("old").unwrap();
+        // Orphans as a killed switch leaves them, including one naming the
+        // other snapshot: it must not be adopted, only removed.
+        fs::write(root.join(".current.77.3.tmp"), b"new\n").unwrap();
+        fs::write(root.join(".previous.77.4.tmp"), b"old\n").unwrap();
+        fs::write(root.join(".current.78.0.tmp"), b"").unwrap();
+        // Not switch output: retained untouched.
+        fs::write(root.join(".current.orphan.tmp"), b"operator copy").unwrap();
+        fs::create_dir(root.join(".previous.1.1.tmp")).unwrap();
+        #[cfg(unix)]
+        {
+            let outside = root.join("outside");
+            fs::write(&outside, b"keep").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join(".current.9.9.tmp")).unwrap();
+        }
+
+        let mut syncs = 0;
+        let (removed, retained) = store
+            .reclaim_orphaned_selector_files_with_sync(|path| {
+                syncs += 1;
+                File::open(path)?.sync_all()
+            })
+            .unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(retained, if cfg!(unix) { 3 } else { 2 });
+        assert_eq!(syncs, 1);
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        assert!(!root.join(".current.77.3.tmp").exists());
+        assert_eq!(
+            fs::read(root.join(".current.orphan.tmp")).unwrap(),
+            b"operator copy"
+        );
+        assert!(root.join(".previous.1.1.tmp").is_dir());
+        #[cfg(unix)]
+        assert_eq!(fs::read(root.join("outside")).unwrap(), b"keep");
+        assert!(root.join("snapshots/new/manifest.json").exists());
+
+        // Idempotent, and later switches still work.
+        assert_eq!(store.reclaim_orphaned_selector_files().unwrap().0, 0);
+        store.switch_to_prevalidated("new").unwrap();
+        assert_eq!(store.current().unwrap().as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn reclaim_before_first_activation_keeps_store_unselected() {
+        let guard = staged_root("unselected");
+        let store = ActiveSnapshotStore::new(&guard.0);
+        // A first activation killed before its rename leaves only this.
+        fs::write(guard.0.join(".current.5.0.tmp"), b"new\n").unwrap();
+        assert_eq!(store.reclaim_orphaned_selector_files().unwrap(), (1, 0));
+        assert_eq!(store.current().unwrap(), None);
+    }
+
+    #[test]
+    fn corrupt_selector_is_refused_and_orphans_kept_for_recovery() {
+        let guard = staged_root("corrupt");
+        let root = &guard.0;
+        fs::write(root.join("current"), b"missing-snapshot\n").unwrap();
+        fs::write(root.join(".previous.3.1.tmp"), b"old\n").unwrap();
+        let store = ActiveSnapshotStore::new(root);
+        assert!(matches!(
+            store.reclaim_orphaned_selector_files(),
+            Err(ActivationError::CorruptCurrentPointer)
+        ));
+        assert_eq!(fs::read(root.join(".previous.3.1.tmp")).unwrap(), b"old\n");
+    }
+
+    #[test]
+    fn reclaim_sync_failure_is_reported_with_selection_intact() {
+        let guard = staged_root("sync");
+        let store = ActiveSnapshotStore::new(&guard.0);
+        store.switch_to_prevalidated("old").unwrap();
+        fs::write(guard.0.join(".current.6.0.tmp"), b"new\n").unwrap();
+        let result = store.reclaim_orphaned_selector_files_with_sync(|_| {
+            Err(io::Error::from(io::ErrorKind::StorageFull))
+        });
+        assert!(matches!(result, Err(ActivationError::Io(_))));
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        // A retry after storage recovers has nothing left to remove.
+        assert_eq!(store.reclaim_orphaned_selector_files().unwrap(), (0, 0));
     }
 }

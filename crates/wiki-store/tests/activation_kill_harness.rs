@@ -258,6 +258,14 @@ fn sigkill_during_activation_never_corrupts_selector_content_or_user_state() {
         assert_eq!(store.current().unwrap().as_deref(), Some(id));
     }
     assert!(private_selector_files(&root) <= leftovers);
+    // With the child dead the parent owns the root: every orphan is reclaimed
+    // and the selection is unchanged.
+    let (removed, retained) = store.reclaim_orphaned_selector_files().unwrap();
+    assert_eq!(retained, 0);
+    assert_eq!(private_selector_files(&root), 0);
+    assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+    assert_recoverable(&root, &inventories);
+    eprintln!("kill harness: reclaimed {removed} orphaned private files");
     eprintln!("kill harness: {KILLS} kills, {last_committed} committed activations, {leftovers} orphaned private files");
     fs::remove_dir_all(root).unwrap();
 }
