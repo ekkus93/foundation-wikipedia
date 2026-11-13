@@ -25,8 +25,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::hosted_codec::{
-    anthropic_messages_body, gemini_generate_body, gemini_stream_path, AnthropicStreamDecoder,
-    ApiKey, GeminiStreamDecoder, HostedProvider,
+    anthropic_messages_body, AnthropicStreamDecoder, ApiKey, HostedProvider,
 };
 use crate::local_http_stream::{map_io, openai_chat_body, read_event_stream, ChatStreamDecoder};
 use crate::openai_stream::OpenAiStreamDecoder;
@@ -47,7 +46,6 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const fn provider_host(provider: HostedProvider) -> &'static str {
     match provider {
         HostedProvider::Anthropic => "api.anthropic.com",
-        HostedProvider::Gemini => "generativelanguage.googleapis.com",
         HostedProvider::OpenAi => "api.openai.com",
     }
 }
@@ -134,11 +132,6 @@ impl HostedChatProvider {
                 "/v1/messages".to_owned(),
                 anthropic_messages_body(request)?,
                 Box::new(AnthropicStreamDecoder::new()),
-            ),
-            HostedProvider::Gemini => (
-                gemini_stream_path(&request.model)?,
-                gemini_generate_body(request)?,
-                Box::new(GeminiStreamDecoder::new()),
             ),
             HostedProvider::OpenAi => (
                 "/v1/chat/completions".to_owned(),
@@ -430,24 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_and_openai_use_their_paths_and_key_headers() {
-        let gemini_body = concat!(
-            "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi\"}]},\"finishReason\":\"STOP\"}]}\n\n",
-        );
-        let (result, sent) = run(
-            HostedProvider::Gemini,
-            event_stream(gemini_body),
-            OutboundPolicy::AllowCloud,
-        );
-        assert_eq!(result.unwrap()[0], StreamEvent::TextDelta("Hi".into()));
-        let request_line = sent.lines().next().unwrap();
-        assert_eq!(
-            request_line,
-            "POST /v1beta/models/test-model:streamGenerateContent?alt=sse HTTP/1.1"
-        );
-        assert!(!request_line.contains("key="), "key never in the URL");
-        assert!(sent.contains("\r\nx-goog-api-key: sk-test-secret-value"));
-
+    fn openai_uses_its_path_and_bearer_header() {
         let openai_body = concat!(
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Yo\"},\"finish_reason\":\"stop\"}]}\n\n",
             "data: [DONE]\n\n",
@@ -533,10 +509,6 @@ mod tests {
         assert_eq!(
             provider_host(HostedProvider::Anthropic),
             "api.anthropic.com"
-        );
-        assert_eq!(
-            provider_host(HostedProvider::Gemini),
-            "generativelanguage.googleapis.com"
         );
         assert_eq!(provider_host(HostedProvider::OpenAi), "api.openai.com");
         let provider = HostedChatProvider::new(HostedProvider::Anthropic, key()).unwrap();

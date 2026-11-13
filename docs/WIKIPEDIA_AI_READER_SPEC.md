@@ -234,7 +234,7 @@ Normal users should not see BM25 tuning or ANN parameters unless Advanced/Develo
 
 ## 15. LLM architecture and provider profiles
 
-Shared Rust `LlmProvider` interface: supported-model enumeration where available, provider capabilities, streaming, cancellation, connection test, typed errors and token/context budgets. Provider-specific adapters for Ollama, generic OpenAI-compatible endpoints (including llama-server), hosted OpenAI/Anthropic/Gemini and later embedded runtimes. Do not assume all hosted providers share one identical protocol.
+Shared Rust `LlmProvider` interface: supported-model enumeration where available, provider capabilities, streaming, cancellation, connection test, typed errors and token/context budgets. Provider-specific adapters for Ollama, generic OpenAI-compatible endpoints (including llama-server), hosted OpenAI/Anthropic and later embedded runtimes. Do not assume all hosted providers share one identical protocol.
 
 **Classify locality correctly:** on-device, localhost, local-network server, or remote cloud. A phone using a LAN PC LLM is not offline. Allow multiple saved provider profiles and easy switching. Default fallback is **none/ask first**; local unavailability must never cause an unconsented cloud request. The selected provider and data destination must be clear in chat and Settings. RAG never depends on the provider type.
 

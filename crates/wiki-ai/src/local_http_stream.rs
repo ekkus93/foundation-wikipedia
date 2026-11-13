@@ -118,15 +118,6 @@ impl ChatStreamDecoder for crate::hosted_codec::AnthropicStreamDecoder {
     }
 }
 
-impl ChatStreamDecoder for crate::hosted_codec::GeminiStreamDecoder {
-    fn push(&mut self, bytes: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
-        crate::hosted_codec::GeminiStreamDecoder::push(self, bytes)
-    }
-    fn finish_stream(&mut self) -> Result<Option<StreamEvent>, ProviderError> {
-        self.finish().map(Some)
-    }
-}
-
 /// Read a bounded HTTP/1.1 `200 text/event-stream` response after the
 /// request was written: headers, then a chunked, length-delimited or
 /// close-delimited body fed through `decoder`. Exactly one terminal event

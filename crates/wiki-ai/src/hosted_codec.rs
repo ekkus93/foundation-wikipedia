@@ -1,4 +1,5 @@
-//! AI-003 wire codecs for hosted Anthropic Messages and Gemini APIs.
+//! AI-003 wire codec for the hosted Anthropic Messages API.
+//! (Hosted OpenAI uses the OpenAI stream format in `openai_stream`.)
 //!
 //! Transport-independent and strict, like `openai_stream`: this module never
 //! opens a socket, holds no HTTP client and performs no TLS. It builds request
@@ -40,7 +41,6 @@ impl ApiKey {
     pub fn header(&self, provider: HostedProvider) -> (&'static str, String) {
         match provider {
             HostedProvider::Anthropic => ("x-api-key", self.0.clone()),
-            HostedProvider::Gemini => ("x-goog-api-key", self.0.clone()),
             HostedProvider::OpenAi => ("authorization", format!("Bearer {}", self.0)),
         }
     }
@@ -55,7 +55,6 @@ impl std::fmt::Debug for ApiKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostedProvider {
     Anthropic,
-    Gemini,
     /// Hosted OpenAI Chat Completions (same stream format as local
     /// OpenAI-compatible servers, decoded by `openai_stream`).
     OpenAi,
@@ -112,47 +111,6 @@ pub fn anthropic_messages_body(request: &GenerateRequest) -> Result<String, Prov
         body["system"] = json!(system);
     }
     serde_json::to_string(&body).map_err(|_| ProviderError::InvalidRequest)
-}
-
-/// Gemini `generateContent` streaming request body. The model is part of
-/// the request path (`gemini_stream_path`), not the body.
-pub fn gemini_generate_body(request: &GenerateRequest) -> Result<String, ProviderError> {
-    let (system, turns) = split_messages(request)?;
-    let contents: Vec<Value> = turns
-        .iter()
-        .map(|(is_user, text)| {
-            json!({
-                "role": if *is_user { "user" } else { "model" },
-                "parts": [{"text": text}],
-            })
-        })
-        .collect();
-    let mut body = json!({
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": request.max_output_tokens},
-    });
-    if !system.is_empty() {
-        body["systemInstruction"] = json!({"parts": [{"text": system}]});
-    }
-    serde_json::to_string(&body).map_err(|_| ProviderError::InvalidRequest)
-}
-
-/// Request path for a Gemini SSE stream. The model ID must be a plain
-/// identifier so it cannot alter the path or add query parameters; the key
-/// is sent as a header, never as `?key=`.
-pub fn gemini_stream_path(model: &str) -> Result<String, ProviderError> {
-    if model.is_empty()
-        || model.len() > 128
-        || !model
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'))
-        || model.starts_with('.')
-    {
-        return Err(ProviderError::InvalidRequest);
-    }
-    Ok(format!(
-        "/v1beta/models/{model}:streamGenerateContent?alt=sse"
-    ))
 }
 
 fn count(value: Option<&Value>) -> Result<Option<u32>, ProviderError> {
@@ -323,124 +281,6 @@ impl AnthropicStreamDecoder {
     }
 }
 
-/// Strict decoder for Gemini `streamGenerateContent?alt=sse`. Each event is
-/// a `GenerateContentResponse` with one candidate of role `model` holding
-/// text parts. Completion requires `finishReason: STOP`; EOF then yields the
-/// terminal event from `finish`.
-#[derive(Default)]
-pub struct GeminiStreamDecoder {
-    sse: SseDecoder,
-    stopped: bool,
-    finished: bool,
-    text_bytes: usize,
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-}
-
-impl GeminiStreamDecoder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ProviderError> {
-        if self.finished {
-            return Err(ProviderError::InvalidResponse);
-        }
-        let mut out = Vec::new();
-        for event in self
-            .sse
-            .push(chunk)
-            .map_err(|_| ProviderError::InvalidResponse)?
-        {
-            self.accept(event, &mut out)?;
-        }
-        Ok(out)
-    }
-
-    /// Gemini signals completion only by `finishReason` then EOF.
-    pub fn finish(&mut self) -> Result<StreamEvent, ProviderError> {
-        self.sse
-            .finish()
-            .map_err(|_| ProviderError::InvalidResponse)?;
-        if !self.stopped || self.finished {
-            return Err(ProviderError::InvalidResponse);
-        }
-        self.finished = true;
-        Ok(StreamEvent::Completed {
-            input_tokens: self.input_tokens,
-            output_tokens: self.output_tokens,
-        })
-    }
-
-    fn accept(&mut self, event: SseEvent, out: &mut Vec<StreamEvent>) -> Result<(), ProviderError> {
-        if !matches!(event.event_type.as_deref(), None | Some("message")) {
-            return Err(ProviderError::InvalidResponse);
-        }
-        let value: Value =
-            serde_json::from_str(&event.data).map_err(|_| ProviderError::InvalidResponse)?;
-        if value.get("error").is_some()
-            || value
-                .get("promptFeedback")
-                .and_then(|f| f.get("blockReason"))
-                .is_some()
-        {
-            return Err(ProviderError::Rejected);
-        }
-        if let Some(usage) = value.get("usageMetadata") {
-            self.input_tokens = count(usage.get("promptTokenCount"))?.or(self.input_tokens);
-            self.output_tokens = count(usage.get("candidatesTokenCount"))?.or(self.output_tokens);
-        }
-        let candidates = match value.get("candidates") {
-            None => {
-                // A trailing usage-only chunk is allowed after the stop.
-                return if self.stopped && value.get("usageMetadata").is_some() {
-                    Ok(())
-                } else {
-                    Err(ProviderError::InvalidResponse)
-                };
-            }
-            Some(candidates) => candidates
-                .as_array()
-                .ok_or(ProviderError::InvalidResponse)?,
-        };
-        if self.stopped || candidates.len() != 1 {
-            return Err(ProviderError::InvalidResponse);
-        }
-        let candidate = &candidates[0];
-        if let Some(content) = candidate.get("content") {
-            if content.get("role").and_then(Value::as_str) != Some("model") {
-                return Err(ProviderError::InvalidResponse);
-            }
-            let parts = content
-                .get("parts")
-                .and_then(Value::as_array)
-                .ok_or(ProviderError::InvalidResponse)?;
-            for part in parts {
-                let object = part.as_object().ok_or(ProviderError::InvalidResponse)?;
-                // functionCall, executableCode, thought parts etc. are not text.
-                if object.keys().any(|key| key != "text") {
-                    return Err(ProviderError::Rejected);
-                }
-                let text = object
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or(ProviderError::InvalidResponse)?;
-                add_text(&mut self.text_bytes, text)?;
-                if !text.is_empty() {
-                    out.push(StreamEvent::TextDelta(text.to_owned()));
-                }
-            }
-        }
-        match candidate.get("finishReason").and_then(Value::as_str) {
-            None => {}
-            Some("STOP") => self.stopped = true,
-            // MAX_TOKENS, SAFETY, RECITATION, BLOCKLIST, MALFORMED_FUNCTION_CALL…
-            Some(_) => return Err(ProviderError::Rejected),
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,7 +379,6 @@ data: {data}
             key.header(HostedProvider::OpenAi),
             ("authorization", "Bearer sk-ant-secret-123".to_owned())
         );
-        assert_eq!(key.header(HostedProvider::Gemini).0, "x-goog-api-key");
         for bad in ["", "has space", "line\r\nX-Injected: 1", "tab\t", "é"] {
             assert_eq!(
                 ApiKey::new(bad.into()),
@@ -567,36 +406,6 @@ data: {data}
             anthropic["messages"][2]["content"][0]["text"],
             "Evidence and question"
         );
-
-        let gemini: Value = serde_json::from_str(&gemini_generate_body(&chat()).unwrap()).unwrap();
-        assert_eq!(
-            gemini["systemInstruction"]["parts"][0]["text"],
-            "Use only the evidence."
-        );
-        let roles: Vec<_> = gemini["contents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|m| m["role"].as_str().unwrap())
-            .collect();
-        assert_eq!(roles, ["user", "model", "user"]);
-        assert_eq!(gemini["generationConfig"]["maxOutputTokens"], 256);
-        assert!(
-            gemini.get("model").is_none(),
-            "Gemini model belongs in the path"
-        );
-
-        assert_eq!(
-            gemini_stream_path("gemini-2.5-flash").unwrap(),
-            "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
-        );
-        for bad in ["", "a/b", "m?key=x", "m:generate", "..", ".hidden", "m%2F"] {
-            assert_eq!(
-                gemini_stream_path(bad),
-                Err(ProviderError::InvalidRequest),
-                "{bad:?}"
-            );
-        }
     }
 
     #[test]
@@ -624,11 +433,6 @@ data: {data}
             let req = request(messages);
             assert_eq!(
                 anthropic_messages_body(&req),
-                Err(ProviderError::InvalidRequest),
-                "{label}"
-            );
-            assert_eq!(
-                gemini_generate_body(&req),
                 Err(ProviderError::InvalidRequest),
                 "{label}"
             );
@@ -742,66 +546,6 @@ data: {data}
         ];
         for (label, body, expected) in cases {
             assert_eq!(decode_anthropic(&body, 5), Err(expected), "{label}");
-        }
-    }
-
-    fn gemini_chunk(text: &str, finish: Option<&str>) -> String {
-        let finish = finish
-            .map(|f| format!(r#","finishReason":"{f}""#))
-            .unwrap_or_default();
-        format!(
-            "data: {{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"text\":{}}}]}}{finish}}}]}}\n\n",
-            serde_json::to_string(text).unwrap()
-        )
-    }
-
-    fn decode_gemini(body: &str) -> Result<Vec<StreamEvent>, ProviderError> {
-        let mut decoder = GeminiStreamDecoder::new();
-        let mut events = Vec::new();
-        for piece in body.as_bytes().chunks(6) {
-            events.extend(decoder.push(piece)?);
-        }
-        events.push(decoder.finish()?);
-        Ok(events)
-    }
-
-    #[test]
-    fn gemini_stream_yields_text_and_completion_at_eof() {
-        let body = format!(
-            "{}{}data: {{\"usageMetadata\":{{\"promptTokenCount\":20,\"candidatesTokenCount\":3}}}}\n\n",
-            gemini_chunk("Gravity ", None),
-            gemini_chunk("attracts.", Some("STOP"))
-        );
-        assert_eq!(
-            decode_gemini(&body).unwrap(),
-            vec![
-                StreamEvent::TextDelta("Gravity ".into()),
-                StreamEvent::TextDelta("attracts.".into()),
-                StreamEvent::Completed {
-                    input_tokens: Some(20),
-                    output_tokens: Some(3)
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn gemini_stream_fails_closed() {
-        let stop = gemini_chunk("done", Some("STOP"));
-        let cases: Vec<(&str, String, ProviderError)> = vec![
-            ("no stop at eof", gemini_chunk("partial", None), ProviderError::InvalidResponse),
-            ("max tokens", gemini_chunk("cut", Some("MAX_TOKENS")), ProviderError::Rejected),
-            ("safety", gemini_chunk("x", Some("SAFETY")), ProviderError::Rejected),
-            ("blocked prompt", "data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\n\n".into(), ProviderError::Rejected),
-            ("function call", "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"f\"}}]}}]}\n\n".into(), ProviderError::Rejected),
-            ("thought part", "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"t\",\"thought\":true}]}}]}\n\n".into(), ProviderError::Rejected),
-            ("user role", stop.replace("\"role\":\"model\"", "\"role\":\"user\""), ProviderError::InvalidResponse),
-            ("text after stop", format!("{stop}{}", gemini_chunk("more", None)), ProviderError::InvalidResponse),
-            ("two candidates", "data: {\"candidates\":[{},{}]}\n\n".into(), ProviderError::InvalidResponse),
-            ("error", "data: {\"error\":{\"code\":429}}\n\n".into(), ProviderError::Rejected),
-        ];
-        for (label, body, expected) in cases {
-            assert_eq!(decode_gemini(&body), Err(expected), "{label}");
         }
     }
 }
