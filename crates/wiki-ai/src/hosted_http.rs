@@ -13,11 +13,14 @@
 //! and never stores, logs or serializes it.
 //!
 //! Android needs a one-time JNI initialisation of the platform verifier from
-//! the app before certificates can be checked; until that bridge exists
-//! (MOB-001) construction returns `ProviderError::Unsupported` there.
+//! the app before certificates can be checked. The Android bridge
+//! (`wiki-ffi`) performs it and then calls [`mark_platform_verifier_ready`];
+//! until then construction returns `ProviderError::Unsupported` there rather
+//! than reaching an uninitialised verifier.
 
 use std::io::{BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -74,6 +77,22 @@ impl std::fmt::Debug for HostedChatProvider {
     }
 }
 
+static PLATFORM_VERIFIER_READY: AtomicBool = AtomicBool::new(false);
+
+/// Record that the host app initialised the OS certificate verifier.
+///
+/// Only meaningful on Android, where `rustls-platform-verifier` must be given
+/// the JVM and application context first; call it only after that
+/// initialisation succeeded. Other platforms need no initialisation.
+pub fn mark_platform_verifier_ready() {
+    PLATFORM_VERIFIER_READY.store(true, Ordering::Release);
+}
+
+/// Whether hosted HTTPS can verify certificates on this platform now.
+pub fn platform_verifier_ready() -> bool {
+    !cfg!(target_os = "android") || PLATFORM_VERIFIER_READY.load(Ordering::Acquire)
+}
+
 fn ring() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
@@ -82,7 +101,7 @@ impl HostedChatProvider {
     /// Connect to `provider`'s fixed production host with OS certificate
     /// verification.
     pub fn new(provider: HostedProvider, key: ApiKey) -> Result<Self, ProviderError> {
-        if cfg!(target_os = "android") {
+        if !platform_verifier_ready() {
             return Err(ProviderError::Unsupported);
         }
         use rustls_platform_verifier::BuilderVerifierExt;

@@ -66,6 +66,11 @@ dependencies {
     // bundles the Android JNA native dispatch library).
     implementation("net.java.dev.jna:jna:5.17.0@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Must equal the rustls-platform-verifier-android version in Cargo.lock
+    // (guarded by scripts/test_android_verifier_pin.py). Its AAR adds the
+    // INTERNET permission and a network security config that allows
+    // cleartext only to CA revocation-list hosts.
+    implementation("org.rustls:rustls-platform-verifier:0.2.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

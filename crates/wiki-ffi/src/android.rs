@@ -390,3 +390,153 @@ impl OfflineLibrary {
         run(&open.as_ref().expect("snapshot opened above").reader)
     }
 }
+
+// ---------------------------------------------------------------------------
+// AI-003 hosted models on Android.
+//
+// The app owns API keys (Android Keystore-encrypted storage) and passes one
+// in per explicit request; nothing here stores, logs or returns a key. TLS
+// uses the shared rustls transport with Android's certificate verifier,
+// which the app must initialise first (`RustTls.init`, see android_tls.rs).
+
+const MAX_MODEL_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum HostedAiProvider {
+    Anthropic,
+    OpenAi,
+}
+
+impl From<HostedAiProvider> for wiki_ai::hosted_codec::HostedProvider {
+    fn from(provider: HostedAiProvider) -> Self {
+        match provider {
+            HostedAiProvider::Anthropic => Self::Anthropic,
+            HostedAiProvider::OpenAi => Self::OpenAi,
+        }
+    }
+}
+
+/// Hosted-model failures. None carries key material or response text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+pub enum HostedAiError {
+    /// The key is empty, too long, or has whitespace or control characters.
+    InvalidKey,
+    /// The model name or request was rejected before any network traffic.
+    InvalidRequest,
+    /// The OS certificate verifier has not been initialised on this device.
+    NotReady,
+    /// The provider refused the request (for example an invalid key).
+    Rejected,
+    Timeout,
+    /// Connection, TLS or certificate failure.
+    Network,
+    InvalidResponse,
+}
+
+impl std::fmt::Display for HostedAiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for HostedAiError {}
+
+impl From<wiki_ai::ProviderError> for HostedAiError {
+    fn from(error: wiki_ai::ProviderError) -> Self {
+        use wiki_ai::ProviderError as E;
+        match error {
+            E::InvalidRequest | E::DestinationNotAllowed => Self::InvalidRequest,
+            E::Unsupported => Self::NotReady,
+            E::Rejected => Self::Rejected,
+            E::Timeout | E::Cancelled => Self::Timeout,
+            E::Transport => Self::Network,
+            E::InvalidResponse => Self::InvalidResponse,
+        }
+    }
+}
+
+/// Reply to an explicit connection check.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HostedAiCheck {
+    pub reply: String,
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+}
+
+/// Whether hosted HTTPS can verify certificates (Android: after `RustTls.init`).
+#[uniffi::export]
+pub fn hosted_ai_ready() -> bool {
+    wiki_ai::hosted_http::platform_verifier_ready()
+}
+
+/// Validate a key's shape before the app stores it. No network traffic.
+#[uniffi::export]
+pub fn hosted_ai_key_is_valid(api_key: String) -> bool {
+    wiki_ai::hosted_codec::ApiKey::new(api_key).is_ok()
+}
+
+/// Send one tiny prompt to the user's hosted model with `api_key`. This IS
+/// cloud traffic: call it only from an explicit user action that says so.
+#[uniffi::export]
+pub fn check_hosted_ai_connection(
+    provider: HostedAiProvider,
+    api_key: String,
+    model: String,
+) -> Result<HostedAiCheck, HostedAiError> {
+    validate_model(&model)?;
+    let key = wiki_ai::hosted_codec::ApiKey::new(api_key).map_err(|_| HostedAiError::InvalidKey)?;
+    let hosted = wiki_ai::hosted_http::HostedChatProvider::new(provider.into(), key)?;
+    run_hosted_check(&hosted, model)
+}
+
+fn validate_model(model: &str) -> Result<(), HostedAiError> {
+    if model.is_empty()
+        || model.len() > MAX_MODEL_BYTES
+        || !model.bytes().all(|b| b.is_ascii_graphic())
+    {
+        return Err(HostedAiError::InvalidRequest);
+    }
+    Ok(())
+}
+
+/// The connection check against any provider (host tests use a fake one).
+pub fn run_hosted_check(
+    provider: &dyn wiki_ai::LlmProvider,
+    model: String,
+) -> Result<HostedAiCheck, HostedAiError> {
+    use wiki_ai::{GenerateRequest, Message, MessageRole, OutboundPolicy, StreamEvent};
+    validate_model(&model)?;
+    let request = GenerateRequest {
+        model,
+        messages: vec![Message {
+            role: MessageRole::User,
+            content: "Reply with the single word OK.".into(),
+        }],
+        max_output_tokens: 16,
+    };
+    let mut check = HostedAiCheck {
+        reply: String::new(),
+        input_tokens: None,
+        output_tokens: None,
+    };
+    wiki_ai::stream_selected(
+        provider,
+        &request,
+        &wiki_ai::CancellationToken::default(),
+        OutboundPolicy::AllowCloud,
+        &mut |event| {
+            match event {
+                StreamEvent::TextDelta(text) => check.reply.push_str(&text),
+                StreamEvent::Completed {
+                    input_tokens,
+                    output_tokens,
+                } => {
+                    check.input_tokens = input_tokens;
+                    check.output_tokens = output_tokens;
+                }
+            }
+            Ok(())
+        },
+    )?;
+    Ok(check)
+}

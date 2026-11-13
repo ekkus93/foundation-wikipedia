@@ -680,6 +680,12 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_wiki_ffi_checksum_func_check_hosted_ai_connection(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_func_hosted_ai_key_is_valid(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_func_hosted_ai_ready(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_installreviewer_approve(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_activate(
@@ -760,6 +766,12 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_wiki_ffi_fn_method_packsource_read(`ptr`: Long,`maxBytes`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_wiki_ffi_fn_func_check_hosted_ai_connection(`provider`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`model`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_wiki_ffi_fn_func_hosted_ai_key_is_valid(`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_wiki_ffi_fn_func_hosted_ai_ready(uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     external fun ffi_wiki_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun ffi_wiki_ffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -879,6 +891,15 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_wiki_ffi_checksum_func_check_hosted_ai_connection() != 9503) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_key_is_valid() != 312) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_ready() != 12470) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_wiki_ffi_checksum_method_installreviewer_approve() != 46819) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2346,6 +2367,52 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
 
 
 
+/**
+ * Reply to an explicit connection check.
+ */
+data class HostedAiCheck (
+    var `reply`: kotlin.String
+    , 
+    var `inputTokens`: kotlin.UInt?
+    , 
+    var `outputTokens`: kotlin.UInt?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHostedAiCheck: FfiConverterRustBuffer<HostedAiCheck> {
+    override fun read(buf: ByteBuffer): HostedAiCheck {
+        return HostedAiCheck(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HostedAiCheck) = (
+            FfiConverterString.allocationSize(value.`reply`) +
+            FfiConverterOptionalUInt.allocationSize(value.`inputTokens`) +
+            FfiConverterOptionalUInt.allocationSize(value.`outputTokens`)
+    )
+
+    override fun write(value: HostedAiCheck, buf: ByteBuffer) {
+            FfiConverterString.write(value.`reply`, buf)
+            FfiConverterOptionalUInt.write(value.`inputTokens`, buf)
+            FfiConverterOptionalUInt.write(value.`outputTokens`, buf)
+    }
+}
+
+
+
 data class InstalledPack (
     var `snapshotId`: kotlin.String
     , 
@@ -2566,6 +2633,204 @@ public object FfiConverterTypeSearchHit: FfiConverterRustBuffer<SearchHit> {
             FfiConverterString.write(value.`title`, buf)
     }
 }
+
+
+
+
+
+/**
+ * Hosted-model failures. None carries key material or response text.
+ */
+sealed class HostedAiException: kotlin.Exception() {
+    
+    /**
+     * The key is empty, too long, or has whitespace or control characters.
+     */
+    class InvalidKey(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The model name or request was rejected before any network traffic.
+     */
+    class InvalidRequest(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The OS certificate verifier has not been initialised on this device.
+     */
+    class NotReady(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The provider refused the request (for example an invalid key).
+     */
+    class Rejected(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    class Timeout(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * Connection, TLS or certificate failure.
+     */
+    class Network(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+    class InvalidResponse(
+        ) : HostedAiException() {
+        override val message
+            get() = ""
+    }
+    
+
+    
+
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<HostedAiException> {
+        override fun lift(error_buf: RustBuffer.ByValue): HostedAiException = FfiConverterTypeHostedAiError.lift(error_buf)
+    }
+
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHostedAiError : FfiConverterRustBuffer<HostedAiException> {
+    override fun read(buf: ByteBuffer): HostedAiException {
+        
+
+        return when(buf.getInt()) {
+            1 -> HostedAiException.InvalidKey()
+            2 -> HostedAiException.InvalidRequest()
+            3 -> HostedAiException.NotReady()
+            4 -> HostedAiException.Rejected()
+            5 -> HostedAiException.Timeout()
+            6 -> HostedAiException.Network()
+            7 -> HostedAiException.InvalidResponse()
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: HostedAiException): ULong {
+        return when(value) {
+            is HostedAiException.InvalidKey -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.InvalidRequest -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.NotReady -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.Rejected -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.Timeout -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.Network -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is HostedAiException.InvalidResponse -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: HostedAiException, buf: ByteBuffer) {
+        when(value) {
+            is HostedAiException.InvalidKey -> {
+                buf.putInt(1)
+                Unit
+            }
+            is HostedAiException.InvalidRequest -> {
+                buf.putInt(2)
+                Unit
+            }
+            is HostedAiException.NotReady -> {
+                buf.putInt(3)
+                Unit
+            }
+            is HostedAiException.Rejected -> {
+                buf.putInt(4)
+                Unit
+            }
+            is HostedAiException.Timeout -> {
+                buf.putInt(5)
+                Unit
+            }
+            is HostedAiException.Network -> {
+                buf.putInt(6)
+                Unit
+            }
+            is HostedAiException.InvalidResponse -> {
+                buf.putInt(7)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+enum class HostedAiProvider {
+    
+    ANTHROPIC,
+    OPEN_AI;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHostedAiProvider: FfiConverterRustBuffer<HostedAiProvider> {
+    override fun read(buf: ByteBuffer) = try {
+        HostedAiProvider.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: HostedAiProvider) = 4UL
+
+    override fun write(value: HostedAiProvider, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -2794,6 +3059,38 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
 /**
  * @suppress
  */
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
+    override fun read(buf: ByteBuffer): kotlin.UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UInt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -2907,4 +3204,45 @@ public object FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer<List<Sea
         }
     }
 }
+        /**
+         * Send one tiny prompt to the user's hosted model with `api_key`. This IS
+         * cloud traffic: call it only from an explicit user action that says so.
+         */
+    @Throws(HostedAiException::class) fun `checkHostedAiConnection`(`provider`: HostedAiProvider, `apiKey`: kotlin.String, `model`: kotlin.String): HostedAiCheck {
+            return FfiConverterTypeHostedAiCheck.lift(
+    uniffiRustCallWithError(HostedAiException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_check_hosted_ai_connection(
+    
+        FfiConverterTypeHostedAiProvider.lower(`provider`),FfiConverterString.lower(`apiKey`),FfiConverterString.lower(`model`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Validate a key's shape before the app stores it. No network traffic.
+         */ fun `hostedAiKeyIsValid`(`apiKey`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_hosted_ai_key_is_valid(
+    
+        FfiConverterString.lower(`apiKey`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Whether hosted HTTPS can verify certificates (Android: after `RustTls.init`).
+         */ fun `hostedAiReady`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_hosted_ai_ready(
+    
+        _status)
+}
+    )
+    }
+    
+
 

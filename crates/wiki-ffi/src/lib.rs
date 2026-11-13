@@ -7,6 +7,8 @@
 //! by scripts/test_ffi_unsafe_boundary.py.
 
 pub mod android;
+#[cfg(target_os = "android")]
+pub mod android_tls;
 pub mod article_chat;
 pub mod online_reader;
 

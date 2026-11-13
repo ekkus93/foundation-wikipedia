@@ -1751,6 +1751,8 @@ dependencies = [
 name = "wiki-ffi"
 version = "0.1.0"
 dependencies = [
+ "jni",
+ "rustls-platform-verifier",
  "uniffi",
  "wiki-ai",
  "wiki-core",

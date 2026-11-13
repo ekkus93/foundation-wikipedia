@@ -437,6 +437,9 @@ private fun FoundationApp() {
                                 "The offline choice persists across app restarts. It does not download " +
                                     "articles, enable bookmarks, or certify missing images and attribution.",
                             )
+                        } else if (category == ReaderSettingsCategory.AI_ASSISTANT) {
+                            Text("AI Assistant", style = MaterialTheme.typography.titleLarge)
+                            HostedAiSection()
                         } else {
                             Text(category.title, style = MaterialTheme.typography.titleLarge)
                             Text(
