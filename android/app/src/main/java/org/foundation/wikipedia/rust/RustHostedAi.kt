@@ -7,10 +7,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import uniffi.wiki_ffi.ChatAnswer
+import uniffi.wiki_ffi.ChatReply
 import uniffi.wiki_ffi.HostedAiCheck
 import uniffi.wiki_ffi.HostedAiProvider
 import uniffi.wiki_ffi.HostedArticleChat
+import uniffi.wiki_ffi.HostedChatRequest
 import uniffi.wiki_ffi.checkHostedAiConnection
 
 /** No key is saved for the requested provider. */
@@ -57,7 +58,9 @@ class RustHostedAi(
     /**
      * Prepare (no network) a question about an article of [library]'s active
      * pack for [provider]. Show the returned preview's `passages()`,
-     * `destination()` and `model()` to the user before calling [send].
+     * `priorTurns()`, `destination()` and `model()` before calling [send].
+     * With [history], a supported answer is saved; [threadId] continues a
+     * saved thread of the same article revision.
      */
     suspend fun prepareArticleChat(
         library: RustOfflineLibrary,
@@ -66,16 +69,21 @@ class RustHostedAi(
         question: String,
         provider: HostedAiProvider,
         model: String,
+        history: RustChatHistory? = null,
+        threadId: Long? = null,
     ): HostedArticleChat {
+        require(pageId > 0) { "pageId must be positive" }
         val key = io { keys.load(provider) } ?: throw HostedAiKeyMissingException()
-        return library.prepareHostedChat(project, pageId, question, provider, model, key)
+        val request = HostedChatRequest(project, pageId.toULong(), question, provider, model, threadId)
+        return library.prepareHostedChat(request, key, history)
     }
 
     /**
      * Send a disclosed preview once the user agreed to share its passages
-     * with its destination. Cancelling the coroutine cancels the request.
+     * (and earlier turns) with its destination. Cancelling the coroutine
+     * cancels the request.
      */
-    suspend fun send(chat: HostedArticleChat): ChatAnswer = coroutineScope {
+    suspend fun send(chat: HostedArticleChat): ChatReply = coroutineScope {
         val request = async(dispatcher) {
             requireOffMainThread()
             RustTls.init(app)

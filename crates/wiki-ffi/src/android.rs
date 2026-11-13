@@ -548,7 +548,9 @@ pub fn run_hosted_check(
 // be sent, without any network I/O, for the app to disclose. `send` contacts
 // the provider only with the user's consent to THAT preview; the reply is
 // shown only after its citations are validated against the same verified
-// article revision. Nothing is saved (Android has no chat history yet).
+// article revision. With a `ChatHistory`, a supported answer is saved to its
+// exact-revision thread with the cited evidence, and a follow-up question
+// resends that thread's recent turns (disclosed in the preview).
 
 const CHAT_PASSAGE_LIMIT: usize = 6;
 const CHAT_CONTEXT_WORDS: usize = 900;
@@ -583,6 +585,8 @@ pub enum ChatError {
     InvalidResponse,
     /// The reply's citations did not match the evidence, so it is not shown.
     Unverifiable,
+    /// Chat history could not be read or written.
+    Storage,
 }
 
 impl std::fmt::Display for ChatError {
@@ -631,6 +635,18 @@ impl From<wiki_ai::article_destination::ArticleInferenceError> for ChatError {
             E::Rag(R::Citation(_) | R::MalformedCitation) | E::Display(_) => Self::Unverifiable,
         }
     }
+}
+
+/// What to ask, of which article of the active pack, and where.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HostedChatRequest {
+    pub project: String,
+    pub page_id: u64,
+    pub question: String,
+    pub provider: HostedAiProvider,
+    pub model: String,
+    /// Continue this saved thread (needs chat history); `None` starts one.
+    pub thread_id: Option<i64>,
 }
 
 /// One passage that will be sent, shown to the user before consent.
@@ -682,14 +698,26 @@ pub struct HostedArticleChat {
     >,
     cancellation: wiki_ai::CancellationToken,
     sent: Mutex<bool>,
+    /// Where a supported answer is saved, with the thread and the personal
+    /// data generation observed when the preview was prepared.
+    history: Option<Arc<ChatHistory>>,
+    thread_id: Option<i64>,
+    generation: u64,
+    prior_turns: Vec<(String, String)>,
+    snapshot_id: Option<String>,
 }
 
 impl HostedArticleChat {
     fn with_question<T>(
         question: &str,
         model: &str,
+        prior: &[(String, String)],
         run: impl FnOnce(&wiki_ai::rag::ArticleQuestion<'_>) -> T,
     ) -> T {
+        let prior_turns: Vec<wiki_ai::rag::PriorTurn<'_>> = prior
+            .iter()
+            .map(|(question, answer)| wiki_ai::rag::PriorTurn { question, answer })
+            .collect();
         run(&wiki_ai::rag::ArticleQuestion {
             question,
             model,
@@ -698,7 +726,7 @@ impl HostedArticleChat {
             selected_evidence: None,
             max_output_tokens: CHAT_MAX_OUTPUT_TOKENS,
             outbound_policy: wiki_ai::OutboundPolicy::AllowCloud,
-            prior_turns: &[],
+            prior_turns: &prior_turns,
         })
     }
 }
@@ -737,9 +765,23 @@ impl HostedArticleChat {
         self.cancellation.cancel();
     }
 
+    /// Earlier turns of the thread that will be sent before the question
+    /// (citation markers removed), oldest first. Disclose them too.
+    pub fn prior_turns(&self) -> Vec<ChatTurn> {
+        self.preview
+            .history()
+            .iter()
+            .map(|(question, answer)| ChatTurn {
+                question: question.clone(),
+                answer: answer.clone(),
+            })
+            .collect()
+    }
+
     /// Send the disclosed request. `share_article_passages` must be the
-    /// user's explicit consent to this preview. Usable once.
-    pub fn send(&self, share_article_passages: bool) -> Result<ChatAnswer, ChatError> {
+    /// user's explicit consent to this preview. Usable once. With chat
+    /// history, a supported answer is saved and its thread returned.
+    pub fn send(&self, share_article_passages: bool) -> Result<ChatReply, ChatError> {
         if !share_article_passages {
             return Err(ChatError::ConsentRequired);
         }
@@ -753,38 +795,298 @@ impl HostedArticleChat {
         if self.cancellation.is_cancelled() {
             return Err(ChatError::Cancelled);
         }
-        let answer = Self::with_question(&self.question, self.preview.model(), |question| {
-            wiki_ai::article_destination::answer_article_with_preview_display(
-                &self.selected,
-                &self.article,
-                question,
-                &self.preview,
-                true,
-                &self.cancellation,
+        let model = self.preview.model().to_owned();
+        let Some(history) = &self.history else {
+            let answer =
+                Self::with_question(&self.question, &model, &self.prior_turns, |question| {
+                    wiki_ai::article_destination::answer_article_with_preview_display(
+                        &self.selected,
+                        &self.article,
+                        question,
+                        &self.preview,
+                        true,
+                        &self.cancellation,
+                    )
+                })?;
+            return Ok(ChatReply {
+                answer: display_answer(answer),
+                thread_id: None,
+            });
+        };
+        // A fresh connection: the request may take minutes and must not
+        // block history reads; SQLite serializes the final write.
+        let mut state = history.open()?;
+        let outcome = Self::with_question(&self.question, &model, &self.prior_turns, |question| {
+            crate::article_chat::answer_and_save_article(
+                &mut state,
+                self.generation,
+                crate::article_chat::ArticleChatRequest {
+                    article: &self.article,
+                    question,
+                    selected: &self.selected,
+                    preview: &self.preview,
+                    share_article_passages: true,
+                    existing_thread: self.thread_id,
+                    evidence_snapshot: self.snapshot_id.as_deref(),
+                    cancellation: &self.cancellation,
+                },
             )
         })?;
-        Ok(match answer {
-            wiki_ai::article_destination::ArticleDisplayAnswer::InsufficientEvidence => {
-                ChatAnswer::InsufficientEvidence
-            }
-            wiki_ai::article_destination::ArticleDisplayAnswer::Supported(parts) => {
-                ChatAnswer::Supported {
-                    parts: parts
-                        .into_iter()
-                        .map(|part| match part {
-                            wiki_ai::rag::ArticleAnswerDisplayPart::Text(text) => {
-                                ChatAnswerPart::Text { text }
-                            }
-                            wiki_ai::rag::ArticleAnswerDisplayPart::Citation(target) => {
-                                ChatAnswerPart::Citation {
-                                    passage: ChatPassage::from(&target.evidence),
-                                }
-                            }
-                        })
-                        .collect(),
-                }
-            }
+        Ok(match outcome {
+            crate::article_chat::SavedArticleChatOutcome::InsufficientEvidence => ChatReply {
+                answer: ChatAnswer::InsufficientEvidence,
+                thread_id: self.thread_id,
+            },
+            crate::article_chat::SavedArticleChatOutcome::Supported {
+                parts, thread_id, ..
+            } => ChatReply {
+                answer: display_answer(
+                    wiki_ai::article_destination::ArticleDisplayAnswer::Supported(parts),
+                ),
+                thread_id: Some(thread_id),
+            },
         })
+    }
+}
+
+fn display_answer(answer: wiki_ai::article_destination::ArticleDisplayAnswer) -> ChatAnswer {
+    match answer {
+        wiki_ai::article_destination::ArticleDisplayAnswer::InsufficientEvidence => {
+            ChatAnswer::InsufficientEvidence
+        }
+        wiki_ai::article_destination::ArticleDisplayAnswer::Supported(parts) => {
+            ChatAnswer::Supported {
+                parts: parts
+                    .into_iter()
+                    .map(|part| match part {
+                        wiki_ai::rag::ArticleAnswerDisplayPart::Text(text) => {
+                            ChatAnswerPart::Text { text }
+                        }
+                        wiki_ai::rag::ArticleAnswerDisplayPart::Citation(target) => {
+                            ChatAnswerPart::Citation {
+                                passage: ChatPassage::from(&target.evidence),
+                            }
+                        }
+                    })
+                    .collect(),
+            }
+        }
+    }
+}
+
+/// The result of a sent question.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ChatReply {
+    pub answer: ChatAnswer,
+    /// The saved thread (new or continued); `None` without chat history or
+    /// for an unsaved abstention on a new thread.
+    pub thread_id: Option<i64>,
+}
+
+/// An earlier exchange resent as context.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ChatTurn {
+    pub question: String,
+    pub answer: String,
+}
+
+impl From<crate::article_chat::ArticleChatError> for ChatError {
+    fn from(error: crate::article_chat::ArticleChatError) -> Self {
+        use crate::article_chat::ArticleChatError as E;
+        match error {
+            E::Inference(error) => error.into(),
+            E::Store(error) => store_error(error),
+            E::Cancelled => Self::Cancelled,
+            E::InvalidSavedMessage => Self::InvalidInput,
+            E::StalePersonalData | E::HistoryMismatch => Self::PreviewChanged,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Android chat history: exact-revision threads in the shared user-state
+// SQLite (the same schema the desktop uses), in an app-private directory.
+
+const MAX_LISTED_THREADS: usize = 200;
+const MAX_LISTED_EXCHANGES: usize = 200;
+
+/// One saved part of an answer. Citations are historical: they show the
+/// evidence saved with the answer, which may differ from a newer revision.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum SavedAnswerPart {
+    Text {
+        text: String,
+    },
+    Citation {
+        block_id: String,
+        passage: Option<ChatPassage>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SavedExchange {
+    pub question_id: i64,
+    pub answer_id: i64,
+    pub question: String,
+    pub answer: Vec<SavedAnswerPart>,
+}
+
+#[derive(uniffi::Object)]
+pub struct ChatHistory {
+    database: PathBuf,
+}
+
+impl ChatHistory {
+    fn open(&self) -> Result<wiki_store::user_state::UserState, ChatError> {
+        wiki_store::user_state::UserState::open(&self.database).map_err(|_| ChatError::Storage)
+    }
+
+    fn generation(&self) -> Result<u64, ChatError> {
+        self.open()?
+            .personal_generation()
+            .map_err(|_| ChatError::Storage)
+    }
+}
+
+fn article_key(project: String, page_id: u64) -> Result<ArticleKey, ChatError> {
+    let key = ArticleKey { project, page_id };
+    key.validate().map_err(|_| ChatError::InvalidInput)?;
+    Ok(key)
+}
+
+fn store_error(error: wiki_store::user_state::UserStateError) -> ChatError {
+    match error {
+        wiki_store::user_state::UserStateError::InvalidValue => ChatError::InvalidInput,
+        _ => ChatError::Storage,
+    }
+}
+
+/// Split stored answer text at its `[[cite:BLOCK]]` markers.
+fn saved_parts(
+    text: &str,
+    citations: &[wiki_store::user_state::StoredCitation],
+) -> Vec<SavedAnswerPart> {
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[cite:") {
+        let after = &rest[start + 7..];
+        let Some(end) = after.find("]]") else {
+            break;
+        };
+        if start > 0 {
+            parts.push(SavedAnswerPart::Text {
+                text: rest[..start].to_owned(),
+            });
+        }
+        let block_id = after[..end].to_owned();
+        let passage = citations
+            .iter()
+            .find(|citation| citation.block_id == block_id)
+            .map(|citation| ChatPassage {
+                block_id: citation.block_id.clone(),
+                heading_path: citation.heading_path.clone(),
+                excerpt: citation.excerpt.clone(),
+            });
+        parts.push(SavedAnswerPart::Citation { block_id, passage });
+        rest = &after[end + 2..];
+    }
+    if !rest.is_empty() {
+        parts.push(SavedAnswerPart::Text {
+            text: rest.to_owned(),
+        });
+    }
+    parts
+}
+
+#[uniffi::export]
+impl ChatHistory {
+    /// Open (creating if needed) chat history in an absolute app-private
+    /// directory (Android: under `noBackupFilesDir`).
+    #[uniffi::constructor]
+    pub fn new(data_dir: String) -> Result<Arc<Self>, ChatError> {
+        let requested = PathBuf::from(&data_dir);
+        if !requested.is_absolute() || data_dir.contains('\0') {
+            return Err(ChatError::InvalidInput);
+        }
+        std::fs::create_dir_all(&requested).map_err(|_| ChatError::Storage)?;
+        let root = std::fs::canonicalize(&requested).map_err(|_| ChatError::Storage)?;
+        let history = Self {
+            database: root.join("chat-history.sqlite"),
+        };
+        history.open()?;
+        Ok(Arc::new(history))
+    }
+
+    /// Thread IDs saved for one exact article revision, newest first.
+    pub fn threads(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+    ) -> Result<Vec<i64>, ChatError> {
+        let key = article_key(project, page_id)?;
+        self.open()?
+            .list_chat_threads(&key, revision_id, MAX_LISTED_THREADS)
+            .map_err(store_error)
+    }
+
+    /// The saved exchanges of a thread, oldest first.
+    pub fn exchanges(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+        thread_id: i64,
+    ) -> Result<Vec<SavedExchange>, ChatError> {
+        let key = article_key(project, page_id)?;
+        let state = self.open()?;
+        state
+            .recent_chat_exchanges(&key, revision_id, thread_id, MAX_LISTED_EXCHANGES)
+            .map_err(store_error)?
+            .into_iter()
+            .map(|exchange| {
+                let citations = state
+                    .chat_citations(&key, revision_id, thread_id, exchange.answer.id)
+                    .map_err(store_error)?;
+                Ok(SavedExchange {
+                    question_id: exchange.question.id,
+                    answer_id: exchange.answer.id,
+                    question: exchange.question.content,
+                    answer: saved_parts(&exchange.answer.content, &citations),
+                })
+            })
+            .collect()
+    }
+
+    /// Delete one thread and its messages. Returns whether it existed.
+    pub fn delete_thread(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+        thread_id: i64,
+    ) -> Result<bool, ChatError> {
+        let key = article_key(project, page_id)?;
+        let state = self.open()?;
+        let generation = state.personal_generation().map_err(store_error)?;
+        state
+            .delete_chat_thread_for_generation(generation, &key, revision_id, thread_id)
+            .map_err(store_error)
+    }
+
+    /// Delete every saved chat. Questions prepared earlier can no longer be
+    /// saved (they fail with `PreviewChanged`).
+    pub fn clear_all(&self) -> Result<(), ChatError> {
+        let mut state = self.open()?;
+        let generation = state.personal_generation().map_err(store_error)?;
+        if state
+            .clear_personal_reading_data_for_generation(generation)
+            .map_err(store_error)?
+        {
+            Ok(())
+        } else {
+            Err(ChatError::PreviewChanged)
+        }
     }
 }
 
@@ -795,13 +1097,21 @@ impl OfflineLibrary {
     /// in memory by the returned object.
     pub fn prepare_hosted_chat(
         &self,
-        project: String,
-        page_id: u64,
-        question: String,
-        provider: HostedAiProvider,
-        model: String,
+        request: HostedChatRequest,
         api_key: String,
+        history: Option<Arc<ChatHistory>>,
     ) -> Result<Arc<HostedArticleChat>, ChatError> {
+        let HostedChatRequest {
+            project,
+            page_id,
+            question,
+            provider,
+            model,
+            thread_id,
+        } = request;
+        if thread_id.is_some() && history.is_none() {
+            return Err(ChatError::InvalidInput);
+        }
         let question = question.trim().to_owned();
         if question.is_empty() || question.len() > MAX_CHAT_QUESTION_BYTES {
             return Err(ChatError::InvalidInput);
@@ -825,11 +1135,30 @@ impl OfflineLibrary {
                 _ => ChatError::VerificationFailed,
             })?
             .ok_or(ChatError::NotInstalled)?;
+        let snapshot_id = self.active_snapshot().map_err(|_| ChatError::Storage)?;
+        // Capture the privacy generation BEFORE reading the thread, so a
+        // concurrent "clear all" makes the later save fail closed.
+        let (generation, prior_turns) = match &history {
+            Some(history) => {
+                let generation = history.generation()?;
+                let prior = match thread_id {
+                    Some(id) => {
+                        let state = history.open()?;
+                        crate::article_chat::prior_turns_for_thread(&state, &article, id)
+                            .map_err(ChatError::from)?
+                    }
+                    None => Vec::new(),
+                };
+                (generation, prior)
+            }
+            None => (0, Vec::new()),
+        };
         let model = wiki_ai::article_destination::ArticleDestination::model(&selected).to_owned();
-        let preview = HostedArticleChat::with_question(&question, &model, |question| {
-            wiki_ai::article_destination::prepare_article_preview(&selected, &article, question)
-        })?
-        .ok_or(ChatError::NoEvidence)?;
+        let preview =
+            HostedArticleChat::with_question(&question, &model, &prior_turns, |question| {
+                wiki_ai::article_destination::prepare_article_preview(&selected, &article, question)
+            })?
+            .ok_or(ChatError::NoEvidence)?;
         Ok(Arc::new(HostedArticleChat {
             article,
             selected,
@@ -837,6 +1166,11 @@ impl OfflineLibrary {
             preview,
             cancellation: wiki_ai::CancellationToken::default(),
             sent: Mutex::new(false),
+            history,
+            thread_id,
+            generation,
+            prior_turns,
+            snapshot_id,
         }))
     }
 }

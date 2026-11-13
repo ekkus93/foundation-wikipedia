@@ -438,11 +438,17 @@ fn library_opens_through_a_symlinked_app_directory() {
 /// AI-003: hosted article chat over an installed pack, without network I/O.
 mod hosted_chat {
     use super::*;
-    use wiki_ffi::android::{ChatError, HostedAiProvider};
+    use std::sync::Arc;
+    use wiki_ffi::android::{
+        ChatError, ChatHistory, ChatPassage, ChatTurn, HostedAiProvider, HostedArticleChat,
+        HostedChatRequest, SavedAnswerPart,
+    };
+    use wiki_store::user_state::UserState;
 
     const KEY: &str = "sk-ant-host-test-secret";
+    const TIDE_REVISION: u64 = 7002;
 
-    fn active_library(dir: &Path) -> std::sync::Arc<OfflineLibrary> {
+    fn active_library(dir: &Path) -> Arc<OfflineLibrary> {
         let pack = build_pack(dir, "moon-pack");
         let library = library(dir);
         library
@@ -452,19 +458,64 @@ mod hosted_chat {
         library
     }
 
+    fn request(page_id: u64, question: &str, thread_id: Option<i64>) -> HostedChatRequest {
+        HostedChatRequest {
+            project: "enwiki".into(),
+            page_id,
+            question: question.into(),
+            provider: HostedAiProvider::Anthropic,
+            model: "claude-haiku-5-5".into(),
+            thread_id,
+        }
+    }
+
     fn prepare(
         library: &OfflineLibrary,
         page_id: u64,
         question: &str,
-    ) -> Result<std::sync::Arc<wiki_ffi::android::HostedArticleChat>, ChatError> {
-        library.prepare_hosted_chat(
-            "enwiki".into(),
-            page_id,
-            question.into(),
-            HostedAiProvider::Anthropic,
-            "claude-haiku-5-5".into(),
-            KEY.into(),
+    ) -> Result<Arc<HostedArticleChat>, ChatError> {
+        library.prepare_hosted_chat(request(page_id, question, None), KEY.into(), None)
+    }
+
+    fn history(dir: &Path) -> Arc<ChatHistory> {
+        ChatHistory::new(dir.join("chat").to_string_lossy().into_owned()).unwrap()
+    }
+
+    /// Save one supported exchange about the Tide article directly in the
+    /// store, citing `passage`, and return its thread.
+    fn seed_thread(dir: &Path, passage: &ChatPassage) -> i64 {
+        let mut state = UserState::open(&dir.join("chat").join("chat-history.sqlite")).unwrap();
+        let generation = state.personal_generation().unwrap();
+        let key = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 2,
+        };
+        let citation = wiki_search::saved_citation::SavedCitation::from_evidence(
+            &key,
+            &wiki_search::EvidenceHit {
+                block_id: passage.block_id.clone(),
+                revision_id: TIDE_REVISION,
+                heading_path: passage.heading_path.clone(),
+                excerpt: passage.excerpt.clone(),
+                score: 0,
+            },
+            Some("moon-pack"),
         )
+        .unwrap()
+        .to_stored();
+        let (thread, _, _) = state
+            .save_cited_chat_exchange_for_generation(
+                generation,
+                &key,
+                TIDE_REVISION,
+                None,
+                "What do tides follow?",
+                &format!("The Moon. [[cite:{}]]", passage.block_id),
+                &[citation],
+            )
+            .unwrap()
+            .unwrap();
+        thread
     }
 
     #[test]
@@ -475,8 +526,8 @@ mod hosted_chat {
         assert_eq!(chat.destination(), "api.anthropic.com");
         assert_eq!(chat.model(), "claude-haiku-5-5");
         assert_eq!(chat.article_title(), "Tide");
+        assert_eq!(chat.prior_turns(), Vec::<ChatTurn>::new());
         let passages = chat.passages();
-        assert!(!passages.is_empty());
         assert!(passages
             .iter()
             .any(|passage| passage.excerpt.contains("Tides follow the Moon's gravity.")));
@@ -490,10 +541,22 @@ mod hosted_chat {
     fn cancellation_before_sending_never_connects_and_a_preview_is_single_use() {
         let dir = test_dir("chat-cancel");
         let library = active_library(&dir.0);
-        let chat = prepare(&library, 1, "What does the Moon orbit?").unwrap();
+        let history = history(&dir.0);
+        let chat = library
+            .prepare_hosted_chat(
+                request(1, "What does the Moon orbit?", None),
+                KEY.into(),
+                Some(history.clone()),
+            )
+            .unwrap();
         chat.cancel();
         assert_eq!(chat.send(true), Err(ChatError::Cancelled));
         assert_eq!(chat.send(true), Err(ChatError::AlreadySent));
+        // Nothing was saved for the cancelled question.
+        assert_eq!(
+            history.threads("enwiki".into(), 1, 7001).unwrap(),
+            Vec::<i64>::new()
+        );
     }
 
     #[test]
@@ -522,22 +585,130 @@ mod hosted_chat {
             Some(ChatError::NoEvidence)
         );
         let bad_key = library.prepare_hosted_chat(
-            "enwiki".into(),
-            1,
-            "What does the Moon orbit?".into(),
-            HostedAiProvider::OpenAi,
-            "gpt-x".into(),
+            request(1, "What does the Moon orbit?", None),
             "bad key".into(),
+            None,
         );
         assert_eq!(bad_key.err(), Some(ChatError::InvalidKey));
-        let bad_model = library.prepare_hosted_chat(
-            "enwiki".into(),
-            1,
-            "What does the Moon orbit?".into(),
-            HostedAiProvider::OpenAi,
-            "two words".into(),
-            KEY.into(),
+        let mut bad_model = request(1, "What does the Moon orbit?", None);
+        bad_model.model = "two words".into();
+        assert_eq!(
+            library
+                .prepare_hosted_chat(bad_model, KEY.into(), None)
+                .err(),
+            Some(ChatError::InvalidInput)
         );
-        assert_eq!(bad_model.err(), Some(ChatError::InvalidInput));
+        // A thread can only be continued with chat history.
+        assert_eq!(
+            library
+                .prepare_hosted_chat(
+                    request(1, "What does the Moon orbit?", Some(1)),
+                    KEY.into(),
+                    None
+                )
+                .err(),
+            Some(ChatError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn saved_threads_are_listed_read_with_their_evidence_and_continued() {
+        let dir = test_dir("chat-history");
+        let library = active_library(&dir.0);
+        let history = history(&dir.0);
+        let passage = prepare(&library, 2, "What do tides follow?")
+            .unwrap()
+            .passages()[0]
+            .clone();
+        let thread = seed_thread(&dir.0, &passage);
+
+        assert_eq!(
+            history.threads("enwiki".into(), 2, TIDE_REVISION).unwrap(),
+            vec![thread]
+        );
+        assert_eq!(
+            history.threads("enwiki".into(), 2, 1).unwrap(),
+            Vec::<i64>::new()
+        );
+        let exchanges = history
+            .exchanges("enwiki".into(), 2, TIDE_REVISION, thread)
+            .unwrap();
+        assert_eq!(exchanges.len(), 1);
+        assert_eq!(exchanges[0].question, "What do tides follow?");
+        assert_eq!(
+            exchanges[0].answer,
+            vec![
+                SavedAnswerPart::Text {
+                    text: "The Moon. ".into()
+                },
+                SavedAnswerPart::Citation {
+                    block_id: passage.block_id.clone(),
+                    passage: Some(passage.clone()),
+                },
+            ]
+        );
+
+        // A follow-up resends the thread's turns, disclosed without markers.
+        let follow_up = library
+            .prepare_hosted_chat(
+                request(2, "Why do tides follow the Moon?", Some(thread)),
+                KEY.into(),
+                Some(history.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            follow_up.prior_turns(),
+            vec![ChatTurn {
+                question: "What do tides follow?".into(),
+                answer: "The Moon.".into(),
+            }]
+        );
+
+        // A thread of another article cannot be continued here.
+        assert_eq!(
+            library
+                .prepare_hosted_chat(
+                    request(1, "What does the Moon orbit?", Some(thread)),
+                    KEY.into(),
+                    Some(history.clone()),
+                )
+                .err(),
+            Some(ChatError::InvalidInput)
+        );
+
+        // Clearing history makes the prepared follow-up unsaveable, and it
+        // is refused before any connection.
+        history.clear_all().unwrap();
+        assert_eq!(follow_up.send(true), Err(ChatError::PreviewChanged));
+        assert_eq!(
+            history.threads("enwiki".into(), 2, TIDE_REVISION).unwrap(),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn a_thread_can_be_deleted() {
+        let dir = test_dir("chat-delete");
+        let library = active_library(&dir.0);
+        let history = history(&dir.0);
+        let passage = prepare(&library, 2, "What do tides follow?")
+            .unwrap()
+            .passages()[0]
+            .clone();
+        let thread = seed_thread(&dir.0, &passage);
+        assert!(history
+            .delete_thread("enwiki".into(), 2, TIDE_REVISION, thread)
+            .unwrap());
+        assert!(!history
+            .delete_thread("enwiki".into(), 2, TIDE_REVISION, thread)
+            .unwrap());
+        assert_eq!(
+            history.threads("enwiki".into(), 2, TIDE_REVISION).unwrap(),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            ChatHistory::new("relative/path".into()).err(),
+            Some(ChatError::InvalidInput)
+        );
     }
 }

@@ -44,6 +44,7 @@ pub enum SavedArticleChatOutcome {
 /// Persist only after the consented provider has completed and its citations
 /// have passed the shared RAG and canonical navigation checks. This private
 /// boundary is not an API for arbitrary caller-constructed "verified" text.
+#[allow(clippy::too_many_arguments)]
 fn persist_validated_display(
     state: &mut UserState,
     generation: u64,
@@ -51,6 +52,7 @@ fn persist_validated_display(
     question: &str,
     thread_id: Option<i64>,
     answer: LocalArticleDisplayAnswer,
+    evidence_snapshot: Option<&str>,
     cancellation: &CancellationToken,
 ) -> Result<SavedArticleChatOutcome, ArticleChatError> {
     if cancellation.is_cancelled() {
@@ -67,10 +69,25 @@ fn persist_validated_display(
         return Ok(SavedArticleChatOutcome::InsufficientEvidence);
     };
     let mut stored = String::new();
+    // The exact evidence each distinct cited block came from, in first-cited
+    // order, saved with the answer so history can show it later (schema v3).
+    let mut citations: Vec<wiki_store::user_state::StoredCitation> = Vec::new();
     for part in &parts {
         match part {
             ArticleAnswerDisplayPart::Text(text) => stored.push_str(text),
             ArticleAnswerDisplayPart::Citation(target) => {
+                if !citations
+                    .iter()
+                    .any(|saved| saved.block_id == target.evidence.block_id)
+                {
+                    let saved = wiki_search::saved_citation::SavedCitation::from_evidence(
+                        &article.key,
+                        &target.evidence,
+                        evidence_snapshot,
+                    )
+                    .map_err(|_| ArticleChatError::InvalidSavedMessage)?;
+                    citations.push(saved.to_stored());
+                }
                 stored.push_str("[[cite:");
                 stored.push_str(&target.evidence.block_id);
                 stored.push_str("]]");
@@ -87,13 +104,14 @@ fn persist_validated_display(
     // article/revision/thread identity again. A new thread and both turns are
     // inserted together, so cancellation/errors leave no empty conversation.
     let saved = state
-        .save_chat_exchange_for_generation(
+        .save_cited_chat_exchange_for_generation(
             generation,
             &article.key,
             article.revision.revision_id,
             thread_id,
             question,
             &stored,
+            &citations,
         )
         .map_err(ArticleChatError::Store)?;
     let Some((thread_id, question_id, answer_id)) = saved else {
@@ -130,6 +148,9 @@ pub struct ArticleChatRequest<'a, D: ArticleDestination = SelectedLocalModel> {
     pub preview: &'a ArticlePreview<D>,
     pub share_article_passages: bool,
     pub existing_thread: Option<i64>,
+    /// Installed snapshot the article was read from, if any; recorded with
+    /// each saved citation.
+    pub evidence_snapshot: Option<&'a str>,
     pub cancellation: &'a CancellationToken,
 }
 
@@ -175,6 +196,7 @@ pub fn answer_and_save_article<D: ArticleDestination>(
         preview,
         share_article_passages,
         existing_thread,
+        evidence_snapshot,
         cancellation,
     } = request;
     if !share_article_passages {
@@ -229,6 +251,7 @@ pub fn answer_and_save_article<D: ArticleDestination>(
         question.question,
         existing_thread,
         answer,
+        evidence_snapshot,
         cancellation,
     )
 }
@@ -305,6 +328,7 @@ mod tests {
                 "gravity",
                 None,
                 LocalArticleDisplayAnswer::Supported(parts.clone()),
+                None,
                 &cancelled,
             ),
             Err(ArticleChatError::Cancelled)
@@ -322,6 +346,7 @@ mod tests {
                 "gravity",
                 None,
                 LocalArticleDisplayAnswer::InsufficientEvidence,
+                None,
                 &active,
             )
             .unwrap(),
@@ -334,6 +359,7 @@ mod tests {
             "gravity",
             None,
             LocalArticleDisplayAnswer::Supported(parts.clone()),
+            None,
             &active,
         )
         .unwrap();
@@ -357,6 +383,14 @@ mod tests {
             messages[1].content,
             format!("Gravity attracts [[cite:{}]]", hit.block_id)
         );
+        // The cited evidence is stored with the answer for later display.
+        let citations = state
+            .chat_citations(&article.key, 12, thread_id, answer_id)
+            .unwrap();
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].block_id, hit.block_id);
+        assert_eq!(citations[0].excerpt, hit.excerpt);
+        assert_eq!(citations[0].snapshot_id, None);
         assert!(matches!(
             persist_validated_display(
                 &mut state,
@@ -365,6 +399,7 @@ mod tests {
                 "gravity",
                 Some(thread_id + 1),
                 LocalArticleDisplayAnswer::Supported(parts),
+                None,
                 &active,
             ),
             Err(ArticleChatError::Store(UserStateError::InvalidValue))
@@ -385,6 +420,7 @@ mod tests {
                 "gravity",
                 None,
                 LocalArticleDisplayAnswer::InsufficientEvidence,
+                None,
                 &active,
             ),
             Err(ArticleChatError::StalePersonalData)
@@ -495,6 +531,7 @@ mod tests {
                     preview: &preview,
                     share_article_passages: false,
                     existing_thread: None,
+                    evidence_snapshot: None,
                     cancellation: &token,
                 },
             ),
@@ -516,6 +553,7 @@ mod tests {
                 preview: &preview,
                 share_article_passages: true,
                 existing_thread: None,
+                evidence_snapshot: None,
                 cancellation: &token,
             },
         )
@@ -583,6 +621,7 @@ mod tests {
                     preview: &follow_up_preview,
                     share_article_passages: true,
                     existing_thread: thread,
+                    evidence_snapshot: None,
                     cancellation: &token,
                 },
             );

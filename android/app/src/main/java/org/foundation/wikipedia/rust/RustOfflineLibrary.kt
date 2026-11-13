@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import uniffi.wiki_ffi.ArticlePage
-import uniffi.wiki_ffi.HostedAiProvider
+import uniffi.wiki_ffi.HostedChatRequest
 import uniffi.wiki_ffi.HostedArticleChat
 import uniffi.wiki_ffi.InstallReviewer
 import uniffi.wiki_ffi.InstalledPack
@@ -103,18 +103,10 @@ class RustOfflineLibrary private constructor(
 
     /** See [RustHostedAi.prepareArticleChat]; the key comes from secure storage. */
     internal suspend fun prepareHostedChat(
-        project: String,
-        pageId: Long,
-        question: String,
-        provider: HostedAiProvider,
-        model: String,
+        request: HostedChatRequest,
         apiKey: String,
-    ): HostedArticleChat {
-        require(pageId > 0) { "pageId must be positive" }
-        return call {
-            it.prepareHostedChat(project, pageId.toULong(), question, provider, model, apiKey)
-        }
-    }
+        history: RustChatHistory?,
+    ): HostedArticleChat = call { it.prepareHostedChat(request, apiKey, history?.history) }
 
     override fun close() = library.close()
 

@@ -686,6 +686,14 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_func_hosted_ai_ready(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_chathistory_clear_all(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_chathistory_delete_thread(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_chathistory_exchanges(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_chathistory_threads(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_article_title(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_cancel(
@@ -695,6 +703,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_model(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_passages(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_prior_turns(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_revision_id(
     ): Int
@@ -722,6 +732,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_packsource_read(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_constructor_chathistory_new(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_constructor_offlinelibrary_new(
     ): Int
     external fun ffi_wiki_ffi_uniffi_contract_version(
@@ -744,7 +756,21 @@ internal object UniffiLib {
         uniffiCallbackInterfacePackSource.register(this)
         
     }
-    external fun uniffi_wiki_ffi_fn_clone_hostedarticlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_wiki_ffi_fn_clone_chathistory(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_free_chathistory(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_constructor_chathistory_new(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_method_chathistory_clear_all(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_method_chathistory_delete_thread(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,`threadId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_wiki_ffi_fn_method_chathistory_exchanges(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,`threadId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_chathistory_threads(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_clone_hostedarticlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_wiki_ffi_fn_free_hostedarticlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -757,6 +783,8 @@ external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_destination(`ptr`: Long
 external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_model(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_passages(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_prior_turns(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_revision_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
@@ -788,7 +816,7 @@ external fun uniffi_wiki_ffi_fn_method_offlinelibrary_list_packs(`ptr`: Long,uni
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_page(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`question`: RustBuffer.ByValue,`provider`: RustBuffer.ByValue,`model`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(`ptr`: Long,`request`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_remove_pack(`ptr`: Long,`snapshotId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -936,6 +964,18 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_ready() != 12470) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_wiki_ffi_checksum_method_chathistory_clear_all() != 23943) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_chathistory_delete_thread() != 27207) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_chathistory_exchanges() != 59838) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_chathistory_threads() != 26969) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_article_title() != 7925) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -951,10 +991,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_passages() != 52083) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_prior_turns() != 36332) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_revision_id() != 10625) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_send() != 2281) {
+    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_send() != 44049) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_installreviewer_approve() != 46819) {
@@ -978,7 +1021,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_page() != 10136) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat() != 35673) {
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat() != 49829) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_remove_pack() != 9570) {
@@ -988,6 +1031,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_packsource_read() != 38010) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_constructor_chathistory_new() != 51162) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_constructor_offlinelibrary_new() != 26112) {
@@ -1203,6 +1249,29 @@ public object FfiConverterULong: FfiConverter<ULong, Long> {
 /**
  * @suppress
  */
+public object FfiConverterLong: FfiConverter<Long, Long> {
+    override fun lift(value: Long): Long {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Long {
+        return buf.getLong()
+    }
+
+    override fun lower(value: Long): Long {
+        return value
+    }
+
+    override fun allocationSize(value: Long) = 8UL
+
+    override fun write(value: Long, buf: ByteBuffer) {
+        buf.putLong(value)
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
     override fun lift(value: Byte): Boolean {
         return value.toInt() != 0
@@ -1395,6 +1464,342 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 //
 
 
+public interface ChatHistoryInterface {
+    
+    /**
+     * Delete every saved chat. Questions prepared earlier can no longer be
+     * saved (they fail with `PreviewChanged`).
+     */
+    fun `clearAll`()
+    
+    /**
+     * Delete one thread and its messages. Returns whether it existed.
+     */
+    fun `deleteThread`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `threadId`: kotlin.Long): kotlin.Boolean
+    
+    /**
+     * The saved exchanges of a thread, oldest first.
+     */
+    fun `exchanges`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `threadId`: kotlin.Long): List<SavedExchange>
+    
+    /**
+     * Thread IDs saved for one exact article revision, newest first.
+     */
+    fun `threads`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): List<kotlin.Long>
+    
+    companion object
+}
+
+open class ChatHistory: Disposable, AutoCloseable, ChatHistoryInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    /**
+     * Open (creating if needed) chat history in an absolute app-private
+     * directory (Android: under `noBackupFilesDir`).
+     */
+    constructor(`dataDir`: kotlin.String) :
+        this(UniffiWithHandle, 
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_constructor_chathistory_new(
+    
+        FfiConverterString.lower(`dataDir`),_status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_wiki_ffi_fn_free_chathistory(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_wiki_ffi_fn_clone_chathistory(handle, status)
+        }
+    }
+
+    
+    /**
+     * Delete every saved chat. Questions prepared earlier can no longer be
+     * saved (they fail with `PreviewChanged`).
+     */
+    @Throws(ChatException::class)override fun `clearAll`()
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_chathistory_clear_all(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Delete one thread and its messages. Returns whether it existed.
+     */
+    @Throws(ChatException::class)override fun `deleteThread`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `threadId`: kotlin.Long): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_chathistory_delete_thread(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),FfiConverterLong.lower(`threadId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The saved exchanges of a thread, oldest first.
+     */
+    @Throws(ChatException::class)override fun `exchanges`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `threadId`: kotlin.Long): List<SavedExchange> {
+            return FfiConverterSequenceTypeSavedExchange.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_chathistory_exchanges(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),FfiConverterLong.lower(`threadId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Thread IDs saved for one exact article revision, newest first.
+     */
+    @Throws(ChatException::class)override fun `threads`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): List<kotlin.Long> {
+            return FfiConverterSequenceLong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_chathistory_threads(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatHistory: FfiConverter<ChatHistory, Long> {
+    override fun lower(value: ChatHistory): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): ChatHistory {
+        return ChatHistory(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): ChatHistory {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: ChatHistory) = 8UL
+
+    override fun write(value: ChatHistory, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 /**
  * A disclosed, not-yet-sent hosted request about one installed article.
  */
@@ -1419,13 +1824,20 @@ public interface HostedArticleChatInterface {
      */
     fun `passages`(): List<ChatPassage>
     
+    /**
+     * Earlier turns of the thread that will be sent before the question
+     * (citation markers removed), oldest first. Disclose them too.
+     */
+    fun `priorTurns`(): List<ChatTurn>
+    
     fun `revisionId`(): kotlin.ULong
     
     /**
      * Send the disclosed request. `share_article_passages` must be the
-     * user's explicit consent to this preview. Usable once.
+     * user's explicit consent to this preview. Usable once. With chat
+     * history, a supported answer is saved and its thread returned.
      */
-    fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatAnswer
+    fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatReply
     
     companion object
 }
@@ -1602,6 +2014,23 @@ open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterf
     }
     
 
+    
+    /**
+     * Earlier turns of the thread that will be sent before the question
+     * (citation markers removed), oldest first. Disclose them too.
+     */override fun `priorTurns`(): List<ChatTurn> {
+            return FfiConverterSequenceTypeChatTurn.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_prior_turns(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
     override fun `revisionId`(): kotlin.ULong {
             return FfiConverterULong.lift(
     callWithHandle {
@@ -1618,10 +2047,11 @@ open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterf
     
     /**
      * Send the disclosed request. `share_article_passages` must be the
-     * user's explicit consent to this preview. Usable once.
+     * user's explicit consent to this preview. Usable once. With chat
+     * history, a supported answer is saved and its thread returned.
      */
-    @Throws(ChatException::class)override fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatAnswer {
-            return FfiConverterTypeChatAnswer.lift(
+    @Throws(ChatException::class)override fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatReply {
+            return FfiConverterTypeChatReply.lift(
     callWithHandle {
     uniffiRustCallWithError(ChatException) { _status ->
     UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_send(
@@ -2123,7 +2553,7 @@ public interface OfflineLibraryInterface {
      * pack. `api_key` comes from the app's secure storage and is kept only
      * in memory by the returned object.
      */
-    fun `prepareHostedChat`(`project`: kotlin.String, `pageId`: kotlin.ULong, `question`: kotlin.String, `provider`: HostedAiProvider, `model`: kotlin.String, `apiKey`: kotlin.String): HostedArticleChat
+    fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): HostedArticleChat
     
     /**
      * Remove an inactive installed snapshot (refused while active).
@@ -2358,13 +2788,13 @@ open class OfflineLibrary: Disposable, AutoCloseable, OfflineLibraryInterface
      * pack. `api_key` comes from the app's secure storage and is kept only
      * in memory by the returned object.
      */
-    @Throws(ChatException::class)override fun `prepareHostedChat`(`project`: kotlin.String, `pageId`: kotlin.ULong, `question`: kotlin.String, `provider`: HostedAiProvider, `model`: kotlin.String, `apiKey`: kotlin.String): HostedArticleChat {
+    @Throws(ChatException::class)override fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): HostedArticleChat {
             return FfiConverterTypeHostedArticleChat.lift(
     callWithHandle {
     uniffiRustCallWithError(ChatException) { _status ->
     UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(
         it,
-        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterString.lower(`question`),FfiConverterTypeHostedAiProvider.lower(`provider`),FfiConverterString.lower(`model`),FfiConverterString.lower(`apiKey`),_status)
+        FfiConverterTypeHostedChatRequest.lower(`request`),FfiConverterString.lower(`apiKey`),FfiConverterOptionalTypeChatHistory.lower(`history`),_status)
 }
     }
     )
@@ -2872,6 +3302,92 @@ public object FfiConverterTypeChatPassage: FfiConverterRustBuffer<ChatPassage> {
 
 
 /**
+ * The result of a sent question.
+ */
+data class ChatReply (
+    var `answer`: ChatAnswer
+    , 
+    /**
+     * The saved thread (new or continued); `None` without chat history or
+     * for an unsaved abstention on a new thread.
+     */
+    var `threadId`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatReply: FfiConverterRustBuffer<ChatReply> {
+    override fun read(buf: ByteBuffer): ChatReply {
+        return ChatReply(
+            FfiConverterTypeChatAnswer.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatReply) = (
+            FfiConverterTypeChatAnswer.allocationSize(value.`answer`) +
+            FfiConverterOptionalLong.allocationSize(value.`threadId`)
+    )
+
+    override fun write(value: ChatReply, buf: ByteBuffer) {
+            FfiConverterTypeChatAnswer.write(value.`answer`, buf)
+            FfiConverterOptionalLong.write(value.`threadId`, buf)
+    }
+}
+
+
+
+/**
+ * An earlier exchange resent as context.
+ */
+data class ChatTurn (
+    var `question`: kotlin.String
+    , 
+    var `answer`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatTurn: FfiConverterRustBuffer<ChatTurn> {
+    override fun read(buf: ByteBuffer): ChatTurn {
+        return ChatTurn(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatTurn) = (
+            FfiConverterString.allocationSize(value.`question`) +
+            FfiConverterString.allocationSize(value.`answer`)
+    )
+
+    override fun write(value: ChatTurn, buf: ByteBuffer) {
+            FfiConverterString.write(value.`question`, buf)
+            FfiConverterString.write(value.`answer`, buf)
+    }
+}
+
+
+
+/**
  * Reply to an explicit connection check.
  */
 data class HostedAiCheck (
@@ -2912,6 +3428,70 @@ public object FfiConverterTypeHostedAiCheck: FfiConverterRustBuffer<HostedAiChec
             FfiConverterString.write(value.`reply`, buf)
             FfiConverterOptionalUInt.write(value.`inputTokens`, buf)
             FfiConverterOptionalUInt.write(value.`outputTokens`, buf)
+    }
+}
+
+
+
+/**
+ * What to ask, of which article of the active pack, and where.
+ */
+data class HostedChatRequest (
+    var `project`: kotlin.String
+    , 
+    var `pageId`: kotlin.ULong
+    , 
+    var `question`: kotlin.String
+    , 
+    var `provider`: HostedAiProvider
+    , 
+    var `model`: kotlin.String
+    , 
+    /**
+     * Continue this saved thread (needs chat history); `None` starts one.
+     */
+    var `threadId`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHostedChatRequest: FfiConverterRustBuffer<HostedChatRequest> {
+    override fun read(buf: ByteBuffer): HostedChatRequest {
+        return HostedChatRequest(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeHostedAiProvider.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HostedChatRequest) = (
+            FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterULong.allocationSize(value.`pageId`) +
+            FfiConverterString.allocationSize(value.`question`) +
+            FfiConverterTypeHostedAiProvider.allocationSize(value.`provider`) +
+            FfiConverterString.allocationSize(value.`model`) +
+            FfiConverterOptionalLong.allocationSize(value.`threadId`)
+    )
+
+    override fun write(value: HostedChatRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`project`, buf)
+            FfiConverterULong.write(value.`pageId`, buf)
+            FfiConverterString.write(value.`question`, buf)
+            FfiConverterTypeHostedAiProvider.write(value.`provider`, buf)
+            FfiConverterString.write(value.`model`, buf)
+            FfiConverterOptionalLong.write(value.`threadId`, buf)
     }
 }
 
@@ -3087,6 +3667,54 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterULong.write(value.`declaredBytes`, buf)
+    }
+}
+
+
+
+data class SavedExchange (
+    var `questionId`: kotlin.Long
+    , 
+    var `answerId`: kotlin.Long
+    , 
+    var `question`: kotlin.String
+    , 
+    var `answer`: List<SavedAnswerPart>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSavedExchange: FfiConverterRustBuffer<SavedExchange> {
+    override fun read(buf: ByteBuffer): SavedExchange {
+        return SavedExchange(
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeSavedAnswerPart.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SavedExchange) = (
+            FfiConverterLong.allocationSize(value.`questionId`) +
+            FfiConverterLong.allocationSize(value.`answerId`) +
+            FfiConverterString.allocationSize(value.`question`) +
+            FfiConverterSequenceTypeSavedAnswerPart.allocationSize(value.`answer`)
+    )
+
+    override fun write(value: SavedExchange, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`questionId`, buf)
+            FfiConverterLong.write(value.`answerId`, buf)
+            FfiConverterString.write(value.`question`, buf)
+            FfiConverterSequenceTypeSavedAnswerPart.write(value.`answer`, buf)
     }
 }
 
@@ -3429,6 +4057,15 @@ sealed class ChatException: kotlin.Exception() {
             get() = ""
     }
     
+    /**
+     * Chat history could not be read or written.
+     */
+    class Storage(
+        ) : ChatException() {
+        override val message
+            get() = ""
+    }
+    
 
     
 
@@ -3463,6 +4100,7 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
             13 -> ChatException.Network()
             14 -> ChatException.InvalidResponse()
             15 -> ChatException.Unverifiable()
+            16 -> ChatException.Storage()
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -3529,6 +4167,10 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
+            is ChatException.Storage -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
         }
     }
 
@@ -3592,6 +4234,10 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
             }
             is ChatException.Unverifiable -> {
                 buf.putInt(15)
+                Unit
+            }
+            is ChatException.Storage -> {
+                buf.putInt(16)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -4020,6 +4666,97 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
 
 
 
+/**
+ * One saved part of an answer. Citations are historical: they show the
+ * evidence saved with the answer, which may differ from a newer revision.
+ */
+sealed class SavedAnswerPart {
+    
+    data class Text(
+        val `text`: kotlin.String) : SavedAnswerPart()
+        
+    {
+        
+
+        companion object
+    }
+    
+    data class Citation(
+        val `blockId`: kotlin.String, 
+        val `passage`: uniffi.wiki_ffi.ChatPassage?) : SavedAnswerPart()
+        
+    {
+        
+
+        companion object
+    }
+    
+
+    
+
+    
+    
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSavedAnswerPart : FfiConverterRustBuffer<SavedAnswerPart>{
+    override fun read(buf: ByteBuffer): SavedAnswerPart {
+        return when(buf.getInt()) {
+            1 -> SavedAnswerPart.Text(
+                FfiConverterString.read(buf),
+                )
+            2 -> SavedAnswerPart.Citation(
+                FfiConverterString.read(buf),
+                FfiConverterOptionalTypeChatPassage.read(buf),
+                )
+            else -> throw RuntimeException("invalid enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: SavedAnswerPart) = when(value) {
+        is SavedAnswerPart.Text -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`text`)
+            )
+        }
+        is SavedAnswerPart.Citation -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`blockId`)
+                + FfiConverterOptionalTypeChatPassage.allocationSize(value.`passage`)
+            )
+        }
+    }
+
+    override fun write(value: SavedAnswerPart, buf: ByteBuffer) {
+        when(value) {
+            is SavedAnswerPart.Text -> {
+                buf.putInt(1)
+                FfiConverterString.write(value.`text`, buf)
+                Unit
+            }
+            is SavedAnswerPart.Citation -> {
+                buf.putInt(2)
+                FfiConverterString.write(value.`blockId`, buf)
+                FfiConverterOptionalTypeChatPassage.write(value.`passage`, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -4046,6 +4783,38 @@ public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
         } else {
             buf.put(1)
             FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalLong: FfiConverterRustBuffer<kotlin.Long?> {
+    override fun read(buf: ByteBuffer): kotlin.Long? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterLong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Long?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterLong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Long?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterLong.write(value, buf)
         }
     }
 }
@@ -4088,6 +4857,38 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeChatHistory: FfiConverterRustBuffer<ChatHistory?> {
+    override fun read(buf: ByteBuffer): ChatHistory? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeChatHistory.read(buf)
+    }
+
+    override fun allocationSize(value: ChatHistory?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeChatHistory.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ChatHistory?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeChatHistory.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeArticlePage: FfiConverterRustBuffer<ArticlePage?> {
     override fun read(buf: ByteBuffer): ArticlePage? {
         if (buf.get().toInt() == 0) {
@@ -4110,6 +4911,66 @@ public object FfiConverterOptionalTypeArticlePage: FfiConverterRustBuffer<Articl
         } else {
             buf.put(1)
             FfiConverterTypeArticlePage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeChatPassage: FfiConverterRustBuffer<ChatPassage?> {
+    override fun read(buf: ByteBuffer): ChatPassage? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeChatPassage.read(buf)
+    }
+
+    override fun allocationSize(value: ChatPassage?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeChatPassage.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ChatPassage?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeChatPassage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceLong: FfiConverterRustBuffer<List<kotlin.Long>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Long> {
+        val len = buf.getInt()
+        return List<kotlin.Long>(len) {
+            FfiConverterLong.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Long>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterLong.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Long>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterLong.write(it, buf)
         }
     }
 }
@@ -4176,6 +5037,34 @@ public object FfiConverterSequenceTypeChatPassage: FfiConverterRustBuffer<List<C
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeChatTurn: FfiConverterRustBuffer<List<ChatTurn>> {
+    override fun read(buf: ByteBuffer): List<ChatTurn> {
+        val len = buf.getInt()
+        return List<ChatTurn>(len) {
+            FfiConverterTypeChatTurn.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ChatTurn>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeChatTurn.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ChatTurn>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeChatTurn.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeInstalledSnapshot: FfiConverterRustBuffer<List<InstalledSnapshot>> {
     override fun read(buf: ByteBuffer): List<InstalledSnapshot> {
         val len = buf.getInt()
@@ -4194,6 +5083,34 @@ public object FfiConverterSequenceTypeInstalledSnapshot: FfiConverterRustBuffer<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeInstalledSnapshot.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSavedExchange: FfiConverterRustBuffer<List<SavedExchange>> {
+    override fun read(buf: ByteBuffer): List<SavedExchange> {
+        val len = buf.getInt()
+        return List<SavedExchange>(len) {
+            FfiConverterTypeSavedExchange.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SavedExchange>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSavedExchange.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SavedExchange>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSavedExchange.write(it, buf)
         }
     }
 }
@@ -4250,6 +5167,34 @@ public object FfiConverterSequenceTypeChatAnswerPart: FfiConverterRustBuffer<Lis
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeChatAnswerPart.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSavedAnswerPart: FfiConverterRustBuffer<List<SavedAnswerPart>> {
+    override fun read(buf: ByteBuffer): List<SavedAnswerPart> {
+        val len = buf.getInt()
+        return List<SavedAnswerPart>(len) {
+            FfiConverterTypeSavedAnswerPart.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SavedAnswerPart>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSavedAnswerPart.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SavedAnswerPart>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSavedAnswerPart.write(it, buf)
         }
     }
 }
