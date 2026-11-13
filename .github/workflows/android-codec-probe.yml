@@ -41,8 +41,9 @@ jobs:
           export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang"
           export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang++"
           export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
-          cargo build --package wiki-store --example codec_probe --target x86_64-linux-android --release --locked
+          cargo build --package wiki-store --example codec_probe --example pack_stream_probe --target x86_64-linux-android --release --locked
           test -x target/x86_64-linux-android/release/examples/codec_probe
+          test -x target/x86_64-linux-android/release/examples/pack_stream_probe
       - name: Run codec probe on API 35 emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -61,12 +62,22 @@ jobs:
             cat /tmp/android-codec-probe.log
             grep -F 'codec_probe target_os=android target_arch=x86_64' /tmp/android-codec-probe.log
             grep -F 'codec_probe migration legacy=1.0 action=rewrite_to_1.1 future_minor=rejected future_major=rejected' /tmp/android-codec-probe.log
+            adb push target/x86_64-linux-android/release/examples/pack_stream_probe /data/local/tmp/foundation-pack-stream-probe
+            adb shell chmod 755 /data/local/tmp/foundation-pack-stream-probe
+            adb shell /data/local/tmp/foundation-pack-stream-probe /data/local/tmp > /tmp/android-pack-stream-probe.log
+            cat /tmp/android-pack-stream-probe.log
+            grep -F 'pack_stream_probe target_os=android target_arch=x86_64' /tmp/android-pack-stream-probe.log
+            grep -F 'pack_stream_probe refusals budget=refused tampered=refused published=none staging=empty' /tmp/android-pack-stream-probe.log
+            grep -F 'pack_stream_probe install stream=nonseekable trust=CustomIntegrityVerified rebuilt_index=true' /tmp/android-pack-stream-probe.log
+            grep -F 'pack_stream_probe result=pass' /tmp/android-pack-stream-probe.log
       - name: Preserve Android codec evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-codec-probe-evidence
-          path: /tmp/android-codec-probe.log
+          path: |
+            /tmp/android-codec-probe.log
+            /tmp/android-pack-stream-probe.log
           retention-days: 14
           if-no-files-found: warn
       - name: Confirm exact head
