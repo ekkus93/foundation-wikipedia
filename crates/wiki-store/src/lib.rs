@@ -18,6 +18,7 @@ pub mod media_lease;
 pub mod media_manifest_install;
 pub mod offline_reader;
 pub mod online_cache;
+pub mod pack_install;
 pub mod search_index;
 pub mod user_state;
 

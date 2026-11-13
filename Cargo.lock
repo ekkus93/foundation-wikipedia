@@ -819,9 +819,11 @@ dependencies = [
  "ciborium",
  "rmp-serde",
  "rusqlite",
+ "serde_json",
  "sha2",
  "wiki-core",
  "wiki-model",
+ "wiki-pack-format",
  "zstd",
 ]
 
