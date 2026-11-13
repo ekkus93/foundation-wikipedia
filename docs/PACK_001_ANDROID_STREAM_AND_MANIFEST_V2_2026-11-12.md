@@ -75,7 +75,7 @@ Regression evidence:
 
 Local verification (Debian 13, Rust 1.85.1, `umask 022`) passed all five checks: rustfmt, clippy `-D warnings`, workspace tests, Python tests (636) and fixture provenance. The host probe printed `result=pass`.
 
-**CI on `01a7f343`:** pending at documentation; to be recorded in a follow-up commit.
+**CI on `01a7f343`:** [Rust workspace 43382314227](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43382314227), [Platform shells 43382314197](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43382314197), [Android Rust ABI 43382314251](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43382314251) and [Android record codec probe 43382314314](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43382314314) all passed.
 
 ## Boundaries
 

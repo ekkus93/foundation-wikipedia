@@ -55,7 +55,7 @@ The existing `search`, the corpus index and the CI retrieval gate are unchanged.
 
 The labeled set exposed a real weakness in the first heuristic. "What is the boiling point of mercury?" retrieved blocks only because it shared "is" with them. The content-bearing rule fixed that, and the case is now a regression test.
 
-Local verification (Rust 1.85.1, `umask 022`): fmt, clippy `-D warnings`, workspace tests, Python tests (644) and fixture provenance all passed. Exact-head CI pending at documentation.
+Local verification (Rust 1.85.1, `umask 022`): fmt, clippy `-D warnings`, workspace tests, Python tests (644) and fixture provenance all passed. Exact-head CI on `8d4c78d8`: [Rust workspace 43383563260](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43383563260), [Platform shells 43383562923](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43383562923) and [Android Rust ABI 43383563015](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43383563015) passed (the Android codec probe does not run for `wiki-search`-only changes).
 
 ## Boundaries
 
