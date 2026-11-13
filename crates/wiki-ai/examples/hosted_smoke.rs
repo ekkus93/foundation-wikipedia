@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
-//! cargo run -p wiki-ai --example hosted_smoke -- anthropic claude-haiku-4-5
+//! cargo run -p wiki-ai --example hosted_smoke -- anthropic claude-haiku-5-5
 //! cargo run -p wiki-ai --example hosted_smoke -- openai gpt-4o-mini
 //! ```
 //!
