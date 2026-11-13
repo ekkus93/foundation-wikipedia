@@ -348,6 +348,22 @@ impl OfflineSearchIndex {
         catalog: &SnapshotCatalog,
         root: &Path,
     ) -> Result<(), SearchError> {
+        Self::replace_persisted_from_catalog_with_sync(path, catalog, root, |target| {
+            File::open(target)?.sync_all()
+        })
+    }
+
+    /// `sync` flushes the staged file, then (on Unix) the directory before and
+    /// after the rename. A failure before the rename leaves the prior index
+    /// untouched. A failure after it is reported although the new, fully
+    /// verified index is already in place: it is derived data, so retrying
+    /// the rebuild is safe, but callers must not assume the old file remains.
+    fn replace_persisted_from_catalog_with_sync(
+        path: &Path,
+        catalog: &SnapshotCatalog,
+        root: &Path,
+        mut sync: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), SearchError> {
         validate_index_path(path)?;
         let parent = path.parent().ok_or(SearchError::UnsafePath)?;
         let (staged, file) = (0..32)
@@ -385,14 +401,14 @@ impl OfflineSearchIndex {
                 // consistent before a rebuilt index becomes publishable.
                 index.verify_native_fts_integrity()?;
             }
-            File::open(&staged)?.sync_all()?;
+            sync(&staged)?;
             #[cfg(unix)]
-            File::open(parent)?.sync_all()?;
+            sync(parent)?;
             // Do not publish a partially indexed SQLite file. The candidate
             // was closed successfully before this atomic same-directory swap.
             fs::rename(&staged, path)?;
             #[cfg(unix)]
-            File::open(parent)?.sync_all()?;
+            sync(parent)?;
             Ok(())
         })();
         if result.is_err() {
@@ -1419,5 +1435,149 @@ mod identity_tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].key.page_id, 42);
         assert_eq!(results[0].revision_id, 123);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_replacement_sync_failures_never_expose_a_partial_index() {
+        use crate::record_codec::append_record_frame;
+        use wiki_model::{Revision, ARTICLE_SCHEMA_VERSION};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-fts-replace-enospc-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let article = |page_id: u64, title: &str| Article {
+            schema_version: ARTICLE_SCHEMA_VERSION,
+            key: ArticleKey {
+                project: "enwiki".into(),
+                page_id,
+            },
+            revision: Revision {
+                revision_id: page_id + 1000,
+                timestamp: "2026-11-01T00:00:00Z".into(),
+                content_sha256: "a".repeat(64),
+            },
+            title: title.into(),
+            display_title: title.into(),
+            language: "en".into(),
+            namespace: 0,
+            aliases: vec![],
+            wikidata_id: None,
+            lead: vec![],
+            sections: vec![],
+            references: vec![],
+            links: vec![],
+            media: vec![],
+            rendered_html: "<article></article>".into(),
+            is_disambiguation: false,
+        };
+        let mut shard = Vec::new();
+        append_record_frame(
+            &mut shard,
+            &PageRecord::Article(Box::new(article(42, "Earth"))),
+        )
+        .unwrap();
+        fs::write(root.join("articles.shard"), &shard).unwrap();
+        let mut catalog = SnapshotCatalog::open(&root.join("catalog.sqlite")).unwrap();
+        catalog
+            .insert_verified(&root, "articles.shard", 0, shard.len() as u64)
+            .unwrap();
+        let path = root.join("search.sqlite");
+        let publish_prior = || {
+            let _ = fs::remove_file(&path);
+            let mut index = OfflineSearchIndex::open(&path).unwrap();
+            index.rebuild(&[article(7, "Retained")]).unwrap();
+            drop(index);
+            fs::read(&path).unwrap()
+        };
+        let staged_files = || {
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".offline-fts.")
+                })
+                .count()
+        };
+        let real = |target: &Path| File::open(target)?.sync_all();
+
+        // Staged file, then directory before the rename: prior bytes survive.
+        for fail_at in 1..=2 {
+            let prior = publish_prior();
+            let mut calls = 0;
+            let result = OfflineSearchIndex::replace_persisted_from_catalog_with_sync(
+                &path,
+                &catalog,
+                &root,
+                |target| {
+                    calls += 1;
+                    if calls == fail_at {
+                        Err(io::Error::from(io::ErrorKind::StorageFull))
+                    } else {
+                        real(target)
+                    }
+                },
+            );
+            assert!(
+                matches!(&result, Err(SearchError::Io(e)) if e.kind() == io::ErrorKind::StorageFull),
+                "fail_at={fail_at}: {result:?}"
+            );
+            assert_eq!(calls, fail_at);
+            assert_eq!(fs::read(&path).unwrap(), prior, "fail_at={fail_at}");
+            assert_eq!(staged_files(), 0, "fail_at={fail_at}");
+        }
+
+        // Directory sync after the rename: the error is reported, the new
+        // index is complete and verified, and a retry succeeds.
+        publish_prior();
+        let mut calls = 0;
+        let result = OfflineSearchIndex::replace_persisted_from_catalog_with_sync(
+            &path,
+            &catalog,
+            &root,
+            |target| {
+                calls += 1;
+                if calls == 3 {
+                    Err(io::Error::from(io::ErrorKind::StorageFull))
+                } else {
+                    real(target)
+                }
+            },
+        );
+        assert!(matches!(result, Err(SearchError::Io(_))));
+        assert_eq!(staged_files(), 0);
+        let reader = OfflineSearchIndex::open_verified_read_only(&path, &catalog, &root).unwrap();
+        assert_eq!(
+            reader
+                .search_verified_project(&catalog, &root, "enwiki", "Earth", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(reader);
+
+        let mut calls = 0;
+        OfflineSearchIndex::replace_persisted_from_catalog_with_sync(
+            &path,
+            &catalog,
+            &root,
+            |target| {
+                calls += 1;
+                real(target)
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 3);
+        drop(catalog);
+        fs::remove_dir_all(root).unwrap();
     }
 }
