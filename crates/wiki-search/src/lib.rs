@@ -7,6 +7,7 @@ pub mod answer_support;
 pub mod evaluation;
 pub mod evaluation_suite;
 pub mod retrieval;
+pub mod saved_citation;
 
 use std::collections::{BTreeMap, BTreeSet};
 use wiki_model::{Article, ArticleKey, Block, BlockContent, ModelError, Section};
