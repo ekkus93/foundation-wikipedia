@@ -9,7 +9,7 @@
 use wiki_ai::local_selection::{
     LocalArticleDisplayAnswer, LocalArticleError, LocalArticlePreview, SelectedLocalModel,
 };
-use wiki_ai::rag::{ArticleAnswerDisplayPart, ArticleQuestion};
+use wiki_ai::rag::{ArticleAnswerDisplayPart, ArticleQuestion, MAX_PRIOR_TURNS};
 use wiki_ai::CancellationToken;
 use wiki_model::Article;
 use wiki_store::user_state::{UserState, UserStateError};
@@ -21,6 +21,9 @@ pub enum ArticleChatError {
     StalePersonalData,
     Cancelled,
     InvalidSavedMessage,
+    /// The question's prior turns are not exactly the thread's stored
+    /// recent exchanges (or a new thread was sent history).
+    HistoryMismatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +127,27 @@ pub struct ArticleChatRequest<'a> {
     pub cancellation: &'a CancellationToken,
 }
 
+/// The last `MAX_PRIOR_TURNS` stored exchanges of an exact-revision thread,
+/// oldest first, as (question, answer) pairs for building `PriorTurn`s.
+/// Adapters pass these back through `ArticleQuestion::prior_turns`.
+pub fn prior_turns_for_thread(
+    state: &UserState,
+    article: &Article,
+    thread_id: i64,
+) -> Result<Vec<(String, String)>, ArticleChatError> {
+    Ok(state
+        .recent_chat_exchanges(
+            &article.key,
+            article.revision.revision_id,
+            thread_id,
+            MAX_PRIOR_TURNS,
+        )
+        .map_err(ArticleChatError::Store)?
+        .into_iter()
+        .map(|exchange| (exchange.question.content, exchange.answer.content))
+        .collect())
+}
+
 pub fn answer_and_save_local_article(
     state: &mut UserState,
     generation: u64,
@@ -156,11 +180,23 @@ pub fn answer_and_save_local_article(
     {
         return Err(ArticleChatError::StalePersonalData);
     }
-    if let Some(id) = existing_thread {
-        // Reject wrong-article/revision/deleted threads before any provider I/O.
-        state
-            .recent_chat_exchanges(&article.key, article.revision.revision_id, id, 0)
-            .map_err(ArticleChatError::Store)?;
+    // Reject wrong-article/revision/deleted threads, and history that is not
+    // exactly the thread's stored recent exchanges, before any provider I/O.
+    let stored = match existing_thread {
+        Some(id) => prior_turns_for_thread(state, article, id)?,
+        None => Vec::new(),
+    };
+    let supplied: Vec<(&str, &str)> = question
+        .prior_turns
+        .iter()
+        .map(|turn| (turn.question, turn.answer))
+        .collect();
+    let expected: Vec<(&str, &str)> = stored
+        .iter()
+        .map(|(question, answer)| (question.as_str(), answer.as_str()))
+        .collect();
+    if supplied != expected {
+        return Err(ArticleChatError::HistoryMismatch);
     }
     let answer = selected
         .answer_article_with_preview_display(
@@ -190,6 +226,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use wiki_ai::local_selection::{discover_local_models, LocalProtocol};
+    use wiki_ai::rag::PriorTurn;
     use wiki_ai::OutboundPolicy;
     use wiki_model::{ArticleKey, Block, BlockContent, Revision, ARTICLE_SCHEMA_VERSION};
     use wiki_search::ArticleLexicalIndex;
@@ -422,6 +459,7 @@ mod tests {
             selected_evidence: None,
             max_output_tokens: 64,
             outbound_policy: OutboundPolicy::AllowLocalEndpoints,
+            prior_turns: &[],
         };
         let preview = selected
             .prepare_article_preview(&article, &question)
@@ -486,5 +524,73 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/tags HTTP/1.1\r\n"));
         assert!(requests[1].starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
         assert!(requests[1].contains("Gravity is attraction between masses."));
+
+        // Bounded history must be exactly the thread's stored exchanges. The
+        // server has stopped, so these mismatches prove no provider I/O.
+        let stored = prior_turns_for_thread(&state, &article, thread_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, "gravity");
+        let stored_turns: Vec<PriorTurn<'_>> = stored
+            .iter()
+            .map(|(question, answer)| PriorTurn { question, answer })
+            .collect();
+        let fabricated = [PriorTurn {
+            question: "gravity",
+            answer: "Something the thread never said.",
+        }];
+        for (label, turns, thread, expect_mismatch) in [
+            ("missing history", &[][..], Some(thread_id), true),
+            ("fabricated history", &fabricated[..], Some(thread_id), true),
+            ("history on a new thread", &stored_turns[..], None, true),
+            (
+                "exact stored history",
+                &stored_turns[..],
+                Some(thread_id),
+                false,
+            ),
+        ] {
+            let follow_up = ArticleQuestion {
+                prior_turns: turns,
+                ..question.clone()
+            };
+            let follow_up_preview = selected
+                .prepare_article_preview(&article, &follow_up)
+                .unwrap()
+                .unwrap();
+            assert_eq!(follow_up_preview.history().len(), turns.len(), "{label}");
+            let result = answer_and_save_local_article(
+                &mut state,
+                generation,
+                ArticleChatRequest {
+                    article: &article,
+                    question: &follow_up,
+                    selected: &selected,
+                    preview: &follow_up_preview,
+                    share_article_passages: true,
+                    existing_thread: thread,
+                    cancellation: &token,
+                },
+            );
+            if expect_mismatch {
+                assert!(
+                    matches!(result, Err(ArticleChatError::HistoryMismatch)),
+                    "{label}: {result:?}"
+                );
+            } else {
+                // Passed the history check and reached the (stopped) server.
+                assert!(
+                    matches!(result, Err(ArticleChatError::Inference(_))),
+                    "{label}: {result:?}"
+                );
+            }
+        }
+        assert_eq!(
+            state
+                .chat_messages(&article.key, 12, thread_id, 10)
+                .unwrap()
+                .len(),
+            2,
+            "refused follow-ups write nothing"
+        );
     }
 }

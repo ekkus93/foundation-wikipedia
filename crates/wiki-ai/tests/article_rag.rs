@@ -103,6 +103,7 @@ fn question<'a>() -> ArticleQuestion<'a> {
         selected_evidence: None,
         max_output_tokens: 80,
         outbound_policy: OutboundPolicy::OnDeviceOnly,
+        prior_turns: &[],
     }
 }
 

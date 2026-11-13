@@ -95,6 +95,11 @@ impl LocalArticlePreview {
     pub fn user_message(&self) -> &str {
         &self.context.user_message
     }
+
+    /// Earlier (question, citation-free answer) turns that will also be sent.
+    pub fn history(&self) -> &[(String, String)] {
+        &self.context.history
+    }
 }
 
 fn provider(protocol: LocalProtocol, endpoint: LocalEndpoint) -> Box<dyn LlmProvider> {
@@ -276,6 +281,7 @@ impl SelectedLocalModel {
         };
         if current.context.user_message != preview.context.user_message
             || current.context.evidence != preview.context.evidence
+            || current.context.history != preview.context.history
         {
             return Err(LocalArticleError::PreviewMismatch);
         }
@@ -574,6 +580,7 @@ mod tests {
             selected_evidence: None,
             max_output_tokens: 64,
             outbound_policy: OutboundPolicy::AllowLocalEndpoints,
+            prior_turns: &[],
         };
         let cancellation = CancellationToken::default();
         let preview = selected
