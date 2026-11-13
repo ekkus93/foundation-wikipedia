@@ -2,6 +2,8 @@
 //!
 //! This is only the atomic SWITCH primitive. Callers must independently
 //! validate every snapshot byte, manifest, and schema before invoking it.
+//! Before publishing the selector, the switch fsyncs the whole staged
+//! candidate tree; it does not make the caller's writes correct or complete.
 //! An existing manifest alone does not establish upstream authenticity.
 
 use std::fs::{self, File, OpenOptions};
@@ -24,6 +26,9 @@ pub enum ActivationError {
     InvalidSnapshotId,
     CandidateNotStaged,
     CorruptCurrentPointer,
+    /// The staged candidate tree contains something other than real files
+    /// and directories (for example a symlink), so its bytes are not owned.
+    UnsafeCandidateEntry,
     /// The new selector was published but rollback durability is uncertain.
     RollbackFailed {
         commit_error: io::Error,
@@ -338,6 +343,45 @@ impl ActiveSnapshotStore {
         Ok(verified_bytes)
     }
 
+    /// Flush every staged file, then every candidate directory (children
+    /// before the directory that names them), then `snapshots/` and the root.
+    /// Only real files and directories are accepted: a symlink or special
+    /// file would let bytes outside the installer's exclusive tree be read.
+    fn sync_staged_candidate(
+        &self,
+        id: &str,
+        sync: &mut impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), ActivationError> {
+        let snapshots = self.root.join("snapshots");
+        // Breadth-first order lists parents before children, so syncing the
+        // list in reverse makes each entry durable before its parent.
+        let mut directories = vec![snapshots.join(id)];
+        let mut next = 0;
+        while next < directories.len() {
+            let mut entries =
+                fs::read_dir(&directories[next])?.collect::<Result<Vec<_>, io::Error>>()?;
+            entries.sort_by_key(fs::DirEntry::file_name);
+            for entry in entries {
+                // DirEntry::file_type does not follow symlinks.
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    directories.push(entry.path());
+                } else if kind.is_file() {
+                    sync(&entry.path())?;
+                } else {
+                    return Err(ActivationError::UnsafeCandidateEntry);
+                }
+            }
+            next += 1;
+        }
+        for directory in directories.iter().rev() {
+            sync(directory)?;
+        }
+        sync(&snapshots)?;
+        sync(&self.root)?;
+        Ok(())
+    }
+
     fn switch_with_precommit_gate(
         &self,
         id: &str,
@@ -351,7 +395,21 @@ impl ActiveSnapshotStore {
         &self,
         id: &str,
         precommit: impl FnOnce() -> Result<(), ActivationError>,
+        sync_parent: impl FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), ActivationError> {
+        self.switch_with_precommit_and_syncs(id, precommit, sync_parent, |path| {
+            File::open(path)?.sync_all()
+        })
+    }
+
+    // `sync_parent` covers the selector directory; `sync_candidate` covers
+    // every file and directory of the staged candidate tree.
+    fn switch_with_precommit_and_syncs(
+        &self,
+        id: &str,
+        precommit: impl FnOnce() -> Result<(), ActivationError>,
         mut sync_parent: impl FnMut(&Path) -> io::Result<()>,
+        mut sync_candidate: impl FnMut(&Path) -> io::Result<()>,
     ) -> Result<(), ActivationError> {
         if !safe_id(id) {
             return Err(ActivationError::InvalidSnapshotId);
@@ -416,6 +474,12 @@ impl ActiveSnapshotStore {
 
             precommit()?;
             // The precommit verifier may have invalidated or removed staging.
+            if !self.candidate_is_staged(id)? {
+                return Err(ActivationError::CandidateNotStaged);
+            }
+            // Durability barrier: a selector that survives power loss must
+            // never name a candidate whose bytes or entries were still cached.
+            self.sync_staged_candidate(id, &mut sync_candidate)?;
             // Never publish a selector pointing at a missing candidate.
             if !self.candidate_is_staged(id)? {
                 return Err(ActivationError::CandidateNotStaged);
@@ -1917,6 +1981,192 @@ mod interruption_tests {
             1
         );
         drop(registry);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn barrier_root(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("wiki-{label}-{}-{stamp}", std::process::id()))
+    }
+
+    /// Stage a candidate shaped like a real snapshot: manifest, catalog,
+    /// search index and nested article shards.
+    fn stage_snapshot_tree(root: &Path, id: &str) -> Vec<PathBuf> {
+        let candidate = root.join("snapshots").join(id);
+        let shards = candidate.join("shards").join("en");
+        fs::create_dir_all(&shards).unwrap();
+        let files = [
+            candidate.join("manifest.json"),
+            candidate.join("catalog.sqlite"),
+            candidate.join("search.sqlite"),
+            shards.join("0001.shard"),
+        ];
+        for file in &files {
+            fs::write(file, format!("{id} staged bytes")).unwrap();
+        }
+        files.to_vec()
+    }
+
+    fn private_selector_files(root: &Path) -> usize {
+        fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(".current.") || name.starts_with(".previous.")
+            })
+            .count()
+    }
+
+    fn real_sync(path: &Path) -> io::Result<()> {
+        File::open(path)?.sync_all()
+    }
+
+    #[test]
+    fn staged_candidate_tree_is_durable_before_selector_publication() {
+        let root = barrier_root("candidate-barrier-order");
+        stage_snapshot_tree(&root, "old");
+        let files = stage_snapshot_tree(&root, "new");
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+
+        let mut synced = Vec::new();
+        store
+            .switch_with_precommit_and_syncs(
+                "new",
+                || Ok(()),
+                real_sync,
+                |path| {
+                    // The selector must still name the old snapshot while the
+                    // candidate's bytes and directory entries are flushed.
+                    assert_eq!(fs::read(root.join("current")).unwrap(), b"old\n");
+                    synced.push(path.to_path_buf());
+                    real_sync(path)
+                },
+            )
+            .unwrap();
+        assert_eq!(store.current().unwrap().as_deref(), Some("new"));
+
+        let candidate = root.join("snapshots/new");
+        let mut expected: Vec<PathBuf> = files;
+        expected.extend([
+            candidate.join("shards/en"),
+            candidate.join("shards"),
+            candidate.clone(),
+            root.join("snapshots"),
+            root.clone(),
+        ]);
+        let unique: std::collections::BTreeSet<_> = synced.iter().cloned().collect();
+        assert_eq!(unique.len(), synced.len(), "each path is synced once");
+        assert_eq!(
+            unique,
+            expected
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        // Contents and entries must be durable before the directory that
+        // names them, up to the snapshot root itself.
+        let position = |path: &Path| synced.iter().position(|p| p == path).unwrap();
+        for path in expected.iter().filter(|path| **path != root) {
+            assert!(
+                position(path) < position(path.parent().unwrap()),
+                "{} synced after its parent",
+                path.display()
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn candidate_sync_failure_preserves_selector_and_bookmarks() {
+        use crate::user_state::UserState;
+        let key = wiki_model::ArticleKey {
+            project: "enwiki".into(),
+            page_id: 42,
+        };
+        // Nine sync points: four files, three candidate directories,
+        // snapshots/ and the root. Fail each one in turn with ENOSPC.
+        for had_previous in [false, true] {
+            for fail_at in 1..=9 {
+                let root =
+                    barrier_root(&format!("candidate-barrier-fail-{had_previous}-{fail_at}"));
+                stage_snapshot_tree(&root, "old");
+                let staged = stage_snapshot_tree(&root, "new");
+                fs::create_dir_all(root.join("user-state")).unwrap();
+                let db = root.join("user-state/user.sqlite");
+                UserState::open(&db)
+                    .unwrap()
+                    .set_bookmark(&key, 123, "saved place")
+                    .unwrap();
+                let store = ActiveSnapshotStore::new(&root);
+                if had_previous {
+                    store.switch_to_prevalidated("old").unwrap();
+                }
+                let original = fs::read(root.join("current")).ok();
+
+                let mut calls = 0;
+                let result = store.switch_with_precommit_and_syncs(
+                    "new",
+                    || Ok(()),
+                    real_sync,
+                    |path| {
+                        calls += 1;
+                        if calls == fail_at {
+                            Err(io::Error::from(io::ErrorKind::StorageFull))
+                        } else {
+                            real_sync(path)
+                        }
+                    },
+                );
+                assert!(
+                    matches!(&result, Err(ActivationError::Io(e)) if e.kind() == io::ErrorKind::StorageFull),
+                    "fail_at={fail_at}: {result:?}"
+                );
+                assert_eq!(calls, fail_at, "no sync after the first failure");
+                assert_eq!(fs::read(root.join("current")).ok(), original);
+                assert_eq!(
+                    store.current().unwrap(),
+                    had_previous.then(|| "old".to_owned())
+                );
+                assert_eq!(private_selector_files(&root), 0);
+                for file in &staged {
+                    assert!(file.exists(), "staged bytes are not discarded");
+                }
+                assert_eq!(
+                    UserState::open(&db).unwrap().bookmark(&key).unwrap(),
+                    Some((123, "saved place".into()))
+                );
+                // The same candidate activates once storage recovers.
+                store.switch_to_prevalidated("new").unwrap();
+                assert_eq!(store.current().unwrap().as_deref(), Some("new"));
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn candidate_tree_with_symlink_entry_is_never_published() {
+        let root = barrier_root("candidate-barrier-symlink");
+        stage_snapshot_tree(&root, "old");
+        stage_snapshot_tree(&root, "new");
+        let outside = root.join("outside.shard");
+        fs::write(&outside, b"mutable elsewhere").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("snapshots/new/shards/en/0002.shard"))
+            .unwrap();
+        let store = ActiveSnapshotStore::new(&root);
+        store.switch_to_prevalidated("old").unwrap();
+        assert!(matches!(
+            store.switch_to_prevalidated("new"),
+            Err(ActivationError::UnsafeCandidateEntry)
+        ));
+        assert_eq!(store.current().unwrap().as_deref(), Some("old"));
+        assert_eq!(private_selector_files(&root), 0);
         fs::remove_dir_all(root).unwrap();
     }
 }
