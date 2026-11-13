@@ -521,11 +521,21 @@ mod tests {
             rendered_html: "<article/>".into(),
             is_disambiguation: false,
         };
-        let hit = ArticleLexicalIndex::build(&article)
-            .unwrap()
-            .search("gravity", 1)
-            .pop()
-            .unwrap();
+        // Expected evidence comes from the same structural retriever that
+        // chat context preparation ranks with (including its rank score).
+        let hit = match ArticleLexicalIndex::build(&article).unwrap().retrieve(
+            &wiki_search::retrieval::RetrievalRequest {
+                query: "gravity".into(),
+                expected_revision: article.revision.revision_id,
+                current_block_id: None,
+                selected_text: None,
+                limit: 1,
+                max_context_tokens: usize::MAX,
+            },
+        ) {
+            wiki_search::retrieval::Retrieval::Evidence { blocks, .. } => blocks[0].hit.clone(),
+            other => panic!("expected evidence, got {other:?}"),
+        };
         let answer = format!("Gravity attracts masses [[cite:{}]]", hit.block_id);
         let valid_chunk = serde_json::json!({
             "choices": [{

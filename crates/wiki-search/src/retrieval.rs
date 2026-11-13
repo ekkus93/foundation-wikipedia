@@ -145,16 +145,22 @@ impl ArticleLexicalIndex {
             (1.0 + (n as f64 - d + 0.5) / (d + 0.5)).ln()
         };
         // A match only counts towards answerability if the term is
-        // content-bearing: not present in every block of a non-trivial
-        // article, and not a one- or two-letter alphabetic token such as
-        // "is" or "of". CJK tokens (single characters and bigrams) are exempt
-        // from the length rule. Short terms still contribute to ranking.
-        let informative = |term: &str| {
-            let ubiquitous =
-                n >= MIN_BLOCKS_FOR_UBIQUITY && df.get(term).copied().unwrap_or(0) >= n;
-            let content_bearing = term.chars().count() >= 3 || term.chars().any(crate::is_cjk);
-            !ubiquitous && content_bearing
-        };
+        // content-bearing: not a one- or two-letter alphabetic token such as
+        // "is" or "of" (CJK tokens are exempt from the length rule). A term
+        // present in every block of a non-trivial article (like "the") is
+        // discounted only when the question also has a content term that is
+        // NOT everywhere; otherwise the question is about the article's
+        // pervasive subject ("gravity" in Gravity) and those matches count.
+        // Short and discounted terms still contribute to ranking.
+        let content_bearing =
+            |term: &str| term.chars().count() >= 3 || term.chars().any(crate::is_cjk);
+        let ubiquitous =
+            |term: &str| n >= MIN_BLOCKS_FOR_UBIQUITY && df.get(term).copied().unwrap_or(0) >= n;
+        let has_specific_content_term = weights
+            .keys()
+            .any(|term| content_bearing(term) && !ubiquitous(term));
+        let informative =
+            |term: &str| content_bearing(term) && (!ubiquitous(term) || !has_specific_content_term);
 
         let current_section = request.current_block_id.as_deref().and_then(|id| {
             self.entries

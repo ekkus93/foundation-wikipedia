@@ -9,6 +9,7 @@ use crate::{
     OutboundPolicy, ProviderError, StreamEvent,
 };
 use wiki_model::{Article, ArticleKey, ModelError};
+use wiki_search::retrieval::{Retrieval, RetrievalRequest, MAX_RETRIEVED_BLOCKS};
 use wiki_search::{
     evidence_word_cost, validate_grounded_answer, ArticleLexicalIndex, CitationError, EvidenceHit,
     GroundedAnswer, MAX_LEXICAL_QUERY_BYTES,
@@ -258,7 +259,25 @@ pub fn prepare_article_context(
         user_message.push_str(&record);
         evidence.push(selected.clone());
     }
-    for hit in index.search(question.question, 100) {
+    // Rank with the structural BM25 retriever (RAG-001). It abstains when
+    // only non-content terms match, so such questions get no context and an
+    // explicit insufficient-evidence answer rather than unrelated passages.
+    // The word and byte budgets below still decide what is sent.
+    let ranked = match index.retrieve(&RetrievalRequest {
+        query: question.question.to_owned(),
+        expected_revision: article.revision.revision_id,
+        current_block_id: None,
+        selected_text: question.selected_evidence.map(|hit| hit.excerpt.clone()),
+        limit: MAX_RETRIEVED_BLOCKS,
+        max_context_tokens: usize::MAX,
+    }) {
+        Retrieval::Evidence { blocks, .. } => blocks.into_iter().map(|block| block.hit).collect(),
+        Retrieval::NoEvidence => Vec::new(),
+        Retrieval::RevisionMismatch { .. } | Retrieval::InvalidRequest => {
+            return Err(RagError::InvalidQuestion)
+        }
+    };
+    for hit in ranked {
         if evidence.len() >= question.passage_limit {
             break;
         }

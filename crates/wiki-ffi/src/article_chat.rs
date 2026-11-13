@@ -354,11 +354,21 @@ mod tests {
     #[test]
     fn loopback_discovery_consent_inference_and_persistence_are_one_use_case() {
         let article = article();
-        let hit = ArticleLexicalIndex::build(&article)
-            .unwrap()
-            .search("gravity", 1)
-            .pop()
-            .unwrap();
+        // Expected evidence is ranked by the same structural retriever that
+        // chat context preparation uses (including its rank score).
+        let hit = match ArticleLexicalIndex::build(&article).unwrap().retrieve(
+            &wiki_search::retrieval::RetrievalRequest {
+                query: "gravity".into(),
+                expected_revision: article.revision.revision_id,
+                current_block_id: None,
+                selected_text: None,
+                limit: 1,
+                max_context_tokens: usize::MAX,
+            },
+        ) {
+            wiki_search::retrieval::Retrieval::Evidence { blocks, .. } => blocks[0].hit.clone(),
+            other => panic!("expected evidence, got {other:?}"),
+        };
         let answer = format!("Gravity attracts masses [[cite:{}]]", hit.block_id);
         let chunk = format!(
             "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":\"{answer}\"}},\"finish_reason\":null}}]}}\n\n"

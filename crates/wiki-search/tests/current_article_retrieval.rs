@@ -321,3 +321,32 @@ fn labeled_questions_retrieve_their_answer_block_first() {
         );
     }
 }
+
+/// Asking about the article's pervasive subject is answerable even though
+/// the term is in every block (regression: it was once treated like "the").
+#[test]
+fn the_articles_own_subject_term_is_answerable() {
+    let mut subject = article();
+    subject.lead = vec![paragraph(0, "The tower stands in the city.")];
+    subject.sections = vec![
+        section(
+            1,
+            "History",
+            vec![paragraph(0, "The tower opened in 1889.")],
+        ),
+        section(
+            2,
+            "Design",
+            vec![paragraph(0, "The tower is made of iron.")],
+        ),
+    ];
+    let index = ArticleLexicalIndex::build(&subject).unwrap();
+    let (blocks, _, _) = evidence(index.retrieve(&request("tower")));
+    assert_eq!(blocks.len(), 3);
+    // A specific unmatched content term still makes "the"/"tower" matches
+    // insufficient on their own.
+    assert_eq!(
+        index.retrieve(&request("Who painted the tower portrait?")),
+        Retrieval::NoEvidence
+    );
+}
