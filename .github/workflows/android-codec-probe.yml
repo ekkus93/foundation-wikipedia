@@ -47,11 +47,22 @@ jobs:
       - name: Enable KVM hardware acceleration for the emulator
         # Without KVM the API 35 emulator boots in software emulation (~13 min)
         # and its post-boot adb steps intermittently fail with exit code 224.
+        # Best effort: some hosted runners expose no /dev/kvm, in which case
+        # the emulator still runs (slowly) under software emulation.
         run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::warning::/dev/kvm is not present on this runner; using software emulation"
+            exit 0
+          fi
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -w /dev/kvm
+          sudo udevadm settle
+          if [ -w /dev/kvm ]; then
+            echo "KVM acceleration enabled"
+          else
+            echo "::warning::/dev/kvm is not writable after udev reload; using software emulation"
+          fi
       - name: Run codec probe on API 35 emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
