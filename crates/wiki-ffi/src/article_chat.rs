@@ -1,4 +1,5 @@
-//! Platform-neutral, consent-gated local article chat with atomic persistence.
+//! Platform-neutral, consent-gated article chat (local or hosted model) with
+//! atomic persistence.
 //!
 //! This use case requires a canonical exact-revision Article from a verified
 //! source. It never constructs evidence from an HTML preview, guesses a model,
@@ -6,9 +7,10 @@
 //! UI adapters must disclose preview.passages(), model() and endpoint() and
 //! obtain affirmative consent for THIS request before invoking it.
 
-use wiki_ai::local_selection::{
-    LocalArticleDisplayAnswer, LocalArticleError, LocalArticlePreview, SelectedLocalModel,
+use wiki_ai::article_destination::{
+    answer_article_with_preview_display, ArticleDestination, ArticlePreview,
 };
+use wiki_ai::local_selection::{LocalArticleDisplayAnswer, LocalArticleError, SelectedLocalModel};
 use wiki_ai::rag::{ArticleAnswerDisplayPart, ArticleQuestion, MAX_PRIOR_TURNS};
 use wiki_ai::CancellationToken;
 use wiki_model::Article;
@@ -117,11 +119,15 @@ fn persist_validated_display(
 /// This is a blocking shared-core API; desktop and Android adapters must run
 /// it off their UI thread and cancel when article/revision or consent changes.
 /// The UI must still compare citation target identities before navigating.
-pub struct ArticleChatRequest<'a> {
+///
+/// `D` is the explicitly selected destination: a discovered local model
+/// (`SelectedLocalModel`) or a hosted one (`SelectedHostedModel`, which also
+/// needs `OutboundPolicy::AllowCloud`).
+pub struct ArticleChatRequest<'a, D: ArticleDestination = SelectedLocalModel> {
     pub article: &'a Article,
     pub question: &'a ArticleQuestion<'a>,
-    pub selected: &'a SelectedLocalModel,
-    pub preview: &'a LocalArticlePreview,
+    pub selected: &'a D,
+    pub preview: &'a ArticlePreview<D>,
     pub share_article_passages: bool,
     pub existing_thread: Option<i64>,
     pub cancellation: &'a CancellationToken,
@@ -152,6 +158,15 @@ pub fn answer_and_save_local_article(
     state: &mut UserState,
     generation: u64,
     request: ArticleChatRequest<'_>,
+) -> Result<SavedArticleChatOutcome, ArticleChatError> {
+    answer_and_save_article(state, generation, request)
+}
+
+/// [`answer_and_save_local_article`] for any explicitly selected destination.
+pub fn answer_and_save_article<D: ArticleDestination>(
+    state: &mut UserState,
+    generation: u64,
+    request: ArticleChatRequest<'_, D>,
 ) -> Result<SavedArticleChatOutcome, ArticleChatError> {
     let ArticleChatRequest {
         article,
@@ -198,15 +213,15 @@ pub fn answer_and_save_local_article(
     if supplied != expected {
         return Err(ArticleChatError::HistoryMismatch);
     }
-    let answer = selected
-        .answer_article_with_preview_display(
-            article,
-            question,
-            preview,
-            share_article_passages,
-            cancellation,
-        )
-        .map_err(ArticleChatError::Inference)?;
+    let answer = answer_article_with_preview_display(
+        selected,
+        article,
+        question,
+        preview,
+        share_article_passages,
+        cancellation,
+    )
+    .map_err(ArticleChatError::Inference)?;
     persist_validated_display(
         state,
         generation,

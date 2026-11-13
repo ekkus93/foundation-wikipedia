@@ -434,3 +434,110 @@ fn library_opens_through_a_symlinked_app_directory() {
         .join("app/files/offline-library/snapshots/moon-pack")
         .is_dir());
 }
+
+/// AI-003: hosted article chat over an installed pack, without network I/O.
+mod hosted_chat {
+    use super::*;
+    use wiki_ffi::android::{ChatError, HostedAiProvider};
+
+    const KEY: &str = "sk-ant-host-test-secret";
+
+    fn active_library(dir: &Path) -> std::sync::Arc<OfflineLibrary> {
+        let pack = build_pack(dir, "moon-pack");
+        let library = library(dir);
+        library
+            .install_pack(pack.to_string_lossy().into_owned(), true)
+            .unwrap();
+        library.activate("moon-pack".into()).unwrap();
+        library
+    }
+
+    fn prepare(
+        library: &OfflineLibrary,
+        page_id: u64,
+        question: &str,
+    ) -> Result<std::sync::Arc<wiki_ffi::android::HostedArticleChat>, ChatError> {
+        library.prepare_hosted_chat(
+            "enwiki".into(),
+            page_id,
+            question.into(),
+            HostedAiProvider::Anthropic,
+            "claude-haiku-5-5".into(),
+            KEY.into(),
+        )
+    }
+
+    #[test]
+    fn a_preview_discloses_passages_host_and_model_and_needs_consent() {
+        let dir = test_dir("chat-preview");
+        let library = active_library(&dir.0);
+        let chat = prepare(&library, 2, "What do tides follow?").unwrap();
+        assert_eq!(chat.destination(), "api.anthropic.com");
+        assert_eq!(chat.model(), "claude-haiku-5-5");
+        assert_eq!(chat.article_title(), "Tide");
+        let passages = chat.passages();
+        assert!(!passages.is_empty());
+        assert!(passages
+            .iter()
+            .any(|passage| passage.excerpt.contains("Tides follow the Moon's gravity.")));
+        assert!(passages
+            .iter()
+            .all(|passage| passage.block_id.starts_with("wkb:enwiki:2:")));
+        assert_eq!(chat.send(false), Err(ChatError::ConsentRequired));
+    }
+
+    #[test]
+    fn cancellation_before_sending_never_connects_and_a_preview_is_single_use() {
+        let dir = test_dir("chat-cancel");
+        let library = active_library(&dir.0);
+        let chat = prepare(&library, 1, "What does the Moon orbit?").unwrap();
+        chat.cancel();
+        assert_eq!(chat.send(true), Err(ChatError::Cancelled));
+        assert_eq!(chat.send(true), Err(ChatError::AlreadySent));
+    }
+
+    #[test]
+    fn bad_inputs_and_missing_articles_fail_before_any_request() {
+        let dir = test_dir("chat-inputs");
+        let inactive = library(&dir.0.join("empty"));
+        assert_eq!(
+            prepare(&inactive, 1, "What does the Moon orbit?").err(),
+            Some(ChatError::NotInstalled)
+        );
+        let library = active_library(&dir.0);
+        assert_eq!(
+            prepare(&library, 99, "What does the Moon orbit?").err(),
+            Some(ChatError::NotInstalled)
+        );
+        assert_eq!(
+            prepare(&library, 1, "   ").err(),
+            Some(ChatError::InvalidInput)
+        );
+        assert_eq!(
+            prepare(&library, 1, &"q".repeat(4096)).err(),
+            Some(ChatError::InvalidInput)
+        );
+        assert_eq!(
+            prepare(&library, 1, "zebra xylophone quantum").err(),
+            Some(ChatError::NoEvidence)
+        );
+        let bad_key = library.prepare_hosted_chat(
+            "enwiki".into(),
+            1,
+            "What does the Moon orbit?".into(),
+            HostedAiProvider::OpenAi,
+            "gpt-x".into(),
+            "bad key".into(),
+        );
+        assert_eq!(bad_key.err(), Some(ChatError::InvalidKey));
+        let bad_model = library.prepare_hosted_chat(
+            "enwiki".into(),
+            1,
+            "What does the Moon orbit?".into(),
+            HostedAiProvider::OpenAi,
+            "two words".into(),
+            KEY.into(),
+        );
+        assert_eq!(bad_model.err(), Some(ChatError::InvalidInput));
+    }
+}

@@ -13,7 +13,7 @@ use crate::{
     OutboundPolicy, ProviderError, StreamEvent,
 };
 use wiki_model::Article;
-use wiki_search::{EvidenceHit, GroundedAnswer};
+use wiki_search::GroundedAnswer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalProtocol {
@@ -60,45 +60,30 @@ pub struct SelectedLocalModel {
     model: String,
 }
 
-/// Exact evidence and selected destination disclosed before consent. A preview
-/// does not grant network permission; it is bound to one model and endpoint.
-#[derive(Clone, Debug)]
-pub struct LocalArticlePreview {
-    selected: SelectedLocalModel,
-    context: crate::rag::PreparedArticleContext,
-    // Consent applies to the entire requested inference, not only excerpts.
-    question: String,
-    passage_limit: usize,
-    context_word_budget: usize,
-    selected_evidence: Option<EvidenceHit>,
-    max_output_tokens: u32,
-    outbound_policy: OutboundPolicy,
-}
+/// A disclosed request to a discovered local model (see `article_destination`).
+pub type LocalArticlePreview = crate::article_destination::ArticlePreview<SelectedLocalModel>;
 
 impl LocalArticlePreview {
     pub fn endpoint(&self) -> &str {
         self.selected.endpoint()
     }
+}
 
-    pub fn model(&self) -> &str {
-        self.selected.model()
+impl crate::article_destination::ArticleDestination for SelectedLocalModel {
+    fn model(&self) -> &str {
+        &self.model
     }
 
-    pub fn locality(&self) -> Locality {
-        self.selected.locality()
+    fn locality(&self) -> Locality {
+        self.endpoint.locality()
     }
 
-    pub fn passages(&self) -> &[EvidenceHit] {
-        &self.context.evidence
+    fn destination(&self) -> &str {
+        SelectedLocalModel::endpoint(self)
     }
 
-    pub fn user_message(&self) -> &str {
-        &self.context.user_message
-    }
-
-    /// Earlier (question, citation-free answer) turns that will also be sent.
-    pub fn history(&self) -> &[(String, String)] {
-        &self.context.history
+    fn connect(&self) -> Result<Box<dyn LlmProvider>, ProviderError> {
+        Ok(provider(self.protocol, self.endpoint.clone()))
     }
 }
 
@@ -230,23 +215,7 @@ impl SelectedLocalModel {
         article: &Article,
         question: &crate::rag::ArticleQuestion<'_>,
     ) -> Result<Option<LocalArticlePreview>, LocalArticleError> {
-        if question.model != self.model {
-            return Err(LocalArticleError::ModelMismatch);
-        }
-        crate::rag::prepare_article_context(article, question)
-            .map(|context| {
-                context.map(|context| LocalArticlePreview {
-                    selected: self.clone(),
-                    context,
-                    question: question.question.to_owned(),
-                    passage_limit: question.passage_limit,
-                    context_word_budget: question.context_word_budget,
-                    selected_evidence: question.selected_evidence.cloned(),
-                    max_output_tokens: question.max_output_tokens,
-                    outbound_policy: question.outbound_policy,
-                })
-            })
-            .map_err(LocalArticleError::Rag)
+        crate::article_destination::prepare_article_preview(self, article, question)
     }
 
     /// Infer only if the affirmative decision applies to the exact preview.
@@ -260,40 +229,14 @@ impl SelectedLocalModel {
         share_article_passages: bool,
         cancellation: &CancellationToken,
     ) -> Result<GroundedAnswer, LocalArticleError> {
-        if !share_article_passages {
-            return Err(LocalArticleError::PassageConsentRequired);
-        }
-        if question.model != self.model {
-            return Err(LocalArticleError::ModelMismatch);
-        }
-        if self != &preview.selected
-            || question.question != preview.question
-            || question.passage_limit != preview.passage_limit
-            || question.context_word_budget != preview.context_word_budget
-            || question.selected_evidence != preview.selected_evidence.as_ref()
-            || question.max_output_tokens != preview.max_output_tokens
-            || question.outbound_policy != preview.outbound_policy
-        {
-            return Err(LocalArticleError::PreviewMismatch);
-        }
-        let Some(current) = self.prepare_article_preview(article, question)? else {
-            return Err(LocalArticleError::PreviewMismatch);
-        };
-        if current.context.user_message != preview.context.user_message
-            || current.context.evidence != preview.context.evidence
-            || current.context.history != preview.context.history
-        {
-            return Err(LocalArticleError::PreviewMismatch);
-        }
-        // Reuse the context just verified against consent. Do not rebuild it
-        // again between verification and the actual provider request.
-        crate::rag::answer_prepared_article(
-            provider(self.protocol, self.endpoint.clone()).as_ref(),
+        crate::article_destination::answer_article_with_preview(
+            self,
+            article,
             question,
-            current.context,
+            preview,
+            share_article_passages,
             cancellation,
         )
-        .map_err(LocalArticleError::Rag)
     }
 
     /// Return presentation-safe text and canonical citation navigation
@@ -308,20 +251,14 @@ impl SelectedLocalModel {
         share_article_passages: bool,
         cancellation: &CancellationToken,
     ) -> Result<LocalArticleDisplayAnswer, LocalArticleError> {
-        match self.answer_article_with_preview(
+        crate::article_destination::answer_article_with_preview_display(
+            self,
             article,
             question,
             preview,
             share_article_passages,
             cancellation,
-        )? {
-            GroundedAnswer::InsufficientEvidence => {
-                Ok(LocalArticleDisplayAnswer::InsufficientEvidence)
-            }
-            supported => crate::rag::answer_navigation_parts(article, &supported)
-                .map(LocalArticleDisplayAnswer::Supported)
-                .map_err(LocalArticleError::Display),
-        }
+        )
     }
 
     /// Use this exact discovered local model for revision-scoped RAG.

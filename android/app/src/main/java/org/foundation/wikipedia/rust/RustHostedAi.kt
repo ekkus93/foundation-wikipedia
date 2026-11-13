@@ -1,11 +1,16 @@
 package org.foundation.wikipedia.rust
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import uniffi.wiki_ffi.ChatAnswer
 import uniffi.wiki_ffi.HostedAiCheck
 import uniffi.wiki_ffi.HostedAiProvider
+import uniffi.wiki_ffi.HostedArticleChat
 import uniffi.wiki_ffi.checkHostedAiConnection
 
 /** No key is saved for the requested provider. */
@@ -47,6 +52,41 @@ class RustHostedAi(
         RustTls.init(app)
         val key = keys.load(provider) ?: throw HostedAiKeyMissingException()
         checkHostedAiConnection(provider, key, model.trim())
+    }
+
+    /**
+     * Prepare (no network) a question about an article of [library]'s active
+     * pack for [provider]. Show the returned preview's `passages()`,
+     * `destination()` and `model()` to the user before calling [send].
+     */
+    suspend fun prepareArticleChat(
+        library: RustOfflineLibrary,
+        project: String,
+        pageId: Long,
+        question: String,
+        provider: HostedAiProvider,
+        model: String,
+    ): HostedArticleChat {
+        val key = io { keys.load(provider) } ?: throw HostedAiKeyMissingException()
+        return library.prepareHostedChat(project, pageId, question, provider, model, key)
+    }
+
+    /**
+     * Send a disclosed preview once the user agreed to share its passages
+     * with its destination. Cancelling the coroutine cancels the request.
+     */
+    suspend fun send(chat: HostedArticleChat): ChatAnswer = coroutineScope {
+        val request = async(dispatcher) {
+            requireOffMainThread()
+            RustTls.init(app)
+            chat.send(true)
+        }
+        try {
+            request.await()
+        } catch (error: CancellationException) {
+            chat.cancel()
+            throw error
+        }
     }
 
     private suspend fun <T> io(block: () -> T): T = withContext(dispatcher) {

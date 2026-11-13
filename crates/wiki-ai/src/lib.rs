@@ -4,8 +4,10 @@
 //! Streaming is callback-based; platform adapters must schedule blocking
 //! transports off the UI thread and honor the cancellation token.
 
+pub mod article_destination;
 pub mod hosted_codec;
 pub mod hosted_http;
+pub mod hosted_selection;
 pub mod local_endpoint;
 pub mod local_http;
 pub mod local_http_stream;

@@ -540,3 +540,303 @@ pub fn run_hosted_check(
     )?;
     Ok(check)
 }
+
+// ---------------------------------------------------------------------------
+// AI-003 article chat with a hosted model, grounded in an installed pack.
+//
+// `prepare_hosted_chat` builds the exact passages, model and host that would
+// be sent, without any network I/O, for the app to disclose. `send` contacts
+// the provider only with the user's consent to THAT preview; the reply is
+// shown only after its citations are validated against the same verified
+// article revision. Nothing is saved (Android has no chat history yet).
+
+const CHAT_PASSAGE_LIMIT: usize = 6;
+const CHAT_CONTEXT_WORDS: usize = 900;
+const CHAT_MAX_OUTPUT_TOKENS: u32 = 1024;
+const MAX_CHAT_QUESTION_BYTES: usize = 2048;
+
+/// Article-chat failures. None carries key material, passages or reply text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
+pub enum ChatError {
+    /// The question, model or article identity was rejected before any work.
+    InvalidInput,
+    InvalidKey,
+    /// No pack is active, or the article is not in it.
+    NotInstalled,
+    /// The installed article failed verification.
+    VerificationFailed,
+    /// The article has no passage relevant to the question; nothing was sent.
+    NoEvidence,
+    /// The user did not consent to sending the disclosed passages.
+    ConsentRequired,
+    /// The preview no longer matches the article or selection; prepare again.
+    PreviewChanged,
+    /// This preview was already sent; prepare a new one for another request.
+    AlreadySent,
+    Cancelled,
+    /// The OS certificate verifier has not been initialised (`RustTls.init`).
+    NotReady,
+    /// The provider refused the request (for example an invalid key or model).
+    Rejected,
+    Timeout,
+    Network,
+    InvalidResponse,
+    /// The reply's citations did not match the evidence, so it is not shown.
+    Unverifiable,
+}
+
+impl std::fmt::Display for ChatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for ChatError {}
+
+impl From<wiki_ai::ProviderError> for ChatError {
+    fn from(error: wiki_ai::ProviderError) -> Self {
+        use wiki_ai::ProviderError as E;
+        match error {
+            E::Cancelled => Self::Cancelled,
+            E::InvalidRequest | E::DestinationNotAllowed => Self::InvalidInput,
+            other => match HostedAiError::from(other) {
+                HostedAiError::NotReady => Self::NotReady,
+                HostedAiError::Rejected => Self::Rejected,
+                HostedAiError::Timeout => Self::Timeout,
+                HostedAiError::Network => Self::Network,
+                HostedAiError::InvalidResponse => Self::InvalidResponse,
+                HostedAiError::InvalidKey | HostedAiError::InvalidRequest => Self::InvalidInput,
+            },
+        }
+    }
+}
+
+impl From<wiki_ai::article_destination::ArticleInferenceError> for ChatError {
+    fn from(error: wiki_ai::article_destination::ArticleInferenceError) -> Self {
+        use wiki_ai::article_destination::ArticleInferenceError as E;
+        use wiki_ai::rag::RagError as R;
+        match error {
+            E::PassageConsentRequired => Self::ConsentRequired,
+            E::ModelMismatch | E::PreviewMismatch => Self::PreviewChanged,
+            E::Rag(R::Provider(error)) => error.into(),
+            E::Rag(R::InvalidArticle(_)) => Self::VerificationFailed,
+            E::Rag(
+                R::InvalidQuestion
+                | R::InvalidSelection
+                | R::SelectionTooLarge
+                | R::InvalidPriorTurn
+                | R::ContextTooLarge,
+            ) => Self::InvalidInput,
+            E::Rag(R::IncompleteStream | R::ResponseTooLarge) => Self::InvalidResponse,
+            E::Rag(R::Citation(_) | R::MalformedCitation) | E::Display(_) => Self::Unverifiable,
+        }
+    }
+}
+
+/// One passage that will be sent, shown to the user before consent.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ChatPassage {
+    pub block_id: String,
+    pub heading_path: Vec<String>,
+    pub excerpt: String,
+}
+
+impl From<&wiki_search::EvidenceHit> for ChatPassage {
+    fn from(hit: &wiki_search::EvidenceHit) -> Self {
+        Self {
+            block_id: hit.block_id.clone(),
+            heading_path: hit.heading_path.clone(),
+            excerpt: hit.excerpt.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ChatAnswerPart {
+    Text {
+        text: String,
+    },
+    /// A validated citation of a passage of the same article revision.
+    Citation {
+        passage: ChatPassage,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ChatAnswer {
+    Supported {
+        parts: Vec<ChatAnswerPart>,
+    },
+    /// The model said the passages do not answer the question.
+    InsufficientEvidence,
+}
+
+/// A disclosed, not-yet-sent hosted request about one installed article.
+#[derive(uniffi::Object)]
+pub struct HostedArticleChat {
+    article: Article,
+    selected: wiki_ai::hosted_selection::SelectedHostedModel,
+    question: String,
+    preview: wiki_ai::article_destination::ArticlePreview<
+        wiki_ai::hosted_selection::SelectedHostedModel,
+    >,
+    cancellation: wiki_ai::CancellationToken,
+    sent: Mutex<bool>,
+}
+
+impl HostedArticleChat {
+    fn with_question<T>(
+        question: &str,
+        model: &str,
+        run: impl FnOnce(&wiki_ai::rag::ArticleQuestion<'_>) -> T,
+    ) -> T {
+        run(&wiki_ai::rag::ArticleQuestion {
+            question,
+            model,
+            passage_limit: CHAT_PASSAGE_LIMIT,
+            context_word_budget: CHAT_CONTEXT_WORDS,
+            selected_evidence: None,
+            max_output_tokens: CHAT_MAX_OUTPUT_TOKENS,
+            outbound_policy: wiki_ai::OutboundPolicy::AllowCloud,
+            prior_turns: &[],
+        })
+    }
+}
+
+#[uniffi::export]
+impl HostedArticleChat {
+    /// The host the passages and question would be sent to.
+    pub fn destination(&self) -> String {
+        use wiki_ai::article_destination::ArticleDestination;
+        self.selected.destination().to_owned()
+    }
+
+    pub fn model(&self) -> String {
+        self.preview.model().to_owned()
+    }
+
+    pub fn article_title(&self) -> String {
+        self.article.display_title.clone()
+    }
+
+    pub fn revision_id(&self) -> u64 {
+        self.article.revision.revision_id
+    }
+
+    /// Exactly the passages that `send` would share.
+    pub fn passages(&self) -> Vec<ChatPassage> {
+        self.preview
+            .passages()
+            .iter()
+            .map(ChatPassage::from)
+            .collect()
+    }
+
+    /// Stop an in-flight `send` (it returns `Cancelled`).
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    /// Send the disclosed request. `share_article_passages` must be the
+    /// user's explicit consent to this preview. Usable once.
+    pub fn send(&self, share_article_passages: bool) -> Result<ChatAnswer, ChatError> {
+        if !share_article_passages {
+            return Err(ChatError::ConsentRequired);
+        }
+        {
+            let mut sent = self.sent.lock().map_err(|_| ChatError::InvalidInput)?;
+            if *sent {
+                return Err(ChatError::AlreadySent);
+            }
+            *sent = true;
+        }
+        if self.cancellation.is_cancelled() {
+            return Err(ChatError::Cancelled);
+        }
+        let answer = Self::with_question(&self.question, self.preview.model(), |question| {
+            wiki_ai::article_destination::answer_article_with_preview_display(
+                &self.selected,
+                &self.article,
+                question,
+                &self.preview,
+                true,
+                &self.cancellation,
+            )
+        })?;
+        Ok(match answer {
+            wiki_ai::article_destination::ArticleDisplayAnswer::InsufficientEvidence => {
+                ChatAnswer::InsufficientEvidence
+            }
+            wiki_ai::article_destination::ArticleDisplayAnswer::Supported(parts) => {
+                ChatAnswer::Supported {
+                    parts: parts
+                        .into_iter()
+                        .map(|part| match part {
+                            wiki_ai::rag::ArticleAnswerDisplayPart::Text(text) => {
+                                ChatAnswerPart::Text { text }
+                            }
+                            wiki_ai::rag::ArticleAnswerDisplayPart::Citation(target) => {
+                                ChatAnswerPart::Citation {
+                                    passage: ChatPassage::from(&target.evidence),
+                                }
+                            }
+                        })
+                        .collect(),
+                }
+            }
+        })
+    }
+}
+
+#[uniffi::export]
+impl OfflineLibrary {
+    /// Prepare (no network) a hosted question about an article of the active
+    /// pack. `api_key` comes from the app's secure storage and is kept only
+    /// in memory by the returned object.
+    pub fn prepare_hosted_chat(
+        &self,
+        project: String,
+        page_id: u64,
+        question: String,
+        provider: HostedAiProvider,
+        model: String,
+        api_key: String,
+    ) -> Result<Arc<HostedArticleChat>, ChatError> {
+        let question = question.trim().to_owned();
+        if question.is_empty() || question.len() > MAX_CHAT_QUESTION_BYTES {
+            return Err(ChatError::InvalidInput);
+        }
+        let key = wiki_ai::hosted_codec::ApiKey::new(api_key).map_err(|_| ChatError::InvalidKey)?;
+        let selected =
+            wiki_ai::hosted_selection::SelectedHostedModel::new(provider.into(), model.trim(), key)
+                .map_err(|_| ChatError::InvalidInput)?;
+        let key = ArticleKey { project, page_id };
+        key.validate().map_err(|_| ChatError::InvalidInput)?;
+        let article = self
+            .with_active(|reader| {
+                reader
+                    .reader()
+                    .open_page(&key)
+                    .map_err(|_| LibraryError::VerificationFailed)
+            })
+            .map_err(|error| match error {
+                LibraryError::NotInstalled => ChatError::NotInstalled,
+                LibraryError::InvalidInput => ChatError::InvalidInput,
+                _ => ChatError::VerificationFailed,
+            })?
+            .ok_or(ChatError::NotInstalled)?;
+        let model = wiki_ai::article_destination::ArticleDestination::model(&selected).to_owned();
+        let preview = HostedArticleChat::with_question(&question, &model, |question| {
+            wiki_ai::article_destination::prepare_article_preview(&selected, &article, question)
+        })?
+        .ok_or(ChatError::NoEvidence)?;
+        Ok(Arc::new(HostedArticleChat {
+            article,
+            selected,
+            question,
+            preview,
+            cancellation: wiki_ai::CancellationToken::default(),
+            sent: Mutex::new(false),
+        }))
+    }
+}
