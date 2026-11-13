@@ -224,8 +224,15 @@ mod staged_tests {
         fs::create_dir(root.join("articles")).unwrap();
         let bytes = b"same bytes as expected diagram";
         fs::write(root.join("articles/page.cbor"), bytes).unwrap();
-        let manifest =
-            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &root,
+            "physics",
+            "enwiki",
+            "20261001",
+            "physics",
+            crate::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         let digest = manifest.objects[0].sha256.clone();
         let expected = media(
             "diagram",
@@ -242,8 +249,15 @@ mod staged_tests {
 
         fs::create_dir(root.join("media")).unwrap();
         fs::write(root.join("media/diagram.svg"), bytes).unwrap();
-        let with_media =
-            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let with_media = custom_manifest_from_tree(
+            &root,
+            "physics",
+            "enwiki",
+            "20261001",
+            "physics",
+            crate::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         let result = check_declared_staged_media(&with_media, &root, &[expected]).unwrap();
         assert_eq!(result.required_objects, 1);
         assert_eq!(result.unique_verified_bytes, bytes.len() as u64);
@@ -264,8 +278,15 @@ mod staged_tests {
         let preview = b"audio/video offline preview";
         fs::write(root.join("media/plot.svg"), diagram).unwrap();
         fs::write(root.join("media/preview.jpg"), preview).unwrap();
-        let manifest =
-            custom_manifest_from_tree(&root, "physics", "enwiki", "20261001", "physics").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &root,
+            "physics",
+            "enwiki",
+            "20261001",
+            "physics",
+            crate::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         let plot_hash = manifest
             .objects
             .iter()

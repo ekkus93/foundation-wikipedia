@@ -33,6 +33,7 @@ fn verified_envelope_stages_into_private_tree() {
         origin: Origin::Custom {
             definition_id: "fixture".into(),
         },
+        metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "articles/1.cbor".into(),
             sha256: format!("{:x}", Sha256::digest(payload)),

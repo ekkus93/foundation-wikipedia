@@ -73,6 +73,7 @@ mod tests {
             project: "enwiki".into(),
             snapshot: "20261009".into(),
             origin,
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "articles/42.cbor.zst".into(),
                 sha256: "a".repeat(64),

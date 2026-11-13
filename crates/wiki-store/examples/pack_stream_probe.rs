@@ -24,7 +24,9 @@ use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_store::activation::ActiveSnapshotStore;
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
-use wiki_store::pack_install::{install_custom_pack_stream, PackInstallError};
+use wiki_store::pack_install::{
+    install_custom_pack_stream, snapshot_pack_metadata, PackInstallError,
+};
 use wiki_store::record_codec::append_record_frame;
 
 const ARTICLES: u64 = 200;
@@ -98,8 +100,21 @@ fn build_tree(tree: &Path) {
 }
 
 fn export(tree: &Path, pack_id: &str, output: &Path) -> u64 {
-    let manifest =
-        custom_manifest_from_tree(tree, pack_id, "enwiki", "20261101", "orbits").unwrap();
+    let manifest = custom_manifest_from_tree(
+        tree,
+        pack_id,
+        "enwiki",
+        "20261101",
+        "orbits",
+        snapshot_pack_metadata(
+            tree,
+            wiki_pack_format::manifest::PackMetadata::synthetic_fixture().source,
+            &"0".repeat(64),
+            "CC-BY-SA-4.0",
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let mut file = BufWriter::new(File::create(output).unwrap());
     write_custom_tree(tree, &manifest, &mut file).unwrap();
     file.into_inner().unwrap().sync_all().unwrap();

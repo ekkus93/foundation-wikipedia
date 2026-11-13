@@ -32,6 +32,7 @@ fn stdin_verification_checks_all_bytes_and_never_promotes_official_claim() {
         origin: Origin::Official {
             publisher: "unverified-claim".into(),
         },
+        metadata: wiki_pack_builder::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "media/figure.svg".into(),
             sha256: sha256_hex(payload),

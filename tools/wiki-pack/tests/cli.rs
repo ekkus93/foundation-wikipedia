@@ -6,6 +6,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use wiki_pack_builder::wiki_pack_format::container::write_container;
 use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin, FORMAT_VERSION};
 
+/// Synthetic v2 pack metadata for `export-custom` (outside the object tree).
+fn write_metadata(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("pack-metadata.json");
+    let zero = "0".repeat(64);
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"source":{{"kind":"custom","snapshot_id":"fixture","manifest_sha256":"{zero}"}},"definition_sha256":"{zero}","license":{{"text_spdx":"CC-BY-SA-4.0","attribution_object":null}},"indexes":[],"counts":{{"articles":0,"redirects":0,"media":0}}}}"#
+        ),
+    )
+    .unwrap();
+    path
+}
+
 fn create_fixture_dir(mut candidate: impl FnMut() -> std::path::PathBuf) -> std::path::PathBuf {
     for _ in 0..32 {
         let path = candidate();
@@ -46,6 +60,7 @@ fn fixture(official: bool) -> (std::path::PathBuf, std::path::PathBuf) {
                 definition_id: "fixture".into(),
             }
         },
+        metadata: wiki_pack_builder::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "articles/1.cbor".into(),
             sha256: "84393add8c489d33569360efd1bcb5f70ed5a22408127d241c751e5ea345eb7c".into(),
@@ -139,18 +154,20 @@ fn usage_errors_and_missing_input_fail_closed() {
 #[test]
 fn cli_export_custom_roundtrip_is_verified_and_never_overwrites() {
     let (parent, _) = fixture(false);
+    let metadata = write_metadata(&parent);
     let source = parent.join("custom-objects");
     fs::create_dir(&source).unwrap();
     fs::create_dir(source.join("media")).unwrap();
     fs::write(source.join("article.cbor"), b"verified canonical article").unwrap();
     fs::write(source.join("media/diagram.svg"), b"<svg/>").unwrap();
     let output = parent.join("custom-output.wpack");
-    let args: [&std::ffi::OsStr; 6] = [
+    let args: [&std::ffi::OsStr; 7] = [
         source.as_os_str(),
         std::ffi::OsStr::new("physics"),
         std::ffi::OsStr::new("enwiki"),
         std::ffi::OsStr::new("20261001"),
         std::ffi::OsStr::new("physics-definition"),
+        metadata.as_os_str(),
         output.as_os_str(),
     ];
     let exported = invoke("export-custom", &args);
@@ -206,12 +223,13 @@ fn cli_export_custom_roundtrip_is_verified_and_never_overwrites() {
         0
     );
     let inside = source.join("self.wpack");
-    let forbidden: [&std::ffi::OsStr; 6] = [
+    let forbidden: [&std::ffi::OsStr; 7] = [
         source.as_os_str(),
         std::ffi::OsStr::new("physics"),
         std::ffi::OsStr::new("enwiki"),
         std::ffi::OsStr::new("20261001"),
         std::ffi::OsStr::new("physics-definition"),
+        metadata.as_os_str(),
         inside.as_os_str(),
     ];
     assert_eq!(invoke("export-custom", &forbidden).status.code(), Some(1));
@@ -224,18 +242,20 @@ fn cli_export_custom_roundtrip_is_verified_and_never_overwrites() {
 fn cli_export_custom_refuses_symlinked_source() {
     use std::os::unix::fs::symlink;
     let (parent, _) = fixture(false);
+    let metadata = write_metadata(&parent);
     let source = parent.join("custom-source");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("article.cbor"), b"content").unwrap();
     symlink(&source, parent.join("linked-source")).unwrap();
     let output = parent.join("unsafe.wpack");
     let linked = parent.join("linked-source");
-    let args: [&std::ffi::OsStr; 6] = [
+    let args: [&std::ffi::OsStr; 7] = [
         linked.as_os_str(),
         std::ffi::OsStr::new("physics"),
         std::ffi::OsStr::new("enwiki"),
         std::ffi::OsStr::new("20261001"),
         std::ffi::OsStr::new("physics"),
+        metadata.as_os_str(),
         output.as_os_str(),
     ];
     let result = invoke("export-custom", &args);

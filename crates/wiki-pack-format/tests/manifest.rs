@@ -12,6 +12,7 @@ fn sample() -> Manifest {
         origin: Origin::Custom {
             definition_id: "physics.toml".into(),
         },
+        metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "articles/01.pack".into(),
             sha256: "a".repeat(64),

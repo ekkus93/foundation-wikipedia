@@ -434,6 +434,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/diagram.svg".into(),
                 sha256: crate::sha256_hex(payload),
@@ -506,6 +507,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/figure.svg".into(),
                 sha256: crate::sha256_hex(payload),
@@ -586,6 +588,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/figure.svg".into(),
                 sha256: crate::sha256_hex(payload),
@@ -650,6 +653,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/figure.svg".into(),
                 sha256: crate::sha256_hex(payload),
@@ -702,6 +706,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/diagram.svg".into(),
                 sha256: crate::sha256_hex(payload),
@@ -986,6 +991,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "physics".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "articles/42.cbor".into(),
                 sha256: crate::sha256_hex(payload),

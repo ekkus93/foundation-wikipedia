@@ -1285,6 +1285,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "benchmark".into(),
             },
+            metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![
                 Object {
                     path: "media/figure.bin".into(),
@@ -1357,6 +1358,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "benchmark".into(),
             },
+            metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "other.json".into(),
                 sha256: sha256_hex(bytes),

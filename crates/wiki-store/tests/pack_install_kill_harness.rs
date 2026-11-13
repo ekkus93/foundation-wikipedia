@@ -24,7 +24,8 @@ use wiki_store::activation::ActiveSnapshotStore;
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
 use wiki_store::pack_install::{
-    install_custom_pack, reclaim_abandoned_staging, PackInstallError, ShardInventory,
+    install_custom_pack, reclaim_abandoned_staging, snapshot_pack_metadata, PackInstallError,
+    ShardInventory,
 };
 use wiki_store::record_codec::append_record_frame;
 
@@ -158,9 +159,23 @@ fn sigkill_during_install_never_publishes_a_partial_snapshot() {
     let inventory = build_tree(&tree);
     fs::create_dir_all(&packs).unwrap();
     fs::create_dir_all(&root).unwrap();
+    let metadata = snapshot_pack_metadata(
+        &tree,
+        wiki_pack_format::manifest::PackMetadata::synthetic_fixture().source,
+        &"0".repeat(64),
+        "CC-BY-SA-4.0",
+    )
+    .unwrap();
     for n in 0..PACKS {
-        let manifest =
-            custom_manifest_from_tree(&tree, &pack_id(n), "enwiki", "20261101", "venus").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &tree,
+            &pack_id(n),
+            "enwiki",
+            "20261101",
+            "venus",
+            metadata.clone(),
+        )
+        .unwrap();
         let mut bytes = Vec::new();
         write_custom_tree(&tree, &manifest, &mut bytes).unwrap();
         fs::write(packs.join(format!("{}.wpack", pack_id(n))), bytes).unwrap();

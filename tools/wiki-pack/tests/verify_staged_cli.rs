@@ -8,13 +8,14 @@ use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Object, Origin};
 
 fn fixture() -> Vec<u8> {
     let manifest = Manifest {
-        version: 1,
+        version: wiki_pack_builder::wiki_pack_format::manifest::FORMAT_VERSION,
         pack_id: "science".into(),
         project: "enwiki".into(),
         snapshot: "20261030".into(),
         origin: Origin::Official {
             publisher: "unverified-publisher".into(),
         },
+        metadata: wiki_pack_builder::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "articles/1.cbor".into(),
             sha256: format!("{:x}", Sha256::digest(b"article")),

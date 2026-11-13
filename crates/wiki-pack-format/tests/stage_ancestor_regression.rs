@@ -29,6 +29,7 @@ fn rejects_symlinked_staging_parent_without_publishing() {
         origin: Origin::Custom {
             definition_id: "test".into(),
         },
+        metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "articles/1.pack".into(),
             sha256: format!("{:x}", Sha256::digest(payload)),

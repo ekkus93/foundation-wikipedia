@@ -12,7 +12,7 @@ mod visual_diagnostic;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -22,7 +22,10 @@ use wiki_pack_builder::wiki_pack_format::container::{
 use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
-use wiki_pack_builder::wiki_pack_format::manifest::{Manifest, Origin};
+use wiki_pack_builder::wiki_pack_format::manifest::{
+    Counts, IndexEntry, IndexRole, License, Manifest, Origin, PackMetadata, SourceKind,
+    SourceSnapshot,
+};
 use wiki_pack_builder::wiki_pack_format::objects::verify_manifest_directory;
 use wiki_pack_builder::wiki_pack_format::stage::{
     stage_container, stage_container_stream_with_budget, stage_container_with_budget,
@@ -53,7 +56,7 @@ fn usage() {
     println!("       wiki-pack verify-public-generation-live [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
-    println!("       wiki-pack export-custom [--json] <object-dir> <pack-id> <project> <snapshot> <definition-id> <output.wpack>");
+    println!("       wiki-pack export-custom [--json] <object-dir> <pack-id> <project> <snapshot> <definition-id> <metadata.json> <output.wpack>");
     println!(
         "       wiki-pack stage-unsigned [--json] <file.wpack> <private-parent> <name> [max-input-bytes]"
     );
@@ -107,6 +110,7 @@ fn print_inspection(manifest: Manifest, detailed: bool, json_output: bool) {
             output["format_version"] = serde_json::json!(manifest.version);
             output["claimed_origin"] = serde_json::json!(origin_kind);
             output["claimed_origin_identity"] = serde_json::json!(origin_identity);
+            output["metadata"] = metadata_json(&manifest.metadata);
         }
         println!("{output}");
         return;
@@ -131,7 +135,156 @@ fn print_inspection(manifest: Manifest, detailed: bool, json_output: bool) {
                 println!("Claimed origin: official ({publisher}); claim NOT authenticated");
             }
         }
+        let meta = &manifest.metadata;
+        println!(
+            "Claimed source: {} snapshot {} (source manifest sha256 {})",
+            meta.source.kind.name(),
+            meta.source.snapshot_id,
+            meta.source.manifest_sha256
+        );
+        println!("Definition sha256: {}", meta.definition_sha256);
+        println!(
+            "Text licence: {}; media attribution object: {}",
+            meta.license.text_spdx,
+            meta.license.attribution_object.as_deref().unwrap_or("none")
+        );
+        for index in &meta.indexes {
+            println!(
+                "Index: {} ({} schema {})",
+                index.path,
+                index.role.name(),
+                index.schema
+            );
+        }
+        println!(
+            "Declared counts: {} articles, {} redirects, {} media",
+            meta.counts.articles, meta.counts.redirects, meta.counts.media
+        );
     }
+}
+
+fn metadata_json(meta: &PackMetadata) -> serde_json::Value {
+    serde_json::json!({
+        "source": {
+            "kind": meta.source.kind.name(),
+            "snapshot_id": meta.source.snapshot_id,
+            "manifest_sha256": meta.source.manifest_sha256,
+        },
+        "definition_sha256": meta.definition_sha256,
+        "license": {
+            "text_spdx": meta.license.text_spdx,
+            "attribution_object": meta.license.attribution_object,
+        },
+        "indexes": meta.indexes.iter().map(|index| serde_json::json!({
+            "path": index.path,
+            "role": index.role.name(),
+            "schema": index.schema,
+        })).collect::<Vec<_>>(),
+        "counts": {
+            "articles": meta.counts.articles,
+            "redirects": meta.counts.redirects,
+            "media": meta.counts.media,
+        },
+    })
+}
+
+/// Strict JSON form of `PackMetadata` read by `export-custom`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MetadataFile {
+    source: SourceFile,
+    definition_sha256: String,
+    license: LicenseFile,
+    indexes: Vec<IndexFile>,
+    counts: CountsFile,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceFile {
+    kind: String,
+    snapshot_id: String,
+    manifest_sha256: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LicenseFile {
+    text_spdx: String,
+    attribution_object: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexFile {
+    path: String,
+    role: String,
+    schema: u32,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CountsFile {
+    articles: u64,
+    redirects: u64,
+    media: u64,
+}
+
+const MAX_METADATA_FILE_BYTES: u64 = 64 * 1024;
+
+/// Read and structurally parse pack metadata. Field validity (digests, SPDX,
+/// declared paths) is enforced by `Manifest::validate` during export.
+fn read_metadata_file(path: &Path) -> Result<PackMetadata, String> {
+    let file = File::open(path).map_err(|error| format!("cannot open metadata file: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_METADATA_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read metadata file: {error}"))?;
+    if bytes.len() as u64 > MAX_METADATA_FILE_BYTES {
+        return Err("metadata file exceeds 64 KiB".into());
+    }
+    let parsed: MetadataFile = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid metadata JSON: {error}"))?;
+    let kind = match parsed.source.kind.as_str() {
+        "enterprise" => SourceKind::Enterprise,
+        "public-dump" => SourceKind::PublicDump,
+        "custom" => SourceKind::Custom,
+        other => return Err(format!("unknown source kind {other:?}")),
+    };
+    let indexes = parsed
+        .indexes
+        .into_iter()
+        .map(|index| {
+            let role = match index.role.as_str() {
+                "catalog" => IndexRole::Catalog,
+                "fts5" => IndexRole::Fts5,
+                other => return Err(format!("unknown index role {other:?}")),
+            };
+            Ok(IndexEntry {
+                path: index.path,
+                role,
+                schema: index.schema,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(PackMetadata {
+        source: SourceSnapshot {
+            kind,
+            snapshot_id: parsed.source.snapshot_id,
+            manifest_sha256: parsed.source.manifest_sha256,
+        },
+        definition_sha256: parsed.definition_sha256,
+        license: License {
+            text_spdx: parsed.license.text_spdx,
+            attribution_object: parsed.license.attribution_object,
+        },
+        indexes,
+        counts: Counts {
+            articles: parsed.counts.articles,
+            redirects: parsed.counts.redirects,
+            media: parsed.counts.media,
+        },
+    })
 }
 
 fn inspect_file(
@@ -220,20 +373,34 @@ fn inspect_stdin(max_bytes: u64, detailed: bool, json_output: bool) -> Result<()
 /// Create a complete provisional envelope in a private temporary file. Never
 /// replace an existing destination and never publish a partially built pack.
 /// The caller must own the object tree exclusively throughout both passes.
+/// Pack identity fields supplied on the `export-custom` command line.
+struct ExportIdentity<'a> {
+    pack_id: &'a str,
+    project: &'a str,
+    snapshot: &'a str,
+    definition_id: &'a str,
+}
+
 fn export_custom_tree(
     source: PathBuf,
-    pack_id: &str,
-    project: &str,
-    snapshot: &str,
-    definition_id: &str,
+    identity: ExportIdentity<'_>,
+    metadata_path: PathBuf,
     destination: PathBuf,
     json_output: bool,
 ) -> Result<(), String> {
     if json_output && destination.to_str().is_none() {
         return Err("JSON export destination path must be UTF-8".into());
     }
-    let manifest = custom_manifest_from_tree(&source, pack_id, project, snapshot, definition_id)
-        .map_err(|error| format!("invalid source object tree: {error:?}"))?;
+    let metadata = read_metadata_file(&metadata_path)?;
+    let manifest = custom_manifest_from_tree(
+        &source,
+        identity.pack_id,
+        identity.project,
+        identity.snapshot,
+        identity.definition_id,
+        metadata,
+    )
+    .map_err(|error| format!("invalid source object tree or metadata: {error:?}"))?;
     let parent = destination
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -327,7 +494,7 @@ fn export_custom_tree(
                 "object_count": manifest.objects.len(),
                 "declared_payload_bytes": declared_payload_bytes,
                 "claimed_origin": "custom",
-                "claimed_origin_identity": definition_id,
+                "claimed_origin_identity": identity.definition_id,
             })
         );
     } else {
@@ -1053,8 +1220,8 @@ fn main() {
             } else {
                 &supplied[..]
             };
-            if fields.len() != 6 {
-                eprintln!("export-custom requires [--json] and exactly six arguments");
+            if fields.len() != 7 {
+                eprintln!("export-custom requires [--json] and exactly seven arguments");
                 if !json_output {
                     usage();
                 }
@@ -1070,11 +1237,14 @@ fn main() {
             };
             if let Err(error) = export_custom_tree(
                 PathBuf::from(&fields[0]),
-                identity[0],
-                identity[1],
-                identity[2],
-                identity[3],
+                ExportIdentity {
+                    pack_id: identity[0],
+                    project: identity[1],
+                    snapshot: identity[2],
+                    definition_id: identity[3],
+                },
                 PathBuf::from(&fields[5]),
+                PathBuf::from(&fields[6]),
                 json_output,
             ) {
                 eprintln!("{error}");

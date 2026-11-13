@@ -16,21 +16,47 @@ fn sandbox() -> std::path::PathBuf {
     parent
 }
 
+/// Synthetic v2 pack metadata for `export-custom` (outside the object tree).
+fn write_metadata(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("pack-metadata.json");
+    let zero = "0".repeat(64);
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"source":{{"kind":"custom","snapshot_id":"fixture","manifest_sha256":"{zero}"}},"definition_sha256":"{zero}","license":{{"text_spdx":"CC-BY-SA-4.0","attribution_object":null}},"indexes":[],"counts":{{"articles":0,"redirects":0,"media":0}}}}"#
+        ),
+    )
+    .unwrap();
+    path
+}
+
 fn run_export(
     source: &std::path::Path,
     destination: &std::path::Path,
     json: bool,
 ) -> std::process::Output {
+    // Keep the metadata file out of the sandbox so entry counts stay exact.
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let metadata_dir =
+        std::env::temp_dir().join(format!("wiki-pack-meta-{}-{nonce}", std::process::id()));
+    fs::create_dir(&metadata_dir).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_wiki-pack"));
     cmd.arg("export-custom");
     if json {
         cmd.arg("--json");
     }
-    cmd.arg(source)
+    let output = cmd
+        .arg(source)
         .args(["science", "enwiki", "20261030", "user-definition"])
+        .arg(write_metadata(&metadata_dir))
         .arg(destination)
         .output()
-        .unwrap()
+        .unwrap();
+    fs::remove_dir_all(metadata_dir).unwrap();
+    output
 }
 
 #[test]
@@ -100,7 +126,7 @@ fn json_export_is_durable_integrity_only_and_does_not_overwrite() {
         .unwrap();
     assert_eq!(malformed.status.code(), Some(2));
     assert!(malformed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&malformed.stderr).contains("exactly six arguments"));
+    assert!(String::from_utf8_lossy(&malformed.stderr).contains("exactly seven arguments"));
 
     let missing_source = run_export(&parent.join("missing"), &parent.join("nope.wpack"), true);
     assert_eq!(missing_source.status.code(), Some(1), "{missing_source:?}");

@@ -10,10 +10,12 @@ use std::io::{self, Read, Write};
 
 use sha2::{Digest, Sha256};
 
-use crate::manifest::{Manifest, ManifestError, Object, Origin, MAX_PACK_OBJECTS};
+use crate::manifest::{
+    Counts, IndexEntry, IndexRole, License, Manifest, ManifestError, Object, Origin, PackMetadata,
+    SourceKind, SourceSnapshot, MAX_PACK_INDEXES, MAX_PACK_OBJECTS, TRANSCRIPT_PREFIX,
+};
 
 const MAGIC: &[u8; 8] = b"FWPACK01";
-const TRANSCRIPT_PREFIX: &[u8] = b"foundation-wikipedia/manifest-identity/v1\0";
 /// Bound manifest memory independently of object payload sizes.
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 
@@ -86,6 +88,7 @@ fn parse_transcript(bytes: &[u8]) -> Result<Manifest, ContainerError> {
         },
         _ => return Err(ContainerError::InvalidTranscript),
     };
+    let metadata = parse_metadata(&mut input)?;
     let count = read_u64(&mut input)?;
     if count == 0 || count > MAX_PACK_OBJECTS as u64 {
         return Err(ContainerError::ResourceBudget);
@@ -107,6 +110,7 @@ fn parse_transcript(bytes: &[u8]) -> Result<Manifest, ContainerError> {
         project,
         snapshot,
         origin,
+        metadata,
         objects,
     };
     // Reject noncanonical object order, digest casing, or alternate encodings.
@@ -114,6 +118,58 @@ fn parse_transcript(bytes: &[u8]) -> Result<Manifest, ContainerError> {
         return Err(ContainerError::InvalidTranscript);
     }
     Ok(manifest)
+}
+
+fn read_tag<R: Read>(input: &mut R) -> Result<u8, ContainerError> {
+    let mut tag = [0];
+    input.read_exact(&mut tag)?;
+    Ok(tag[0])
+}
+
+fn parse_metadata<R: Read>(input: &mut R) -> Result<PackMetadata, ContainerError> {
+    let kind = SourceKind::from_tag(read_tag(input)?).ok_or(ContainerError::InvalidTranscript)?;
+    let source = SourceSnapshot {
+        kind,
+        snapshot_id: read_field(input)?,
+        manifest_sha256: read_field(input)?,
+    };
+    let definition_sha256 = read_field(input)?;
+    let text_spdx = read_field(input)?;
+    let attribution_object = match read_tag(input)? {
+        0 => None,
+        1 => Some(read_field(input)?),
+        _ => return Err(ContainerError::InvalidTranscript),
+    };
+    let index_count = read_u64(input)?;
+    if index_count > MAX_PACK_INDEXES as u64 {
+        return Err(ContainerError::ResourceBudget);
+    }
+    let mut indexes = Vec::new();
+    for _ in 0..index_count {
+        let path = read_field(input)?;
+        let role =
+            IndexRole::from_tag(read_tag(input)?).ok_or(ContainerError::InvalidTranscript)?;
+        indexes.push(IndexEntry {
+            path,
+            role,
+            schema: read_u32(input)?,
+        });
+    }
+    let counts = Counts {
+        articles: read_u64(input)?,
+        redirects: read_u64(input)?,
+        media: read_u64(input)?,
+    };
+    Ok(PackMetadata {
+        source,
+        definition_sha256,
+        license: License {
+            text_spdx,
+            attribution_object,
+        },
+        indexes,
+        counts,
+    })
 }
 
 pub(crate) fn canonical_objects(manifest: &Manifest) -> Vec<&Object> {
@@ -356,13 +412,14 @@ mod tests {
 
     fn sample() -> Manifest {
         Manifest {
-            version: 1,
+            version: crate::manifest::FORMAT_VERSION,
             pack_id: "physics".into(),
             project: "enwiki".into(),
             snapshot: "20261001".into(),
             origin: Origin::Custom {
                 definition_id: "test".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![
                 Object {
                     path: "media/figure.svg".into(),
@@ -460,10 +517,27 @@ mod tests {
         ));
         let mut bytes = envelope(&sample());
         let header_end = 12 + TRANSCRIPT_PREFIX.len();
-        bytes[header_end..header_end + 4].copy_from_slice(&2u32.to_be_bytes());
+        bytes[header_end..header_end + 4]
+            .copy_from_slice(&(crate::manifest::FORMAT_VERSION + 1).to_be_bytes());
         assert!(matches!(
             verify_container(&mut bytes.as_slice()),
             Err(ContainerError::Manifest(ManifestError::Version))
+        ));
+        // Version 1 is no longer accepted, whether by version field or by
+        // the v1 transcript domain prefix.
+        let mut bytes = envelope(&sample());
+        bytes[header_end..header_end + 4].copy_from_slice(&1u32.to_be_bytes());
+        assert!(matches!(
+            verify_container(&mut bytes.as_slice()),
+            Err(ContainerError::Manifest(ManifestError::Version))
+        ));
+        let mut bytes = envelope(&sample());
+        let v = 12 + TRANSCRIPT_PREFIX.len() - 2;
+        assert_eq!(bytes[v], b'2');
+        bytes[v] = b'1';
+        assert!(matches!(
+            verify_container(&mut bytes.as_slice()),
+            Err(ContainerError::InvalidTranscript)
         ));
     }
 }

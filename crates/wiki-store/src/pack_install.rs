@@ -33,7 +33,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wiki_pack_format::container::ContainerError;
-use wiki_pack_format::manifest::{Manifest, Origin};
+use wiki_pack_format::manifest::{
+    Counts, IndexEntry, IndexRole, License, Manifest, Origin, PackMetadata, SourceSnapshot,
+};
 use wiki_pack_format::stage;
 use wiki_pack_format::trust::{classify, IntegrityState, TrustStatus};
 
@@ -45,6 +47,9 @@ use crate::search_index::{OfflineSearchIndex, SearchError};
 pub const CATALOG_OBJECT: &str = "catalog.sqlite";
 pub const SEARCH_OBJECT: &str = "search.sqlite";
 pub const MANIFEST_FILE: &str = "manifest.json";
+/// Index schema versions this installer understands (manifest v2 `indexes`).
+pub const CATALOG_SCHEMA: u32 = 1;
+pub const FTS5_SCHEMA: u32 = 1;
 
 static NEXT_STAGE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -87,6 +92,13 @@ pub enum PackInstallError {
     Reader(ReaderError),
     AlreadyInstalled,
     Declined,
+    /// The manifest declares media; pack media installation is not built yet.
+    MediaNotSupported,
+    /// Declared article/redirect counts disagree with the verified catalog.
+    CountMismatch {
+        declared: Counts,
+        actual: Counts,
+    },
 }
 
 impl From<io::Error> for PackInstallError {
@@ -293,8 +305,31 @@ fn prepare_staged(
         return Err(PackInstallError::InvalidSnapshotId);
     }
 
+    let metadata = &manifest.metadata;
+    if metadata.counts.media > 0 {
+        return Err(PackInstallError::MediaNotSupported);
+    }
+    // Index objects are located from the manifest's declared roles; the
+    // snapshot layout fixes their paths and supported schema versions.
     let mut has_catalog = false;
     let mut has_search = false;
+    for index in &metadata.indexes {
+        let (path, schema) = match index.role {
+            IndexRole::Catalog => (CATALOG_OBJECT, CATALOG_SCHEMA),
+            IndexRole::Fts5 => (SEARCH_OBJECT, FTS5_SCHEMA),
+        };
+        if index.path != path || index.schema != schema {
+            return Err(PackInstallError::UnsupportedObject(index.path.clone()));
+        }
+        match index.role {
+            IndexRole::Catalog => has_catalog = true,
+            IndexRole::Fts5 => has_search = true,
+        }
+    }
+    if !has_catalog {
+        return Err(PackInstallError::MissingCatalog);
+    }
+    let attribution = metadata.license.attribution_object.as_deref();
     let mut shards = ShardInventory::new();
     let mut declared_bytes = 0u64;
     for object in &manifest.objects {
@@ -306,19 +341,20 @@ fn prepare_staged(
         if path == MANIFEST_FILE || sqlite_sidecar || path.starts_with(".offline-fts.") {
             return Err(PackInstallError::UnsupportedObject(object.path.clone()));
         }
-        match path {
-            CATALOG_OBJECT => has_catalog = true,
-            SEARCH_OBJECT => has_search = true,
-            _ => {
-                shards.insert(
-                    object.path.clone(),
-                    (object.bytes, object.sha256.to_ascii_lowercase()),
-                );
-            }
+        if path == CATALOG_OBJECT || (path == SEARCH_OBJECT && has_search) {
+            continue;
         }
-    }
-    if !has_catalog {
-        return Err(PackInstallError::MissingCatalog);
+        // An undeclared index file is not canonical content.
+        if path == SEARCH_OBJECT {
+            return Err(PackInstallError::UnsupportedObject(object.path.clone()));
+        }
+        if Some(path) == attribution {
+            continue;
+        }
+        shards.insert(
+            object.path.clone(),
+            (object.bytes, object.sha256.to_ascii_lowercase()),
+        );
     }
 
     let catalog_path = staged.join(CATALOG_OBJECT);
@@ -344,6 +380,14 @@ fn prepare_staged(
     )
     .map_err(PackInstallError::Reader)?;
     drop(reader);
+    let actual = count_catalog_records(&catalog_path, staged)?;
+    if actual.articles != metadata.counts.articles || actual.redirects != metadata.counts.redirects
+    {
+        return Err(PackInstallError::CountMismatch {
+            declared: metadata.counts,
+            actual,
+        });
+    }
 
     write_snapshot_manifest(staged, manifest)?;
     sync(staged)?;
@@ -364,6 +408,62 @@ fn prepare_staged(
         return Err(PackInstallError::Declined);
     }
     Ok((id, trust, shards))
+}
+
+/// Count verified catalog records by kind, decoding one frame at a time.
+fn count_catalog_records(catalog_path: &Path, root: &Path) -> Result<Counts, PackInstallError> {
+    let catalog = SnapshotCatalog::open_read_only(catalog_path)
+        .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
+    let mut counts = Counts::default();
+    catalog
+        .visit_records(root, |record| {
+            match record {
+                wiki_model::PageRecord::Article(_) => counts.articles += 1,
+                wiki_model::PageRecord::Redirect(_) => counts.redirects += 1,
+            }
+            Ok::<(), crate::catalog::CatalogError>(())
+        })
+        .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
+    Ok(counts)
+}
+
+/// Derive manifest v2 metadata for a snapshot-layout tree: the declared
+/// indexes come from the files present (`catalog.sqlite` required,
+/// `search.sqlite` optional) and the counts from a verified catalog scan.
+/// Source, definition hash and text licence are the builder's claims and
+/// are passed through. Media are not supported yet, so `media` is zero.
+pub fn snapshot_pack_metadata(
+    tree: &Path,
+    source: SourceSnapshot,
+    definition_sha256: &str,
+    text_spdx: &str,
+) -> Result<PackMetadata, PackInstallError> {
+    let catalog_path = tree.join(CATALOG_OBJECT);
+    if !catalog_path.is_file() {
+        return Err(PackInstallError::MissingCatalog);
+    }
+    let mut indexes = vec![IndexEntry {
+        path: CATALOG_OBJECT.into(),
+        role: IndexRole::Catalog,
+        schema: CATALOG_SCHEMA,
+    }];
+    if tree.join(SEARCH_OBJECT).is_file() {
+        indexes.push(IndexEntry {
+            path: SEARCH_OBJECT.into(),
+            role: IndexRole::Fts5,
+            schema: FTS5_SCHEMA,
+        });
+    }
+    Ok(PackMetadata {
+        source,
+        definition_sha256: definition_sha256.into(),
+        license: License {
+            text_spdx: text_spdx.into(),
+            attribution_object: None,
+        },
+        indexes,
+        counts: count_catalog_records(&catalog_path, tree)?,
+    })
 }
 
 /// The installer, not the pack, owns `manifest.json`: it records the verified
@@ -391,6 +491,26 @@ fn write_snapshot_manifest(staged: &Path, manifest: &Manifest) -> io::Result<()>
         "snapshot": manifest.snapshot,
         "origin": { "custom": { "definition_id": definition_id } },
         "trust": TrustStatus::CustomIntegrityVerified.label(),
+        "source": {
+            "kind": manifest.metadata.source.kind.name(),
+            "snapshot_id": manifest.metadata.source.snapshot_id,
+            "manifest_sha256": manifest.metadata.source.manifest_sha256,
+        },
+        "definition_sha256": manifest.metadata.definition_sha256,
+        "license": {
+            "text_spdx": manifest.metadata.license.text_spdx,
+            "attribution_object": manifest.metadata.license.attribution_object,
+        },
+        "indexes": manifest.metadata.indexes.iter().map(|index| serde_json::json!({
+            "path": index.path,
+            "role": index.role.name(),
+            "schema": index.schema,
+        })).collect::<Vec<_>>(),
+        "counts": {
+            "articles": manifest.metadata.counts.articles,
+            "redirects": manifest.metadata.counts.redirects,
+            "media": manifest.metadata.counts.media,
+        },
         "objects": objects,
     });
     let mut bytes = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
@@ -492,12 +612,45 @@ mod tests {
         }
     }
 
-    fn pack_bytes(tree: &Path, pack_id: &str) -> Vec<u8> {
+    /// Metadata derived from the tree, or, for deliberately broken trees
+    /// the derivation cannot scan, the declared indexes with zero counts.
+    fn metadata_for(tree: &Path) -> PackMetadata {
+        let fixture = PackMetadata::synthetic_fixture();
+        snapshot_pack_metadata(
+            tree,
+            fixture.source.clone(),
+            &"0".repeat(64),
+            "CC-BY-SA-4.0",
+        )
+        .unwrap_or_else(|_| {
+            let mut metadata = fixture;
+            for (path, role, schema) in [
+                (CATALOG_OBJECT, IndexRole::Catalog, CATALOG_SCHEMA),
+                (SEARCH_OBJECT, IndexRole::Fts5, FTS5_SCHEMA),
+            ] {
+                if tree.join(path).is_file() {
+                    metadata.indexes.push(IndexEntry {
+                        path: path.into(),
+                        role,
+                        schema,
+                    });
+                }
+            }
+            metadata
+        })
+    }
+
+    fn pack_with(tree: &Path, pack_id: &str, metadata: PackMetadata) -> Vec<u8> {
         let manifest =
-            custom_manifest_from_tree(tree, pack_id, "enwiki", "20261101", "mars-def").unwrap();
+            custom_manifest_from_tree(tree, pack_id, "enwiki", "20261101", "mars-def", metadata)
+                .unwrap();
         let mut bytes = Vec::new();
         write_custom_tree(tree, &manifest, &mut bytes).unwrap();
         bytes
+    }
+
+    fn pack_bytes(tree: &Path, pack_id: &str) -> Vec<u8> {
+        pack_with(tree, pack_id, metadata_for(tree))
     }
 
     fn install(root: &Path, bytes: &[u8]) -> Result<InstalledPack, PackInstallError> {
@@ -633,8 +786,15 @@ mod tests {
         let dir = test_dir("official");
         let tree = dir.0.join("tree");
         snapshot_tree(&tree, 3005, true);
-        let mut manifest =
-            custom_manifest_from_tree(&tree, "official-pack", "enwiki", "20261101", "x").unwrap();
+        let mut manifest = custom_manifest_from_tree(
+            &tree,
+            "official-pack",
+            "enwiki",
+            "20261101",
+            "x",
+            metadata_for(&tree),
+        )
+        .unwrap();
         manifest.origin = Origin::Official {
             publisher: "Wikimedia".into(),
         };
@@ -797,6 +957,91 @@ mod tests {
         // Published snapshots are never touched.
         assert_eq!(open_revision(&installed), 3015);
         assert_eq!(reclaim_abandoned_staging(&root).unwrap().0, 0);
+    }
+
+    #[test]
+    fn manifest_metadata_is_checked_against_the_snapshot() {
+        let dir = test_dir("metadata");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3016, true);
+        let derived = metadata_for(&tree);
+        assert_eq!(derived.counts.articles, 1);
+        assert_eq!(derived.indexes.len(), 2);
+
+        let mut wrong_count = derived.clone();
+        wrong_count.counts.articles = 2;
+        assert!(matches!(
+            install(&root, &pack_with(&tree, "wrong-count", wrong_count)),
+            Err(PackInstallError::CountMismatch { declared, actual })
+                if declared.articles == 2 && actual.articles == 1
+        ));
+
+        let mut wrong_redirects = derived.clone();
+        wrong_redirects.counts.redirects = 1;
+        assert!(matches!(
+            install(&root, &pack_with(&tree, "wrong-redirects", wrong_redirects)),
+            Err(PackInstallError::CountMismatch { .. })
+        ));
+
+        // A search index that is present but not declared is not content.
+        let mut undeclared = derived.clone();
+        undeclared
+            .indexes
+            .retain(|index| index.role != IndexRole::Fts5);
+        assert!(matches!(
+            install(&root, &pack_with(&tree, "undeclared", undeclared)),
+            Err(PackInstallError::UnsupportedObject(path)) if path == SEARCH_OBJECT
+        ));
+
+        let mut future_schema = derived.clone();
+        future_schema.indexes[0].schema = CATALOG_SCHEMA + 1;
+        assert!(matches!(
+            install(&root, &pack_with(&tree, "future-schema", future_schema)),
+            Err(PackInstallError::UnsupportedObject(_))
+        ));
+
+        let mut no_catalog_role = derived.clone();
+        no_catalog_role
+            .indexes
+            .retain(|index| index.role != IndexRole::Catalog);
+        assert!(matches!(
+            install(&root, &pack_with(&tree, "no-catalog-role", no_catalog_role)),
+            Err(PackInstallError::MissingCatalog)
+        ));
+
+        // Media need an attribution object and are not installable yet.
+        let with_attribution = dir.0.join("attributed");
+        snapshot_tree(&with_attribution, 3017, true);
+        fs::write(with_attribution.join("attribution.json"), b"[]").unwrap();
+        let mut media = metadata_for(&with_attribution);
+        media.license.attribution_object = Some("attribution.json".into());
+        media.counts.media = 1;
+        assert!(matches!(
+            install(&root, &pack_with(&with_attribution, "media", media.clone())),
+            Err(PackInstallError::MediaNotSupported)
+        ));
+
+        assert_eq!(fs::read_dir(root.join("snapshots")).unwrap().count(), 0);
+        assert_eq!(staging_entries(&root), 0);
+
+        // A text-only pack may still carry an attribution object; it is kept
+        // in the snapshot and is not treated as an article shard.
+        media.counts.media = 0;
+        let installed = install(&root, &pack_with(&with_attribution, "attributed", media)).unwrap();
+        assert!(installed.path.join("attribution.json").is_file());
+        assert!(!installed.shards.contains_key("attribution.json"));
+        assert_eq!(open_revision(&installed), 3017);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(installed.path.join(MANIFEST_FILE)).unwrap()).unwrap();
+        assert_eq!(manifest["format_version"], 2);
+        assert_eq!(manifest["counts"]["articles"], 1);
+        assert_eq!(
+            manifest["license"]["attribution_object"],
+            "attribution.json"
+        );
+        assert_eq!(manifest["indexes"].as_array().unwrap().len(), 2);
     }
 
     #[test]

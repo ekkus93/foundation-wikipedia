@@ -233,6 +233,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "math".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects,
         }
     }

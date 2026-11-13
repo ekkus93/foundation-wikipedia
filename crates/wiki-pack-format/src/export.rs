@@ -6,8 +6,8 @@
 
 use crate::container::{write_container, ContainerError};
 use crate::manifest::{
-    Manifest, ManifestError, Object, Origin, FORMAT_VERSION, MAX_DECLARED_BYTES, MAX_OBJECT_BYTES,
-    MAX_PACK_OBJECTS,
+    Manifest, ManifestError, Object, Origin, PackMetadata, FORMAT_VERSION, MAX_DECLARED_BYTES,
+    MAX_OBJECT_BYTES, MAX_PACK_OBJECTS,
 };
 use crate::objects::{same_file_snapshot, verify_manifest_directory, ObjectVerifyError};
 use sha2::{Digest, Sha256};
@@ -129,6 +129,7 @@ pub fn custom_manifest_from_tree(
     project: &str,
     snapshot: &str,
     definition_id: &str,
+    metadata: PackMetadata,
 ) -> Result<Manifest, ExportError> {
     private_root(root)?;
     let mut objects = Vec::new();
@@ -185,6 +186,7 @@ pub fn custom_manifest_from_tree(
         origin: Origin::Custom {
             definition_id: definition_id.to_owned(),
         },
+        metadata,
         objects,
     };
     manifest.validate()?;
@@ -313,8 +315,15 @@ mod tests {
         fs::create_dir(root.join("media")).unwrap();
         fs::write(root.join("article.cbor"), b"verified article").unwrap();
         fs::write(root.join("media/diagram.svg"), b"<svg/>").unwrap();
-        let manifest =
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &root,
+            "math",
+            "enwiki",
+            "20261001",
+            "math",
+            crate::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         assert_eq!(manifest.objects.len(), 2);
         assert!(matches!(manifest.origin, Origin::Custom { .. }));
         let mut output = Vec::new();
@@ -332,12 +341,26 @@ mod tests {
     fn refuses_changed_sources_and_empty_manifest() {
         let root = root();
         assert!(matches!(
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math"),
+            custom_manifest_from_tree(
+                &root,
+                "math",
+                "enwiki",
+                "20261001",
+                "math",
+                crate::manifest::PackMetadata::synthetic_fixture()
+            ),
             Err(ExportError::Manifest(ManifestError::MissingMetadata))
         ));
         fs::write(root.join("article.cbor"), b"original").unwrap();
-        let manifest =
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &root,
+            "math",
+            "enwiki",
+            "20261001",
+            "math",
+            crate::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         fs::write(root.join("unlisted.svg"), b"new required diagram").unwrap();
         assert!(matches!(
             write_custom_tree(&root, &manifest, &mut Vec::new()),
@@ -393,8 +416,15 @@ mod tests {
         let root = root();
         let object = root.join("article.cbor");
         fs::write(&object, b"same bytes").unwrap();
-        let manifest =
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math").unwrap();
+        let manifest = custom_manifest_from_tree(
+            &root,
+            "math",
+            "enwiki",
+            "20261001",
+            "math",
+            crate::manifest::PackMetadata::synthetic_fixture(),
+        )
+        .unwrap();
         let mut output = ReplacingWriter {
             payload: Vec::new(),
             source: object,
@@ -421,13 +451,27 @@ mod tests {
         let target = root.join("article.cbor");
         fs::hard_link(&outside, &target).unwrap();
         assert!(matches!(
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math"),
+            custom_manifest_from_tree(
+                &root,
+                "math",
+                "enwiki",
+                "20261001",
+                "math",
+                crate::manifest::PackMetadata::synthetic_fixture()
+            ),
             Err(ExportError::InvalidTree)
         ));
         fs::remove_file(&target).unwrap();
         symlink(&outside, &target).unwrap();
         assert!(matches!(
-            custom_manifest_from_tree(&root, "math", "enwiki", "20261001", "math"),
+            custom_manifest_from_tree(
+                &root,
+                "math",
+                "enwiki",
+                "20261001",
+                "math",
+                crate::manifest::PackMetadata::synthetic_fixture()
+            ),
             Err(ExportError::InvalidTree)
         ));
         fs::remove_dir_all(root).unwrap();

@@ -17,6 +17,7 @@ fn case_insensitive_paths_must_be_unique() {
         origin: Origin::Custom {
             definition_id: "sample".into(),
         },
+        metadata: wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![first, second],
     };
     assert_eq!(manifest.validate(), Err(ManifestError::DuplicateObject));

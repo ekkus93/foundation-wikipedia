@@ -2,7 +2,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_normalization::UnicodeNormalization;
 
-pub const FORMAT_VERSION: u32 = 1;
+/// Manifest/identity-transcript version (ADR 0007). Version 1 is rejected.
+pub const FORMAT_VERSION: u32 = 2;
+/// Bound on declared index entries; a snapshot needs only a few.
+pub const MAX_PACK_INDEXES: usize = 16;
 /// Provisional safeguards until archive framing and mobile benchmarks are final.
 pub const MAX_PACK_OBJECTS: usize = 1_000_000;
 pub const MAX_OBJECT_BYTES: u64 = 1_u64 << 40;
@@ -10,11 +13,160 @@ pub const MAX_DECLARED_BYTES: u64 = 4_u64 << 40;
 pub const MAX_OBJECT_PATH_BYTES: usize = 4096;
 pub const MAX_OBJECT_PATH_COMPONENTS: usize = 64;
 pub const MAX_OBJECT_PATH_COMPONENT_BYTES: usize = 255;
+/// Domain-separation prefix of the version-2 identity transcript.
+pub const TRANSCRIPT_PREFIX: &[u8] = b"foundation-wikipedia/manifest-identity/v2\0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
     Official { publisher: String },
     Custom { definition_id: String },
+}
+
+/// Where the pack's article content came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceKind {
+    Enterprise,
+    PublicDump,
+    Custom,
+}
+
+impl SourceKind {
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Enterprise => 1,
+            Self::PublicDump => 2,
+            Self::Custom => 3,
+        }
+    }
+
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Enterprise),
+            2 => Some(Self::PublicDump),
+            3 => Some(Self::Custom),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Enterprise => "enterprise",
+            Self::PublicDump => "public-dump",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+/// Source snapshot identity: which upstream snapshot was imported and the
+/// SHA-256 of the source manifest (for example a dump's `SHA256SUMS`) the
+/// importer verified. This is a provenance claim, not a signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceSnapshot {
+    pub kind: SourceKind,
+    pub snapshot_id: String,
+    pub manifest_sha256: String,
+}
+
+/// Text licence (SPDX identifier) and, when the pack carries media, the
+/// declared object holding per-media attribution notices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct License {
+    pub text_spdx: String,
+    pub attribution_object: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IndexRole {
+    Catalog,
+    Fts5,
+}
+
+impl IndexRole {
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Catalog => 1,
+            Self::Fts5 => 2,
+        }
+    }
+
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Catalog),
+            2 => Some(Self::Fts5),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Catalog => "catalog",
+            Self::Fts5 => "fts5",
+        }
+    }
+}
+
+/// A declared object that is an index rather than canonical content.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IndexEntry {
+    pub path: String,
+    pub role: IndexRole,
+    pub schema: u32,
+}
+
+/// Declared content counts. Installers must check them against the catalog.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub articles: u64,
+    pub redirects: u64,
+    pub media: u64,
+}
+
+/// Version-2 manifest metadata bound into the identity transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackMetadata {
+    pub source: SourceSnapshot,
+    /// SHA-256 of the canonical topic definition the pack was built from.
+    pub definition_sha256: String,
+    pub license: License,
+    pub indexes: Vec<IndexEntry>,
+    pub counts: Counts,
+}
+
+impl PackMetadata {
+    /// Deterministic, valid metadata for fixtures, tests and probes that do
+    /// not model provenance: custom source, CC BY-SA 4.0 text, no indexes,
+    /// zero counts. Real builders must supply measured values.
+    pub fn synthetic_fixture() -> Self {
+        Self {
+            source: SourceSnapshot {
+                kind: SourceKind::Custom,
+                snapshot_id: "fixture".into(),
+                manifest_sha256: "0".repeat(64),
+            },
+            definition_sha256: "0".repeat(64),
+            license: License {
+                text_spdx: "CC-BY-SA-4.0".into(),
+                attribution_object: None,
+            },
+            indexes: Vec::new(),
+            counts: Counts::default(),
+        }
+    }
+}
+
+fn lowercase_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn valid_spdx(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +183,7 @@ pub struct Manifest {
     pub project: String,
     pub snapshot: String,
     pub origin: Origin,
+    pub metadata: PackMetadata,
     pub objects: Vec<Object>,
 }
 
@@ -43,6 +196,8 @@ pub enum ManifestError {
     DuplicateObject,
     ConflictingDigest,
     ResourceBudget,
+    /// Invalid v2 source/definition/licence/index/count metadata.
+    InvalidPackMetadata,
 }
 
 /// Reject invisible/spoofing format characters and Unicode noncharacters in
@@ -122,11 +277,10 @@ pub(crate) fn unsafe_component(component: &str) -> bool {
     ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&base) || port
 }
 
-/// Provisional, unambiguous binary encoding for manifest *identity* only.
-///
-/// This helper is not the final .wpack serialization or a publisher signature
-/// payload. Full licensing, resource requirements, and update provenance must
-/// be added before a future format can be signed or shipped.
+/// Unambiguous binary encoding of the manifest identity transcript (v2,
+/// ADR 0007): identity, origin, source snapshot, definition hash, licence,
+/// index metadata, counts and the object inventory. It is the byte string a
+/// future publisher signature (TRUST-001) covers; it carries no signature.
 fn append_field(bytes: &mut Vec<u8>, field: &str) {
     bytes.extend_from_slice(&(field.len() as u64).to_be_bytes());
     bytes.extend_from_slice(field.as_bytes());
@@ -137,7 +291,7 @@ impl Manifest {
     /// and the casing of hexadecimal digests.
     pub fn identity_transcript(&self) -> Result<Vec<u8>, ManifestError> {
         self.validate()?;
-        let mut out = b"foundation-wikipedia/manifest-identity/v1\0".to_vec();
+        let mut out = TRANSCRIPT_PREFIX.to_vec();
         out.extend_from_slice(&self.version.to_be_bytes());
         append_field(&mut out, &self.pack_id);
         append_field(&mut out, &self.project);
@@ -152,6 +306,30 @@ impl Manifest {
                 append_field(&mut out, definition_id);
             }
         }
+        let meta = &self.metadata;
+        out.push(meta.source.kind.tag());
+        append_field(&mut out, &meta.source.snapshot_id);
+        append_field(&mut out, &meta.source.manifest_sha256);
+        append_field(&mut out, &meta.definition_sha256);
+        append_field(&mut out, &meta.license.text_spdx);
+        match &meta.license.attribution_object {
+            None => out.push(0),
+            Some(path) => {
+                out.push(1);
+                append_field(&mut out, path);
+            }
+        }
+        let mut indexes = meta.indexes.iter().collect::<Vec<_>>();
+        indexes.sort_by(|a, b| a.path.cmp(&b.path));
+        out.extend_from_slice(&(indexes.len() as u64).to_be_bytes());
+        for index in indexes {
+            append_field(&mut out, &index.path);
+            out.push(index.role.tag());
+            out.extend_from_slice(&index.schema.to_be_bytes());
+        }
+        out.extend_from_slice(&meta.counts.articles.to_be_bytes());
+        out.extend_from_slice(&meta.counts.redirects.to_be_bytes());
+        out.extend_from_slice(&meta.counts.media.to_be_bytes());
         let mut objects = self.objects.iter().collect::<Vec<_>>();
         objects.sort_by(|a, b| a.path.cmp(&b.path));
         out.extend_from_slice(&(objects.len() as u64).to_be_bytes());
@@ -275,6 +453,45 @@ impl Manifest {
                 }
             }
         }
+        self.validate_metadata()
+    }
+
+    fn validate_metadata(&self) -> Result<(), ManifestError> {
+        let meta = &self.metadata;
+        let invalid = Err(ManifestError::InvalidPackMetadata);
+        if !safe_id(&meta.source.snapshot_id)
+            || !lowercase_sha256(&meta.source.manifest_sha256)
+            || !lowercase_sha256(&meta.definition_sha256)
+            || !valid_spdx(&meta.license.text_spdx)
+            || meta.indexes.len() > MAX_PACK_INDEXES
+        {
+            return invalid;
+        }
+        let declared: BTreeSet<&str> = self.objects.iter().map(|o| o.path.as_str()).collect();
+        // Media attribution travels with the media it describes.
+        match &meta.license.attribution_object {
+            Some(path) if !declared.contains(path.as_str()) => return invalid,
+            None if meta.counts.media > 0 => return invalid,
+            _ => {}
+        }
+        let mut index_paths = BTreeSet::new();
+        let mut roles = BTreeSet::new();
+        for index in &meta.indexes {
+            if index.schema == 0
+                || !declared.contains(index.path.as_str())
+                || !index_paths.insert(index.path.as_str())
+                || !roles.insert(index.role)
+                || meta.license.attribution_object.as_deref() == Some(index.path.as_str())
+            {
+                return invalid;
+            }
+        }
+        if meta.counts.articles > MAX_PACK_OBJECTS as u64 * 1_000
+            || meta.counts.redirects > MAX_PACK_OBJECTS as u64 * 1_000
+            || meta.counts.media > MAX_PACK_OBJECTS as u64
+        {
+            return Err(ManifestError::ResourceBudget);
+        }
         Ok(())
     }
 }
@@ -292,6 +509,7 @@ mod transcript_tests {
             origin: Origin::Custom {
                 definition_id: "my-topic".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![
                 Object {
                     path: "b/image.svg".into(),

@@ -54,6 +54,7 @@ fn stdin_staging_checks_integrity_and_quota_without_spool_residue() {
         origin: Origin::Custom {
             definition_id: "figures".into(),
         },
+        metadata: wiki_pack_builder::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "media/figure.svg".into(),
             sha256: sha256_hex(payload),

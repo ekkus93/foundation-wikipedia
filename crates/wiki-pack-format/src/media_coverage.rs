@@ -131,6 +131,7 @@ mod tests {
             origin: Origin::Custom {
                 definition_id: "physics".into(),
             },
+            metadata: crate::manifest::PackMetadata::synthetic_fixture(),
             objects: vec![Object {
                 path: "media/figure.svg".into(),
                 sha256: "b".repeat(64),

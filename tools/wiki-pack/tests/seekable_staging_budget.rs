@@ -41,6 +41,7 @@ fn seekable_staging_cli_enforces_optional_input_budget_without_partial_output() 
         origin: Origin::Custom {
             definition_id: "topic".into(),
         },
+        metadata: wiki_pack_builder::wiki_pack_format::manifest::PackMetadata::synthetic_fixture(),
         objects: vec![Object {
             path: "media/figure.svg".into(),
             sha256: wiki_pack_builder::wiki_pack_format::sha256_hex(payload),

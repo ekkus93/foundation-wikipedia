@@ -1,6 +1,6 @@
 # ADR 0007 — `.wpack` container framing and streamed install
 
-**Status:** Accepted (owner decision, 2026-11-12) as the v0.1 `.wpack` framing, as implemented in `wiki-pack-format::container` (`FWPACK01`, manifest identity transcript v1).  
+**Status:** Accepted (owner decision, 2026-11-12) as the v0.1 `.wpack` framing, as implemented in `wiki-pack-format::container` (`FWPACK01`, manifest identity transcript v2, adopted the same day).  
 **Date:** 2026-11-12  
 **Requirements:** PACK-001, TRUST-001, TRUST-003, MOBPACK-002, STORE-003
 
@@ -14,11 +14,16 @@ PACK-001 asks for a portable, versioned `.wpack` container, an evaluation of saf
 
 1. 8-byte magic `FWPACK01`.
 2. Big-endian `u32` length of the manifest identity transcript. The length must be 1 to 64 MiB (`MAX_MANIFEST_BYTES`).
-3. The canonical **identity transcript**:
-   - prefix `foundation-wikipedia/manifest-identity/v1\0`;
-   - `u32` format version (1);
+3. The canonical **identity transcript, version 2**. Version 1 is rejected; no v1 packs shipped (owner decision 2026-11-12):
+   - prefix `foundation-wikipedia/manifest-identity/v2\0`;
+   - `u32` format version (2);
    - length-prefixed (`u64` BE) UTF-8 fields: `pack_id`, `project`, `snapshot`;
    - an origin tag: `1` = Official (`publisher`) or `2` = Custom (`definition_id`);
+   - **source snapshot**: a kind tag (`1` Enterprise, `2` public dump, `3` custom), then `snapshot_id` and the lowercase SHA-256 of the source manifest the importer verified (for example a dump's `SHA256SUMS`);
+   - `definition_sha256`: lowercase SHA-256 of the canonical topic definition;
+   - **licence**: the text licence as an SPDX identifier, then an optional attribution object (tag `0` = none, `1` = path). The attribution object is required when the pack declares media, and it must be a declared object;
+   - **indexes**: a `u64` count (at most 16), then for each entry sorted by path: `path`, a role tag (`1` catalog, `2` FTS5) and a `u32` schema version (at least 1). Each path must be a declared object; paths and roles are unique;
+   - **counts**: `u64` articles, redirects and media;
    - a `u64` object count (1 to 1,000,000);
    - for each object, sorted by byte-wise path: `path`, lowercase hex `sha256`, `u64` byte length.
 4. The raw object bytes, concatenated in that same canonical path order, with no per-object headers, padding or trailing data.
@@ -44,6 +49,13 @@ Any failure removes the partial tree durably.
 **Unseekable streams.** `stage_container_stream_with_budget` tees the stream into a private `create_new` spool file while verifying it under the quota. It then stages from the spool through the same two-pass path, requires that the staged and streamed manifests are identical, and deletes the spool. `pack_install::install_custom_pack_stream` builds the STORE-003 installer on top of this.
 
 **Export.** `export::write_custom_tree` streams a private, immutable tree into the envelope. It rechecks object membership and digests against the manifest so a changed tree is not exported.
+
+**Installer checks of v2 metadata** (`wiki-store::pack_install`):
+- It locates `catalog.sqlite` and an optional `search.sqlite` from the declared index roles, and accepts only schema 1 of each. An index file present but undeclared is refused.
+- It excludes the attribution object from the article shards and keeps it in the snapshot.
+- It refuses packs declaring media until pack media installation exists.
+- After verified opening, it requires the declared article and redirect counts to equal a verified scan of the catalog.
+- `snapshot_pack_metadata` derives the indexes and counts from a snapshot-layout tree for builders. Source, definition hash and licence remain the builder's claims.
 
 **Trust.** The envelope is unsigned. Origin is a claim. The installer refuses official-origin packs until TRUST-001 and labels custom packs "Custom — integrity verified" only after full byte verification.
 
@@ -78,10 +90,10 @@ Any failure removes the partial tree durably.
 - Validating before allocating bounds memory, and a byte quota bounds disk on import.
 - An unseekable import temporarily needs disk for the spool plus the staged tree, about twice the pack size, until the spool is deleted.
 - With no envelope compression, packs are only as compact as their objects (compressed records, media formats, SQLite). A derived `search.sqlite` may be omitted, because the installer rebuilds it (ADR 0006).
-- The magic carries format version 1. A future layout change needs a new magic or transcript version, and readers reject unknown versions.
+- The magic `FWPACK01` frames the envelope; the transcript carries manifest version 2. A future layout change needs a new magic or transcript version, and readers reject unknown versions.
 
 ## Not yet established
 
 - The PACK-001 acceptance criterion: a round trip through an **independent** desktop or Android-compatible importer. The emulator probe uses the same Rust implementation, not an independent one.
 - A real Android document-picker stream (MOBPACK-002), physical devices, and pack sizes beyond the probe.
-- Signatures (TRUST-001), licensing fields and source or definition hashes in the manifest (the first PACK-001 subtask).
+- Signatures (TRUST-001). Source and definition hashes are recorded claims, not verified against an authenticated upstream (SRC-002/003). Per-media attribution content is defined by PACK-003.
