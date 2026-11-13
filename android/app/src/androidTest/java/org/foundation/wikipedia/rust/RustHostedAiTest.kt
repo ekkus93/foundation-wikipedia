@@ -1,8 +1,11 @@
 package org.foundation.wikipedia.rust
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.net.URL
+import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -10,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,12 +109,40 @@ class RustHostedAiTest {
         RustTls.init(context)
         RustTls.init(context)
         assertTrue(hostedAiReady())
-        assertThrows(HostedAiException.Rejected::class.java) {
+        // Separate "the emulator has no route to the provider" from a Rust or
+        // verifier failure: Android's own HTTPS stack must reach the host first.
+        val platformStatus = try {
+            val connection = URL("https://api.anthropic.com/v1/messages")
+                .openConnection() as HttpsURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 15_000
+            try {
+                connection.responseCode
+            } finally {
+                connection.disconnect()
+            }
+        } catch (error: Exception) {
+            fail("Android's own HTTPS stack could not reach api.anthropic.com: $error")
+        }
+        Log.i(TAG, "platform HTTPS to api.anthropic.com returned HTTP $platformStatus")
+        try {
             checkHostedAiConnection(
                 HostedAiProvider.ANTHROPIC,
                 "sk-ant-invalid-instrumented-test-key",
                 "claude-haiku-5-5",
             )
+            fail("an invalid key must be refused by the provider")
+        } catch (error: HostedAiException.Rejected) {
+            // Expected: TLS verified, request sent, provider refused the key.
+        } catch (error: HostedAiException) {
+            fail(
+                "Platform HTTPS reached the host (HTTP $platformStatus) but the Rust " +
+                    "transport failed with ${error::class.simpleName}",
+            )
         }
+    }
+
+    private companion object {
+        const val TAG = "RustHostedAiTest"
     }
 }
