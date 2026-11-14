@@ -34,7 +34,7 @@ class ArticleReaderUiTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Before
-    fun installFixturePack() = runBlocking {
+    fun installFixturePack(): Unit = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val pack = File(context.cacheDir, "reader-sample-v2.wpack")
         InstrumentationRegistry.getInstrumentation().context.assets

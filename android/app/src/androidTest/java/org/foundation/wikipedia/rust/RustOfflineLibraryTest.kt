@@ -44,7 +44,7 @@ class RustOfflineLibraryTest {
     }
 
     @Test
-    fun installsSearchesAndOpensThroughSharedRust() = runBlocking {
+    fun installsSearchesAndOpensThroughSharedRust(): Unit = runBlocking {
         RustOfflineLibrary.open(dataDir).use { library ->
             assertNull(library.activeSnapshot())
             assertThrows(LibraryException.ConfirmationRequired::class.java) {
@@ -86,7 +86,7 @@ class RustOfflineLibraryTest {
     private fun packBytes(): ByteArray = pack.readBytes()
 
     @Test
-    fun importsFromAStreamOnlyAfterReviewApproval() = runBlocking {
+    fun importsFromAStreamOnlyAfterReviewApproval(): Unit = runBlocking {
         RustOfflineLibrary.open(dataDir).use { library ->
             val reviews = mutableListOf<PackReview>()
             assertThrows(LibraryException.ConfirmationRequired::class.java) {
@@ -111,7 +111,7 @@ class RustOfflineLibraryTest {
     }
 
     @Test
-    fun tamperedStreamsAreRejectedBeforeReview() = runBlocking {
+    fun tamperedStreamsAreRejectedBeforeReview(): Unit = runBlocking {
         RustOfflineLibrary.open(dataDir).use { library ->
             val tampered = packBytes()
             tampered[tampered.size / 2] = (tampered[tampered.size / 2].toInt() xor 1).toByte()
@@ -129,7 +129,7 @@ class RustOfflineLibraryTest {
     }
 
     @Test
-    fun onlyInactivePacksCanBeRemoved() = runBlocking {
+    fun onlyInactivePacksCanBeRemoved(): Unit = runBlocking {
         RustOfflineLibrary.open(dataDir).use { library ->
             library.importPack(packBytes().inputStream()) { true }
             library.activate("android-sample")
