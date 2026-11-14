@@ -13,5 +13,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!--
+            MOB-003 "Ask about this" in the reader's text-selection menu. Not
+            exported: it is offered only inside this app's own WebView, never
+            in other apps' selection menus.
+        -->
+        <activity
+            android:name=".AskSelectionActivity"
+            android:exported="false"
+            android:label="@string/ask_about_selection"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

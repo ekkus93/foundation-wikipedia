@@ -613,11 +613,33 @@ internal open class UniffiForeignFutureResultVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceChatProgressMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`update`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceInstallReviewerMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`review`: RustBuffer.ByValue,`uniffiOutReturn`: ByteByReference,uniffiCallStatus: UniffiRustCallStatus,)
 }
 internal interface UniffiCallbackInterfacePackSourceMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`maxBytes`: Int,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "onProgress")
+internal open class UniffiVTableCallbackInterfaceChatProgress(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceChatProgressMethod0? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `onProgress`: UniffiCallbackInterfaceChatProgressMethod0? = null,
+    ): UniffiVTableCallbackInterfaceChatProgress(`uniffiFree`,`uniffiClone`,`onProgress`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceChatProgress) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `onProgress` = other.`onProgress`
+    }
+
 }
 @Structure.FieldOrder("uniffiFree", "uniffiClone", "approve")
 internal open class UniffiVTableCallbackInterfaceInstallReviewer(
@@ -682,9 +704,35 @@ internal object IntegrityCheckingUniffiLib {
     }
     external fun uniffi_wiki_ffi_checksum_func_check_hosted_ai_connection(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_func_discover_local_ai(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_func_hosted_ai_key_is_valid(
     ): Int
     external fun uniffi_wiki_ffi_checksum_func_hosted_ai_ready(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_article_title(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_cancel(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_destination(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_locality(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_max_output_tokens(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_model(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_passages(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_prior_turns(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_prompt_chars(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_revision_id(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_selected_passage(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_articlechat_send(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_chathistory_clear_all(
     ): Int
@@ -694,23 +742,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_chathistory_threads(
     ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_article_title(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_cancel(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_destination(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_model(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_passages(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_prior_turns(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_revision_id(
-    ): Int
-    external fun uniffi_wiki_ffi_checksum_method_hostedarticlechat_send(
+    external fun uniffi_wiki_ffi_checksum_method_chatprogress_on_progress(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_installreviewer_approve(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_localaiserver_endpoint(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_localaiserver_locality(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_localaiserver_models(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_activate(
     ): Int
@@ -731,6 +771,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_title(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_local_chat(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_remove_pack(
     ): Int
@@ -758,11 +800,40 @@ internal object UniffiLib {
 
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "wiki_ffi"))
+        uniffiCallbackInterfaceChatProgress.register(this)
         uniffiCallbackInterfaceInstallReviewer.register(this)
         uniffiCallbackInterfacePackSource.register(this)
         
     }
-    external fun uniffi_wiki_ffi_fn_clone_chathistory(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_wiki_ffi_fn_clone_articlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_free_articlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_method_articlechat_article_title(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_cancel(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_method_articlechat_destination(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_locality(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_max_output_tokens(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+external fun uniffi_wiki_ffi_fn_method_articlechat_model(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_passages(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_prior_turns(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_prompt_chars(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_method_articlechat_revision_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_method_articlechat_selected_passage(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_articlechat_send(`ptr`: Long,`shareArticlePassages`: Byte,`progress`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_clone_chathistory(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_wiki_ffi_fn_free_chathistory(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -776,26 +847,14 @@ external fun uniffi_wiki_ffi_fn_method_chathistory_exchanges(`ptr`: Long,`projec
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_chathistory_threads(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_clone_hostedarticlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_wiki_ffi_fn_clone_chatprogress(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
-external fun uniffi_wiki_ffi_fn_free_hostedarticlechat(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_wiki_ffi_fn_free_chatprogress(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_article_title(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_cancel(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_wiki_ffi_fn_init_callback_vtable_chatprogress(`vtable`: UniffiVTableCallbackInterfaceChatProgress,
 ): Unit
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_destination(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_model(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_passages(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_prior_turns(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_revision_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): Long
-external fun uniffi_wiki_ffi_fn_method_hostedarticlechat_send(`ptr`: Long,`shareArticlePassages`: Byte,uniffi_out_err: UniffiRustCallStatus, 
-): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_chatprogress_on_progress(`ptr`: Long,`update`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_wiki_ffi_fn_clone_installreviewer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_wiki_ffi_fn_free_installreviewer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -804,6 +863,16 @@ external fun uniffi_wiki_ffi_fn_init_callback_vtable_installreviewer(`vtable`: U
 ): Unit
 external fun uniffi_wiki_ffi_fn_method_installreviewer_approve(`ptr`: Long,`review`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_wiki_ffi_fn_clone_localaiserver(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_free_localaiserver(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_method_localaiserver_endpoint(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_localaiserver_locality(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_localaiserver_models(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_clone_offlinelibrary(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
 external fun uniffi_wiki_ffi_fn_free_offlinelibrary(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -830,6 +899,8 @@ external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_title(`ptr`: L
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(`ptr`: Long,`request`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_local_chat(`ptr`: Long,`request`: RustBuffer.ByValue,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_remove_pack(`ptr`: Long,`snapshotId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_search(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -844,6 +915,8 @@ external fun uniffi_wiki_ffi_fn_method_packsource_read(`ptr`: Long,`maxBytes`: I
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_func_check_hosted_ai_connection(`provider`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`model`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_func_discover_local_ai(`protocol`: RustBuffer.ByValue,`endpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_wiki_ffi_fn_func_hosted_ai_key_is_valid(`apiKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_wiki_ffi_fn_func_hosted_ai_ready(uniffi_out_err: UniffiRustCallStatus, 
@@ -970,10 +1043,49 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_func_check_hosted_ai_connection() != 9503) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_wiki_ffi_checksum_func_discover_local_ai() != 61062) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_key_is_valid() != 312) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_ready() != 12470) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_article_title() != 63286) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_cancel() != 8267) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_destination() != 60870) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_locality() != 30973) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_max_output_tokens() != 8404) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_model() != 27456) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_passages() != 6782) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_prior_turns() != 62362) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_prompt_chars() != 56465) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_revision_id() != 62960) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_selected_passage() != 57535) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_articlechat_send() != 25030) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_chathistory_clear_all() != 23943) {
@@ -988,31 +1100,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_chathistory_threads() != 26969) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_article_title() != 7925) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_cancel() != 55922) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_destination() != 20085) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_model() != 34638) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_passages() != 52083) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_prior_turns() != 36332) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_revision_id() != 10625) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_wiki_ffi_checksum_method_hostedarticlechat_send() != 44049) {
+    if (lib.uniffi_wiki_ffi_checksum_method_chatprogress_on_progress() != 48654) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_installreviewer_approve() != 46819) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_localaiserver_endpoint() != 1313) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_localaiserver_locality() != 47907) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_localaiserver_models() != 48775) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_activate() != 47176) {
@@ -1042,7 +1142,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_title() != 57589) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat() != 49829) {
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat() != 36063) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_local_chat() != 32534) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_remove_pack() != 9570) {
@@ -1485,6 +1588,485 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 //
 
 
+/**
+ * A disclosed, not-yet-sent question about one installed article, to a
+ * hosted provider or a local model server.
+ */
+public interface ArticleChatInterface {
+    
+    fun `articleTitle`(): kotlin.String
+    
+    /**
+     * Stop an in-flight `send` (it returns `Cancelled`).
+     */
+    fun `cancel`()
+    
+    /**
+     * The host (or local server URL) the passages and question go to.
+     */
+    fun `destination`(): kotlin.String
+    
+    fun `locality`(): ChatLocality
+    
+    /**
+     * The most the model may write, in tokens.
+     */
+    fun `maxOutputTokens`(): kotlin.UInt
+    
+    fun `model`(): kotlin.String
+    
+    /**
+     * Exactly the passages that `send` would share.
+     */
+    fun `passages`(): List<ChatPassage>
+    
+    /**
+     * Earlier turns of the thread that will be sent before the question
+     * (citation markers removed), oldest first. Disclose them too.
+     */
+    fun `priorTurns`(): List<ChatTurn>
+    
+    /**
+     * Size of what is sent before the model answers (question, passages
+     * and earlier turns), for estimating how long the model takes to read it.
+     */
+    fun `promptChars`(): kotlin.ULong
+    
+    fun `revisionId`(): kotlin.ULong
+    
+    /**
+     * The passage holding the user's reader selection, if one was given.
+     */
+    fun `selectedPassage`(): ChatPassage?
+    
+    /**
+     * Send the disclosed request. `share_article_passages` must be the
+     * user's explicit consent to this preview. Usable once. With chat
+     * history, a supported answer is saved and its thread returned.
+     */
+    fun `send`(`shareArticlePassages`: kotlin.Boolean, `progress`: ChatProgress?): ChatReply
+    
+    companion object
+}
+
+/**
+ * A disclosed, not-yet-sent question about one installed article, to a
+ * hosted provider or a local model server.
+ */
+open class ArticleChat: Disposable, AutoCloseable, ArticleChatInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_wiki_ffi_fn_free_articlechat(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_wiki_ffi_fn_clone_articlechat(handle, status)
+        }
+    }
+
+    override fun `articleTitle`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_article_title(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Stop an in-flight `send` (it returns `Cancelled`).
+     */override fun `cancel`()
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_cancel(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * The host (or local server URL) the passages and question go to.
+     */override fun `destination`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_destination(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `locality`(): ChatLocality {
+            return FfiConverterTypeChatLocality.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_locality(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The most the model may write, in tokens.
+     */override fun `maxOutputTokens`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_max_output_tokens(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `model`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_model(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Exactly the passages that `send` would share.
+     */override fun `passages`(): List<ChatPassage> {
+            return FfiConverterSequenceTypeChatPassage.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_passages(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Earlier turns of the thread that will be sent before the question
+     * (citation markers removed), oldest first. Disclose them too.
+     */override fun `priorTurns`(): List<ChatTurn> {
+            return FfiConverterSequenceTypeChatTurn.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_prior_turns(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Size of what is sent before the model answers (question, passages
+     * and earlier turns), for estimating how long the model takes to read it.
+     */override fun `promptChars`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_prompt_chars(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `revisionId`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_revision_id(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The passage holding the user's reader selection, if one was given.
+     */override fun `selectedPassage`(): ChatPassage? {
+            return FfiConverterOptionalTypeChatPassage.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_selected_passage(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Send the disclosed request. `share_article_passages` must be the
+     * user's explicit consent to this preview. Usable once. With chat
+     * history, a supported answer is saved and its thread returned.
+     */
+    @Throws(ChatException::class)override fun `send`(`shareArticlePassages`: kotlin.Boolean, `progress`: ChatProgress?): ChatReply {
+            return FfiConverterTypeChatReply.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_articlechat_send(
+        it,
+        FfiConverterBoolean.lower(`shareArticlePassages`),FfiConverterOptionalTypeChatProgress.lower(`progress`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeArticleChat: FfiConverter<ArticleChat, Long> {
+    override fun lower(value: ArticleChat): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): ArticleChat {
+        return ArticleChat(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): ArticleChat {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: ArticleChat) = 8UL
+
+    override fun write(value: ArticleChat, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 public interface ChatHistoryInterface {
     
     /**
@@ -1822,51 +2404,19 @@ public object FfiConverterTypeChatHistory: FfiConverter<ChatHistory, Long> {
 
 
 /**
- * A disclosed, not-yet-sent hosted request about one installed article.
+ * Receives progress on the sending thread, at most every 250 ms.
  */
-public interface HostedArticleChatInterface {
+public interface ChatProgress {
     
-    fun `articleTitle`(): kotlin.String
-    
-    /**
-     * Stop an in-flight `send` (it returns `Cancelled`).
-     */
-    fun `cancel`()
-    
-    /**
-     * The host the passages and question would be sent to.
-     */
-    fun `destination`(): kotlin.String
-    
-    fun `model`(): kotlin.String
-    
-    /**
-     * Exactly the passages that `send` would share.
-     */
-    fun `passages`(): List<ChatPassage>
-    
-    /**
-     * Earlier turns of the thread that will be sent before the question
-     * (citation markers removed), oldest first. Disclose them too.
-     */
-    fun `priorTurns`(): List<ChatTurn>
-    
-    fun `revisionId`(): kotlin.ULong
-    
-    /**
-     * Send the disclosed request. `share_article_passages` must be the
-     * user's explicit consent to this preview. Usable once. With chat
-     * history, a supported answer is saved and its thread returned.
-     */
-    fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatReply
+    fun `onProgress`(`update`: ChatProgressUpdate)
     
     companion object
 }
 
 /**
- * A disclosed, not-yet-sent hosted request about one installed article.
+ * Receives progress on the sending thread, at most every 250 ms.
  */
-open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterface
+open class ChatProgressImpl: Disposable, AutoCloseable, ChatProgress
 {
 
     @Suppress("UNUSED_PARAMETER")
@@ -1945,7 +2495,7 @@ open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterf
                 return;
             }
             uniffiRustCall { status ->
-                UniffiLib.uniffi_wiki_ffi_fn_free_hostedarticlechat(handle, status)
+                UniffiLib.uniffi_wiki_ffi_fn_free_chatprogress(handle, status)
             }
         }
     }
@@ -1958,130 +2508,20 @@ open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterf
             throw InternalException("uniffiCloneHandle() called on NoHandle object");
         }
         return uniffiRustCall() { status ->
-            UniffiLib.uniffi_wiki_ffi_fn_clone_hostedarticlechat(handle, status)
+            UniffiLib.uniffi_wiki_ffi_fn_clone_chatprogress(handle, status)
         }
     }
 
-    override fun `articleTitle`(): kotlin.String {
-            return FfiConverterString.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_article_title(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Stop an in-flight `send` (it returns `Cancelled`).
-     */override fun `cancel`()
+    override fun `onProgress`(`update`: ChatProgressUpdate)
         = 
     callWithHandle {
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_cancel(
+    UniffiLib.uniffi_wiki_ffi_fn_method_chatprogress_on_progress(
         it,
-        _status)
+        FfiConverterTypeChatProgressUpdate.lower(`update`),_status)
 }
     }
     
-    
-
-    
-    /**
-     * The host the passages and question would be sent to.
-     */override fun `destination`(): kotlin.String {
-            return FfiConverterString.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_destination(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    override fun `model`(): kotlin.String {
-            return FfiConverterString.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_model(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Exactly the passages that `send` would share.
-     */override fun `passages`(): List<ChatPassage> {
-            return FfiConverterSequenceTypeChatPassage.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_passages(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Earlier turns of the thread that will be sent before the question
-     * (citation markers removed), oldest first. Disclose them too.
-     */override fun `priorTurns`(): List<ChatTurn> {
-            return FfiConverterSequenceTypeChatTurn.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_prior_turns(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    override fun `revisionId`(): kotlin.ULong {
-            return FfiConverterULong.lift(
-    callWithHandle {
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_revision_id(
-        it,
-        _status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Send the disclosed request. `share_article_passages` must be the
-     * user's explicit consent to this preview. Usable once. With chat
-     * history, a supported answer is saved and its thread returned.
-     */
-    @Throws(ChatException::class)override fun `send`(`shareArticlePassages`: kotlin.Boolean): ChatReply {
-            return FfiConverterTypeChatReply.lift(
-    callWithHandle {
-    uniffiRustCallWithError(ChatException) { _status ->
-    UniffiLib.uniffi_wiki_ffi_fn_method_hostedarticlechat_send(
-        it,
-        FfiConverterBoolean.lower(`shareArticlePassages`),_status)
-}
-    }
-    )
-    }
     
 
     
@@ -2099,25 +2539,81 @@ open class HostedArticleChat: Disposable, AutoCloseable, HostedArticleChatInterf
 }
 
 
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceChatProgress {
+    internal object `onProgress`: UniffiCallbackInterfaceChatProgressMethod0 {
+        override fun callback(`uniffiHandle`: Long,`update`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeChatProgress.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterTypeChatProgressUpdate.lift(`update`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeChatProgress.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeChatProgress.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceChatProgress.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `onProgress`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_wiki_ffi_fn_init_callback_vtable_chatprogress(vtable)
+    }
+}
+
 /**
  * @suppress
  */
-public object FfiConverterTypeHostedArticleChat: FfiConverter<HostedArticleChat, Long> {
-    override fun lower(value: HostedArticleChat): Long {
-        return value.uniffiCloneHandle()
+public object FfiConverterTypeChatProgress: FfiConverter<ChatProgress, Long> {
+    internal val handleMap = UniffiHandleMap<ChatProgress>()
+
+    override fun lower(value: ChatProgress): Long {
+        if (value is ChatProgressImpl) {
+             // Rust-implemented object.  Clone the handle and return it
+            return value.uniffiCloneHandle()
+         } else {
+            // Kotlin object, generate a new vtable handle and return that.
+            return handleMap.insert(value)
+         }
     }
 
-    override fun lift(value: Long): HostedArticleChat {
-        return HostedArticleChat(UniffiWithHandle, value)
+    override fun lift(value: Long): ChatProgress {
+        if ((value and 1.toLong()) == 0.toLong()) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return ChatProgressImpl(UniffiWithHandle, value)
+        } else {
+            // Kotlin-generated handle, get the object from the handle map
+            return handleMap.remove(value)
+        }
     }
 
-    override fun read(buf: ByteBuffer): HostedArticleChat {
+    override fun read(buf: ByteBuffer): ChatProgress {
         return lift(buf.getLong())
     }
 
-    override fun allocationSize(value: HostedArticleChat) = 8UL
+    override fun allocationSize(value: ChatProgress) = 8UL
 
-    override fun write(value: HostedArticleChat, buf: ByteBuffer) {
+    override fun write(value: ChatProgress, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -2533,6 +3029,298 @@ public object FfiConverterTypeInstallReviewer: FfiConverter<InstallReviewer, Lon
 
 
 /**
+ * A local model server whose model list was just read (`discover_local_ai`).
+ */
+public interface LocalAiServerInterface {
+    
+    fun `endpoint`(): kotlin.String
+    
+    fun `locality`(): ChatLocality
+    
+    /**
+     * The model IDs the server offers; only these can be selected.
+     */
+    fun `models`(): List<kotlin.String>
+    
+    companion object
+}
+
+/**
+ * A local model server whose model list was just read (`discover_local_ai`).
+ */
+open class LocalAiServer: Disposable, AutoCloseable, LocalAiServerInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_wiki_ffi_fn_free_localaiserver(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_wiki_ffi_fn_clone_localaiserver(handle, status)
+        }
+    }
+
+    override fun `endpoint`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_localaiserver_endpoint(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    override fun `locality`(): ChatLocality {
+            return FfiConverterTypeChatLocality.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_localaiserver_locality(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * The model IDs the server offers; only these can be selected.
+     */override fun `models`(): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_localaiserver_models(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalAiServer: FfiConverter<LocalAiServer, Long> {
+    override fun lower(value: LocalAiServer): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): LocalAiServer {
+        return LocalAiServer(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): LocalAiServer {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: LocalAiServer) = 8UL
+
+    override fun write(value: LocalAiServer, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
  * One app-private offline library. Create a single instance per data
  * directory per process: it assumes exclusive ownership of that directory.
  */
@@ -2593,7 +3381,14 @@ public interface OfflineLibraryInterface {
      * pack. `api_key` comes from the app's secure storage and is kept only
      * in memory by the returned object.
      */
-    fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): HostedArticleChat
+    fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): ArticleChat
+    
+    /**
+     * Prepare (no network) a question for a model of a discovered local
+     * server. Only that server's listed models can be chosen, and the
+     * request may go only to a loopback or private-network address.
+     */
+    fun `prepareLocalChat`(`request`: LocalChatRequest, `history`: ChatHistory?): ArticleChat
     
     /**
      * Remove an inactive installed snapshot (refused while active).
@@ -2883,13 +3678,32 @@ open class OfflineLibrary: Disposable, AutoCloseable, OfflineLibraryInterface
      * pack. `api_key` comes from the app's secure storage and is kept only
      * in memory by the returned object.
      */
-    @Throws(ChatException::class)override fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): HostedArticleChat {
-            return FfiConverterTypeHostedArticleChat.lift(
+    @Throws(ChatException::class)override fun `prepareHostedChat`(`request`: HostedChatRequest, `apiKey`: kotlin.String, `history`: ChatHistory?): ArticleChat {
+            return FfiConverterTypeArticleChat.lift(
     callWithHandle {
     uniffiRustCallWithError(ChatException) { _status ->
     UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(
         it,
         FfiConverterTypeHostedChatRequest.lower(`request`),FfiConverterString.lower(`apiKey`),FfiConverterOptionalTypeChatHistory.lower(`history`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Prepare (no network) a question for a model of a discovered local
+     * server. Only that server's listed models can be chosen, and the
+     * request may go only to a loopback or private-network address.
+     */
+    @Throws(ChatException::class)override fun `prepareLocalChat`(`request`: LocalChatRequest, `history`: ChatHistory?): ArticleChat {
+            return FfiConverterTypeArticleChat.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ChatException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_local_chat(
+        it,
+        FfiConverterTypeLocalChatRequest.lower(`request`),FfiConverterOptionalTypeChatHistory.lower(`history`),_status)
 }
     }
     )
@@ -3397,6 +4211,69 @@ public object FfiConverterTypeChatPassage: FfiConverterRustBuffer<ChatPassage> {
 
 
 /**
+ * A snapshot of a request in flight.
+ */
+data class ChatProgressUpdate (
+    /**
+     * Since the request started (before connecting).
+     */
+    var `elapsedMs`: kotlin.ULong
+    , 
+    /**
+     * When the first output arrived; `None` while the model reads the prompt.
+     */
+    var `firstOutputMs`: kotlin.ULong?
+    , 
+    /**
+     * Output received so far, in characters (≈ 4 per token).
+     */
+    var `outputChars`: kotlin.ULong
+    , 
+    /**
+     * True once the model finished; validation follows.
+     */
+    var `finished`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatProgressUpdate: FfiConverterRustBuffer<ChatProgressUpdate> {
+    override fun read(buf: ByteBuffer): ChatProgressUpdate {
+        return ChatProgressUpdate(
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatProgressUpdate) = (
+            FfiConverterULong.allocationSize(value.`elapsedMs`) +
+            FfiConverterOptionalULong.allocationSize(value.`firstOutputMs`) +
+            FfiConverterULong.allocationSize(value.`outputChars`) +
+            FfiConverterBoolean.allocationSize(value.`finished`)
+    )
+
+    override fun write(value: ChatProgressUpdate, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`elapsedMs`, buf)
+            FfiConverterOptionalULong.write(value.`firstOutputMs`, buf)
+            FfiConverterULong.write(value.`outputChars`, buf)
+            FfiConverterBoolean.write(value.`finished`, buf)
+    }
+}
+
+
+
+/**
  * The result of a sent question.
  */
 data class ChatReply (
@@ -3600,6 +4477,12 @@ data class HostedChatRequest (
      * Continue this saved thread (needs chat history); `None` starts one.
      */
     var `threadId`: kotlin.Long?
+    , 
+    /**
+     * Text the user selected in the reader. It must lie within one
+     * passage of the article, which is then always sent.
+     */
+    var `selection`: kotlin.String?
     
 ){
     
@@ -3622,6 +4505,7 @@ public object FfiConverterTypeHostedChatRequest: FfiConverterRustBuffer<HostedCh
             FfiConverterTypeHostedAiProvider.read(buf),
             FfiConverterString.read(buf),
             FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -3631,7 +4515,8 @@ public object FfiConverterTypeHostedChatRequest: FfiConverterRustBuffer<HostedCh
             FfiConverterString.allocationSize(value.`question`) +
             FfiConverterTypeHostedAiProvider.allocationSize(value.`provider`) +
             FfiConverterString.allocationSize(value.`model`) +
-            FfiConverterOptionalLong.allocationSize(value.`threadId`)
+            FfiConverterOptionalLong.allocationSize(value.`threadId`) +
+            FfiConverterOptionalString.allocationSize(value.`selection`)
     )
 
     override fun write(value: HostedChatRequest, buf: ByteBuffer) {
@@ -3641,6 +4526,7 @@ public object FfiConverterTypeHostedChatRequest: FfiConverterRustBuffer<HostedCh
             FfiConverterTypeHostedAiProvider.write(value.`provider`, buf)
             FfiConverterString.write(value.`model`, buf)
             FfiConverterOptionalLong.write(value.`threadId`, buf)
+            FfiConverterOptionalString.write(value.`selection`, buf)
     }
 }
 
@@ -3756,6 +4642,89 @@ public object FfiConverterTypeInstalledSnapshot: FfiConverterRustBuffer<Installe
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterBoolean.write(value.`active`, buf)
             FfiConverterBoolean.write(value.`damaged`, buf)
+    }
+}
+
+
+
+/**
+ * What to ask a local server about an article of the active pack.
+ */
+data class LocalChatRequest (
+    var `project`: kotlin.String
+    , 
+    var `pageId`: kotlin.ULong
+    , 
+    var `question`: kotlin.String
+    , 
+    var `server`: LocalAiServer
+    , 
+    /**
+     * One of `server.models()`.
+     */
+    var `model`: kotlin.String
+    , 
+    var `threadId`: kotlin.Long?
+    , 
+    var `selection`: kotlin.String?
+    
+): Disposable{
+    
+
+    
+
+    
+    @Suppress("UNNECESSARY_SAFE_CALL") // codegen is much simpler if we unconditionally emit safe calls here
+    override fun destroy() {
+        
+    Disposable.destroy(
+        this.`project`,
+        this.`pageId`,
+        this.`question`,
+        this.`server`,
+        this.`model`,
+        this.`threadId`,
+        this.`selection`
+    )
+    }
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalChatRequest: FfiConverterRustBuffer<LocalChatRequest> {
+    override fun read(buf: ByteBuffer): LocalChatRequest {
+        return LocalChatRequest(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeLocalAiServer.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LocalChatRequest) = (
+            FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterULong.allocationSize(value.`pageId`) +
+            FfiConverterString.allocationSize(value.`question`) +
+            FfiConverterTypeLocalAiServer.allocationSize(value.`server`) +
+            FfiConverterString.allocationSize(value.`model`) +
+            FfiConverterOptionalLong.allocationSize(value.`threadId`) +
+            FfiConverterOptionalString.allocationSize(value.`selection`)
+    )
+
+    override fun write(value: LocalChatRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`project`, buf)
+            FfiConverterULong.write(value.`pageId`, buf)
+            FfiConverterString.write(value.`question`, buf)
+            FfiConverterTypeLocalAiServer.write(value.`server`, buf)
+            FfiConverterString.write(value.`model`, buf)
+            FfiConverterOptionalLong.write(value.`threadId`, buf)
+            FfiConverterOptionalString.write(value.`selection`, buf)
     }
 }
 
@@ -4280,6 +5249,15 @@ sealed class ChatException: kotlin.Exception() {
     }
     
     /**
+     * The selected text is not within exactly one passage of the article.
+     */
+    class SelectionNotFound(
+        ) : ChatException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
      * Chat history could not be read or written.
      */
     class Storage(
@@ -4322,7 +5300,8 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
             13 -> ChatException.Network()
             14 -> ChatException.InvalidResponse()
             15 -> ChatException.Unverifiable()
-            16 -> ChatException.Storage()
+            16 -> ChatException.SelectionNotFound()
+            17 -> ChatException.Storage()
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -4386,6 +5365,10 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
                 4UL
             )
             is ChatException.Unverifiable -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is ChatException.SelectionNotFound -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
@@ -4458,14 +5441,65 @@ public object FfiConverterTypeChatError : FfiConverterRustBuffer<ChatException> 
                 buf.putInt(15)
                 Unit
             }
-            is ChatException.Storage -> {
+            is ChatException.SelectionNotFound -> {
                 buf.putInt(16)
+                Unit
+            }
+            is ChatException.Storage -> {
+                buf.putInt(17)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 
 }
+
+
+
+/**
+ * Where a local server is, as disclosed to the user.
+ */
+
+enum class ChatLocality {
+    
+    /**
+     * A hosted provider on the internet.
+     */
+    CLOUD,
+    /**
+     * Another device on the local network (or the emulator's host).
+     */
+    LOCAL_NETWORK,
+    /**
+     * A server on this device.
+     */
+    THIS_DEVICE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatLocality: FfiConverterRustBuffer<ChatLocality> {
+    override fun read(buf: ByteBuffer) = try {
+        ChatLocality.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ChatLocality) = 4UL
+
+    override fun write(value: ChatLocality, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -4888,6 +5922,186 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
 
 
 
+
+
+sealed class LocalAiException: kotlin.Exception() {
+    
+    /**
+     * Not an `http://` URL with a private-network or loopback IP literal.
+     */
+    class InvalidEndpoint(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * Nothing answered at the address, or the connection failed.
+     */
+    class Unreachable(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+    class Timeout(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The server answered, but not like the chosen protocol.
+     */
+    class InvalidResponse(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The server lists no models.
+     */
+    class NoModels(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+    class Cancelled(
+        ) : LocalAiException() {
+        override val message
+            get() = ""
+    }
+    
+
+    
+
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<LocalAiException> {
+        override fun lift(error_buf: RustBuffer.ByValue): LocalAiException = FfiConverterTypeLocalAiError.lift(error_buf)
+    }
+
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalAiError : FfiConverterRustBuffer<LocalAiException> {
+    override fun read(buf: ByteBuffer): LocalAiException {
+        
+
+        return when(buf.getInt()) {
+            1 -> LocalAiException.InvalidEndpoint()
+            2 -> LocalAiException.Unreachable()
+            3 -> LocalAiException.Timeout()
+            4 -> LocalAiException.InvalidResponse()
+            5 -> LocalAiException.NoModels()
+            6 -> LocalAiException.Cancelled()
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: LocalAiException): ULong {
+        return when(value) {
+            is LocalAiException.InvalidEndpoint -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LocalAiException.Unreachable -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LocalAiException.Timeout -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LocalAiException.InvalidResponse -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LocalAiException.NoModels -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LocalAiException.Cancelled -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: LocalAiException, buf: ByteBuffer) {
+        when(value) {
+            is LocalAiException.InvalidEndpoint -> {
+                buf.putInt(1)
+                Unit
+            }
+            is LocalAiException.Unreachable -> {
+                buf.putInt(2)
+                Unit
+            }
+            is LocalAiException.Timeout -> {
+                buf.putInt(3)
+                Unit
+            }
+            is LocalAiException.InvalidResponse -> {
+                buf.putInt(4)
+                Unit
+            }
+            is LocalAiException.NoModels -> {
+                buf.putInt(5)
+                Unit
+            }
+            is LocalAiException.Cancelled -> {
+                buf.putInt(6)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+/**
+ * The protocol of a local model server.
+ */
+
+enum class LocalAiProtocol {
+    
+    OLLAMA,
+    OPEN_AI_COMPATIBLE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLocalAiProtocol: FfiConverterRustBuffer<LocalAiProtocol> {
+    override fun read(buf: ByteBuffer) = try {
+        LocalAiProtocol.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: LocalAiProtocol) = 4UL
+
+    override fun write(value: LocalAiProtocol, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 /**
  * One saved part of an answer. Citations are historical: they show the
  * evidence saved with the answer, which may differ from a newer revision.
@@ -5015,6 +6229,38 @@ public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalULong: FfiConverterRustBuffer<kotlin.ULong?> {
+    override fun read(buf: ByteBuffer): kotlin.ULong? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterULong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ULong?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterULong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ULong?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterULong.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalLong: FfiConverterRustBuffer<kotlin.Long?> {
     override fun read(buf: ByteBuffer): kotlin.Long? {
         if (buf.get().toInt() == 0) {
@@ -5101,6 +6347,38 @@ public object FfiConverterOptionalTypeChatHistory: FfiConverterRustBuffer<ChatHi
         } else {
             buf.put(1)
             FfiConverterTypeChatHistory.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeChatProgress: FfiConverterRustBuffer<ChatProgress?> {
+    override fun read(buf: ByteBuffer): ChatProgress? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeChatProgress.read(buf)
+    }
+
+    override fun allocationSize(value: ChatProgress?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeChatProgress.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ChatProgress?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeChatProgress.write(value, buf)
         }
     }
 }
@@ -5494,6 +6772,21 @@ public object FfiConverterSequenceTypeSavedAnswerPart: FfiConverterRustBuffer<Li
     UniffiLib.uniffi_wiki_ffi_fn_func_check_hosted_ai_connection(
     
         FfiConverterTypeHostedAiProvider.lower(`provider`),FfiConverterString.lower(`apiKey`),FfiConverterString.lower(`model`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Read the model list of the local server at `endpoint`. This is a single
+         * GET of the model list: no question or article text is sent.
+         */
+    @Throws(LocalAiException::class) fun `discoverLocalAi`(`protocol`: LocalAiProtocol, `endpoint`: kotlin.String): LocalAiServer {
+            return FfiConverterTypeLocalAiServer.lift(
+    uniffiRustCallWithError(LocalAiException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_discover_local_ai(
+    
+        FfiConverterTypeLocalAiProtocol.lower(`protocol`),FfiConverterString.lower(`endpoint`),_status)
 }
     )
     }

@@ -67,7 +67,7 @@ class RustHostedChatTest {
         assertEquals("claude-haiku-5-5", chat.model())
         assertEquals("Tide", chat.articleTitle())
         assertTrue(chat.passages().any { it.excerpt.contains("Tides follow the Moon's gravity.") })
-        assertThrows(ChatException.ConsentRequired::class.java) { chat.send(false) }
+        assertThrows(ChatException.ConsentRequired::class.java) { chat.send(false, null) }
     }
 
     /**
@@ -85,7 +85,7 @@ class RustHostedChatTest {
         } catch (error: ChatException.Rejected) {
             // Expected: evidence packed, TLS verified, provider refused the key.
         }
-        assertThrows(ChatException.AlreadySent::class.java) { chat.send(true) }
+        assertThrows(ChatException.AlreadySent::class.java) { chat.send(true, null) }
         assertEquals(emptyList<Long>(), history.threads("enwiki", 2, TIDE_REVISION))
     }
 
@@ -105,7 +105,7 @@ class RustHostedChatTest {
         history.clearAll()
         // The preview was prepared before the history was cleared, so it can
         // no longer be saved; it is refused without contacting the provider.
-        assertThrows(ChatException.PreviewChanged::class.java) { chat.send(true) }
+        assertThrows(ChatException.PreviewChanged::class.java) { chat.send(true, null) }
     }
 
     private suspend fun prepare(

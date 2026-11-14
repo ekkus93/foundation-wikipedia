@@ -448,7 +448,7 @@ mod hosted_chat {
     use super::*;
     use std::sync::Arc;
     use wiki_ffi::android::{
-        ChatError, ChatHistory, ChatPassage, ChatTurn, HostedAiProvider, HostedArticleChat,
+        ArticleChat, ChatError, ChatHistory, ChatPassage, ChatTurn, HostedAiProvider,
         HostedChatRequest, SavedAnswerPart,
     };
     use wiki_store::user_state::UserState;
@@ -474,6 +474,7 @@ mod hosted_chat {
             provider: HostedAiProvider::Anthropic,
             model: "claude-haiku-5-5".into(),
             thread_id,
+            selection: None,
         }
     }
 
@@ -481,7 +482,7 @@ mod hosted_chat {
         library: &OfflineLibrary,
         page_id: u64,
         question: &str,
-    ) -> Result<Arc<HostedArticleChat>, ChatError> {
+    ) -> Result<Arc<ArticleChat>, ChatError> {
         library.prepare_hosted_chat(request(page_id, question, None), KEY.into(), None)
     }
 
@@ -542,7 +543,7 @@ mod hosted_chat {
         assert!(passages
             .iter()
             .all(|passage| passage.block_id.starts_with("wkb:enwiki:2:")));
-        assert_eq!(chat.send(false), Err(ChatError::ConsentRequired));
+        assert_eq!(chat.send(false, None), Err(ChatError::ConsentRequired));
     }
 
     #[test]
@@ -558,8 +559,8 @@ mod hosted_chat {
             )
             .unwrap();
         chat.cancel();
-        assert_eq!(chat.send(true), Err(ChatError::Cancelled));
-        assert_eq!(chat.send(true), Err(ChatError::AlreadySent));
+        assert_eq!(chat.send(true, None), Err(ChatError::Cancelled));
+        assert_eq!(chat.send(true, None), Err(ChatError::AlreadySent));
         // Nothing was saved for the cancelled question.
         assert_eq!(
             history.threads("enwiki".into(), 1, 7001).unwrap(),
@@ -687,7 +688,7 @@ mod hosted_chat {
         // Clearing history makes the prepared follow-up unsaveable, and it
         // is refused before any connection.
         history.clear_all().unwrap();
-        assert_eq!(follow_up.send(true), Err(ChatError::PreviewChanged));
+        assert_eq!(follow_up.send(true, None), Err(ChatError::PreviewChanged));
         assert_eq!(
             history.threads("enwiki".into(), 2, TIDE_REVISION).unwrap(),
             Vec::<i64>::new()
@@ -833,5 +834,253 @@ mod reader {
             inactive.open_reader_title("enwiki".into(), "Moon".into(), false),
             Err(LibraryError::NotInstalled)
         );
+    }
+}
+
+/// MOB-003: local (Ollama) article chat with a reader selection and progress.
+mod local_chat {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use wiki_ffi::android::{
+        discover_local_ai, ChatAnswer, ChatAnswerPart, ChatError, ChatLocality, ChatProgress,
+        ChatProgressUpdate, LocalAiError, LocalAiProtocol, LocalChatRequest,
+    };
+
+    fn active_library(dir: &Path) -> Arc<OfflineLibrary> {
+        let pack = build_pack(dir, "moon-pack");
+        let library = library(dir);
+        library
+            .install_pack(pack.to_string_lossy().into_owned(), true)
+            .unwrap();
+        library.activate("moon-pack".into()).unwrap();
+        library
+    }
+
+    /// Read one HTTP request (headers and Content-Length body).
+    fn read_request(socket: &mut std::net::TcpStream) -> String {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = socket.read(&mut buf).unwrap();
+            data.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&data).into_owned();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Content-Length: "))
+                    .map_or(0, |value| value.trim().parse::<usize>().unwrap());
+                if data.len() >= end + 4 + length || n == 0 {
+                    return text;
+                }
+            }
+            if n == 0 {
+                return text;
+            }
+        }
+    }
+
+    /// A fake Ollama: answers the model list, then one streamed chat reply.
+    fn fake_ollama(reply: &'static str) -> (String, thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let handle = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            assert!(read_request(&mut socket).starts_with("GET /api/tags "));
+            let body = r#"{"models":[{"name":"qwen2.5:3b"}]}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            drop(socket);
+            let (mut socket, _) = listener.accept().unwrap();
+            let request = read_request(&mut socket);
+            let mut sse = String::new();
+            for piece in reply.split_inclusive(' ') {
+                // Test replies contain no quotes or backslashes.
+                let content = format!("\"{piece}\"");
+                sse.push_str(&format!(
+                    "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"content\":{content}}},\"finish_reason\":null}}]}}\n\n"
+                ));
+            }
+            sse.push_str("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{sse}",
+                sse.len()
+            )
+            .unwrap();
+            request
+        });
+        (endpoint, handle)
+    }
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<ChatProgressUpdate>>);
+
+    impl ChatProgress for Recorder {
+        fn on_progress(&self, update: ChatProgressUpdate) {
+            self.0.lock().unwrap().push(update);
+        }
+    }
+
+    #[test]
+    fn a_selection_is_sent_to_the_local_model_and_progress_is_reported() {
+        let dir = test_dir("local-chat");
+        let library = active_library(&dir.0);
+        let lead = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 2,
+        }
+        .block_id(7002, &[], 0);
+        let reply: &'static str =
+            Box::leak(format!("Tides follow the Moon's pull. [[cite:{lead}]]").into_boxed_str());
+        let (endpoint, server) = fake_ollama(reply);
+        let local = discover_local_ai(LocalAiProtocol::Ollama, format!("{endpoint}/")).unwrap();
+        assert_eq!(local.models(), vec!["qwen2.5:3b".to_owned()]);
+        assert_eq!(local.locality(), ChatLocality::ThisDevice);
+        let chat = library
+            .prepare_local_chat(
+                LocalChatRequest {
+                    project: "enwiki".into(),
+                    page_id: 2,
+                    question: "What does this mean?".into(),
+                    server: local.clone(),
+                    model: "qwen2.5:3b".into(),
+                    thread_id: None,
+                    // As rendered and selected in the reader.
+                    selection: Some("follow the Moon's\n gravity".into()),
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(chat.destination(), endpoint);
+        assert_eq!(chat.locality(), ChatLocality::ThisDevice);
+        assert_eq!(chat.selected_passage().unwrap().block_id, lead);
+        assert!(chat.prompt_chars() > 50);
+        assert_eq!(chat.max_output_tokens(), 1024);
+        let progress = Arc::new(Recorder::default());
+        let reply = chat.send(true, Some(progress.clone())).unwrap();
+        let ChatAnswer::Supported { parts } = reply.answer else {
+            panic!("expected a supported answer");
+        };
+        assert!(parts.iter().any(|part| matches!(
+            part,
+            ChatAnswerPart::Citation { passage } if passage.block_id == lead
+        )));
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /v1/chat/completions "));
+        assert!(request.contains(&format!("Evidence ID: {lead}")));
+        let updates = progress.0.lock().unwrap().clone();
+        assert_eq!(updates.first().unwrap().output_chars, 0);
+        assert!(updates.first().unwrap().first_output_ms.is_none());
+        let last = updates.last().unwrap();
+        assert!(last.finished);
+        assert_eq!(last.output_chars, reply_len(&lead));
+        assert!(last.first_output_ms.is_some());
+        assert!(updates
+            .windows(2)
+            .all(|pair| pair[0].output_chars <= pair[1].output_chars));
+    }
+
+    fn reply_len(lead: &str) -> u64 {
+        format!("Tides follow the Moon's pull. [[cite:{lead}]]")
+            .chars()
+            .count() as u64
+    }
+
+    #[test]
+    fn a_selection_outside_one_passage_or_an_unlisted_model_is_refused_before_sending() {
+        let dir = test_dir("local-chat-refused");
+        let library = active_library(&dir.0);
+        let (endpoint, _server) = fake_ollama("unused");
+        let local = discover_local_ai(LocalAiProtocol::Ollama, endpoint).unwrap();
+        let ask = |selection: Option<&str>, model: &str| {
+            library.prepare_local_chat(
+                LocalChatRequest {
+                    project: "enwiki".into(),
+                    page_id: 2,
+                    question: "Why?".into(),
+                    server: local.clone(),
+                    model: model.into(),
+                    thread_id: None,
+                    selection: selection.map(str::to_owned),
+                },
+                None,
+            )
+        };
+        assert_eq!(
+            ask(Some("text that is not in the article"), "qwen2.5:3b").err(),
+            Some(ChatError::SelectionNotFound)
+        );
+        assert_eq!(
+            ask(Some("Tides"), "other-model").err(),
+            Some(ChatError::InvalidInput)
+        );
+        assert!(ask(Some("Tides"), "qwen2.5:3b").is_ok());
+    }
+
+    /// Live check against a real local server (not run by default):
+    /// `FOUNDATION_OLLAMA_URL=http://127.0.0.1:11434 FOUNDATION_OLLAMA_MODEL=qwen2.5:3b
+    /// cargo test -p wiki-ffi --test android_library local_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a running local model server"]
+    fn local_smoke() {
+        let (Ok(endpoint), Ok(model)) = (
+            std::env::var("FOUNDATION_OLLAMA_URL"),
+            std::env::var("FOUNDATION_OLLAMA_MODEL"),
+        ) else {
+            panic!("set FOUNDATION_OLLAMA_URL and FOUNDATION_OLLAMA_MODEL");
+        };
+        let dir = test_dir("local-smoke");
+        let library = active_library(&dir.0);
+        let local = discover_local_ai(LocalAiProtocol::Ollama, endpoint).unwrap();
+        let chat = library
+            .prepare_local_chat(
+                LocalChatRequest {
+                    project: "enwiki".into(),
+                    page_id: 2,
+                    question: "What do tides follow?".into(),
+                    server: local,
+                    model,
+                    thread_id: None,
+                    selection: Some("Tides follow".into()),
+                },
+                None,
+            )
+            .unwrap();
+        let progress = Arc::new(Recorder::default());
+        let started = std::time::Instant::now();
+        let reply = chat.send(true, Some(progress.clone()));
+        let updates = progress.0.lock().unwrap().clone();
+        println!(
+            "took {:?}; prompt {} chars; last progress {:?}; reply {reply:?}",
+            started.elapsed(),
+            chat.prompt_chars(),
+            updates.last()
+        );
+        assert!(updates.last().is_some_and(|update| update.finished));
+        reply.unwrap();
+    }
+
+    #[test]
+    fn only_private_or_loopback_http_servers_can_be_discovered() {
+        for endpoint in [
+            "https://127.0.0.1:11434",
+            "http://example.com:11434",
+            "http://8.8.8.8:11434",
+            "ftp://10.0.2.2",
+            "",
+        ] {
+            assert_eq!(
+                discover_local_ai(LocalAiProtocol::Ollama, endpoint.into()).err(),
+                Some(LocalAiError::InvalidEndpoint),
+                "{endpoint}"
+            );
+        }
     }
 }

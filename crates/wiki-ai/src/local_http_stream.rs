@@ -18,7 +18,9 @@ const MAX_HEADERS: usize = 16 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const MAX_LINE: usize = 4096;
 const READ_TIMEOUT: Duration = Duration::from_millis(250);
-const MAX_DURATION: Duration = Duration::from_secs(120);
+// CPU-only local models can take minutes to read a prompt and answer; the
+// user can cancel at any time, and the progress estimate shows how long.
+const MAX_DURATION: Duration = Duration::from_secs(600);
 
 pub fn stream_chat(
     endpoint: &LocalEndpoint,

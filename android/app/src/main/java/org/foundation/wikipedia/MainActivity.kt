@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -182,6 +183,16 @@ private fun FoundationApp() {
     var chatTarget by remember { mutableStateOf<ArticleChatTarget?>(null) }
     var conversation by remember { mutableStateOf<ChatConversation?>(null) }
     var citation by remember { mutableStateOf<CitationRequest?>(null) }
+    // Text chosen with "Ask about this" in the reader's selection menu.
+    var selection by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        ReaderSelection.selections.collect { offered ->
+            if (offered != null) {
+                selection = ReaderSelection.take()
+                shell = shell.showChat()
+            }
+        }
+    }
 
     BackHandler(enabled = shell.actionsOpen || shell.settingsOpen || shell.chatOpen) {
         shell = shell.back()
@@ -413,6 +424,8 @@ private fun FoundationApp() {
                             )
                         } else if (category == ReaderSettingsCategory.AI_ASSISTANT) {
                             Text("AI Assistant", style = MaterialTheme.typography.titleLarge)
+                            LocalAiSection()
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             HostedAiSection()
                         } else {
                             Text(category.title, style = MaterialTheme.typography.titleLarge)
@@ -438,6 +451,8 @@ private fun FoundationApp() {
                     conversation = ChatConversation.forTarget(conversation, chatTarget),
                     onConversation = { conversation = it },
                     saveHistory = historyEnabled,
+                    selection = selection,
+                    onClearSelection = { selection = null },
                     onCitation = { request ->
                         // Close the sheet so the highlighted paragraph is visible;
                         // the conversation is kept for when chat is reopened.

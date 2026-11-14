@@ -585,6 +585,8 @@ pub enum ChatError {
     InvalidResponse,
     /// The reply's citations did not match the evidence, so it is not shown.
     Unverifiable,
+    /// The selected text is not within exactly one passage of the article.
+    SelectionNotFound,
     /// Chat history could not be read or written.
     Storage,
 }
@@ -647,6 +649,312 @@ pub struct HostedChatRequest {
     pub model: String,
     /// Continue this saved thread (needs chat history); `None` starts one.
     pub thread_id: Option<i64>,
+    /// Text the user selected in the reader. It must lie within one
+    /// passage of the article, which is then always sent.
+    pub selection: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// MOB-003 local or LAN model servers (for example Ollama on a computer on the
+// same network, or `http://10.0.2.2:11434` from an Android emulator). Only
+// IP literals or `localhost` are accepted, never DNS names or public hosts.
+
+/// The protocol of a local model server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LocalAiProtocol {
+    Ollama,
+    OpenAiCompatible,
+}
+
+impl From<LocalAiProtocol> for wiki_ai::local_selection::LocalProtocol {
+    fn from(protocol: LocalAiProtocol) -> Self {
+        match protocol {
+            LocalAiProtocol::Ollama => Self::Ollama,
+            LocalAiProtocol::OpenAiCompatible => Self::OpenAiCompatible,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Error)]
+pub enum LocalAiError {
+    /// Not an `http://` URL with a private-network or loopback IP literal.
+    InvalidEndpoint,
+    /// Nothing answered at the address, or the connection failed.
+    Unreachable,
+    Timeout,
+    /// The server answered, but not like the chosen protocol.
+    InvalidResponse,
+    /// The server lists no models.
+    NoModels,
+    Cancelled,
+}
+
+impl std::fmt::Display for LocalAiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for LocalAiError {}
+
+impl From<wiki_ai::local_selection::SelectionError> for LocalAiError {
+    fn from(error: wiki_ai::local_selection::SelectionError) -> Self {
+        use wiki_ai::local_selection::SelectionError as S;
+        use wiki_ai::ProviderError as P;
+        match error {
+            S::InvalidEndpoint(_) | S::UnknownModel => Self::InvalidEndpoint,
+            S::Provider(P::Cancelled) => Self::Cancelled,
+            S::Provider(P::Timeout) => Self::Timeout,
+            S::Provider(P::Transport) => Self::Unreachable,
+            S::Provider(P::InvalidRequest | P::DestinationNotAllowed | P::Unsupported) => {
+                Self::InvalidEndpoint
+            }
+            S::Provider(P::Rejected | P::InvalidResponse) => Self::InvalidResponse,
+        }
+    }
+}
+
+/// Where a local server is, as disclosed to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ChatLocality {
+    /// A hosted provider on the internet.
+    Cloud,
+    /// Another device on the local network (or the emulator's host).
+    LocalNetwork,
+    /// A server on this device.
+    ThisDevice,
+}
+
+impl From<wiki_ai::Locality> for ChatLocality {
+    fn from(locality: wiki_ai::Locality) -> Self {
+        match locality {
+            wiki_ai::Locality::Cloud => Self::Cloud,
+            wiki_ai::Locality::LocalNetwork => Self::LocalNetwork,
+            wiki_ai::Locality::Localhost | wiki_ai::Locality::OnDevice => Self::ThisDevice,
+        }
+    }
+}
+
+/// A local model server whose model list was just read (`discover_local_ai`).
+#[derive(uniffi::Object)]
+pub struct LocalAiServer {
+    inventory: wiki_ai::local_selection::LocalModelInventory,
+}
+
+#[uniffi::export]
+impl LocalAiServer {
+    pub fn endpoint(&self) -> String {
+        self.inventory.endpoint().to_owned()
+    }
+
+    pub fn locality(&self) -> ChatLocality {
+        self.inventory.locality().into()
+    }
+
+    /// The model IDs the server offers; only these can be selected.
+    pub fn models(&self) -> Vec<String> {
+        self.inventory
+            .models()
+            .iter()
+            .map(|model| model.id.clone())
+            .collect()
+    }
+}
+
+/// Read the model list of the local server at `endpoint`. This is a single
+/// GET of the model list: no question or article text is sent.
+#[uniffi::export]
+pub fn discover_local_ai(
+    protocol: LocalAiProtocol,
+    endpoint: String,
+) -> Result<Arc<LocalAiServer>, LocalAiError> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if !endpoint.starts_with("http://") {
+        return Err(LocalAiError::InvalidEndpoint);
+    }
+    let inventory = wiki_ai::local_selection::discover_local_models(protocol.into(), endpoint)?;
+    if inventory.models().is_empty() {
+        return Err(LocalAiError::NoModels);
+    }
+    Ok(Arc::new(LocalAiServer { inventory }))
+}
+
+/// What to ask a local server about an article of the active pack.
+#[derive(Clone, uniffi::Record)]
+pub struct LocalChatRequest {
+    pub project: String,
+    pub page_id: u64,
+    pub question: String,
+    pub server: Arc<LocalAiServer>,
+    /// One of `server.models()`.
+    pub model: String,
+    pub thread_id: Option<i64>,
+    pub selection: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Progress of a sent request, for a progress bar and a time estimate. Model
+// output is still buffered until its citations are validated; only counts
+// and timings are reported, never text.
+
+/// A snapshot of a request in flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct ChatProgressUpdate {
+    /// Since the request started (before connecting).
+    pub elapsed_ms: u64,
+    /// When the first output arrived; `None` while the model reads the prompt.
+    pub first_output_ms: Option<u64>,
+    /// Output received so far, in characters (≈ 4 per token).
+    pub output_chars: u64,
+    /// True once the model finished; validation follows.
+    pub finished: bool,
+}
+
+/// Receives progress on the sending thread, at most every 250 ms.
+#[uniffi::export(with_foreign)]
+pub trait ChatProgress: Send + Sync {
+    fn on_progress(&self, update: ChatProgressUpdate);
+}
+
+const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Where an article chat goes, plus the progress sink of its one request.
+#[derive(Clone)]
+struct ChatDestination {
+    target: ChatTarget,
+    progress: Arc<Mutex<Option<Arc<dyn ChatProgress>>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ChatTarget {
+    Hosted(wiki_ai::hosted_selection::SelectedHostedModel),
+    Local(wiki_ai::local_selection::SelectedLocalModel),
+}
+
+impl ChatDestination {
+    fn new(target: ChatTarget) -> Self {
+        Self {
+            target,
+            progress: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+// Consent binds the destination, never the progress sink.
+impl PartialEq for ChatDestination {
+    fn eq(&self, other: &Self) -> bool {
+        self.target == other.target
+    }
+}
+
+impl std::fmt::Debug for ChatDestination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.target.fmt(f)
+    }
+}
+
+impl wiki_ai::article_destination::ArticleDestination for ChatDestination {
+    fn model(&self) -> &str {
+        match &self.target {
+            ChatTarget::Hosted(selected) => selected.model(),
+            ChatTarget::Local(selected) => {
+                wiki_ai::article_destination::ArticleDestination::model(selected)
+            }
+        }
+    }
+
+    fn locality(&self) -> wiki_ai::Locality {
+        match &self.target {
+            ChatTarget::Hosted(selected) => selected.locality(),
+            ChatTarget::Local(selected) => selected.locality(),
+        }
+    }
+
+    fn destination(&self) -> &str {
+        match &self.target {
+            ChatTarget::Hosted(selected) => selected.destination(),
+            ChatTarget::Local(selected) => selected.destination(),
+        }
+    }
+
+    fn connect(&self) -> Result<Box<dyn wiki_ai::LlmProvider>, wiki_ai::ProviderError> {
+        let inner = match &self.target {
+            ChatTarget::Hosted(selected) => selected.connect()?,
+            ChatTarget::Local(selected) => selected.connect()?,
+        };
+        let sink = self.progress.lock().ok().and_then(|sink| sink.clone());
+        Ok(match sink {
+            Some(sink) => Box::new(ProgressProvider { inner, sink }),
+            None => inner,
+        })
+    }
+}
+
+/// Reports output counts and timings of the wrapped provider's stream.
+struct ProgressProvider {
+    inner: Box<dyn wiki_ai::LlmProvider>,
+    sink: Arc<dyn ChatProgress>,
+}
+
+impl wiki_ai::LlmProvider for ProgressProvider {
+    fn locality(&self) -> wiki_ai::Locality {
+        self.inner.locality()
+    }
+
+    fn capabilities(&self) -> wiki_ai::ProviderCapabilities {
+        self.inner.capabilities()
+    }
+
+    fn list_models(&self) -> Result<Vec<wiki_ai::ModelInfo>, wiki_ai::ProviderError> {
+        self.inner.list_models()
+    }
+
+    fn test_connection(&self) -> Result<(), wiki_ai::ProviderError> {
+        self.inner.test_connection()
+    }
+
+    fn stream(
+        &self,
+        request: &wiki_ai::GenerateRequest,
+        cancellation: &wiki_ai::CancellationToken,
+        on_event: &mut dyn FnMut(wiki_ai::StreamEvent) -> Result<(), wiki_ai::ProviderError>,
+    ) -> Result<(), wiki_ai::ProviderError> {
+        let start = std::time::Instant::now();
+        let millis = |at: std::time::Instant| {
+            u64::try_from(at.duration_since(start).as_millis()).unwrap_or(u64::MAX)
+        };
+        let mut update = ChatProgressUpdate {
+            elapsed_ms: 0,
+            first_output_ms: None,
+            output_chars: 0,
+            finished: false,
+        };
+        self.sink.on_progress(update);
+        let mut reported = start;
+        self.inner.stream(request, cancellation, &mut |event| {
+            let now = std::time::Instant::now();
+            match &event {
+                wiki_ai::StreamEvent::TextDelta(text) => {
+                    update.output_chars = update
+                        .output_chars
+                        .saturating_add(text.chars().count() as u64);
+                    let first = update.first_output_ms.is_none();
+                    update.first_output_ms.get_or_insert(millis(now));
+                    if first || now.duration_since(reported) >= PROGRESS_INTERVAL {
+                        update.elapsed_ms = millis(now);
+                        self.sink.on_progress(update);
+                        reported = now;
+                    }
+                }
+                wiki_ai::StreamEvent::Completed { .. } => {
+                    update.elapsed_ms = millis(now);
+                    update.finished = true;
+                    self.sink.on_progress(update);
+                }
+            }
+            on_event(event)
+        })
+    }
 }
 
 /// One passage that will be sent, shown to the user before consent.
@@ -687,15 +995,17 @@ pub enum ChatAnswer {
     InsufficientEvidence,
 }
 
-/// A disclosed, not-yet-sent hosted request about one installed article.
+/// A disclosed, not-yet-sent question about one installed article, to a
+/// hosted provider or a local model server.
 #[derive(uniffi::Object)]
-pub struct HostedArticleChat {
+pub struct ArticleChat {
     article: Article,
-    selected: wiki_ai::hosted_selection::SelectedHostedModel,
+    selected: ChatDestination,
+    policy: wiki_ai::OutboundPolicy,
+    /// The passage containing the user's reader selection, always sent.
+    selection: Option<wiki_search::EvidenceHit>,
     question: String,
-    preview: wiki_ai::article_destination::ArticlePreview<
-        wiki_ai::hosted_selection::SelectedHostedModel,
-    >,
+    preview: wiki_ai::article_destination::ArticlePreview<ChatDestination>,
     cancellation: wiki_ai::CancellationToken,
     sent: Mutex<bool>,
     /// Where a supported answer is saved, with the thread and the personal
@@ -707,13 +1017,37 @@ pub struct HostedArticleChat {
     snapshot_id: Option<String>,
 }
 
-impl HostedArticleChat {
+/// How one question is asked; the same values at preview and at send.
+struct QuestionSettings<'a> {
+    question: &'a str,
+    model: &'a str,
+    prior: &'a [(String, String)],
+    policy: wiki_ai::OutboundPolicy,
+    selection: Option<&'a wiki_search::EvidenceHit>,
+}
+
+impl ArticleChat {
+    fn settings(&self) -> QuestionSettings<'_> {
+        QuestionSettings {
+            question: &self.question,
+            model: self.preview.model(),
+            prior: &self.prior_turns,
+            policy: self.policy,
+            selection: self.selection.as_ref(),
+        }
+    }
+
     fn with_question<T>(
-        question: &str,
-        model: &str,
-        prior: &[(String, String)],
+        settings: QuestionSettings<'_>,
         run: impl FnOnce(&wiki_ai::rag::ArticleQuestion<'_>) -> T,
     ) -> T {
+        let QuestionSettings {
+            question,
+            model,
+            prior,
+            policy,
+            selection,
+        } = settings;
         let prior_turns: Vec<wiki_ai::rag::PriorTurn<'_>> = prior
             .iter()
             .map(|(question, answer)| wiki_ai::rag::PriorTurn { question, answer })
@@ -723,20 +1057,47 @@ impl HostedArticleChat {
             model,
             passage_limit: CHAT_PASSAGE_LIMIT,
             context_word_budget: CHAT_CONTEXT_WORDS,
-            selected_evidence: None,
+            selected_evidence: selection,
             max_output_tokens: CHAT_MAX_OUTPUT_TOKENS,
-            outbound_policy: wiki_ai::OutboundPolicy::AllowCloud,
+            outbound_policy: policy,
             prior_turns: &prior_turns,
         })
     }
 }
 
 #[uniffi::export]
-impl HostedArticleChat {
-    /// The host the passages and question would be sent to.
+impl ArticleChat {
+    /// The host (or local server URL) the passages and question go to.
     pub fn destination(&self) -> String {
         use wiki_ai::article_destination::ArticleDestination;
         self.selected.destination().to_owned()
+    }
+
+    pub fn locality(&self) -> ChatLocality {
+        use wiki_ai::article_destination::ArticleDestination;
+        self.selected.locality().into()
+    }
+
+    /// Size of what is sent before the model answers (question, passages
+    /// and earlier turns), for estimating how long the model takes to read it.
+    pub fn prompt_chars(&self) -> u64 {
+        let history: usize = self
+            .preview
+            .history()
+            .iter()
+            .map(|(question, answer)| question.chars().count() + answer.chars().count())
+            .sum();
+        (self.preview.user_message().chars().count() + history) as u64
+    }
+
+    /// The most the model may write, in tokens.
+    pub fn max_output_tokens(&self) -> u32 {
+        CHAT_MAX_OUTPUT_TOKENS
+    }
+
+    /// The passage holding the user's reader selection, if one was given.
+    pub fn selected_passage(&self) -> Option<ChatPassage> {
+        self.selection.as_ref().map(ChatPassage::from)
     }
 
     pub fn model(&self) -> String {
@@ -781,7 +1142,11 @@ impl HostedArticleChat {
     /// Send the disclosed request. `share_article_passages` must be the
     /// user's explicit consent to this preview. Usable once. With chat
     /// history, a supported answer is saved and its thread returned.
-    pub fn send(&self, share_article_passages: bool) -> Result<ChatReply, ChatError> {
+    pub fn send(
+        &self,
+        share_article_passages: bool,
+        progress: Option<Arc<dyn ChatProgress>>,
+    ) -> Result<ChatReply, ChatError> {
         if !share_article_passages {
             return Err(ChatError::ConsentRequired);
         }
@@ -795,19 +1160,20 @@ impl HostedArticleChat {
         if self.cancellation.is_cancelled() {
             return Err(ChatError::Cancelled);
         }
-        let model = self.preview.model().to_owned();
+        if let Ok(mut sink) = self.selected.progress.lock() {
+            *sink = progress;
+        }
         let Some(history) = &self.history else {
-            let answer =
-                Self::with_question(&self.question, &model, &self.prior_turns, |question| {
-                    wiki_ai::article_destination::answer_article_with_preview_display(
-                        &self.selected,
-                        &self.article,
-                        question,
-                        &self.preview,
-                        true,
-                        &self.cancellation,
-                    )
-                })?;
+            let answer = Self::with_question(self.settings(), |question| {
+                wiki_ai::article_destination::answer_article_with_preview_display(
+                    &self.selected,
+                    &self.article,
+                    question,
+                    &self.preview,
+                    true,
+                    &self.cancellation,
+                )
+            })?;
             return Ok(ChatReply {
                 answer: display_answer(answer),
                 thread_id: None,
@@ -816,7 +1182,7 @@ impl HostedArticleChat {
         // A fresh connection: the request may take minutes and must not
         // block history reads; SQLite serializes the final write.
         let mut state = history.open()?;
-        let outcome = Self::with_question(&self.question, &model, &self.prior_turns, |question| {
+        let outcome = Self::with_question(self.settings(), |question| {
             crate::article_chat::answer_and_save_article(
                 &mut state,
                 self.generation,
@@ -1090,25 +1456,32 @@ impl ChatHistory {
     }
 }
 
-#[uniffi::export]
+/// The article-side half of a chat request, shared by every destination.
+struct ChatQuestion {
+    project: String,
+    page_id: u64,
+    question: String,
+    thread_id: Option<i64>,
+    selection: Option<String>,
+}
+
+const MAX_SELECTION_BYTES: usize = 4096;
+
 impl OfflineLibrary {
-    /// Prepare (no network) a hosted question about an article of the active
-    /// pack. `api_key` comes from the app's secure storage and is kept only
-    /// in memory by the returned object.
-    pub fn prepare_hosted_chat(
+    fn prepare_chat(
         &self,
-        request: HostedChatRequest,
-        api_key: String,
+        ask: ChatQuestion,
+        selected: ChatDestination,
+        policy: wiki_ai::OutboundPolicy,
         history: Option<Arc<ChatHistory>>,
-    ) -> Result<Arc<HostedArticleChat>, ChatError> {
-        let HostedChatRequest {
+    ) -> Result<Arc<ArticleChat>, ChatError> {
+        let ChatQuestion {
             project,
             page_id,
             question,
-            provider,
-            model,
             thread_id,
-        } = request;
+            selection,
+        } = ask;
         if thread_id.is_some() && history.is_none() {
             return Err(ChatError::InvalidInput);
         }
@@ -1116,10 +1489,12 @@ impl OfflineLibrary {
         if question.is_empty() || question.len() > MAX_CHAT_QUESTION_BYTES {
             return Err(ChatError::InvalidInput);
         }
-        let key = wiki_ai::hosted_codec::ApiKey::new(api_key).map_err(|_| ChatError::InvalidKey)?;
-        let selected =
-            wiki_ai::hosted_selection::SelectedHostedModel::new(provider.into(), model.trim(), key)
-                .map_err(|_| ChatError::InvalidInput)?;
+        if selection
+            .as_ref()
+            .is_some_and(|text| text.len() > MAX_SELECTION_BYTES)
+        {
+            return Err(ChatError::InvalidInput);
+        }
         let key = ArticleKey { project, page_id };
         key.validate().map_err(|_| ChatError::InvalidInput)?;
         let article = self
@@ -1135,6 +1510,17 @@ impl OfflineLibrary {
                 _ => ChatError::VerificationFailed,
             })?
             .ok_or(ChatError::NotInstalled)?;
+        // A selection is resolved to the one passage containing it, from the
+        // verified article itself: the app's text is never sent as evidence.
+        let selection = match selection.filter(|text| !text.trim().is_empty()) {
+            Some(text) => Some(
+                wiki_search::ArticleLexicalIndex::build(&article)
+                    .map_err(|_| ChatError::VerificationFailed)?
+                    .evidence_containing(&text)
+                    .ok_or(ChatError::SelectionNotFound)?,
+            ),
+            None => None,
+        };
         let snapshot_id = self.active_snapshot().map_err(|_| ChatError::Storage)?;
         // Capture the privacy generation BEFORE reading the thread, so a
         // concurrent "clear all" makes the later save fail closed.
@@ -1154,14 +1540,22 @@ impl OfflineLibrary {
             None => (0, Vec::new()),
         };
         let model = wiki_ai::article_destination::ArticleDestination::model(&selected).to_owned();
-        let preview =
-            HostedArticleChat::with_question(&question, &model, &prior_turns, |question| {
-                wiki_ai::article_destination::prepare_article_preview(&selected, &article, question)
-            })?
-            .ok_or(ChatError::NoEvidence)?;
-        Ok(Arc::new(HostedArticleChat {
+        let settings = QuestionSettings {
+            question: &question,
+            model: &model,
+            prior: &prior_turns,
+            policy,
+            selection: selection.as_ref(),
+        };
+        let preview = ArticleChat::with_question(settings, |question| {
+            wiki_ai::article_destination::prepare_article_preview(&selected, &article, question)
+        })?
+        .ok_or(ChatError::NoEvidence)?;
+        Ok(Arc::new(ArticleChat {
             article,
             selected,
+            policy,
+            selection,
             question,
             preview,
             cancellation: wiki_ai::CancellationToken::default(),
@@ -1172,6 +1566,80 @@ impl OfflineLibrary {
             prior_turns,
             snapshot_id,
         }))
+    }
+}
+
+#[uniffi::export]
+impl OfflineLibrary {
+    /// Prepare (no network) a hosted question about an article of the active
+    /// pack. `api_key` comes from the app's secure storage and is kept only
+    /// in memory by the returned object.
+    pub fn prepare_hosted_chat(
+        &self,
+        request: HostedChatRequest,
+        api_key: String,
+        history: Option<Arc<ChatHistory>>,
+    ) -> Result<Arc<ArticleChat>, ChatError> {
+        let HostedChatRequest {
+            project,
+            page_id,
+            question,
+            provider,
+            model,
+            thread_id,
+            selection,
+        } = request;
+        let key = wiki_ai::hosted_codec::ApiKey::new(api_key).map_err(|_| ChatError::InvalidKey)?;
+        let selected =
+            wiki_ai::hosted_selection::SelectedHostedModel::new(provider.into(), model.trim(), key)
+                .map_err(|_| ChatError::InvalidInput)?;
+        self.prepare_chat(
+            ChatQuestion {
+                project,
+                page_id,
+                question,
+                thread_id,
+                selection,
+            },
+            ChatDestination::new(ChatTarget::Hosted(selected)),
+            wiki_ai::OutboundPolicy::AllowCloud,
+            history,
+        )
+    }
+
+    /// Prepare (no network) a question for a model of a discovered local
+    /// server. Only that server's listed models can be chosen, and the
+    /// request may go only to a loopback or private-network address.
+    pub fn prepare_local_chat(
+        &self,
+        request: LocalChatRequest,
+        history: Option<Arc<ChatHistory>>,
+    ) -> Result<Arc<ArticleChat>, ChatError> {
+        let LocalChatRequest {
+            project,
+            page_id,
+            question,
+            server,
+            model,
+            thread_id,
+            selection,
+        } = request;
+        let selected = server
+            .inventory
+            .select(model.trim())
+            .map_err(|_| ChatError::InvalidInput)?;
+        self.prepare_chat(
+            ChatQuestion {
+                project,
+                page_id,
+                question,
+                thread_id,
+                selection,
+            },
+            ChatDestination::new(ChatTarget::Local(selected)),
+            wiki_ai::OutboundPolicy::AllowLocalEndpoints,
+            history,
+        )
     }
 }
 

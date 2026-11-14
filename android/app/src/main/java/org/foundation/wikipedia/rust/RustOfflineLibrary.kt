@@ -9,11 +9,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import uniffi.wiki_ffi.ArticlePage
 import uniffi.wiki_ffi.HostedChatRequest
-import uniffi.wiki_ffi.HostedArticleChat
+import uniffi.wiki_ffi.ArticleChat
 import uniffi.wiki_ffi.InstallReviewer
 import uniffi.wiki_ffi.InstalledPack
 import uniffi.wiki_ffi.InstalledSnapshot
 import uniffi.wiki_ffi.LibraryException
+import uniffi.wiki_ffi.LocalChatRequest
 import uniffi.wiki_ffi.OfflineLibrary
 import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
@@ -135,7 +136,13 @@ class RustOfflineLibrary private constructor(
         request: HostedChatRequest,
         apiKey: String,
         history: RustChatHistory?,
-    ): HostedArticleChat = call { it.prepareHostedChat(request, apiKey, history?.history) }
+    ): ArticleChat = call { it.prepareHostedChat(request, apiKey, history?.history) }
+
+    /** See [RustLocalAi.prepareArticleChat]. */
+    internal suspend fun prepareLocalChat(
+        request: LocalChatRequest,
+        history: RustChatHistory?,
+    ): ArticleChat = call { it.prepareLocalChat(request, history?.history) }
 
     override fun close() = library.close()
 

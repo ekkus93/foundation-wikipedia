@@ -102,6 +102,27 @@ impl ArticleLexicalIndex {
         selected
     }
 
+    /// The one evidence block whose text contains a reader's text
+    /// `selection`, compared with whitespace collapsed and short bracketed
+    /// reference markers such as `[1]` or `[note 2]` removed (they are in
+    /// the rendered page, not in block text). `None` when the selection is
+    /// too short, spans blocks or matches several: it is never guessed.
+    pub fn evidence_containing(&self, selection: &str) -> Option<EvidenceHit> {
+        let wanted = normalize_selection(selection);
+        if wanted.chars().count() < MIN_SELECTION_CHARS {
+            return None;
+        }
+        let mut found = self
+            .entries
+            .iter()
+            .filter(|entry| normalize_selection(&entry.excerpt).contains(&wanted));
+        let hit = found.next()?;
+        if found.next().is_some() {
+            return None;
+        }
+        Some(hit.clone())
+    }
+
     pub fn contains_evidence(&self, hit: &EvidenceHit) -> bool {
         hit.revision_id == self.revision_id
             && self.entries.iter().any(|entry| {
@@ -110,6 +131,30 @@ impl ArticleLexicalIndex {
                     && entry.heading_path == hit.heading_path
             })
     }
+}
+
+const MIN_SELECTION_CHARS: usize = 3;
+
+/// Collapse whitespace and drop short bracketed markers (`[1]`, `[a]`,
+/// `[note 2]`, `[citation needed]`) from selected or block text.
+fn normalize_selection(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        stripped.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find(']') {
+            Some(close) if close <= 24 && !after[..close].contains('[') => {
+                rest = &after[close + 1..];
+            }
+            _ => {
+                stripped.push('[');
+                rest = after;
+            }
+        }
+    }
+    stripped.push_str(rest);
+    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Multi-article deterministic lexical retrieval. This is not yet BM25 or
@@ -784,6 +829,39 @@ mod tests {
         assert!(!ArticleLexicalIndex::build(&newer)
             .unwrap()
             .contains_evidence(&hits[0]));
+    }
+
+    #[test]
+    fn a_reader_selection_resolves_to_exactly_one_block() {
+        let mut article = sample();
+        article.sections[0].blocks.push(Block {
+            ordinal: 1,
+            content: BlockContent::Paragraph("Gravity bends light near stars.".into()),
+        });
+        let index = ArticleLexicalIndex::build(&article).unwrap();
+        // Rendered text adds reference markers and different whitespace.
+        let hit = index
+            .evidence_containing("  bends\n spacetime[1]")
+            .expect("selection inside one paragraph");
+        assert_eq!(hit.block_id, "wkb:enwiki:9:12:1:b0");
+        assert!(index.contains_evidence(&hit));
+        assert_eq!(
+            index
+                .evidence_containing("studies [citation needed] matter")
+                .unwrap()
+                .block_id,
+            "wkb:enwiki:9:12:b0"
+        );
+        // Ambiguous (both gravity paragraphs), spanning, absent or tiny: none.
+        for selection in [
+            "Gravity bends",
+            "matter. Gravity bends",
+            "quantum foam",
+            "ma",
+            "",
+        ] {
+            assert_eq!(index.evidence_containing(selection), None, "{selection:?}");
+        }
     }
 
     #[test]

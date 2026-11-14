@@ -7,10 +7,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import uniffi.wiki_ffi.ChatProgressUpdate
+import uniffi.wiki_ffi.ChatProgress
 import uniffi.wiki_ffi.ChatReply
 import uniffi.wiki_ffi.HostedAiCheck
 import uniffi.wiki_ffi.HostedAiProvider
-import uniffi.wiki_ffi.HostedArticleChat
+import uniffi.wiki_ffi.ArticleChat
 import uniffi.wiki_ffi.HostedChatRequest
 import uniffi.wiki_ffi.checkHostedAiConnection
 
@@ -71,10 +73,11 @@ class RustHostedAi(
         model: String,
         history: RustChatHistory? = null,
         threadId: Long? = null,
-    ): HostedArticleChat {
+        selection: String? = null,
+    ): ArticleChat {
         require(pageId > 0) { "pageId must be positive" }
         val key = io { keys.load(provider) } ?: throw HostedAiKeyMissingException()
-        val request = HostedChatRequest(project, pageId.toULong(), question, provider, model, threadId)
+        val request = HostedChatRequest(project, pageId.toULong(), question, provider, model, threadId, selection)
         return library.prepareHostedChat(request, key, history)
     }
 
@@ -83,22 +86,47 @@ class RustHostedAi(
      * (and earlier turns) with its destination. Cancelling the coroutine
      * cancels the request.
      */
-    suspend fun send(chat: HostedArticleChat): ChatReply = coroutineScope {
-        val request = async(dispatcher) {
-            requireOffMainThread()
-            RustTls.init(app)
-            chat.send(true)
-        }
-        try {
-            request.await()
-        } catch (error: CancellationException) {
-            chat.cancel()
-            throw error
-        }
-    }
+    suspend fun send(chat: ArticleChat, onProgress: ((ChatProgressUpdate) -> Unit)? = null): ChatReply =
+        sendArticleChat(chat, dispatcher, onProgress) { RustTls.init(app) }
 
     private suspend fun <T> io(block: () -> T): T = withContext(dispatcher) {
         requireOffMainThread()
         block()
+    }
+}
+
+/**
+ * Send a disclosed [chat] once the user agreed to share its passages (and
+ * earlier turns) with its destination. [onProgress] is called on a
+ * background thread with counts and timings only. Cancelling the coroutine
+ * cancels the request.
+ */
+internal suspend fun sendArticleChat(
+    chat: ArticleChat,
+    dispatcher: CoroutineDispatcher,
+    onProgress: ((ChatProgressUpdate) -> Unit)?,
+    prepare: () -> Unit = {},
+): ChatReply = coroutineScope {
+    val sink = onProgress?.let { report ->
+        object : ChatProgress {
+            override fun onProgress(update: ChatProgressUpdate) {
+                // Never throw into Rust from the progress callback.
+                try {
+                    report(update)
+                } catch (_: RuntimeException) {
+                }
+            }
+        }
+    }
+    val request = async(dispatcher) {
+        requireOffMainThread()
+        prepare()
+        chat.send(true, sink)
+    }
+    try {
+        request.await()
+    } catch (error: CancellationException) {
+        chat.cancel()
+        throw error
     }
 }
