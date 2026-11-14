@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CardDefaults
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -198,6 +199,7 @@ fun ArticleChatSheet(
     onCitation: (CitationRequest) -> Unit,
     onOpenAiSettings: () -> Unit,
     onClose: () -> Unit,
+    compact: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -350,6 +352,23 @@ fun ArticleChatSheet(
         }
     }
 
+    // The progress of a request in flight, with its draft unless [withDraft] is false.
+    val inFlight: @Composable (withDraft: Boolean) -> Unit = { withDraft ->
+        val update = progress
+        val elapsed = (now - startedAt).coerceAtLeast(update?.elapsedMs?.toLong() ?: 0)
+        val estimate = ResponseEstimate.of(
+            timing,
+            sentPromptChars,
+            sentMaxOutputChars,
+            elapsed,
+            update?.firstOutputMs?.toLong(),
+            update?.outputChars?.toLong() ?: 0,
+            update?.finished ?: false,
+        )
+        ResponseProgress(estimate, elapsed)
+        if (withDraft) update?.draft?.takeIf { it.isNotBlank() }?.let { DraftAnswer(it) }
+    }
+
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -364,6 +383,23 @@ fun ArticleChatSheet(
         }
         if (target == null) {
             Text("Open an article from your offline pack first, then ask about it here.")
+            return@Column
+        }
+        if (compact) {
+            // Peek height: the article stays usable; show only what is happening.
+            val last = conversation?.takeIf { it.target == target }?.exchanges?.lastOrNull()
+            when {
+                request != null -> inFlight(false)
+                message != null -> Text(message!!, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                last != null -> Text(
+                    last.segments?.joinToString("") { (it as? ChatSegment.Text)?.text ?: "" }?.trim()
+                        ?: "The article passages do not answer this question.",
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                else -> Text("Drag up to ask about this article.", style = MaterialTheme.typography.bodyMedium)
+            }
             return@Column
         }
         if (selection != null) {
@@ -465,19 +501,7 @@ fun ArticleChatSheet(
             DisclosureCard(chat, previewQuestion)
         }
         if (request != null) {
-            val update = progress
-            val elapsed = (now - startedAt).coerceAtLeast(update?.elapsedMs?.toLong() ?: 0)
-            val estimate = ResponseEstimate.of(
-                timing,
-                sentPromptChars,
-                sentMaxOutputChars,
-                elapsed,
-                update?.firstOutputMs?.toLong(),
-                update?.outputChars?.toLong() ?: 0,
-                update?.finished ?: false,
-            )
-            ResponseProgress(estimate, elapsed)
-            update?.draft?.takeIf { it.isNotBlank() }?.let { DraftAnswer(it) }
+            inFlight(true)
         } else if (busy) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }

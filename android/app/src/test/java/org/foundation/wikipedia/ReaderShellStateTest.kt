@@ -153,8 +153,27 @@ class ReaderShellStateTest {
         assertFalse(chat.actionsOpen)
         assertTrue(chat.offline)
         assertEquals(reader, chat.closeChat())
-        assertEquals(reader, chat.back())
+        assertEquals(reader, chat.back().back())
         assertEquals(chat, chat.toggleActions())
+    }
+
+    @Test
+    fun chatSheetOpensAtHalfHeightResizesAndBackLowersItBeforeClosing() {
+        val reader = ReaderShellState()
+        val half = reader.showChat()
+        assertEquals(ChatSheetHeight.HALF, half.chatHeight)
+        assertFalse(half.readerCovered)
+        val full = half.resizeChat(ChatSheetHeight.FULL)
+        assertTrue(full.readerCovered)
+        val peek = full.back()
+        assertTrue(peek.chatOpen)
+        assertEquals(ChatSheetHeight.PEEK, peek.chatHeight)
+        assertFalse(peek.readerCovered)
+        assertEquals(reader, peek.back())
+        // A closed sheet cannot be resized, and reopening starts at half height.
+        assertEquals(reader, reader.resizeChat(ChatSheetHeight.FULL))
+        assertEquals(ChatSheetHeight.HALF, full.closeChat().showChat().chatHeight)
+        assertEquals(ChatSheetHeight.HALF, peek.showChat().chatHeight)
     }
 
     @Test

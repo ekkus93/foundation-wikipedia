@@ -16,12 +16,19 @@ enum class ReaderSettingsCategory(val title: String) {
     ABOUT("About"),
 }
 
+/**
+ * How much of the screen the chat sheet takes (MOB-003). At [PEEK] only its
+ * title and status show and the article stays usable; [FULL] covers it.
+ */
+enum class ChatSheetHeight { PEEK, HALF, FULL }
+
 data class ReaderShellState(
     val offline: Boolean = false,
     val settingsOpen: Boolean = false,
     val actionsOpen: Boolean = false,
     val settingsCategory: ReaderSettingsCategory? = null,
     val chatOpen: Boolean = false,
+    val chatHeight: ChatSheetHeight = ChatSheetHeight.HALF,
 ) {
     fun toggleActions(): ReaderShellState =
         if (settingsOpen || chatOpen) this else copy(actionsOpen = !actionsOpen)
@@ -30,9 +37,16 @@ data class ReaderShellState(
 
     /** Open the chat sheet. Opening it sends nothing; each request is reviewed first. */
     fun showChat(): ReaderShellState =
-        if (settingsOpen) this else copy(chatOpen = true, actionsOpen = false)
+        if (settingsOpen) this else copy(chatOpen = true, actionsOpen = false, chatHeight = ChatSheetHeight.HALF)
 
-    fun closeChat(): ReaderShellState = copy(chatOpen = false)
+    fun closeChat(): ReaderShellState = copy(chatOpen = false, chatHeight = ChatSheetHeight.HALF)
+
+    /** Resize an open chat sheet (drag, handle tap or accessibility action). */
+    fun resizeChat(height: ChatSheetHeight): ReaderShellState =
+        if (chatOpen) copy(chatHeight = height) else this
+
+    /** The article is hidden from accessibility only when the sheet covers it. */
+    val readerCovered: Boolean get() = actionsOpen || (chatOpen && chatHeight == ChatSheetHeight.FULL)
 
     fun withOffline(enabled: Boolean): ReaderShellState =
         copy(offline = enabled, actionsOpen = false)
@@ -44,7 +58,9 @@ data class ReaderShellState(
         if (!settingsOpen) this else copy(settingsCategory = category, actionsOpen = false)
 
     fun back(): ReaderShellState = when {
-        chatOpen -> copy(chatOpen = false)
+        // Back lowers an open chat to its peek height first, then closes it.
+        chatOpen && chatHeight != ChatSheetHeight.PEEK -> copy(chatHeight = ChatSheetHeight.PEEK)
+        chatOpen -> closeChat()
         actionsOpen -> copy(actionsOpen = false)
         settingsCategory != null -> copy(settingsCategory = null)
         settingsOpen -> copy(settingsOpen = false)

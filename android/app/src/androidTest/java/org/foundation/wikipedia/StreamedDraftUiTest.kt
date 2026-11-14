@@ -1,5 +1,9 @@
 package org.foundation.wikipedia
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -170,6 +174,24 @@ class StreamedDraftUiTest {
         }
         assertTrue(shown("Tides follow the Moon") && shown("[1] and the Sun."))
         assertTrue(!shown(DRAFT_LABEL, substring = false))
+
+        // Tapping the citation lowers the sheet to its peek height (the
+        // highlighted paragraph is visible) and keeps the answer in view.
+        val handle = compose.onNodeWithContentDescription("Chat sheet size")
+        handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "half height"))
+        compose.onNodeWithContentDescription("Show cited passage 1", substring = true).performClick()
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "collapsed"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.waitForIdle()
+        assertTrue(shown("Tides follow the Moon"))
+        assertTrue("peek shows no question field", !shown("Review request", substring = false))
+        // TalkBack's Expand action raises it again with the conversation.
+        val actions = handle.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        compose.runOnUiThread { actions.first { it.label == "Expand" }.action() }
+        compose.waitUntil(timeoutMillis = 10_000) { shown("Review request", substring = false) }
+        handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "half height"))
     }
 
     @Test

@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,8 +26,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -222,7 +221,8 @@ private fun FoundationApp() {
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             floatingActionButton = {
-                if (!shell.settingsOpen) {
+                if (!shell.settingsOpen && !shell.chatOpen) {
+                    // Hidden while chat is open: it would cover the sheet.
                     Column(horizontalAlignment = Alignment.End) {
                         // Visually nearest the main FAB: Chat, Bookmark, Offline, Settings.
                         if (shell.actionsOpen) {
@@ -269,13 +269,15 @@ private fun FoundationApp() {
                 }
             },
         ) { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Consumed so the chat sheet's keyboard padding does not add the
+            // navigation bar a second time.
+            Box(modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 // Keep the reader mounted while Settings is open: no reload or
                 // loss of the current scroll position.
                 ArticleReader(
                     dark = isDark,
                     hidden = shell.settingsOpen,
-                    hideFromAccessibility = shell.actionsOpen || shell.chatOpen,
+                    hideFromAccessibility = shell.readerCovered,
                     citation = citation,
                     onCitationConsumed = { citation = null },
                     onArticleShown = { chatTarget = it },
@@ -437,34 +439,34 @@ private fun FoundationApp() {
                         }
                     }
                 }
-            }
-        }
-        if (shell.chatOpen) {
-            // Half-height first (the article stays visible); drag up for full height.
-            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-            ModalBottomSheet(
-                onDismissRequest = { shell = shell.closeChat() },
-                sheetState = sheetState,
-            ) {
-                ArticleChatSheet(
-                    target = chatTarget,
-                    conversation = ChatConversation.forTarget(conversation, chatTarget),
-                    onConversation = { conversation = it },
-                    saveHistory = historyEnabled,
-                    selection = selection,
-                    onClearSelection = { selection = null },
-                    onCitation = { request ->
-                        // Close the sheet so the highlighted paragraph is visible;
-                        // the conversation is kept for when chat is reopened.
-                        citation = request
-                        shell = shell.closeChat()
-                    },
-                    onOpenAiSettings = {
-                        shell = shell.showSettings()
-                            .openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
-                    },
-                    onClose = { shell = shell.closeChat() },
-                )
+                if (shell.chatOpen && !shell.settingsOpen) {
+                    // Opens at half height; peek keeps the article usable, full covers it.
+                    ChatSheetFrame(
+                        height = shell.chatHeight,
+                        onHeight = { shell = shell.resizeChat(it) },
+                    ) { compact ->
+                        ArticleChatSheet(
+                            target = chatTarget,
+                            conversation = ChatConversation.forTarget(conversation, chatTarget),
+                            onConversation = { conversation = it },
+                            saveHistory = historyEnabled,
+                            selection = selection,
+                            onClearSelection = { selection = null },
+                            onCitation = { request ->
+                                // Lower the sheet so the highlighted paragraph is
+                                // visible; the conversation stays open below it.
+                                citation = request
+                                shell = shell.resizeChat(ChatSheetHeight.PEEK)
+                            },
+                            onOpenAiSettings = {
+                                shell = shell.showSettings()
+                                    .openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
+                            },
+                            onClose = { shell = shell.closeChat() },
+                            compact = compact,
+                        )
+                    }
+                }
             }
         }
     }
