@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
@@ -177,6 +178,10 @@ private fun FoundationApp() {
         }
     }
     val chatActionFocus = remember { FocusRequester() }
+    // MOB-003: the article shown in the reader, its chat and a citation to show.
+    var chatTarget by remember { mutableStateOf<ArticleChatTarget?>(null) }
+    var conversation by remember { mutableStateOf<ChatConversation?>(null) }
+    var citation by remember { mutableStateOf<CitationRequest?>(null) }
 
     BackHandler(enabled = shell.actionsOpen || shell.settingsOpen || shell.chatOpen) {
         shell = shell.back()
@@ -260,6 +265,9 @@ private fun FoundationApp() {
                     dark = isDark,
                     hidden = shell.settingsOpen,
                     hideFromAccessibility = shell.actionsOpen || shell.chatOpen,
+                    citation = citation,
+                    onCitationConsumed = { citation = null },
+                    onArticleShown = { chatTarget = it },
                     onMessage = { message, externalUrl ->
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
@@ -419,19 +427,29 @@ private fun FoundationApp() {
             }
         }
         if (shell.chatOpen) {
-            // Presentation-only: no unverified article data or prompts are sent.
-            ModalBottomSheet(onDismissRequest = { shell = shell.closeChat() }) {
-                Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
-                    Text("Article chat", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "Chat is unavailable in this development build. " +
-                            "A verified Wikipedia article, revision-scoped citations, " +
-                            "and an explicitly configured AI provider are required.",
-                    )
-                    TextButton(onClick = { shell = shell.closeChat() }) {
-                        Text("Close chat")
-                    }
-                }
+            // Half-height first (the article stays visible); drag up for full height.
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+            ModalBottomSheet(
+                onDismissRequest = { shell = shell.closeChat() },
+                sheetState = sheetState,
+            ) {
+                ArticleChatSheet(
+                    target = chatTarget,
+                    conversation = ChatConversation.forTarget(conversation, chatTarget),
+                    onConversation = { conversation = it },
+                    saveHistory = historyEnabled,
+                    onCitation = { request ->
+                        // Close the sheet so the highlighted paragraph is visible;
+                        // the conversation is kept for when chat is reopened.
+                        citation = request
+                        shell = shell.closeChat()
+                    },
+                    onOpenAiSettings = {
+                        shell = shell.showSettings()
+                            .openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
+                    },
+                    onClose = { shell = shell.closeChat() },
+                )
             }
         }
     }

@@ -50,7 +50,8 @@ import uniffi.wiki_ffi.SearchHit
 /** What the reader shows in the article WebView. */
 private sealed interface ReaderContent {
     data object Welcome : ReaderContent
-    data class Article(val page: ReaderPage) : ReaderContent
+    /** [fragment] scrolls to a highlighted citation; [nonce] repeats the scroll. */
+    data class Article(val page: ReaderPage, val fragment: String? = null, val nonce: Long = 0) : ReaderContent
 }
 
 /**
@@ -100,6 +101,9 @@ fun ArticleReader(
     hideFromAccessibility: Boolean,
     onMessage: (message: String, externalUrl: String?) -> Unit,
     modifier: Modifier = Modifier,
+    citation: CitationRequest? = null,
+    onCitationConsumed: () -> Unit = {},
+    onArticleShown: (ArticleChatTarget?) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -115,6 +119,18 @@ fun ArticleReader(
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
     var busy by remember { mutableStateOf(false) }
     val served = remember { AtomicReference<Pair<String, String>?>(null) }
+    // The chat citation to highlight while its article is the current entry.
+    var highlight by remember { mutableStateOf<CitationRequest?>(null) }
+
+    LaunchedEffect(citation) {
+        val request = citation ?: return@LaunchedEffect
+        onCitationConsumed()
+        results = null
+        highlight = request
+        navigation = navigation.open(
+            ReaderEntry(request.target.project, request.target.pageId, request.target.title),
+        )
+    }
 
     LaunchedEffect(Unit) {
         library = try {
@@ -129,11 +145,38 @@ fun ArticleReader(
     }
 
     // Load (or reload, e.g. on theme change or after restore) the current entry.
-    LaunchedEffect(library, navigation.current, dark) {
+    LaunchedEffect(library, navigation.current, dark, highlight) {
         val lib = library ?: return@LaunchedEffect
         val entry = navigation.current
         if (entry == null) {
             content = ReaderContent.Welcome
+            return@LaunchedEffect
+        }
+        val cite = highlight?.takeIf {
+            it.target.project == entry.project && it.target.pageId == entry.pageId
+        }
+        if (cite != null) {
+            val cited = try {
+                lib.openReaderCitation(
+                    cite.target.project,
+                    cite.target.pageId,
+                    cite.target.revisionId,
+                    cite.blockId,
+                    dark,
+                )
+            } catch (error: Exception) {
+                onMessage(packErrorMessage(error), null)
+                null
+            }
+            if (cited == null) {
+                onMessage("The cited revision of “${entry.title}” is not in the active offline pack.", null)
+                highlight = null // reloads the current page without a highlight
+            } else {
+                if (!cited.located) {
+                    onMessage("The cited passage is shown at the top: its exact place was not found.", null)
+                }
+                content = ReaderContent.Article(cited.page, cited.fragment, cite.nonce)
+            }
             return@LaunchedEffect
         }
         content = try {
@@ -149,8 +192,17 @@ fun ArticleReader(
         }
     }
 
+    LaunchedEffect(content) {
+        onArticleShown(
+            (content as? ReaderContent.Article)?.page?.let {
+                ArticleChatTarget(it.project, it.pageId.toLong(), it.revisionId.toLong(), it.title)
+            },
+        )
+    }
+
     fun openPage(project: String, pageId: Long, title: String) {
         results = null
+        highlight = null
         navigation = navigation.open(ReaderEntry(project, pageId, title))
     }
 
@@ -265,21 +317,27 @@ fun ArticleReader(
                             }
                         }
                     }
-                    val (url, html) = when (val shown = content) {
+                    val shown = content
+                    val (url, html) = when (shown) {
                         is ReaderContent.Article -> shown.page.baseUrl to shown.page.document
                         ReaderContent.Welcome -> ReaderLinks.ORIGIN + "/" to
                             if (dark) WELCOME_HTML.replace("<html lang=\"en\">", "<html lang=\"en\" class=\"dark\">")
                             else WELCOME_HTML
                     }
-                    // Reload only when the document changes, so scrolling and
-                    // in-page anchors survive unrelated recompositions.
-                    if (view.tag != html) {
-                        view.tag = html
+                    val fragment = (shown as? ReaderContent.Article)?.fragment
+                    val nonce = (shown as? ReaderContent.Article)?.nonce ?: 0
+                    // Reload only when the document (or a citation tap) changes, so
+                    // scrolling and in-page anchors survive unrelated recompositions.
+                    val tag = "$nonce|$html"
+                    if (view.tag != tag) {
+                        view.tag = tag
                         // The document is served by the client above for this
                         // URL only (loadDataWithBaseURL with an https base is
-                        // blocked as a network load by blockNetworkLoads).
+                        // blocked as a network load by blockNetworkLoads). A
+                        // fragment is not part of the request; it scrolls the
+                        // loaded page to the highlighted citation.
                         served.set(url to html)
-                        view.loadUrl(url)
+                        view.loadUrl(if (fragment != null) "$url#$fragment" else url)
                     }
                     view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
                     view.importantForAccessibility = if (hidden || hideFromAccessibility) {

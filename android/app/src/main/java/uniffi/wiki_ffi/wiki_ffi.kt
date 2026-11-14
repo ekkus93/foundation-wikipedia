@@ -724,6 +724,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_page(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_citation(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_page(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_title(
@@ -819,6 +821,8 @@ external fun uniffi_wiki_ffi_fn_method_offlinelibrary_install_pack_stream(`ptr`:
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_list_packs(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_page(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_citation(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,`blockId`: RustBuffer.ByValue,`dark`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_page(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`dark`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1027,6 +1031,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_page() != 10136) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_citation() != 8145) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_page() != 51704) {
@@ -2563,6 +2570,14 @@ public interface OfflineLibraryInterface {
     fun `openPage`(`project`: kotlin.String, `pageId`: kotlin.ULong): ArticlePage?
     
     /**
+     * Open the article revision a chat citation points to, with the cited
+     * passage highlighted. `None` if the active pack does not hold exactly
+     * that revision or the passage is not one of its blocks: a citation
+     * is never shown against different text.
+     */
+    fun `openReaderCitation`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `blockId`: kotlin.String, `dark`: kotlin.Boolean): CitedReaderPage?
+    
+    /**
      * Open an article of the active pack by page ID as a reader document.
      */
     fun `openReaderPage`(`project`: kotlin.String, `pageId`: kotlin.ULong, `dark`: kotlin.Boolean): ReaderPage?
@@ -2801,6 +2816,26 @@ open class OfflineLibrary: Disposable, AutoCloseable, OfflineLibraryInterface
     UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_open_page(
         it,
         FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Open the article revision a chat citation points to, with the cited
+     * passage highlighted. `None` if the active pack does not hold exactly
+     * that revision or the passage is not one of its blocks: a citation
+     * is never shown against different text.
+     */
+    @Throws(LibraryException::class)override fun `openReaderCitation`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `blockId`: kotlin.String, `dark`: kotlin.Boolean): CitedReaderPage? {
+            return FfiConverterOptionalTypeCitedReaderPage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LibraryException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_citation(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),FfiConverterString.lower(`blockId`),FfiConverterBoolean.lower(`dark`),_status)
 }
     }
     )
@@ -3442,6 +3477,60 @@ public object FfiConverterTypeChatTurn: FfiConverterRustBuffer<ChatTurn> {
     override fun write(value: ChatTurn, buf: ByteBuffer) {
             FfiConverterString.write(value.`question`, buf)
             FfiConverterString.write(value.`answer`, buf)
+    }
+}
+
+
+
+/**
+ * A reader document with one cited passage highlighted (MOB-003).
+ */
+data class CitedReaderPage (
+    var `page`: ReaderPage
+    , 
+    /**
+     * Load `page.base_url#fragment` to scroll to the highlighted passage.
+     */
+    var `fragment`: kotlin.String
+    , 
+    /**
+     * True when the paragraph itself is highlighted in the article text;
+     * false when its text is shown, labelled, at the top of the page
+     * because it matched no single paragraph of the rendered article.
+     */
+    var `located`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCitedReaderPage: FfiConverterRustBuffer<CitedReaderPage> {
+    override fun read(buf: ByteBuffer): CitedReaderPage {
+        return CitedReaderPage(
+            FfiConverterTypeReaderPage.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CitedReaderPage) = (
+            FfiConverterTypeReaderPage.allocationSize(value.`page`) +
+            FfiConverterString.allocationSize(value.`fragment`) +
+            FfiConverterBoolean.allocationSize(value.`located`)
+    )
+
+    override fun write(value: CitedReaderPage, buf: ByteBuffer) {
+            FfiConverterTypeReaderPage.write(value.`page`, buf)
+            FfiConverterString.write(value.`fragment`, buf)
+            FfiConverterBoolean.write(value.`located`, buf)
     }
 }
 
@@ -5076,6 +5165,38 @@ public object FfiConverterOptionalTypeChatPassage: FfiConverterRustBuffer<ChatPa
         } else {
             buf.put(1)
             FfiConverterTypeChatPassage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeCitedReaderPage: FfiConverterRustBuffer<CitedReaderPage?> {
+    override fun read(buf: ByteBuffer): CitedReaderPage? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeCitedReaderPage.read(buf)
+    }
+
+    override fun allocationSize(value: CitedReaderPage?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeCitedReaderPage.allocationSize(value)
+        }
+    }
+
+    override fun write(value: CitedReaderPage?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeCitedReaderPage.write(value, buf)
         }
     }
 }

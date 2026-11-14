@@ -1208,14 +1208,22 @@ fn encode_title_path(title: &str) -> String {
     path
 }
 
-fn reader_page(article: Article, dark: bool) -> ReaderPage {
-    use wiki_source::reader_document::{reader_document, ReaderTheme, ARTICLE_PATH, READER_ORIGIN};
-    let theme = if dark {
+fn reader_theme(dark: bool) -> wiki_source::reader_document::ReaderTheme {
+    use wiki_source::reader_document::ReaderTheme;
+    if dark {
         ReaderTheme::Dark
     } else {
         ReaderTheme::Light
-    };
-    let document = reader_document(&article, theme);
+    }
+}
+
+fn reader_page(article: Article, dark: bool) -> ReaderPage {
+    let document = wiki_source::reader_document::reader_document(&article, reader_theme(dark));
+    reader_page_with(article, document)
+}
+
+fn reader_page_with(article: Article, document: String) -> ReaderPage {
+    use wiki_source::reader_document::{ARTICLE_PATH, READER_ORIGIN};
     ReaderPage {
         base_url: format!(
             "{READER_ORIGIN}{ARTICLE_PATH}{}",
@@ -1230,8 +1238,60 @@ fn reader_page(article: Article, dark: bool) -> ReaderPage {
     }
 }
 
+/// A reader document with one cited passage highlighted (MOB-003).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CitedReaderPage {
+    pub page: ReaderPage,
+    /// Load `page.base_url#fragment` to scroll to the highlighted passage.
+    pub fragment: String,
+    /// True when the paragraph itself is highlighted in the article text;
+    /// false when its text is shown, labelled, at the top of the page
+    /// because it matched no single paragraph of the rendered article.
+    pub located: bool,
+}
+
 #[uniffi::export]
 impl OfflineLibrary {
+    /// Open the article revision a chat citation points to, with the cited
+    /// passage highlighted. `None` if the active pack does not hold exactly
+    /// that revision or the passage is not one of its blocks: a citation
+    /// is never shown against different text.
+    pub fn open_reader_citation(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+        block_id: String,
+        dark: bool,
+    ) -> Result<Option<CitedReaderPage>, LibraryError> {
+        use wiki_source::reader_document::{reader_document_with_citation, CitedPassage};
+        let key = ArticleKey { project, page_id };
+        key.validate().map_err(|_| LibraryError::InvalidInput)?;
+        if block_id.is_empty() || block_id.len() > 512 {
+            return Err(LibraryError::InvalidInput);
+        }
+        let article = self.with_active(|reader| {
+            reader
+                .reader()
+                .open_page(&key)
+                .map_err(|_| LibraryError::VerificationFailed)
+        })?;
+        let Some(article) = article.filter(|article| article.revision.revision_id == revision_id)
+        else {
+            return Ok(None);
+        };
+        let Some((document, passage)) =
+            reader_document_with_citation(&article, reader_theme(dark), &block_id)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(CitedReaderPage {
+            page: reader_page_with(article, document),
+            fragment: wiki_source::reader_document::CITED_FRAGMENT.to_owned(),
+            located: passage == CitedPassage::Located,
+        }))
+    }
+
     /// Open an article of the active pack by page ID as a reader document.
     pub fn open_reader_page(
         &self,

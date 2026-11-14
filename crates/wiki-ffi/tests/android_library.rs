@@ -767,6 +767,42 @@ mod reader {
     }
 
     #[test]
+    fn a_citation_opens_its_exact_revision_with_the_passage_highlighted() {
+        let dir = test_dir("reader-citation");
+        let library = active_library(&dir.0);
+        let key = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 2,
+        };
+        let block = key.block_id(7002, &[], 0);
+        let cited = library
+            .open_reader_citation("enwiki".into(), 2, 7002, block.clone(), false)
+            .unwrap()
+            .unwrap();
+        assert!(cited.located);
+        assert_eq!(cited.fragment, "foundation-cited");
+        assert_eq!(cited.page.base_url, "https://foundation.invalid/wiki/Tide");
+        assert!(cited.page.document.contains(
+            "<div id=\"foundation-cited\" class=\"foundation-cited\"><p>Tides follow the"
+        ));
+        // A different revision, a foreign block or a missing page is refused.
+        for (page, revision, block) in [
+            (2, 7001, block.clone()),
+            (2, 7002, key.block_id(7002, &[3], 0)),
+            (99, 7099, block.clone()),
+        ] {
+            assert_eq!(
+                library.open_reader_citation("enwiki".into(), page, revision, block, false),
+                Ok(None)
+            );
+        }
+        assert_eq!(
+            library.open_reader_citation("enwiki".into(), 2, 7002, String::new(), false),
+            Err(LibraryError::InvalidInput)
+        );
+    }
+
+    #[test]
     fn in_app_links_resolve_titles_within_the_pack() {
         let dir = test_dir("reader-title");
         let library = active_library(&dir.0);

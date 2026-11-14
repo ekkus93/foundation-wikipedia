@@ -28,7 +28,7 @@ data class ReaderShellState(
 
     fun dismissActions(): ReaderShellState = copy(actionsOpen = false)
 
-    /** Presentation-only chat shell; does not authorize model calls. */
+    /** Open the chat sheet. Opening it sends nothing; each request is reviewed first. */
     fun showChat(): ReaderShellState =
         if (settingsOpen) this else copy(chatOpen = true, actionsOpen = false)
 

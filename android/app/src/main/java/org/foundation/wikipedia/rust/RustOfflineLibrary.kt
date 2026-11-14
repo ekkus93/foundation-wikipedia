@@ -17,6 +17,7 @@ import uniffi.wiki_ffi.LibraryException
 import uniffi.wiki_ffi.OfflineLibrary
 import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
+import uniffi.wiki_ffi.CitedReaderPage
 import uniffi.wiki_ffi.ReaderPage
 import uniffi.wiki_ffi.SearchHit
 
@@ -106,6 +107,23 @@ class RustOfflineLibrary private constructor(
     suspend fun openReaderPage(project: String, pageId: Long, dark: Boolean): ReaderPage? {
         require(pageId > 0) { "pageId must be positive" }
         return call { it.openReaderPage(project, pageId.toULong(), dark) }
+    }
+
+    /**
+     * The exact article revision a chat citation points to, with the cited
+     * passage highlighted; `null` if the active pack no longer holds it.
+     */
+    suspend fun openReaderCitation(
+        project: String,
+        pageId: Long,
+        revisionId: Long,
+        blockId: String,
+        dark: Boolean,
+    ): CitedReaderPage? {
+        require(pageId > 0 && revisionId > 0) { "pageId and revisionId must be positive" }
+        return call {
+            it.openReaderCitation(project, pageId.toULong(), revisionId.toULong(), blockId, dark)
+        }
     }
 
     /** Resolve an in-app article link by title within the active pack. */
