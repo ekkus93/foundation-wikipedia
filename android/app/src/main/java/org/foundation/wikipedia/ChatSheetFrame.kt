@@ -62,7 +62,7 @@ data class ChatSheetAnchors(val peek: Float, val half: Float, val full: Float) {
     }
 
     companion object {
-        val PEEK_HEIGHT: Dp = 140.dp
+        val PEEK_HEIGHT: Dp = 152.dp
 
         fun forSpace(spacePx: Float, peekPx: Float): ChatSheetAnchors {
             val peek = peekPx.coerceAtMost(spacePx)
@@ -127,7 +127,8 @@ fun ChatSheetFrame(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(32.dp)
+                        // 48 dp: the minimum touch target.
+                        .height(48.dp)
                         .draggable(
                             state = drag,
                             orientation = Orientation.Vertical,

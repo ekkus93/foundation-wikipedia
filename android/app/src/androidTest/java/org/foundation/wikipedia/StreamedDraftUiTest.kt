@@ -1,10 +1,14 @@
 package org.foundation.wikipedia
 
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performCustomAccessibilityActionWithLabel
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.tryPerformAccessibilityChecks
+import androidx.compose.ui.test.junit4.accessibility.enableAccessibilityChecks
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -38,6 +42,7 @@ import uniffi.wiki_ffi.LocalAiProtocol
  * as placeholders; the checked answer replaces it, and a draft whose
  * citations fail the check is removed rather than shown.
  */
+@OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class StreamedDraftUiTest {
     @get:Rule
@@ -188,8 +193,7 @@ class StreamedDraftUiTest {
         assertTrue(shown("Tides follow the Moon"))
         assertTrue("peek shows no question field", !shown("Review request", substring = false))
         // TalkBack's Expand action raises it again with the conversation.
-        val actions = handle.fetchSemanticsNode().config[SemanticsActions.CustomActions]
-        compose.runOnUiThread { actions.first { it.label == "Expand" }.action() }
+        handle.performCustomAccessibilityActionWithLabel("Expand")
         compose.waitUntil(timeoutMillis = 10_000) { shown("Review request", substring = false) }
         handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "half height"))
     }
@@ -202,5 +206,29 @@ class StreamedDraftUiTest {
         compose.waitUntil(timeoutMillis = 30_000) { shown("citations did not match this article") }
         assertTrue(!shown(DRAFT_LABEL, substring = false))
         assertTrue(!shown("Tides follow the Moon"))
+    }
+
+    @Test
+    fun theChatSheetPassesAccessibilityChecksAtEveryHeightAndWhileDrafting() {
+        val fake = FakeOllama("Tides follow the Moon [[cite:wkb:enwiki:2:7002:b0]]", ".")
+        askAboutTide(fake)
+        compose.waitUntil(timeoutMillis = 30_000) { shown(DRAFT_LABEL, substring = false) }
+        // Touch target size, contrast, labels and duplicate descriptions
+        // (Accessibility Test Framework); failures throw with details.
+        compose.enableAccessibilityChecks()
+        compose.onRoot().tryPerformAccessibilityChecks()
+        fake.release.countDown()
+        compose.waitUntil(timeoutMillis = 30_000) { !shown(DRAFT_LABEL, substring = false) }
+        val handle = compose.onNodeWithContentDescription("Chat sheet size")
+        for (label in listOf("Expand", "Collapse", "Collapse")) {
+            compose.waitForIdle()
+            compose.onRoot().tryPerformAccessibilityChecks()
+            handle.performCustomAccessibilityActionWithLabel(label)
+        }
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "collapsed"))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onRoot().tryPerformAccessibilityChecks()
     }
 }
