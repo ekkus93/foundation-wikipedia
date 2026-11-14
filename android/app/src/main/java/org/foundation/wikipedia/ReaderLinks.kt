@@ -29,6 +29,27 @@ object ReaderLinks {
     private const val ARTICLE_PATH = "/wiki/"
     private const val MAX_TITLE_LENGTH = 512
 
+    /**
+     * Whether a WebView request asks for exactly the document currently
+     * shown (same reserved origin and decoded path, no query). Only that
+     * main-frame request is answered with the document; all others are
+     * refused.
+     */
+    fun isDocumentRequest(url: String, mainFrame: Boolean, documentUrl: String?): Boolean {
+        if (!mainFrame || documentUrl == null) return false
+        return try {
+            val request = URI(url)
+            val document = URI(documentUrl)
+            request.scheme.equals("https", ignoreCase = true) &&
+                request.host.equals(HOST, ignoreCase = true) &&
+                request.port == -1 && request.rawQuery == null && request.userInfo == null &&
+                request.path != null && request.path == document.path &&
+                document.host.equals(HOST, ignoreCase = true)
+        } catch (_: URISyntaxException) {
+            false
+        }
+    }
+
     fun classify(url: String, currentDocumentUrl: String?): ReaderLink {
         val uri = try {
             URI(url)

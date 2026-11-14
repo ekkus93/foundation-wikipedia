@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.launch
 import org.foundation.wikipedia.rust.RustOfflineLibrary
 import uniffi.wiki_ffi.ReaderPage
@@ -53,14 +54,23 @@ private sealed interface ReaderContent {
 }
 
 /**
- * Every subresource request from an article document is refused: the
- * document has no scripts or styles to fetch, image sources are removed until
- * verified offline media exists (PACK-003), and this keeps the reserved
- * origin from ever reaching the network. Verified local media will be served
- * here from the active pack.
+ * Every request other than the current document is refused: the document has
+ * no scripts or styles to fetch, image sources are removed until verified
+ * offline media exists (PACK-003), and the reserved origin never reaches the
+ * network. Verified local media will be served here from the active pack.
  */
 internal fun refuseResource(): WebResourceResponse =
     WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+
+/** The current document, served by the WebView client for its exact URL. */
+internal fun documentResponse(html: String): WebResourceResponse = WebResourceResponse(
+    "text/html",
+    "utf-8",
+    200,
+    "OK",
+    mapOf("Cache-Control" to "no-store"),
+    ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)),
+)
 
 private const val WELCOME_HTML = """
 <!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -104,6 +114,7 @@ fun ArticleReader(
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
     var busy by remember { mutableStateOf(false) }
+    val served = remember { AtomicReference<Pair<String, String>?>(null) }
 
     LaunchedEffect(Unit) {
         library = try {
@@ -239,10 +250,20 @@ fun ArticleReader(
                             }
                         }
 
+                        // Runs on a WebView background thread: read only the
+                        // atomically published current document.
                         override fun shouldInterceptRequest(
                             view: WebView?,
                             request: WebResourceRequest?,
-                        ): WebResourceResponse = refuseResource()
+                        ): WebResourceResponse {
+                            val shown = served.get() ?: return refuseResource()
+                            val url = request?.url?.toString() ?: return refuseResource()
+                            return if (ReaderLinks.isDocumentRequest(url, request.isForMainFrame, shown.first)) {
+                                documentResponse(shown.second)
+                            } else {
+                                refuseResource()
+                            }
+                        }
                     }
                     val (url, html) = when (val shown = content) {
                         is ReaderContent.Article -> shown.page.baseUrl to shown.page.document
@@ -254,7 +275,11 @@ fun ArticleReader(
                     // in-page anchors survive unrelated recompositions.
                     if (view.tag != html) {
                         view.tag = html
-                        view.loadDataWithBaseURL(url, html, "text/html", "UTF-8", null)
+                        // The document is served by the client above for this
+                        // URL only (loadDataWithBaseURL with an https base is
+                        // blocked as a network load by blockNetworkLoads).
+                        served.set(url to html)
+                        view.loadUrl(url)
                     }
                     view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
                     view.importantForAccessibility = if (hidden || hideFromAccessibility) {

@@ -3752,7 +3752,8 @@ data class ReaderPage (
     var `document`: kotlin.String
     , 
     /**
-     * Load the document at this URL so in-page fragments resolve to it.
+     * The document's URL in the reserved reader origin (title
+     * percent-encoded). The app serves `document` for exactly this URL.
      */
     var `baseUrl`: kotlin.String
     

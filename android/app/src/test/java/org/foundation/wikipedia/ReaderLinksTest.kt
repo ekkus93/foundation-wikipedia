@@ -62,6 +62,25 @@ class ReaderLinksTest {
     }
 
     @Test
+    fun onlyTheCurrentDocumentIsServed() {
+        val doc = "https://foundation.invalid/wiki/%C3%89clair"
+        assertTrue(ReaderLinks.isDocumentRequest(doc, true, doc))
+        assertTrue(ReaderLinks.isDocumentRequest("https://foundation.invalid/wiki/Éclair", true, doc))
+        assertFalse(ReaderLinks.isDocumentRequest(doc, false, doc))
+        assertFalse(ReaderLinks.isDocumentRequest(doc, true, null))
+        for (other in listOf(
+            "https://foundation.invalid/wiki/Moon",
+            "https://foundation.invalid/wiki/%C3%89clair?x=1",
+            "http://foundation.invalid/wiki/%C3%89clair",
+            "https://foundation.invalid:444/wiki/%C3%89clair",
+            "https://example.org/wiki/%C3%89clair",
+            "https://foundation.invalid/favicon.ico",
+        )) {
+            assertFalse(other, ReaderLinks.isDocumentRequest(other, true, doc))
+        }
+    }
+
+    @Test
     fun theBackStackIsBoundedDeduplicatedAndRestorable() {
         val moon = ReaderEntry("enwiki", 1, "Moon")
         val tide = ReaderEntry("enwiki", 2, "Tide")

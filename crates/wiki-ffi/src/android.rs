@@ -1189,8 +1189,23 @@ pub struct ReaderPage {
     pub display_title: String,
     /// Complete sanitized HTML document (see `wiki_source::reader_document`).
     pub document: String,
-    /// Load the document at this URL so in-page fragments resolve to it.
+    /// The document's URL in the reserved reader origin (title
+    /// percent-encoded). The app serves `document` for exactly this URL.
     pub base_url: String,
+}
+
+/// Percent-encode a title as a URL path (spaces become `_`, as on
+/// Wikipedia), so `?`, `#`, `%` and non-ASCII never change the URL's meaning.
+fn encode_title_path(title: &str) -> String {
+    let mut path = String::with_capacity(title.len());
+    for byte in title.replace(' ', "_").bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:()!,'*".contains(&byte) {
+            path.push(byte as char);
+        } else {
+            path.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    path
 }
 
 fn reader_page(article: Article, dark: bool) -> ReaderPage {
@@ -1204,7 +1219,7 @@ fn reader_page(article: Article, dark: bool) -> ReaderPage {
     ReaderPage {
         base_url: format!(
             "{READER_ORIGIN}{ARTICLE_PATH}{}",
-            article.title.replace(' ', "_")
+            encode_title_path(&article.title)
         ),
         project: article.key.project,
         page_id: article.key.page_id,
@@ -1258,5 +1273,19 @@ impl OfflineLibrary {
                 .map_err(|_| LibraryError::VerificationFailed)
         })
         .map(|article| article.map(|article| reader_page(article, dark)))
+    }
+}
+
+#[cfg(test)]
+mod reader_url_tests {
+    use super::encode_title_path;
+
+    #[test]
+    fn titles_are_encoded_so_they_cannot_become_queries_or_fragments() {
+        assert_eq!(encode_title_path("Isaac Newton"), "Isaac_Newton");
+        assert_eq!(encode_title_path("AC/DC"), "AC/DC");
+        assert_eq!(encode_title_path("C#"), "C%23");
+        assert_eq!(encode_title_path("What? 100%"), "What%3F_100%25");
+        assert_eq!(encode_title_path("Éclair"), "%C3%89clair");
     }
 }
