@@ -1105,3 +1105,108 @@ mod local_chat {
         }
     }
 }
+
+/// MOB-004: Android bookmarks and opt-in history in the user-state database.
+mod reader_state {
+    use super::*;
+    use wiki_ffi::android::ChatHistory;
+    use wiki_ffi::reader_state::{ReaderState, ReaderStateError};
+
+    fn setup(
+        label: &str,
+    ) -> (
+        TestDir,
+        std::sync::Arc<OfflineLibrary>,
+        std::sync::Arc<ReaderState>,
+    ) {
+        let dir = test_dir(label);
+        let pack = build_pack(&dir.0, "moon-pack");
+        let library = library(&dir.0);
+        library
+            .install_pack(pack.to_string_lossy().into_owned(), true)
+            .unwrap();
+        library.activate("moon-pack".into()).unwrap();
+        let state = ReaderState::new(dir.0.join("state").to_string_lossy().into_owned()).unwrap();
+        (dir, library, state)
+    }
+
+    #[test]
+    fn bookmarks_toggle_and_list_with_titles_from_the_active_pack() {
+        let (_dir, library, state) = setup("bookmarks");
+        assert!(!state.is_bookmarked("enwiki".into(), 2).unwrap());
+        assert!(state.toggle_bookmark("enwiki".into(), 2, 7002).unwrap());
+        assert!(state.is_bookmarked("enwiki".into(), 2).unwrap());
+        // A page the active pack does not have keeps no title.
+        assert!(state.toggle_bookmark("enwiki".into(), 99, 7099).unwrap());
+        let saved = state.saved_content(Some(library.clone())).unwrap();
+        let titles: Vec<_> = saved
+            .bookmarks
+            .iter()
+            .map(|page| (page.page_id, page.revision_id, page.title.clone()))
+            .collect();
+        assert_eq!(
+            titles,
+            vec![(2, 7002, Some("Tide".to_owned())), (99, 7099, None)]
+        );
+        assert!(saved.bookmarks.iter().all(|page| page.visited_at.is_none()));
+        assert!(!state.toggle_bookmark("enwiki".into(), 2, 7002).unwrap());
+        assert!(state.remove_bookmark("enwiki".into(), 99).unwrap());
+        assert!(!state.remove_bookmark("enwiki".into(), 99).unwrap());
+        assert!(state.saved_content(None).unwrap().bookmarks.is_empty());
+        // Bookmarks survive reopening the database.
+        state.toggle_bookmark("enwiki".into(), 1, 7001).unwrap();
+        let dir = _dir.0.join("state").to_string_lossy().into_owned();
+        let reopened = ReaderState::new(dir).unwrap();
+        assert!(reopened.is_bookmarked("enwiki".into(), 1).unwrap());
+    }
+
+    #[test]
+    fn visits_are_recorded_only_with_history_on_and_can_be_cleared() {
+        let (_dir, library, state) = setup("history");
+        assert!(!state.saved_content(None).unwrap().history_enabled);
+        assert!(!state.record_visit("enwiki".into(), 2, 7002).unwrap());
+        state.set_history_enabled(true).unwrap();
+        assert!(state.record_visit("enwiki".into(), 2, 7002).unwrap());
+        assert!(state.record_visit("enwiki".into(), 1, 7001).unwrap());
+        let saved = state.saved_content(Some(library)).unwrap();
+        assert!(saved.history_enabled);
+        assert_eq!(saved.history.len(), 2);
+        assert!(saved
+            .history
+            .iter()
+            .all(|page| page.visited_at.unwrap() > 0));
+        assert!(saved
+            .history
+            .iter()
+            .any(|page| page.title.as_deref() == Some("Moon")));
+        // Turning history off stops recording but keeps visits until cleared.
+        state.set_history_enabled(false).unwrap();
+        assert!(!state.record_visit("enwiki".into(), 2, 7002).unwrap());
+        assert_eq!(state.saved_content(None).unwrap().history.len(), 2);
+        assert_eq!(state.clear_history().unwrap(), 2);
+        assert!(state.saved_content(None).unwrap().history.is_empty());
+    }
+
+    #[test]
+    fn clearing_chats_and_reading_data_also_clears_bookmarks_and_bad_input_is_refused() {
+        let (dir, _library, state) = setup("cleared");
+        state.toggle_bookmark("enwiki".into(), 2, 7002).unwrap();
+        // Both objects share one user-state database.
+        let chats = ChatHistory::new(dir.0.join("state").to_string_lossy().into_owned()).unwrap();
+        chats.clear_all().unwrap();
+        assert!(!state.is_bookmarked("enwiki".into(), 2).unwrap());
+        for (project, page_id, revision_id) in
+            [("", 2, 7002), ("enwiki", 0, 7002), ("enwiki", 2, 0)]
+        {
+            assert_eq!(
+                state.toggle_bookmark(project.into(), page_id, revision_id),
+                Err(ReaderStateError::InvalidInput)
+            );
+        }
+        assert_eq!(
+            state.record_visit("enwiki".into(), 2, u64::MAX),
+            Err(ReaderStateError::InvalidInput)
+        );
+        assert!(ReaderState::new("relative/dir".into()).is_err());
+    }
+}

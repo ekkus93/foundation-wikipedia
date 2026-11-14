@@ -58,6 +58,9 @@ data class ReaderShellState(
     /** The chat sheet is on screen (open and not under Settings). */
     val chatShown: Boolean get() = chatOpen && !settingsOpen
 
+    /** Leave Settings for the reader (and any chat it covered). */
+    fun closeSettings(): ReaderShellState = copy(settingsOpen = false, settingsCategory = null)
+
     fun openSettingsCategory(category: ReaderSettingsCategory): ReaderShellState =
         if (!settingsOpen) this else copy(settingsCategory = category, actionsOpen = false)
 

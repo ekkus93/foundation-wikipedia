@@ -105,6 +105,8 @@ fun ArticleReader(
     citation: CitationRequest? = null,
     onCitationConsumed: () -> Unit = {},
     onArticleShown: (ArticleChatTarget?) -> Unit = {},
+    openEntry: ReaderEntry? = null,
+    onOpenConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -134,6 +136,14 @@ fun ArticleReader(
     val served = remember { AtomicReference<Pair<String, String>?>(null) }
     // The chat citation to highlight while its article is the current entry.
     var highlight by remember { mutableStateOf<CitationRequest?>(null) }
+
+    // A saved page chosen in Settings › History & Saved Content.
+    LaunchedEffect(openEntry) {
+        val entry = openEntry ?: return@LaunchedEffect
+        onOpenConsumed()
+        results = null
+        navigation = navigation.open(entry)
+    }
 
     LaunchedEffect(citation) {
         val request = citation ?: return@LaunchedEffect

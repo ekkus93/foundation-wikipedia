@@ -780,9 +780,25 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_packsource_read(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_clear_history(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_is_bookmarked(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_record_visit(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_remove_bookmark(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_saved_content(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_set_history_enabled(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_toggle_bookmark(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_constructor_chathistory_new(
     ): Int
     external fun uniffi_wiki_ffi_checksum_constructor_offlinelibrary_new(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_constructor_readerstate_new(
     ): Int
     external fun ffi_wiki_ffi_uniffi_contract_version(
     ): Int
@@ -913,6 +929,26 @@ external fun uniffi_wiki_ffi_fn_init_callback_vtable_packsource(`vtable`: Uniffi
 ): Unit
 external fun uniffi_wiki_ffi_fn_method_packsource_read(`ptr`: Long,`maxBytes`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_clone_readerstate(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_free_readerstate(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_constructor_readerstate_new(`dataDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_method_readerstate_clear_history(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_wiki_ffi_fn_method_readerstate_is_bookmarked(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_wiki_ffi_fn_method_readerstate_record_visit(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_wiki_ffi_fn_method_readerstate_remove_bookmark(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_wiki_ffi_fn_method_readerstate_saved_content(`ptr`: Long,`library`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_readerstate_set_history_enabled(`ptr`: Long,`enabled`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_wiki_ffi_fn_method_readerstate_toggle_bookmark(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 external fun uniffi_wiki_ffi_fn_func_check_hosted_ai_connection(`provider`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`model`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_func_discover_local_ai(`protocol`: RustBuffer.ByValue,`endpoint`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1157,10 +1193,34 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_packsource_read() != 38010) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_clear_history() != 42589) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_is_bookmarked() != 45978) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_record_visit() != 23512) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_remove_bookmark() != 35309) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_saved_content() != 42228) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_set_history_enabled() != 26228) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_toggle_bookmark() != 12605) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_wiki_ffi_checksum_constructor_chathistory_new() != 51162) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_constructor_offlinelibrary_new() != 26112) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_constructor_readerstate_new() != 60008) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -4102,6 +4162,408 @@ public object FfiConverterTypePackSource: FfiConverter<PackSource, Long> {
 }
 
 
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface ReaderStateInterface {
+    
+    /**
+     * Delete all visits; returns how many there were. Bookmarks are kept.
+     */
+    fun `clearHistory`(): kotlin.ULong
+    
+    fun `isBookmarked`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean
+    
+    /**
+     * Record that the page was shown, only if history is on; returns
+     * whether a visit was saved.
+     */
+    fun `recordVisit`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.Boolean
+    
+    /**
+     * Remove a bookmark; returns whether there was one.
+     */
+    fun `removeBookmark`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean
+    
+    /**
+     * Bookmarks, the history choice and recent visits, with titles from
+     * `library`'s active pack where it has the page.
+     */
+    fun `savedContent`(`library`: OfflineLibrary?): SavedContent
+    
+    /**
+     * Turn history recording on or off. Turning it off fences any visit
+     * still being written; saved visits stay until `clear_history`.
+     */
+    fun `setHistoryEnabled`(`enabled`: kotlin.Boolean)
+    
+    /**
+     * Add or remove the page's bookmark (at the shown revision); returns
+     * whether it is bookmarked now.
+     */
+    fun `toggleBookmark`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.Boolean
+    
+    companion object
+}
+
+open class ReaderState: Disposable, AutoCloseable, ReaderStateInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    /**
+     * Open (creating if needed) the user-state database in an absolute
+     * app-private directory; the same one `ChatHistory` uses.
+     */
+    constructor(`dataDir`: kotlin.String) :
+        this(UniffiWithHandle, 
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_constructor_readerstate_new(
+    
+        FfiConverterString.lower(`dataDir`),_status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_wiki_ffi_fn_free_readerstate(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_wiki_ffi_fn_clone_readerstate(handle, status)
+        }
+    }
+
+    
+    /**
+     * Delete all visits; returns how many there were. Bookmarks are kept.
+     */
+    @Throws(ReaderStateException::class)override fun `clearHistory`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_clear_history(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(ReaderStateException::class)override fun `isBookmarked`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_is_bookmarked(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Record that the page was shown, only if history is on; returns
+     * whether a visit was saved.
+     */
+    @Throws(ReaderStateException::class)override fun `recordVisit`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_record_visit(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Remove a bookmark; returns whether there was one.
+     */
+    @Throws(ReaderStateException::class)override fun `removeBookmark`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_remove_bookmark(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Bookmarks, the history choice and recent visits, with titles from
+     * `library`'s active pack where it has the page.
+     */
+    @Throws(ReaderStateException::class)override fun `savedContent`(`library`: OfflineLibrary?): SavedContent {
+            return FfiConverterTypeSavedContent.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_saved_content(
+        it,
+        FfiConverterOptionalTypeOfflineLibrary.lower(`library`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Turn history recording on or off. Turning it off fences any visit
+     * still being written; saved visits stay until `clear_history`.
+     */
+    @Throws(ReaderStateException::class)override fun `setHistoryEnabled`(`enabled`: kotlin.Boolean)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_set_history_enabled(
+        it,
+        FfiConverterBoolean.lower(`enabled`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Add or remove the page's bookmark (at the shown revision); returns
+     * whether it is bookmarked now.
+     */
+    @Throws(ReaderStateException::class)override fun `toggleBookmark`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_toggle_bookmark(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReaderState: FfiConverter<ReaderState, Long> {
+    override fun lower(value: ReaderState): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): ReaderState {
+        return ReaderState(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): ReaderState {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: ReaderState) = 8UL
+
+    override fun write(value: ReaderState, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
 
 data class ArticlePage (
     var `project`: kotlin.String
@@ -4872,6 +5334,55 @@ public object FfiConverterTypeReaderPage: FfiConverterRustBuffer<ReaderPage> {
 
 
 
+/**
+ * Bookmarks, the history choice and recent visits, read from one snapshot.
+ */
+data class SavedContent (
+    var `bookmarks`: List<SavedPage>
+    , 
+    var `historyEnabled`: kotlin.Boolean
+    , 
+    /**
+     * Newest first.
+     */
+    var `history`: List<SavedPage>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSavedContent: FfiConverterRustBuffer<SavedContent> {
+    override fun read(buf: ByteBuffer): SavedContent {
+        return SavedContent(
+            FfiConverterSequenceTypeSavedPage.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterSequenceTypeSavedPage.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SavedContent) = (
+            FfiConverterSequenceTypeSavedPage.allocationSize(value.`bookmarks`) +
+            FfiConverterBoolean.allocationSize(value.`historyEnabled`) +
+            FfiConverterSequenceTypeSavedPage.allocationSize(value.`history`)
+    )
+
+    override fun write(value: SavedContent, buf: ByteBuffer) {
+            FfiConverterSequenceTypeSavedPage.write(value.`bookmarks`, buf)
+            FfiConverterBoolean.write(value.`historyEnabled`, buf)
+            FfiConverterSequenceTypeSavedPage.write(value.`history`, buf)
+    }
+}
+
+
+
 data class SavedExchange (
     var `questionId`: kotlin.Long
     , 
@@ -4915,6 +5426,71 @@ public object FfiConverterTypeSavedExchange: FfiConverterRustBuffer<SavedExchang
             FfiConverterLong.write(value.`answerId`, buf)
             FfiConverterString.write(value.`question`, buf)
             FfiConverterSequenceTypeSavedAnswerPart.write(value.`answer`, buf)
+    }
+}
+
+
+
+/**
+ * One saved article: a bookmark or a history visit.
+ */
+data class SavedPage (
+    var `project`: kotlin.String
+    , 
+    var `pageId`: kotlin.ULong
+    , 
+    /**
+     * The revision that was shown when it was saved.
+     */
+    var `revisionId`: kotlin.ULong
+    , 
+    /**
+     * From the active pack; `None` when that pack does not have the page.
+     */
+    var `title`: kotlin.String?
+    , 
+    /**
+     * Seconds since the Unix epoch, for history visits; `None` for bookmarks.
+     */
+    var `visitedAt`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSavedPage: FfiConverterRustBuffer<SavedPage> {
+    override fun read(buf: ByteBuffer): SavedPage {
+        return SavedPage(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SavedPage) = (
+            FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterULong.allocationSize(value.`pageId`) +
+            FfiConverterULong.allocationSize(value.`revisionId`) +
+            FfiConverterOptionalString.allocationSize(value.`title`) +
+            FfiConverterOptionalLong.allocationSize(value.`visitedAt`)
+    )
+
+    override fun write(value: SavedPage, buf: ByteBuffer) {
+            FfiConverterString.write(value.`project`, buf)
+            FfiConverterULong.write(value.`pageId`, buf)
+            FfiConverterULong.write(value.`revisionId`, buf)
+            FfiConverterOptionalString.write(value.`title`, buf)
+            FfiConverterOptionalLong.write(value.`visitedAt`, buf)
     }
 }
 
@@ -6111,6 +6687,102 @@ public object FfiConverterTypeLocalAiProtocol: FfiConverterRustBuffer<LocalAiPro
 
 
 
+
+
+sealed class ReaderStateException: kotlin.Exception() {
+    
+    /**
+     * An identifier or path was rejected before any write.
+     */
+    class InvalidInput(
+        ) : ReaderStateException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * The database could not be opened, read or written.
+     */
+    class Storage(
+        ) : ReaderStateException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * Saved data was cleared (or history turned off) meanwhile; nothing
+     * was written. Reload and try again.
+     */
+    class Changed(
+        ) : ReaderStateException() {
+        override val message
+            get() = ""
+    }
+    
+
+    
+
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<ReaderStateException> {
+        override fun lift(error_buf: RustBuffer.ByValue): ReaderStateException = FfiConverterTypeReaderStateError.lift(error_buf)
+    }
+
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReaderStateError : FfiConverterRustBuffer<ReaderStateException> {
+    override fun read(buf: ByteBuffer): ReaderStateException {
+        
+
+        return when(buf.getInt()) {
+            1 -> ReaderStateException.InvalidInput()
+            2 -> ReaderStateException.Storage()
+            3 -> ReaderStateException.Changed()
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: ReaderStateException): ULong {
+        return when(value) {
+            is ReaderStateException.InvalidInput -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is ReaderStateException.Storage -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is ReaderStateException.Changed -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+        }
+    }
+
+    override fun write(value: ReaderStateException, buf: ByteBuffer) {
+        when(value) {
+            is ReaderStateException.InvalidInput -> {
+                buf.putInt(1)
+                Unit
+            }
+            is ReaderStateException.Storage -> {
+                buf.putInt(2)
+                Unit
+            }
+            is ReaderStateException.Changed -> {
+                buf.putInt(3)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
 /**
  * One saved part of an answer. Citations are historical: they show the
  * evidence saved with the answer, which may differ from a newer revision.
@@ -6388,6 +7060,38 @@ public object FfiConverterOptionalTypeChatProgress: FfiConverterRustBuffer<ChatP
         } else {
             buf.put(1)
             FfiConverterTypeChatProgress.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeOfflineLibrary: FfiConverterRustBuffer<OfflineLibrary?> {
+    override fun read(buf: ByteBuffer): OfflineLibrary? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeOfflineLibrary.read(buf)
+    }
+
+    override fun allocationSize(value: OfflineLibrary?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeOfflineLibrary.allocationSize(value)
+        }
+    }
+
+    override fun write(value: OfflineLibrary?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeOfflineLibrary.write(value, buf)
         }
     }
 }
@@ -6684,6 +7388,34 @@ public object FfiConverterSequenceTypeSavedExchange: FfiConverterRustBuffer<List
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSavedExchange.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSavedPage: FfiConverterRustBuffer<List<SavedPage>> {
+    override fun read(buf: ByteBuffer): List<SavedPage> {
+        val len = buf.getInt()
+        return List<SavedPage>(len) {
+            FfiConverterTypeSavedPage.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SavedPage>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSavedPage.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SavedPage>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSavedPage.write(it, buf)
         }
     }
 }

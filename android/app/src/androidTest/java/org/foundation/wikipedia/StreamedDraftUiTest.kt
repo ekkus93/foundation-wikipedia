@@ -17,7 +17,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.test.uiautomator.UiDevice
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -247,10 +246,13 @@ class StreamedDraftUiTest {
         // The chat is hidden (not just covered) while Settings is open.
         assertTrue(!shown("Ask about “Tide”", substring = false))
         assertTrue(!shown("What do tides follow?", substring = false))
-        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        device.pressBack() // AI Assistant → Settings
-        compose.waitForIdle()
-        device.pressBack() // Settings → the reader with its chat
+        // Back goes to the app, not to a keyboard still closing on slow emulators.
+        fun back() {
+            compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+        }
+        back() // AI Assistant → Settings
+        back() // Settings → the reader with its chat
         compose.waitUntil(timeoutMillis = 10_000) { shown("Ask about “Tide”", substring = false) }
         assertTrue(shown("What do tides follow?", substring = false))
         handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "full height"))

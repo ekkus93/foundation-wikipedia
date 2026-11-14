@@ -11,5 +11,6 @@ pub mod android;
 pub mod android_tls;
 pub mod article_chat;
 pub mod online_reader;
+pub mod reader_state;
 
 uniffi::setup_scaffolding!();

@@ -20,6 +20,7 @@ import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
 import uniffi.wiki_ffi.CitedReaderPage
 import uniffi.wiki_ffi.ReaderPage
+import uniffi.wiki_ffi.SavedContent
 import uniffi.wiki_ffi.SearchHit
 
 /**
@@ -145,6 +146,10 @@ class RustOfflineLibrary private constructor(
     ): ArticleChat = call { it.prepareLocalChat(request, history?.history) }
 
     override fun close() = library.close()
+
+    /** Saved bookmarks and history with titles from this library's active pack. */
+    internal suspend fun savedContent(state: RustReaderState): SavedContent =
+        call { state.state.savedContent(it) }
 
     private suspend fun <T> call(block: (OfflineLibrary) -> T): T = withContext(dispatcher) {
         requireOffMainThread()

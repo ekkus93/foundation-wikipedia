@@ -122,7 +122,7 @@ private fun FoundationApp() {
             true
         }
     }
-    // Consent only: article/history persistence is not wired to Rust yet.
+    // The history choice; Rust's copy is kept in step (MOB-004).
     val historyPreferences = remember(context) {
         context.getSharedPreferences(ReaderOfflinePreference.FILE, Context.MODE_PRIVATE)
     }
@@ -139,6 +139,21 @@ private fun FoundationApp() {
     // Do not restore a stale saveable consent value over the durable preference.
     var historyEnabled by remember { mutableStateOf(initialHistoryEnabled) }
     var historyPersistenceFailed by remember { mutableStateOf(false) }
+    // MOB-004: whether the shown article is bookmarked, the last recorded
+    // visit (a theme reload is not a new visit) and a saved page to open.
+    var bookmarked by remember { mutableStateOf(false) }
+    var lastVisit by remember { mutableStateOf<ArticleChatTarget?>(null) }
+    var openEntry by remember { mutableStateOf<ReaderEntry?>(null) }
+    // Rust records visits only when its copy of the choice agrees.
+    LaunchedEffect(historyEnabled) {
+        try {
+            val state = ReaderStateHolder.get(context)
+            if (state.savedContent().historyEnabled != historyEnabled) state.setHistoryEnabled(historyEnabled)
+        } catch (_: Exception) {
+            // Visits then stay unrecorded; Settings shows the storage error.
+        } catch (_: LinkageError) {
+        }
+    }
     val shellSaver = remember {
         listSaver<ReaderShellState, Any>(
             save = {
@@ -237,10 +252,24 @@ private fun FoundationApp() {
                                             "Chat" -> shell = shell.showChat()
                                             else -> {
                                                 shell = shell.copy(actionsOpen = false)
+                                                val article = chatTarget
                                                 scope.launch {
-                                                    snackbarHostState.showSnackbar(
-                                                        "Bookmarks are not available on Android yet."
-                                                    )
+                                                    val note = if (article == null) {
+                                                        "Open an article to bookmark it."
+                                                    } else {
+                                                        try {
+                                                            bookmarked = ReaderStateHolder.get(context).toggleBookmark(
+                                                                article.project, article.pageId, article.revisionId,
+                                                            )
+                                                            if (bookmarked) "Bookmarked “${article.title}”."
+                                                            else "Removed the bookmark for “${article.title}”."
+                                                        } catch (error: Exception) {
+                                                            readerStateErrorMessage(error)
+                                                        } catch (error: LinkageError) {
+                                                            readerStateErrorMessage(error)
+                                                        }
+                                                    }
+                                                    snackbarHostState.showSnackbar(note)
                                                 }
                                             }
                                         }
@@ -251,7 +280,13 @@ private fun FoundationApp() {
                                         Modifier
                                     },
                                 ) {
-                                    Text(if (label == "Offline" && shell.offline) "Go online" else label)
+                                    Text(
+                                        when {
+                                            label == "Offline" && shell.offline -> "Go online"
+                                            label == "Bookmark" && bookmarked -> "Remove bookmark"
+                                            else -> label
+                                        },
+                                    )
                                 }
                             }
                         }
@@ -282,7 +317,25 @@ private fun FoundationApp() {
                     hideFromAccessibility = shell.readerCovered,
                     citation = citation,
                     onCitationConsumed = { citation = null },
-                    onArticleShown = { chatTarget = it },
+                    onArticleShown = { shown ->
+                        chatTarget = shown
+                        scope.launch {
+                            try {
+                                val state = ReaderStateHolder.get(context)
+                                bookmarked = shown != null && state.isBookmarked(shown.project, shown.pageId)
+                                if (shown != null && shown != lastVisit && historyEnabled) {
+                                    lastVisit = shown
+                                    state.recordVisit(shown.project, shown.pageId, shown.revisionId)
+                                }
+                            } catch (_: Exception) {
+                                bookmarked = false
+                            } catch (_: LinkageError) {
+                                bookmarked = false
+                            }
+                        }
+                    },
+                    openEntry = openEntry,
+                    onOpenConsumed = { openEntry = null },
                     onMessage = { message, externalUrl ->
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
@@ -390,43 +443,22 @@ private fun FoundationApp() {
                                     "override it for this app. Other reading controls are not available yet.",
                             )
                         } else if (category == ReaderSettingsCategory.HISTORY_SAVED_CONTENT) {
-                            Text("History & Saved Content", style = MaterialTheme.typography.titleLarge)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text("Allow saving reading history", modifier = Modifier.weight(1f))
-                                Switch(
-                                    checked = historyEnabled,
-                                    onCheckedChange = { requested ->
-                                        val update = ReaderHistoryPreference.update(requested) { value ->
-                                            historyPreferences.edit()
-                                                .putString(ReaderHistoryPreference.KEY, value)
-                                                .commit()
-                                        }
-                                        historyEnabled = update.enabled
-                                        historyPersistenceFailed = !update.saved
-                                    },
-                                )
-                            }
-                            Text(
-                                if (historyEnabled) {
-                                    "History consent is on. No reading history is currently " +
-                                        "recorded: verified articles and Rust storage are not connected."
-                                } else {
-                                    "History consent is off. Reading history is not recorded."
+                            SavedContentSection(
+                                historyEnabled = historyEnabled,
+                                historyPersistenceFailed = historyPersistenceFailed,
+                                onHistoryChoice = { requested ->
+                                    val update = ReaderHistoryPreference.update(requested) { value ->
+                                        historyPreferences.edit()
+                                            .putString(ReaderHistoryPreference.KEY, value)
+                                            .commit()
+                                    }
+                                    historyEnabled = update.enabled
+                                    historyPersistenceFailed = !update.saved
                                 },
-                            )
-                            if (historyPersistenceFailed) {
-                                Text(
-                                    "Could not save reading-history consent. History stays disabled " +
-                                        "for this session; an older saved choice may reappear after " +
-                                        "restart. No history is collected by this preview."
-                                )
-                            }
-                            Text(
-                                "This preference does not enable article loading, create bookmarks, " +
-                                    "or delete history from another installation."
+                                onOpen = { entry ->
+                                    openEntry = entry
+                                    shell = shell.closeSettings()
+                                },
                             )
                         } else if (category == ReaderSettingsCategory.WIKIPEDIA_OFFLINE_DATA) {
                             Text("Reading & offline", style = MaterialTheme.typography.titleLarge)
