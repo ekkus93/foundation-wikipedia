@@ -109,29 +109,51 @@ class LocalChatAndSelectionTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         openTide()
         val words = device.wait(Until.findObject(By.textContains("gravity")), 30_000)
-        if (words != null) {
-            val box = words.visibleBounds
-            // Long-press inside "'s gravity." to select a word.
-            val x = box.left + box.width() * 2 / 3
-            device.swipe(x, box.centerY(), x, box.centerY(), 120)
-        } else {
-            // Slow emulators may not expose WebView text in time: press the
-            // lead paragraph ("Tides follow…"), about 130 dp below the top
-            // of the page and 60 dp in from its left edge.
+        fun longPress() {
+            val target = words ?: device.findObject(By.textContains("gravity"))
+            if (target != null) {
+                val box = target.visibleBounds
+                // Long-press inside "'s gravity." to select a word.
+                val x = box.left + box.width() * 2 / 3
+                device.swipe(x, box.centerY(), x, box.centerY(), 120)
+            } else {
+                // Slow emulators may not expose WebView text in time: press the
+                // lead paragraph ("Tides follow…"), about 130 dp below the top
+                // of the page and 60 dp in from its left edge.
+                val (left, top) = webViewOrigin()
+                val density = context.resources.displayMetrics.density
+                val x = left + (60 * density).toInt()
+                val y = top + (130 * density).toInt()
+                device.swipe(x, y, x, y, 120)
+            }
+        }
+        fun findAsk(): androidx.test.uiautomator.UiObject2? {
+            device.wait(Until.findObject(By.text("Ask about this")), 8_000)?.let { return it }
+            // A crowded selection toolbar moves extra actions into overflow.
+            device.findObject(By.desc("More options"))?.click() ?: return null
+            return device.wait(Until.findObject(By.text("Ask about this")), 5_000)
+        }
+        // A slow emulator can miss the first long-press (no selection, or a
+        // toolbar that never appears): clear it and try again.
+        var ask: androidx.test.uiautomator.UiObject2? = null
+        for (attempt in 1..3) {
+            longPress()
+            ask = findAsk()
+            if (ask != null) break
+            android.util.Log.w("SelectionTest", "attempt $attempt: no \"Ask about this\" (text found: ${words != null})")
+            // Tap the empty page below Tide's short text to clear any selection.
             val (left, top) = webViewOrigin()
             val density = context.resources.displayMetrics.density
-            val x = left + (60 * density).toInt()
-            val y = top + (130 * density).toInt()
-            device.swipe(x, y, x, y, 120)
+            device.click(left + (40 * density).toInt(), top + (420 * density).toInt())
+            device.waitForIdle()
         }
-        var ask = device.wait(Until.findObject(By.text("Ask about this")), 5_000)
         if (ask == null) {
-            // A crowded selection toolbar moves extra actions into overflow.
-            device.findObject(By.desc("More options"))?.click()
-            ask = device.wait(Until.findObject(By.text("Ask about this")), 5_000)
+            val dump = java.io.ByteArrayOutputStream()
+            device.dumpWindowHierarchy(dump)
+            dump.toString().chunked(3_000).forEach { android.util.Log.w("SelectionTest", it) }
         }
         assertNotNull("\"Ask about this\" is missing from the WebView selection menu", ask)
-        ask.click()
+        ask!!.click()
         compose.waitUntil(timeoutMillis = 30_000) {
             compose.onAllNodesWithText("Ask about “Tide”").fetchSemanticsNodes().isNotEmpty() &&
                 compose.onAllNodesWithText("Asking about: “", substring = true).fetchSemanticsNodes().isNotEmpty()
