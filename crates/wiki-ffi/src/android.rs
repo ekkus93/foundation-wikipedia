@@ -793,12 +793,13 @@ pub struct LocalChatRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Progress of a sent request, for a progress bar and a time estimate. Model
-// output is still buffered until its citations are validated; only counts
-// and timings are reported, never text.
+// Progress of a sent request, for a progress bar, a time estimate and an
+// unchecked draft. The answer itself is still returned only after its
+// citations are validated; the draft must be labelled as unchecked and
+// replaced (or, if the check fails, discarded) when `send` returns.
 
 /// A snapshot of a request in flight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ChatProgressUpdate {
     /// Since the request started (before connecting).
     pub elapsed_ms: u64,
@@ -808,6 +809,9 @@ pub struct ChatProgressUpdate {
     pub output_chars: u64,
     /// True once the model finished; validation follows.
     pub finished: bool,
+    /// The output so far for an unchecked draft (`wiki_ai::rag::draft_display`):
+    /// citation markers are placeholders, never evidence IDs or links.
+    pub draft: String,
 }
 
 /// Receives progress on the sending thread, at most every 250 ms.
@@ -817,6 +821,7 @@ pub trait ChatProgress: Send + Sync {
 }
 
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+const MAX_DRAFT_BYTES: usize = 64 * 1024;
 
 /// Where an article chat goes, plus the progress sink of its one request.
 #[derive(Clone)]
@@ -928,9 +933,11 @@ impl wiki_ai::LlmProvider for ProgressProvider {
             first_output_ms: None,
             output_chars: 0,
             finished: false,
+            draft: String::new(),
         };
-        self.sink.on_progress(update);
+        self.sink.on_progress(update.clone());
         let mut reported = start;
+        let mut raw = String::new();
         self.inner.stream(request, cancellation, &mut |event| {
             let now = std::time::Instant::now();
             match &event {
@@ -938,18 +945,24 @@ impl wiki_ai::LlmProvider for ProgressProvider {
                     update.output_chars = update
                         .output_chars
                         .saturating_add(text.chars().count() as u64);
+                    // The pipeline rejects longer output; stop growing the draft.
+                    if raw.len() + text.len() <= MAX_DRAFT_BYTES {
+                        raw.push_str(text);
+                    }
                     let first = update.first_output_ms.is_none();
                     update.first_output_ms.get_or_insert(millis(now));
                     if first || now.duration_since(reported) >= PROGRESS_INTERVAL {
                         update.elapsed_ms = millis(now);
-                        self.sink.on_progress(update);
+                        update.draft = wiki_ai::rag::draft_display(&raw);
+                        self.sink.on_progress(update.clone());
                         reported = now;
                     }
                 }
                 wiki_ai::StreamEvent::Completed { .. } => {
                     update.elapsed_ms = millis(now);
                     update.finished = true;
-                    self.sink.on_progress(update);
+                    update.draft = wiki_ai::rag::draft_display(&raw);
+                    self.sink.on_progress(update.clone());
                 }
             }
             on_event(event)

@@ -7,6 +7,11 @@ import androidx.compose.ui.semantics.liveRegion
 import kotlinx.coroutines.delay
 import org.foundation.wikipedia.rust.RustLocalAi
 import uniffi.wiki_ffi.ChatProgressUpdate
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -175,8 +180,11 @@ internal fun ChatAnswer.toExchange(question: String): ChatExchange = when (this)
  * destination, model, question, any reader selection and the exact passages
  * (and earlier turns) are shown, and nothing leaves the device until the
  * user taps Send. While the model works, a progress bar and an estimate of
- * the time left are shown (learned from earlier replies of the same model).
- * Answers are shown only after Rust has validated every citation against the
+ * the time left are shown (learned from earlier replies of the same model),
+ * with the text received so far as a draft labelled "citations not checked
+ * yet": its citation markers are placeholders, never links. The draft is
+ * replaced by the checked answer, or removed if the check fails, and is
+ * never saved. Answers are shown only after Rust has validated every citation against the
  * article revision; tapping a citation shows that passage in the reader.
  */
 @Composable
@@ -209,6 +217,10 @@ fun ArticleChatSheet(
     var startedAt by remember { mutableLongStateOf(0L) }
     var now by remember { mutableLongStateOf(0L) }
     var timing by remember { mutableStateOf<ModelTiming?>(null) }
+    // Sizes of the request in flight, read once at send: the native preview
+    // is closed when the request ends and must not be read while drawing.
+    var sentPromptChars by remember { mutableLongStateOf(0L) }
+    var sentMaxOutputChars by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(Unit) {
         val hostedChoices = try {
@@ -297,6 +309,8 @@ fun ArticleChatSheet(
         val destination = chat.destination()
         val chatModel = chat.model()
         val promptChars = chat.promptChars().toLong()
+        sentPromptChars = promptChars
+        sentMaxOutputChars = chat.maxOutputTokens().toLong() * 4
         timing = ModelTimingPreference.load(context, destination, chatModel)
         progress = null
         startedAt = SystemClock.elapsedRealtime()
@@ -455,14 +469,15 @@ fun ArticleChatSheet(
             val elapsed = (now - startedAt).coerceAtLeast(update?.elapsedMs?.toLong() ?: 0)
             val estimate = ResponseEstimate.of(
                 timing,
-                chat?.promptChars()?.toLong() ?: 0,
-                (chat?.maxOutputTokens()?.toLong() ?: 1024) * 4,
+                sentPromptChars,
+                sentMaxOutputChars,
                 elapsed,
                 update?.firstOutputMs?.toLong(),
                 update?.outputChars?.toLong() ?: 0,
                 update?.finished ?: false,
             )
             ResponseProgress(estimate, elapsed)
+            update?.draft?.takeIf { it.isNotBlank() }?.let { DraftAnswer(it) }
         } else if (busy) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
@@ -483,6 +498,37 @@ fun ArticleChatSheet(
         }
         if (request != null) {
             Text("Closing the chat stops the request.", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+const val DRAFT_LABEL = "Draft – citations not checked yet"
+
+/**
+ * The unchecked text of a request in flight. Not a live region: it changes
+ * several times a second, and the checked answer is announced instead.
+ */
+@Composable
+private fun DraftAnswer(draft: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                DRAFT_LABEL,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                draft,
+                style = MaterialTheme.typography.bodyMedium,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

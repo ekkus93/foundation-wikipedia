@@ -84,6 +84,44 @@ fn claimed_citations(text: &str) -> Result<Vec<String>, RagError> {
     Ok(claims)
 }
 
+/// Shown in place of each citation marker of an unchecked draft.
+pub const DRAFT_CITATION_PLACEHOLDER: &str = "[\u{2026}]";
+
+/// Model output received so far, as plain text for a draft that is labelled
+/// unchecked: complete `[[cite:...]]` markers become
+/// [`DRAFT_CITATION_PLACEHOLDER`] (they are not validated yet, so they are
+/// never links), `[NO_EVIDENCE]` is hidden, and a marker still arriving at
+/// the end is held back rather than shown half-written. This validates
+/// nothing: the checked answer must replace the draft, and a failed check
+/// must discard it.
+pub fn draft_display(raw: &str) -> String {
+    const NO_EVIDENCE: &str = "[NO_EVIDENCE]";
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('[') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        if rest.starts_with(CITE_PREFIX) {
+            match rest.find("]]") {
+                Some(end) => {
+                    out.push_str(DRAFT_CITATION_PLACEHOLDER);
+                    rest = &rest[end + 2..];
+                }
+                None => return out,
+            }
+        } else if let Some(after) = rest.strip_prefix(NO_EVIDENCE) {
+            rest = after;
+        } else if CITE_OPEN.starts_with(rest) || NO_EVIDENCE.starts_with(rest) {
+            return out;
+        } else {
+            out.push('[');
+            rest = &rest[1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// A presentation-safe, structured view of an already validated RAG answer.
 /// Render Text as literal text nodes, never HTML. A Citation carries the exact
 /// revision-bound evidence hit for an eventual reader scroll/highlight action.
@@ -995,6 +1033,33 @@ mod citation_parser_tests {
         assert_eq!(
             claimed_citations("No citation here").unwrap(),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn drafts_show_placeholders_for_unchecked_citations_and_hold_back_partial_markers() {
+        assert_eq!(
+            draft_display("Tides follow the Moon [[cite:wkb:enwiki:2:7002:b0]]."),
+            "Tides follow the Moon [\u{2026}]."
+        );
+        // A marker still arriving is not shown half-written.
+        for partial in [
+            "Tides [",
+            "Tides [[",
+            "Tides [[ci",
+            "Tides [[cite:wkb:en",
+            "Tides [NO_",
+        ] {
+            assert_eq!(draft_display(partial), "Tides ");
+        }
+        assert_eq!(draft_display("[NO_EVIDENCE]"), "");
+        // Other brackets are literal text, and malformed markers still
+        // become placeholders: the draft never shows an evidence ID.
+        assert_eq!(draft_display("a [b] c [[x]]"), "a [b] c [[x]]");
+        assert_eq!(draft_display("x [[cite bad]] y"), "x [\u{2026}] y");
+        assert_eq!(
+            draft_display("Ünïcode [[cite:a]][[cite:b]]"),
+            "Ünïcode [\u{2026}][\u{2026}]"
         );
     }
 

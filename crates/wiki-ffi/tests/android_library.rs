@@ -985,6 +985,10 @@ mod local_chat {
         assert!(updates
             .windows(2)
             .all(|pair| pair[0].output_chars <= pair[1].output_chars));
+        // The unchecked draft shows the text, never the evidence ID.
+        assert_eq!(updates.first().unwrap().draft, "");
+        assert_eq!(last.draft, "Tides follow the Moon's pull. [\u{2026}]");
+        assert!(updates.iter().all(|update| !update.draft.contains("cite")));
     }
 
     fn reply_len(lead: &str) -> u64 {

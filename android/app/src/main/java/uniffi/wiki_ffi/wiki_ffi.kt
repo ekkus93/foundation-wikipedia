@@ -4233,6 +4233,12 @@ data class ChatProgressUpdate (
      * True once the model finished; validation follows.
      */
     var `finished`: kotlin.Boolean
+    , 
+    /**
+     * The output so far for an unchecked draft (`wiki_ai::rag::draft_display`):
+     * citation markers are placeholders, never evidence IDs or links.
+     */
+    var `draft`: kotlin.String
     
 ){
     
@@ -4253,6 +4259,7 @@ public object FfiConverterTypeChatProgressUpdate: FfiConverterRustBuffer<ChatPro
             FfiConverterOptionalULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -4260,7 +4267,8 @@ public object FfiConverterTypeChatProgressUpdate: FfiConverterRustBuffer<ChatPro
             FfiConverterULong.allocationSize(value.`elapsedMs`) +
             FfiConverterOptionalULong.allocationSize(value.`firstOutputMs`) +
             FfiConverterULong.allocationSize(value.`outputChars`) +
-            FfiConverterBoolean.allocationSize(value.`finished`)
+            FfiConverterBoolean.allocationSize(value.`finished`) +
+            FfiConverterString.allocationSize(value.`draft`)
     )
 
     override fun write(value: ChatProgressUpdate, buf: ByteBuffer) {
@@ -4268,6 +4276,7 @@ public object FfiConverterTypeChatProgressUpdate: FfiConverterRustBuffer<ChatPro
             FfiConverterOptionalULong.write(value.`firstOutputMs`, buf)
             FfiConverterULong.write(value.`outputChars`, buf)
             FfiConverterBoolean.write(value.`finished`, buf)
+            FfiConverterString.write(value.`draft`, buf)
     }
 }
 
