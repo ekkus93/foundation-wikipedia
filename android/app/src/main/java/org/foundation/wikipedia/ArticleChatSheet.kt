@@ -132,7 +132,8 @@ fun chatErrorMessage(error: Throwable): String = when (error) {
     is ChatException.Cancelled -> "Stopped. No answer was shown."
     is ChatException.NotReady -> "Secure connections are not available on this device yet."
     is ChatException.Rejected ->
-        "The provider refused the request. Check the API key and model name."
+        "The model refused the request or stopped before finishing an answer. " +
+            "Check the model name (and the API key for a hosted provider), or try again."
     is ChatException.Timeout -> "The provider did not respond in time."
     is ChatException.Network -> "Could not connect securely. Check the network connection."
     is ChatException.InvalidResponse -> "The provider sent an unexpected response."

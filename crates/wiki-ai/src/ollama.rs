@@ -57,7 +57,12 @@ impl LlmProvider for LocalOllamaProvider {
     ) -> Result<(), ProviderError> {
         // Ollama exposes the OpenAI-compatible chat endpoint alongside its
         // native model inventory. Keep one explicit, pinned destination.
-        crate::local_http_stream::stream_chat(&self.endpoint, request, cancellation, on_event)
+        crate::local_http_stream::stream_ollama_chat(
+            &self.endpoint,
+            request,
+            cancellation,
+            on_event,
+        )
     }
 }
 

@@ -29,6 +29,30 @@ pub fn stream_chat(
     on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
 ) -> Result<(), ProviderError> {
     request.validate()?;
+    stream_body(endpoint, openai_chat_body(request), cancellation, on_event)
+}
+
+/// Ollama's OpenAI-compatible chat endpoint with model "thinking" turned
+/// off. Reasoning models (Qwen 3.5, DeepSeek R1…) otherwise stream hidden
+/// reasoning that can use the whole output budget before any answer, so a
+/// short cited answer arrives late or is cut off. Ollama accepts
+/// `reasoning_effort: "none"` for models without thinking too.
+pub fn stream_ollama_chat(
+    endpoint: &LocalEndpoint,
+    request: &GenerateRequest,
+    cancellation: &CancellationToken,
+    on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+) -> Result<(), ProviderError> {
+    request.validate()?;
+    stream_body(endpoint, ollama_chat_body(request), cancellation, on_event)
+}
+
+fn stream_body(
+    endpoint: &LocalEndpoint,
+    body: String,
+    cancellation: &CancellationToken,
+    on_event: &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+) -> Result<(), ProviderError> {
     if cancellation.is_cancelled() {
         return Err(ProviderError::Cancelled);
     }
@@ -39,7 +63,6 @@ pub fn stream_chat(
         .split('/')
         .next()
         .ok_or(ProviderError::InvalidRequest)?;
-    let body = openai_chat_body(request);
     if body.len() > MAX_REQUEST_BYTES {
         return Err(ProviderError::InvalidRequest);
     }
@@ -70,6 +93,10 @@ pub fn stream_chat(
 
 /// OpenAI Chat Completions streaming request body (local or hosted).
 pub(crate) fn openai_chat_body(request: &GenerateRequest) -> String {
+    openai_chat_json(request).to_string()
+}
+
+fn openai_chat_json(request: &GenerateRequest) -> serde_json::Value {
     let messages: Vec<_> = request
         .messages
         .iter()
@@ -91,7 +118,13 @@ pub(crate) fn openai_chat_body(request: &GenerateRequest) -> String {
         "stream": true,
         "stream_options": { "include_usage": true },
     })
-    .to_string()
+}
+
+/// [`openai_chat_body`] plus Ollama's switch that turns model thinking off.
+pub(crate) fn ollama_chat_body(request: &GenerateRequest) -> String {
+    let mut body = openai_chat_json(request);
+    body["reasoning_effort"] = json!("none");
+    body.to_string()
 }
 
 /// Incremental decoder for one provider's streamed response body.
@@ -431,6 +464,40 @@ mod tests {
                 content: "Why is the sky blue?".into(),
             }],
             max_output_tokens: 100,
+        }
+    }
+
+    #[test]
+    fn ollama_requests_turn_model_thinking_off_and_generic_ones_do_not() {
+        let reply = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 81\r\n\r\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        type Stream = fn(
+            &LocalEndpoint,
+            &GenerateRequest,
+            &CancellationToken,
+            &mut dyn FnMut(StreamEvent) -> Result<(), ProviderError>,
+        ) -> Result<(), ProviderError>;
+        for (stream, thinking_off) in [
+            (stream_ollama_chat as Stream, true),
+            (stream_chat as Stream, false),
+        ] {
+            let (endpoint, handle) = fixture_server(reply.to_vec());
+            let result = stream(
+                &endpoint,
+                &request(),
+                &CancellationToken::default(),
+                &mut |_| Ok(()),
+            );
+            assert_eq!(result, Ok(()));
+            let sent = handle.join().unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(sent.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            assert_eq!(body["model"], "fixture");
+            assert_eq!(body["max_tokens"], 100);
+            assert_eq!(
+                body.get("reasoning_effort"),
+                thinking_off.then(|| json!("none")).as_ref(),
+                "{sent}"
+            );
         }
     }
 

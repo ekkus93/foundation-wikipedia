@@ -37,7 +37,7 @@ class ChatCitationUiTest {
     private val tide = ArticleChatTarget("enwiki", 2, 7002, "Tide")
     private val tideLead = "wkb:enwiki:2:7002:b0"
     private val messages = CopyOnWriteArrayList<String>()
-    private var shown: ArticleChatTarget? = null
+    @Volatile private var shown: ArticleChatTarget? = null
     private var citation by mutableStateOf<CitationRequest?>(null)
 
     @Before
@@ -125,7 +125,8 @@ class ChatCitationUiTest {
             compose.runOnUiThread { title = webView().title }
             title == "Tide"
         }
-        assertEquals(tide, shown)
+        // Reported from a LaunchedEffect, which may run after the page loads.
+        waitFor("the reader did not report the shown article") { shown == tide }
         val html = servedDocument()
         assertTrue(
             html,
