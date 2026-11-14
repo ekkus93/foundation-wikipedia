@@ -71,10 +71,18 @@ fn build_pack(dir: &Path, pack_id: &str) -> PathBuf {
     fs::create_dir_all(&tree).unwrap();
     let mut shard = Vec::new();
     let mut frames = Vec::new();
-    for article in [
-        article(1, "Moon", "The Moon orbits the Earth."),
-        article(2, "Tide", "Tides follow the Moon's gravity."),
-    ] {
+    for article in [article(1, "Moon", "The Moon orbits the Earth."), {
+        // An in-pack article link and an external link for the reader
+        // (MOB-002); the text blocks used by search and chat are unchanged.
+        let mut tide = article(2, "Tide", "Tides follow the Moon's gravity.");
+        tide.rendered_html = concat!(
+            "<article><p>Tides follow the <a href=\"./Moon\">Moon</a>'s gravity.</p>",
+            "<p><a href=\"https://en.wikipedia.org/wiki/Tide\">Tide on Wikipedia</a></p>",
+            "</article>"
+        )
+        .into();
+        tide
+    }] {
         let offset = shard.len() as u64;
         append_record_frame(&mut shard, &PageRecord::Article(Box::new(article))).unwrap();
         frames.push((offset, shard.len() as u64 - offset));
@@ -709,6 +717,85 @@ mod hosted_chat {
         assert_eq!(
             ChatHistory::new("relative/path".into()).err(),
             Some(ChatError::InvalidInput)
+        );
+    }
+}
+
+/// MOB-002: reader documents for the article WebView.
+mod reader {
+    use super::*;
+
+    fn active_library(dir: &Path) -> std::sync::Arc<OfflineLibrary> {
+        let pack = build_pack(dir, "moon-pack");
+        let library = library(dir);
+        library
+            .install_pack(pack.to_string_lossy().into_owned(), true)
+            .unwrap();
+        library.activate("moon-pack".into()).unwrap();
+        library
+    }
+
+    #[test]
+    fn pages_open_by_id_as_locked_down_themed_documents() {
+        let dir = test_dir("reader-page");
+        let library = active_library(&dir.0);
+        let page = library
+            .open_reader_page("enwiki".into(), 2, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(page.title, "Tide");
+        assert_eq!(page.revision_id, 7002);
+        assert_eq!(page.base_url, "https://foundation.invalid/wiki/Tide");
+        assert!(page.document.starts_with("<!doctype html>"));
+        assert!(page
+            .document
+            .contains("<a href=\"https://foundation.invalid/wiki/Moon\" rel=\"noopener noreferrer nofollow\">Moon</a>"));
+        assert!(page
+            .document
+            .contains("href=\"https://en.wikipedia.org/wiki/Tide\""));
+        assert!(page.document.contains("default-src 'none'"));
+        assert!(!page.document.contains("class=\"dark\""));
+        let dark = library
+            .open_reader_page("enwiki".into(), 2, true)
+            .unwrap()
+            .unwrap();
+        assert!(dark.document.contains("class=\"dark\""));
+        assert_eq!(
+            library.open_reader_page("enwiki".into(), 99, false),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn in_app_links_resolve_titles_within_the_pack() {
+        let dir = test_dir("reader-title");
+        let library = active_library(&dir.0);
+        let moon = library
+            .open_reader_title("enwiki".into(), "Moon".into(), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(moon.page_id, 1);
+        // Wikipedia folds only the first letter; links use underscores.
+        let tide = library
+            .open_reader_title("enwiki".into(), "tide".into(), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tide.page_id, 2);
+        assert_eq!(
+            library.open_reader_title("enwiki".into(), "Not_in_pack".into(), false),
+            Ok(None)
+        );
+        for bad in ["", "   ", "a\u{0}b"] {
+            assert_eq!(
+                library.open_reader_title("enwiki".into(), bad.into(), false),
+                Err(LibraryError::InvalidInput),
+                "{bad:?}"
+            );
+        }
+        let inactive = super::library(&dir.0.join("empty"));
+        assert_eq!(
+            inactive.open_reader_title("enwiki".into(), "Moon".into(), false),
+            Err(LibraryError::NotInstalled)
         );
     }
 }

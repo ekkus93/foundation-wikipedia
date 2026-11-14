@@ -17,6 +17,7 @@ import uniffi.wiki_ffi.LibraryException
 import uniffi.wiki_ffi.OfflineLibrary
 import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
+import uniffi.wiki_ffi.ReaderPage
 import uniffi.wiki_ffi.SearchHit
 
 /**
@@ -100,6 +101,16 @@ class RustOfflineLibrary private constructor(
         require(pageId > 0) { "pageId must be positive" }
         return call { it.openPage(project, pageId.toULong()) }
     }
+
+    /** An article of the active pack as a sanitized reader document. */
+    suspend fun openReaderPage(project: String, pageId: Long, dark: Boolean): ReaderPage? {
+        require(pageId > 0) { "pageId must be positive" }
+        return call { it.openReaderPage(project, pageId.toULong(), dark) }
+    }
+
+    /** Resolve an in-app article link by title within the active pack. */
+    suspend fun openReaderTitle(project: String, title: String, dark: Boolean): ReaderPage? =
+        call { it.openReaderTitle(project, title, dark) }
 
     /** See [RustHostedAi.prepareArticleChat]; the key comes from secure storage. */
     internal suspend fun prepareHostedChat(

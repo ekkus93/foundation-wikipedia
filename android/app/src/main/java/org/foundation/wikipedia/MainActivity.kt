@@ -2,12 +2,10 @@ package org.foundation.wikipedia
 
 import android.os.Build
 import android.os.Bundle
-import android.view.View
+import android.content.ActivityNotFoundException
 import android.content.Context
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -33,6 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -57,7 +56,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 
 /** Native Compose application shell; Wikimedia loading will be bound through Rust. */
@@ -68,28 +66,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private const val BOOTSTRAP_HTML = """
-<!doctype html>
-<html lang="en">
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-body{margin:24px;color:#202122;font:16px/1.65 Georgia,serif}
-h1{font-weight:400;font-size:30px;border-bottom:1px solid #a2a9b1}
-h2{font-weight:400;border-bottom:1px solid #a2a9b1}
-.note{color:#54595d;font:12px sans-serif}
-</style>
-</head>
-<body>
-<p class="note">FOUNDATION WIKIPEDIA · DEVELOPMENT PREVIEW</p>
-<h1>Welcome to Foundation Wikipedia</h1>
-<p>A Wikipedia-first reader with optional AI assistance and offline packs.</p>
-<h2>Under development</h2>
-<p>This is a local placeholder, not a downloaded Wikipedia article. Wikimedia
-content, offline packs, article citation bridges and AI are not implemented yet.</p>
-</body>
-</html>
-"""
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -245,7 +221,7 @@ private fun FoundationApp() {
                                                 shell = shell.copy(actionsOpen = false)
                                                 scope.launch {
                                                     snackbarHostState.showSnackbar(
-                                                        "$label requires a loaded, verified article; this build has none."
+                                                        "Bookmarks are not available on Android yet."
                                                     )
                                                 }
                                             }
@@ -278,40 +254,29 @@ private fun FoundationApp() {
             },
         ) { padding ->
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { viewContext ->
-                        WebView(viewContext).apply {
-                            settings.javaScriptEnabled = false
-                            settings.javaScriptCanOpenWindowsAutomatically = false
-                            settings.domStorageEnabled = false
-                            settings.allowFileAccess = false
-                            settings.allowContentAccess = false
-                            settings.blockNetworkLoads = true
-                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    request: WebResourceRequest?,
-                                ): Boolean = true
-                            }
-                            loadDataWithBaseURL(
-                                "https://foundation.invalid/",
-                                BOOTSTRAP_HTML,
-                                "text/html",
-                                "UTF-8",
-                                null,
+                // Keep the reader mounted while Settings is open: no reload or
+                // loss of the current scroll position.
+                ArticleReader(
+                    dark = isDark,
+                    hidden = shell.settingsOpen,
+                    hideFromAccessibility = shell.actionsOpen || shell.chatOpen,
+                    onMessage = { message, externalUrl ->
+                        scope.launch {
+                            val result = snackbarHostState.showSnackbar(
+                                message,
+                                actionLabel = externalUrl?.let { "Open in browser" },
+                                withDismissAction = externalUrl != null,
                             )
-                        }
-                    },
-                    update = { view ->
-                        // Keep the same WebView mounted while Settings is open:
-                        // no reload or loss of the current in-memory scroll position.
-                        view.visibility = if (shell.settingsOpen) View.INVISIBLE else View.VISIBLE
-                        view.importantForAccessibility = if (shell.settingsOpen || shell.actionsOpen || shell.chatOpen) {
-                            View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                        } else {
-                            View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                            if (externalUrl != null && result == SnackbarResult.ActionPerformed) {
+                                try {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(externalUrl))
+                                            .addCategory(Intent.CATEGORY_BROWSABLE),
+                                    )
+                                } catch (_: ActivityNotFoundException) {
+                                    snackbarHostState.showSnackbar("No browser is available.")
+                                }
+                            }
                         }
                     },
                 )
@@ -429,8 +394,9 @@ private fun FoundationApp() {
                                 else "Offline mode is off. Online article fetching is not implemented yet.",
                             )
                             Text(
-                                "This development WebView never requests network resources, " +
-                                    "even when Work offline is off.",
+                                "The article reader shows only articles from the active offline " +
+                                    "pack and never requests network resources, even when Work " +
+                                    "offline is off.",
                             )
                             OfflinePacksSection()
                             Text(

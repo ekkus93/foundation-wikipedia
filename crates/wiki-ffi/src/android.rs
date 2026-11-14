@@ -1174,3 +1174,89 @@ impl OfflineLibrary {
         }))
     }
 }
+
+// ---------------------------------------------------------------------------
+// MOB-002 article reader: script-free, re-sanitized documents for the
+// article WebView, opened by page ID (search) or by title (in-app links).
+
+/// A verified article revision ready for the article WebView.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ReaderPage {
+    pub project: String,
+    pub page_id: u64,
+    pub revision_id: u64,
+    pub title: String,
+    pub display_title: String,
+    /// Complete sanitized HTML document (see `wiki_source::reader_document`).
+    pub document: String,
+    /// Load the document at this URL so in-page fragments resolve to it.
+    pub base_url: String,
+}
+
+fn reader_page(article: Article, dark: bool) -> ReaderPage {
+    use wiki_source::reader_document::{reader_document, ReaderTheme, ARTICLE_PATH, READER_ORIGIN};
+    let theme = if dark {
+        ReaderTheme::Dark
+    } else {
+        ReaderTheme::Light
+    };
+    let document = reader_document(&article, theme);
+    ReaderPage {
+        base_url: format!(
+            "{READER_ORIGIN}{ARTICLE_PATH}{}",
+            article.title.replace(' ', "_")
+        ),
+        project: article.key.project,
+        page_id: article.key.page_id,
+        revision_id: article.revision.revision_id,
+        title: article.title,
+        display_title: article.display_title,
+        document,
+    }
+}
+
+#[uniffi::export]
+impl OfflineLibrary {
+    /// Open an article of the active pack by page ID as a reader document.
+    pub fn open_reader_page(
+        &self,
+        project: String,
+        page_id: u64,
+        dark: bool,
+    ) -> Result<Option<ReaderPage>, LibraryError> {
+        let key = ArticleKey { project, page_id };
+        key.validate().map_err(|_| LibraryError::InvalidInput)?;
+        self.with_active(|reader| {
+            reader
+                .reader()
+                .open_page(&key)
+                .map_err(|_| LibraryError::VerificationFailed)
+        })
+        .map(|article| article.map(|article| reader_page(article, dark)))
+    }
+
+    /// Resolve an in-app article link (a title or installed redirect) within
+    /// the active pack. `None` means the article is not in this pack.
+    pub fn open_reader_title(
+        &self,
+        project: String,
+        title: String,
+        dark: bool,
+    ) -> Result<Option<ReaderPage>, LibraryError> {
+        let probe = ArticleKey {
+            project: project.clone(),
+            page_id: 1,
+        };
+        probe.validate().map_err(|_| LibraryError::InvalidInput)?;
+        if !wiki_model::valid_navigation_title(&title) {
+            return Err(LibraryError::InvalidInput);
+        }
+        self.with_active(|reader| {
+            reader
+                .reader()
+                .open_title(&project, &title)
+                .map_err(|_| LibraryError::VerificationFailed)
+        })
+        .map(|article| article.map(|article| reader_page(article, dark)))
+    }
+}

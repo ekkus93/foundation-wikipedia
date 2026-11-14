@@ -45,6 +45,7 @@ pub mod public_dump_verify;
 pub mod public_dump_xml_events;
 pub mod public_dump_xml_structure;
 pub mod public_dump_xml_text;
+pub mod reader_document;
 
 mod strict_json;
 

@@ -724,6 +724,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_page(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_page(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_title(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_remove_pack(
@@ -815,6 +819,10 @@ external fun uniffi_wiki_ffi_fn_method_offlinelibrary_install_pack_stream(`ptr`:
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_list_packs(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_page(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_page(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`dark`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_title(`ptr`: Long,`project`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`dark`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(`ptr`: Long,`request`: RustBuffer.ByValue,`apiKey`: RustBuffer.ByValue,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
@@ -1019,6 +1027,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_page() != 10136) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_page() != 51704) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_open_reader_title() != 57589) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_hosted_chat() != 49829) {
@@ -2549,6 +2563,17 @@ public interface OfflineLibraryInterface {
     fun `openPage`(`project`: kotlin.String, `pageId`: kotlin.ULong): ArticlePage?
     
     /**
+     * Open an article of the active pack by page ID as a reader document.
+     */
+    fun `openReaderPage`(`project`: kotlin.String, `pageId`: kotlin.ULong, `dark`: kotlin.Boolean): ReaderPage?
+    
+    /**
+     * Resolve an in-app article link (a title or installed redirect) within
+     * the active pack. `None` means the article is not in this pack.
+     */
+    fun `openReaderTitle`(`project`: kotlin.String, `title`: kotlin.String, `dark`: kotlin.Boolean): ReaderPage?
+    
+    /**
      * Prepare (no network) a hosted question about an article of the active
      * pack. `api_key` comes from the app's secure storage and is kept only
      * in memory by the returned object.
@@ -2776,6 +2801,41 @@ open class OfflineLibrary: Disposable, AutoCloseable, OfflineLibraryInterface
     UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_open_page(
         it,
         FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Open an article of the active pack by page ID as a reader document.
+     */
+    @Throws(LibraryException::class)override fun `openReaderPage`(`project`: kotlin.String, `pageId`: kotlin.ULong, `dark`: kotlin.Boolean): ReaderPage? {
+            return FfiConverterOptionalTypeReaderPage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LibraryException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_page(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterBoolean.lower(`dark`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Resolve an in-app article link (a title or installed redirect) within
+     * the active pack. `None` means the article is not in this pack.
+     */
+    @Throws(LibraryException::class)override fun `openReaderTitle`(`project`: kotlin.String, `title`: kotlin.String, `dark`: kotlin.Boolean): ReaderPage? {
+            return FfiConverterOptionalTypeReaderPage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LibraryException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_open_reader_title(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterString.lower(`title`),FfiConverterBoolean.lower(`dark`),_status)
 }
     }
     )
@@ -3667,6 +3727,78 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterULong.write(value.`declaredBytes`, buf)
+    }
+}
+
+
+
+/**
+ * A verified article revision ready for the article WebView.
+ */
+data class ReaderPage (
+    var `project`: kotlin.String
+    , 
+    var `pageId`: kotlin.ULong
+    , 
+    var `revisionId`: kotlin.ULong
+    , 
+    var `title`: kotlin.String
+    , 
+    var `displayTitle`: kotlin.String
+    , 
+    /**
+     * Complete sanitized HTML document (see `wiki_source::reader_document`).
+     */
+    var `document`: kotlin.String
+    , 
+    /**
+     * Load the document at this URL so in-page fragments resolve to it.
+     */
+    var `baseUrl`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeReaderPage: FfiConverterRustBuffer<ReaderPage> {
+    override fun read(buf: ByteBuffer): ReaderPage {
+        return ReaderPage(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ReaderPage) = (
+            FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterULong.allocationSize(value.`pageId`) +
+            FfiConverterULong.allocationSize(value.`revisionId`) +
+            FfiConverterString.allocationSize(value.`title`) +
+            FfiConverterString.allocationSize(value.`displayTitle`) +
+            FfiConverterString.allocationSize(value.`document`) +
+            FfiConverterString.allocationSize(value.`baseUrl`)
+    )
+
+    override fun write(value: ReaderPage, buf: ByteBuffer) {
+            FfiConverterString.write(value.`project`, buf)
+            FfiConverterULong.write(value.`pageId`, buf)
+            FfiConverterULong.write(value.`revisionId`, buf)
+            FfiConverterString.write(value.`title`, buf)
+            FfiConverterString.write(value.`displayTitle`, buf)
+            FfiConverterString.write(value.`document`, buf)
+            FfiConverterString.write(value.`baseUrl`, buf)
     }
 }
 
@@ -4943,6 +5075,38 @@ public object FfiConverterOptionalTypeChatPassage: FfiConverterRustBuffer<ChatPa
         } else {
             buf.put(1)
             FfiConverterTypeChatPassage.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeReaderPage: FfiConverterRustBuffer<ReaderPage?> {
+    override fun read(buf: ByteBuffer): ReaderPage? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeReaderPage.read(buf)
+    }
+
+    override fun allocationSize(value: ReaderPage?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeReaderPage.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ReaderPage?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeReaderPage.write(value, buf)
         }
     }
 }
