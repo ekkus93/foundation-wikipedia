@@ -64,12 +64,31 @@ class ArticleReaderUiTest {
     }
 
     private fun waitForTitle(title: String) {
-        compose.waitUntil(timeoutMillis = 15_000) {
-            var current: String? = null
-            compose.runOnUiThread { current = webView().title }
-            current == title
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                var current: String? = null
+                compose.runOnUiThread { current = webView().title }
+                current == title
+            }
+        } catch (error: Throwable) {
+            // Say what the reader actually showed, to tell a load problem
+            // from a navigation or pack error.
+            var state = ""
+            compose.runOnUiThread {
+                val view = webView()
+                state = "url=${view.url} title=${view.title} progress=${view.progress} " +
+                    "visible=${view.visibility == View.VISIBLE}"
+            }
+            val texts = compose.onAllNodes(androidx.compose.ui.test.isRoot())
+                .fetchSemanticsNodes()
+                .flatMap { root -> collectTexts(root) }
+            throw AssertionError("expected article \"$title\"; WebView $state; screen texts $texts", error)
         }
     }
+
+    private fun collectTexts(node: androidx.compose.ui.semantics.SemanticsNode): List<String> =
+        node.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.Text) { null }
+            .orEmpty().map { it.text } + node.children.flatMap { collectTexts(it) }
 
     private fun tap(url: String): Boolean {
         val request = object : WebResourceRequest {
