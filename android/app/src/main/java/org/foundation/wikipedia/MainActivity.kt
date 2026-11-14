@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -178,6 +179,7 @@ private fun FoundationApp() {
         }
     }
     val chatActionFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     // MOB-003: the article shown in the reader, its chat and a citation to show.
     var chatTarget by remember { mutableStateOf<ArticleChatTarget?>(null) }
     var conversation by remember { mutableStateOf<ChatConversation?>(null) }
@@ -301,6 +303,40 @@ private fun FoundationApp() {
                         }
                     },
                 )
+                if (shell.chatOpen) {
+                    // Opens at half height; peek keeps the article usable, full
+                    // covers it. Under Settings it stays composed but hidden, so
+                    // its question, height and any request in flight survive.
+                    ChatSheetFrame(
+                        height = shell.chatHeight,
+                        onHeight = { shell = shell.resizeChat(it) },
+                        hidden = shell.settingsOpen,
+                    ) { compact ->
+                        ArticleChatSheet(
+                            target = chatTarget,
+                            conversation = ChatConversation.forTarget(conversation, chatTarget),
+                            onConversation = { conversation = it },
+                            saveHistory = historyEnabled,
+                            selection = selection,
+                            onClearSelection = { selection = null },
+                            onCitation = { request ->
+                                // Lower the sheet so the highlighted paragraph is
+                                // visible; the conversation stays open below it.
+                                citation = request
+                                shell = shell.resizeChat(ChatSheetHeight.PEEK)
+                            },
+                            onOpenAiSettings = {
+                                // Close the keyboard: Back should leave Settings, not hide it.
+                                focusManager.clearFocus()
+                                shell = shell.showSettings()
+                                    .openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
+                            },
+                            onClose = { shell = shell.closeChat() },
+                            compact = compact,
+                            active = !shell.settingsOpen,
+                        )
+                    }
+                }
                 if (shell.actionsOpen && !shell.settingsOpen) {
                     // Intercept outside taps without reloading or obscuring the reader.
                     // The Scaffold FAB and its action buttons remain above this overlay.
@@ -437,34 +473,6 @@ private fun FoundationApp() {
                                     "for those features are enabled.",
                             )
                         }
-                    }
-                }
-                if (shell.chatOpen && !shell.settingsOpen) {
-                    // Opens at half height; peek keeps the article usable, full covers it.
-                    ChatSheetFrame(
-                        height = shell.chatHeight,
-                        onHeight = { shell = shell.resizeChat(it) },
-                    ) { compact ->
-                        ArticleChatSheet(
-                            target = chatTarget,
-                            conversation = ChatConversation.forTarget(conversation, chatTarget),
-                            onConversation = { conversation = it },
-                            saveHistory = historyEnabled,
-                            selection = selection,
-                            onClearSelection = { selection = null },
-                            onCitation = { request ->
-                                // Lower the sheet so the highlighted paragraph is
-                                // visible; the conversation stays open below it.
-                                citation = request
-                                shell = shell.resizeChat(ChatSheetHeight.PEEK)
-                            },
-                            onOpenAiSettings = {
-                                shell = shell.showSettings()
-                                    .openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
-                            },
-                            onClose = { shell = shell.closeChat() },
-                            compact = compact,
-                        )
                     }
                 }
             }

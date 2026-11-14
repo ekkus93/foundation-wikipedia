@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.test.uiautomator.UiDevice
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -133,7 +134,7 @@ class StreamedDraftUiTest {
         }
     }
 
-    private fun askAboutTide(fake: FakeOllama) {
+    private fun openChatAndType(fake: FakeOllama) {
         server = fake
         assertTrue(LocalAiPreference.save(context, LocalAiChoice(LocalAiProtocol.OLLAMA, fake.endpoint, "fake:1b")))
         compose.onNode(hasSetTextAction()).performTextInput("tide")
@@ -151,6 +152,10 @@ class StreamedDraftUiTest {
             compose.onAllNodesWithText("Model fake:1b", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNode(hasSetTextAction() and hasTextLabel("Question")).performTextInput("What do tides follow?")
+    }
+
+    private fun askAboutTide(fake: FakeOllama) {
+        openChatAndType(fake)
         compose.onNodeWithText("Review request").performClick()
         compose.waitUntil(timeoutMillis = 15_000) {
             compose.onAllNodesWithText("Send").fetchSemanticsNodes().isNotEmpty()
@@ -230,5 +235,37 @@ class StreamedDraftUiTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.onRoot().tryPerformAccessibilityChecks()
+    }
+
+    @Test
+    fun leavingSettingsReturnsToTheOpenChatWithItsQuestionAndHeight() {
+        openChatAndType(FakeOllama("unused", "unused"))
+        val handle = compose.onNodeWithContentDescription("Chat sheet size")
+        handle.performCustomAccessibilityActionWithLabel("Expand")
+        compose.onNodeWithText("AI settings").performClick()
+        compose.waitUntil(timeoutMillis = 10_000) { shown("Local or LAN model", substring = false) }
+        // The chat is hidden (not just covered) while Settings is open.
+        assertTrue(!shown("Ask about “Tide”", substring = false))
+        assertTrue(!shown("What do tides follow?", substring = false))
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.pressBack() // AI Assistant → Settings
+        compose.waitForIdle()
+        device.pressBack() // Settings → the reader with its chat
+        compose.waitUntil(timeoutMillis = 10_000) { shown("Ask about “Tide”", substring = false) }
+        assertTrue(shown("What do tides follow?", substring = false))
+        handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "full height"))
+        assertTrue(readerTitleIs("Tide"))
+    }
+
+    private fun readerTitleIs(title: String): Boolean {
+        var found = false
+        compose.runOnUiThread {
+            fun search(view: android.view.View) {
+                if (view is android.webkit.WebView && view.title == title) found = true
+                if (view is android.view.ViewGroup) for (i in 0 until view.childCount) search(view.getChildAt(i))
+            }
+            search(compose.activity.window.decorView)
+        }
+        return found
     }
 }

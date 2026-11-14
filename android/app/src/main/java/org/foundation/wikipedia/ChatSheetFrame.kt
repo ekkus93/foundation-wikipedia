@@ -31,7 +31,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -82,13 +86,15 @@ private fun ChatSheetHeight.label() = when (this) {
  * (MOB-003). Its content stays composed at every height, so a request in
  * flight continues while the sheet is lowered. Drag the handle to resize, or
  * tap it to step up; TalkBack offers Expand/Collapse actions on it. Motion is
- * skipped when the system turns animations off.
+ * skipped when the system turns animations off. [hidden] keeps it composed
+ * but invisible and inert (under Settings).
  */
 @Composable
 fun ChatSheetFrame(
     height: ChatSheetHeight,
     onHeight: (ChatSheetHeight) -> Unit,
     modifier: Modifier = Modifier,
+    hidden: Boolean = false,
     content: @Composable (compact: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -96,7 +102,20 @@ fun ChatSheetFrame(
     val reduceMotion = remember {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
-    BoxWithConstraints(modifier = modifier.fillMaxSize().imePadding(), contentAlignment = Alignment.BottomCenter) {
+    val cover = if (hidden) {
+        // Invisible, silent to accessibility and ignoring touches.
+        Modifier.alpha(0f).clearAndSetSemantics {}.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+            }
+        }
+    } else {
+        Modifier
+    }
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize().then(cover).imePadding(),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
         val space = constraints.maxHeight.toFloat()
         val anchors = ChatSheetAnchors.forSpace(space, with(density) { ChatSheetAnchors.PEEK_HEIGHT.toPx() })
         var dragging by remember { mutableStateOf(false) }

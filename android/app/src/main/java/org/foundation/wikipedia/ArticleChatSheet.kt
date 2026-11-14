@@ -19,8 +19,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -200,6 +198,7 @@ fun ArticleChatSheet(
     onOpenAiSettings: () -> Unit,
     onClose: () -> Unit,
     compact: Boolean = false,
+    active: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -224,7 +223,10 @@ fun ArticleChatSheet(
     var sentPromptChars by remember { mutableLongStateOf(0L) }
     var sentMaxOutputChars by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(Unit) {
+    // Load the models on open and again on return from Settings, where they
+    // may have changed. A request being reviewed or in flight keeps its choice.
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
         val hostedChoices = try {
             HostedAiProvider.entries.filter { hosted.isKeyConfigured(it) }.map { ChatChoice.Hosted(it) }
         } catch (error: Exception) {
@@ -237,9 +239,11 @@ fun ArticleChatSheet(
         val localChoice = LocalAiPreference.load(context)?.let { ChatChoice.Local(it) }
         val all = listOfNotNull(localChoice) + hostedChoices
         choices = all
-        all.firstOrNull()?.let {
-            choice = it
-            if (it is ChatChoice.Hosted) model = HostedAiModelPreference.load(context, it.provider)
+        if (busy || request != null || preview != null) return@LaunchedEffect
+        val kept = choice?.takeIf { it in all }
+        if (kept == null) {
+            choice = all.firstOrNull()
+            (choice as? ChatChoice.Hosted)?.let { model = HostedAiModelPreference.load(context, it.provider) }
         }
     }
 
@@ -431,60 +435,80 @@ fun ArticleChatSheet(
             }
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        // Everything between the title and the question scrolls, so the
+        // question and buttons stay reachable at half height; it follows new content.
+        val chat = preview
+        val scroll = rememberScrollState()
+        val exchangeCount = conversation?.takeIf { it.target == target }?.exchanges?.size ?: 0
+        LaunchedEffect(exchangeCount, preview, request, progress?.draft?.length) {
+            scroll.animateScrollTo(scroll.maxValue)
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(scroll)
+                .semantics { contentDescription = "Conversation" },
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val exchanges = conversation?.takeIf { it.target == target }?.exchanges.orEmpty()
-            if (exchanges.isEmpty()) {
-                item {
-                    Text(
-                        "Answers use only passages from this article and cite them. " +
-                            "To ask about specific text, select it in the article and choose " +
-                            "“Ask about this”. " +
-                            if (saveHistory) "Chats are saved on this device." else
-                                "Chats are not saved (History & Saved Content is off), so " +
-                                    "earlier questions are not sent with new ones.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            if (available != null && available.size > 1) {
+                for (option in available) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
+                            choice = option
+                            if (option is ChatChoice.Hosted) model = HostedAiModelPreference.load(context, option.provider)
+                            discardPreview()
+                        },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = choice == option, onClick = null)
+                        Text(option.label)
+                    }
                 }
             }
-            items(exchanges) { exchange -> ExchangeView(exchange, target, onCitation) }
-        }
-
-        if (available != null && available.size > 1) {
-            for (option in available) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
-                        choice = option
-                        if (option is ChatChoice.Hosted) model = HostedAiModelPreference.load(context, option.provider)
+            when (val chosen = choice) {
+                is ChatChoice.Hosted -> OutlinedTextField(
+                    value = model,
+                    onValueChange = {
+                        model = it.take(200)
                         discardPreview()
                     },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = choice == option, onClick = null)
-                    Text(option.label)
-                }
+                    label = { Text("${chosen.provider.label()} model") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is ChatChoice.Local -> Text(
+                    "Model ${chosen.local.model} at ${chosen.local.endpoint}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                null -> {}
             }
+            // The chat stays open (and is shown again) behind Settings.
+            TextButton(enabled = !busy, onClick = onOpenAiSettings) { Text("AI settings") }
+            val exchanges = conversation?.takeIf { it.target == target }?.exchanges.orEmpty()
+            if (exchanges.isEmpty()) {
+                Text(
+                    "Answers use only passages from this article and cite them. " +
+                        "To ask about specific text, select it in the article and choose " +
+                        "“Ask about this”. " +
+                        if (saveHistory) "Chats are saved on this device." else
+                            "Chats are not saved (History & Saved Content is off), so " +
+                                "earlier questions are not sent with new ones.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            for (exchange in exchanges) ExchangeView(exchange, target, onCitation)
+
+
+            if (chat != null && request == null) {
+                DisclosureCard(chat, previewQuestion)
+            }
+            if (request != null) {
+                inFlight(true)
+            } else if (busy) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-        when (val chosen = choice) {
-            is ChatChoice.Hosted -> OutlinedTextField(
-                value = model,
-                onValueChange = {
-                    model = it.take(200)
-                    discardPreview()
-                },
-                label = { Text("${chosen.provider.label()} model") },
-                singleLine = true,
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            is ChatChoice.Local -> Text(
-                "Model ${chosen.local.model} at ${chosen.local.endpoint}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            null -> {}
-        }
+        // The question and its buttons stay at the bottom, always in view.
         OutlinedTextField(
             value = question,
             onValueChange = {
@@ -492,20 +516,10 @@ fun ArticleChatSheet(
                 discardPreview()
             },
             label = { Text("Question") },
+            maxLines = 4,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
         )
-
-        val chat = preview
-        if (chat != null && request == null) {
-            DisclosureCard(chat, previewQuestion)
-        }
-        if (request != null) {
-            inFlight(true)
-        } else if (busy) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
-        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
                 request != null -> OutlinedButton(onClick = { request?.cancel() }) { Text("Stop") }

@@ -46,24 +46,28 @@ data class ReaderShellState(
         if (chatOpen) copy(chatHeight = height) else this
 
     /** The article is hidden from accessibility only when the sheet covers it. */
-    val readerCovered: Boolean get() = actionsOpen || (chatOpen && chatHeight == ChatSheetHeight.FULL)
+    val readerCovered: Boolean get() = actionsOpen || (chatShown && chatHeight == ChatSheetHeight.FULL)
 
     fun withOffline(enabled: Boolean): ReaderShellState =
         copy(offline = enabled, actionsOpen = false)
 
+    /** Settings covers an open chat, which is shown again on return. */
     fun showSettings(): ReaderShellState =
-        copy(settingsOpen = true, settingsCategory = null, actionsOpen = false, chatOpen = false)
+        copy(settingsOpen = true, settingsCategory = null, actionsOpen = false)
+
+    /** The chat sheet is on screen (open and not under Settings). */
+    val chatShown: Boolean get() = chatOpen && !settingsOpen
 
     fun openSettingsCategory(category: ReaderSettingsCategory): ReaderShellState =
         if (!settingsOpen) this else copy(settingsCategory = category, actionsOpen = false)
 
     fun back(): ReaderShellState = when {
+        settingsCategory != null -> copy(settingsCategory = null)
+        settingsOpen -> copy(settingsOpen = false)
         // Back lowers an open chat to its peek height first, then closes it.
         chatOpen && chatHeight != ChatSheetHeight.PEEK -> copy(chatHeight = ChatSheetHeight.PEEK)
         chatOpen -> closeChat()
         actionsOpen -> copy(actionsOpen = false)
-        settingsCategory != null -> copy(settingsCategory = null)
-        settingsOpen -> copy(settingsOpen = false)
         else -> this
     }
 

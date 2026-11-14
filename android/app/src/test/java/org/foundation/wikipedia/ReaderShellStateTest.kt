@@ -177,10 +177,17 @@ class ReaderShellStateTest {
     }
 
     @Test
-    fun settingsAndChatAreMutuallyExclusiveAndRecreationClosesChat() {
+    fun settingsCoversAnOpenChatWhichReturnsAtItsHeightAndRecreationClosesChat() {
         val reader = ReaderShellState()
-        val chat = reader.showChat()
-        assertFalse(chat.showSettings().chatOpen)
+        val chat = reader.showChat().resizeChat(ChatSheetHeight.FULL)
+        val covered = chat.showSettings().openSettingsCategory(ReaderSettingsCategory.AI_ASSISTANT)
+        assertTrue(covered.chatOpen)
+        assertFalse(covered.chatShown)
+        assertFalse("Settings, not the hidden chat, covers the reader", covered.readerCovered)
+        // Back: category → Settings → the same open chat → peek → reader.
+        assertEquals(chat, covered.back().back())
+        assertTrue(covered.back().back().chatShown)
+        assertEquals(ChatSheetHeight.PEEK, covered.back().back().back().chatHeight)
         val settings = reader.showSettings()
         assertEquals(settings, settings.showChat())
         val restored = ReaderShellState.restore(
