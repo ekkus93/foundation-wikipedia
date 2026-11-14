@@ -14,13 +14,15 @@
             </intent-filter>
         </activity>
         <!--
-            MOB-003 "Ask about this" in the reader's text-selection menu. Not
-            exported: it is offered only inside this app's own WebView, never
-            in other apps' selection menus.
+            MOB-003 "Ask about this" in the reader's text-selection menu.
+            Exported because the WebView leaves non-exported PROCESS_TEXT
+            activities out of its menu, even its own app's. The activity
+            accepts text only from this app (getCallingPackage); other apps'
+            selections are refused without being read.
         -->
         <activity
             android:name=".AskSelectionActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/ask_about_selection"
             android:excludeFromRecents="true"
             android:noHistory="true"
