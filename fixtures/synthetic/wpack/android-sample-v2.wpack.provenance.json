@@ -2,5 +2,5 @@
   "source": "synthetic",
   "description": "Two-article FWPACK01 manifest-v2 custom pack (catalog plus one shard, synthetic text) installed by the MOB-001 Android instrumented test; pinned to the wiki-ffi test builder, regenerate with WPACK_WRITE_FIXTURE=1 cargo test -p wiki-ffi --test android_library committed_android_fixture",
   "license": "CC0-1.0",
-  "sha256": "2aa4409cd556c30dc25192cbb5cb5f13ad80d25cd7bda4759056854a8414f156"
+  "sha256": "95fc24f59528006d9cecf3c3fe83c3a1bc5ce97ff25dc300a0a37d1d5ca30d5d"
 }

@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -115,6 +116,18 @@ fun ArticleReader(
         ),
     ) { mutableStateOf(ReaderNavigation()) }
     var content by remember { mutableStateOf<ReaderContent>(ReaderContent.Welcome) }
+    // Where each history entry was scrolled to; restored after recreation.
+    var scroll by rememberSaveable(
+        stateSaver = androidx.compose.runtime.saveable.listSaver<ReaderScroll, String>(
+            save = { it.save() },
+            restore = { ReaderScroll.restore(it) },
+        ),
+    ) { mutableStateOf(ReaderScroll()) }
+    val shownContent by rememberUpdatedState(content)
+    val shownNavigation by rememberUpdatedState(navigation)
+    // True from loading a document until its saved position is restored, so
+    // the reset to the top while loading is not recorded as the position.
+    val loading = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -278,10 +291,40 @@ fun ArticleReader(
                         settings.blockNetworkLoads = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         settings.setSupportMultipleWindows(false)
+                        setOnScrollChangeListener { view, _, y, _, _ ->
+                            val page = (shownContent as? ReaderContent.Article)?.page ?: return@setOnScrollChangeListener
+                            if (loading.get()) return@setOnScrollChangeListener
+                            val web = view as WebView
+                            val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
+                            scroll = scroll.with(
+                                page.project, page.pageId.toLong(),
+                                ReaderScroll.fraction(y, contentPx, web.height),
+                                shownNavigation.entries,
+                            )
+                        }
                     }
                 },
                 update = { view ->
                     view.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            val web = view ?: return
+                            val article = shownContent as? ReaderContent.Article
+                            val saved = article?.takeIf { it.fragment == null }
+                                ?.let { scroll.at(it.page.project, it.page.pageId.toLong()) }
+                            if (saved == null) {
+                                loading.set(false)
+                                return
+                            }
+                            // After the page has laid out, return to its place.
+                            web.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                                override fun onComplete(requestId: Long) {
+                                    val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
+                                    web.scrollTo(0, ReaderScroll.offset(saved, contentPx, web.height))
+                                    loading.set(false)
+                                }
+                            })
+                        }
+
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
                             request: WebResourceRequest?,
@@ -337,6 +380,7 @@ fun ArticleReader(
                         // fragment is not part of the request; it scrolls the
                         // loaded page to the highlighted citation.
                         served.set(url to html)
+                        loading.set(true)
                         view.loadUrl(if (fragment != null) "$url#$fragment" else url)
                     }
                     view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE

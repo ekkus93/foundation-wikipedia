@@ -71,18 +71,35 @@ fn build_pack(dir: &Path, pack_id: &str) -> PathBuf {
     fs::create_dir_all(&tree).unwrap();
     let mut shard = Vec::new();
     let mut frames = Vec::new();
-    for article in [article(1, "Moon", "The Moon orbits the Earth."), {
-        // An in-pack article link and an external link for the reader
-        // (MOB-002); the text blocks used by search and chat are unchanged.
-        let mut tide = article(2, "Tide", "Tides follow the Moon's gravity.");
-        tide.rendered_html = concat!(
-            "<article><p>Tides follow the <a href=\"./Moon\">Moon</a>'s gravity.</p>",
-            "<p><a href=\"https://en.wikipedia.org/wiki/Tide\">Tide on Wikipedia</a></p>",
-            "</article>"
-        )
-        .into();
-        tide
-    }] {
+    for article in [
+        {
+            // A long page for reader scroll restoration (MOB-004); its text
+            // block, used by search and chat, is unchanged.
+            let mut moon = article(1, "Moon", "The Moon orbits the Earth.");
+            let mut filler = String::new();
+            for n in 1..=40 {
+                filler.push_str(&format!(
+                    "<p>Synthetic paragraph {n} about the Moon, for scrolling.</p>"
+                ));
+            }
+            moon.rendered_html = format!(
+                "<article><h1>Moon</h1><p>The Moon orbits the Earth.</p>{filler}</article>"
+            );
+            moon
+        },
+        {
+            // An in-pack article link and an external link for the reader
+            // (MOB-002); the text blocks used by search and chat are unchanged.
+            let mut tide = article(2, "Tide", "Tides follow the Moon's gravity.");
+            tide.rendered_html = concat!(
+                "<article><p>Tides follow the <a href=\"./Moon\">Moon</a>'s gravity.</p>",
+                "<p><a href=\"https://en.wikipedia.org/wiki/Tide\">Tide on Wikipedia</a></p>",
+                "</article>"
+            )
+            .into();
+            tide
+        },
+    ] {
         let offset = shard.len() as u64;
         append_record_frame(&mut shard, &PageRecord::Article(Box::new(article))).unwrap();
         frames.push((offset, shard.len() as u64 - offset));
