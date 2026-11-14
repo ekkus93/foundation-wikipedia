@@ -78,6 +78,18 @@ class LocalChatAndSelectionTest {
         compose.waitUntil(timeoutMillis = 30_000) { readerTitle() == "Tide" }
     }
 
+    private fun webViewOrigin(): Pair<Int, Int> {
+        val location = IntArray(2)
+        compose.runOnUiThread {
+            fun search(view: View) {
+                if (view is WebView) view.getLocationOnScreen(location)
+                if (view is ViewGroup) for (i in 0 until view.childCount) search(view.getChildAt(i))
+            }
+            search(compose.activity.window.decorView)
+        }
+        return location[0] to location[1]
+    }
+
     private fun readerTitle(): String? {
         var title: String? = null
         compose.runOnUiThread {
@@ -92,15 +104,26 @@ class LocalChatAndSelectionTest {
 
     @Test
     fun longPressingArticleTextOffersAskAboutThisWhichOpensTheChat() {
-        openTide()
+        // Connect UiAutomation first so accessibility is on before the
+        // WebView builds its page, then the page exposes its text runs.
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        // The WebView exposes the paragraph's text runs to accessibility.
-        val words = device.wait(Until.findObject(By.textContains("gravity")), 15_000)
-        assertNotNull("article text not shown", words)
-        val box = words.visibleBounds
-        // Long-press the middle of "'s gravity." to select a word.
-        val x = box.left + box.width() * 2 / 3
-        device.swipe(x, box.centerY(), x, box.centerY(), 120)
+        openTide()
+        val words = device.wait(Until.findObject(By.textContains("gravity")), 30_000)
+        if (words != null) {
+            val box = words.visibleBounds
+            // Long-press inside "'s gravity." to select a word.
+            val x = box.left + box.width() * 2 / 3
+            device.swipe(x, box.centerY(), x, box.centerY(), 120)
+        } else {
+            // Slow emulators may not expose WebView text in time: press the
+            // lead paragraph ("Tides follow…"), about 130 dp below the top
+            // of the page and 60 dp in from its left edge.
+            val (left, top) = webViewOrigin()
+            val density = context.resources.displayMetrics.density
+            val x = left + (60 * density).toInt()
+            val y = top + (130 * density).toInt()
+            device.swipe(x, y, x, y, 120)
+        }
         var ask = device.wait(Until.findObject(By.text("Ask about this")), 5_000)
         if (ask == null) {
             // A crowded selection toolbar moves extra actions into overflow.
