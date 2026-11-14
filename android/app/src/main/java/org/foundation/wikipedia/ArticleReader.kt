@@ -29,7 +29,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -43,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.foundation.wikipedia.rust.RustOfflineLibrary
 import uniffi.wiki_ffi.ReaderPage
@@ -125,8 +125,10 @@ fun ArticleReader(
             restore = { ReaderScroll.restore(it) },
         ),
     ) { mutableStateOf(ReaderScroll()) }
-    val shownContent by rememberUpdatedState(content)
-    val shownNavigation by rememberUpdatedState(navigation)
+    // What the WebView was last given, set when it is handed the document:
+    // its callbacks can arrive before composed state becomes visible.
+    val shownContent = remember { AtomicReference<ReaderContent>(ReaderContent.Welcome) }
+    val shownEntries = remember { AtomicReference<List<ReaderEntry>>(emptyList()) }
     // True from loading a document until its saved position is restored, so
     // the reset to the top while loading is not recorded as the position.
     val loading = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -153,6 +155,19 @@ fun ArticleReader(
         navigation = navigation.open(
             ReaderEntry(request.target.project, request.target.pageId, request.target.title),
         )
+    }
+
+    /** Use the stored position of this exact revision when none is saved in state. */
+    suspend fun restoreStoredPosition(project: String, pageId: Long, revisionId: Long) {
+        if (scroll.at(project, pageId) != null) return
+        val stored = try {
+            ReaderStateHolder.get(context).position(project, pageId, revisionId)
+        } catch (_: Exception) {
+            null
+        } catch (_: LinkageError) {
+            null
+        } ?: return
+        scroll = scroll.with(project, pageId, stored / 1_000_000f, navigation.entries)
     }
 
     LaunchedEffect(Unit) {
@@ -204,6 +219,7 @@ fun ArticleReader(
         }
         content = try {
             lib.openReaderPage(entry.project, entry.pageId, dark)
+                ?.also { page -> restoreStoredPosition(page.project, page.pageId.toLong(), page.revisionId.toLong()) }
                 ?.let { ReaderContent.Article(it) }
                 ?: run {
                     onMessage("“${entry.title}” is not in the active offline pack.", null)
@@ -212,6 +228,22 @@ fun ArticleReader(
         } catch (error: Exception) {
             onMessage(packErrorMessage(error), null)
             ReaderContent.Welcome
+        }
+    }
+
+    // Keep where each page was left across restarts too (Rust decides
+    // whether it may: history on or the page bookmarked), once scrolling stops.
+    LaunchedEffect(scroll) {
+        val page = (content as? ReaderContent.Article)?.page ?: return@LaunchedEffect
+        val fraction = scroll.at(page.project, page.pageId.toLong()) ?: return@LaunchedEffect
+        delay(1_500)
+        try {
+            ReaderStateHolder.get(context).savePosition(
+                page.project, page.pageId.toLong(), page.revisionId.toLong(), (fraction * 1_000_000).toInt(),
+            )
+        } catch (_: Exception) {
+            // Unsaved positions only mean starting at the top next time.
+        } catch (_: LinkageError) {
         }
     }
 
@@ -302,14 +334,14 @@ fun ArticleReader(
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         settings.setSupportMultipleWindows(false)
                         setOnScrollChangeListener { view, _, y, _, _ ->
-                            val page = (shownContent as? ReaderContent.Article)?.page ?: return@setOnScrollChangeListener
+                            val page = (shownContent.get() as? ReaderContent.Article)?.page ?: return@setOnScrollChangeListener
                             if (loading.get()) return@setOnScrollChangeListener
                             val web = view as WebView
                             val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
                             scroll = scroll.with(
                                 page.project, page.pageId.toLong(),
                                 ReaderScroll.fraction(y, contentPx, web.height),
-                                shownNavigation.entries,
+                                shownEntries.get(),
                             )
                         }
                     }
@@ -318,20 +350,32 @@ fun ArticleReader(
                     view.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             val web = view ?: return
-                            val article = shownContent as? ReaderContent.Article
+                            // Only the document being loaded now: an earlier
+                            // page finishing late must not end the guard.
+                            if (url?.substringBefore('#') != served.get()?.first) return
+                            val article = shownContent.get() as? ReaderContent.Article
                             val saved = article?.takeIf { it.fragment == null }
                                 ?.let { scroll.at(it.page.project, it.page.pageId.toLong()) }
                             if (saved == null) {
                                 loading.set(false)
                                 return
                             }
-                            // After the page has laid out, return to its place.
-                            web.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
-                                override fun onComplete(requestId: Long) {
-                                    val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
-                                    web.scrollTo(0, ReaderScroll.offset(saved, contentPx, web.height))
-                                    loading.set(false)
+                            // After the page has laid out, return to its place. The
+                            // content height can still read 0 when it is first drawn,
+                            // so wait (briefly) until the page is measurably long.
+                            val document = served.get()?.first
+                            fun restore(attempt: Int) {
+                                if (served.get()?.first != document) return // another page now
+                                val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
+                                if (contentPx <= web.height && attempt < 40) {
+                                    web.postDelayed({ restore(attempt + 1) }, 50)
+                                    return
                                 }
+                                web.scrollTo(0, ReaderScroll.offset(saved, contentPx, web.height))
+                                loading.set(false)
+                            }
+                            web.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                                override fun onComplete(requestId: Long) = restore(0)
                             })
                         }
 
@@ -371,6 +415,7 @@ fun ArticleReader(
                         }
                     }
                     val shown = content
+                    shownEntries.set(navigation.entries)
                     val (url, html) = when (shown) {
                         is ReaderContent.Article -> shown.page.baseUrl to shown.page.document
                         ReaderContent.Welcome -> ReaderLinks.ORIGIN + "/" to
@@ -390,6 +435,7 @@ fun ArticleReader(
                         // fragment is not part of the request; it scrolls the
                         // loaded page to the highlighted citation.
                         served.set(url to html)
+                        shownContent.set(shown)
                         loading.set(true)
                         view.loadUrl(if (fragment != null) "$url#$fragment" else url)
                     }

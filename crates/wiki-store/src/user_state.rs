@@ -1399,6 +1399,46 @@ impl UserState {
         Ok(Some(removed))
     }
 
+    /// Clear visit history and the reading positions of pages that are not
+    /// bookmarked, in one transaction that advances the privacy generation
+    /// (like `clear_history_for_generation`). A kept position would still
+    /// show what was read. Returns None for a stale request, or Some(number
+    /// of deleted visits).
+    pub fn clear_history_and_unbookmarked_positions_for_generation(
+        &mut self,
+        generation: u64,
+    ) -> Result<Option<usize>, UserStateError> {
+        if generation > i64::MAX as u64 {
+            return Err(UserStateError::InvalidValue);
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if Self::generation_from(&tx)? != generation {
+            return Ok(None);
+        }
+        let next = generation
+            .checked_add(1)
+            .filter(|value| *value <= i64::MAX as u64)
+            .ok_or(UserStateError::InvalidValue)?;
+        tx.execute(
+            "INSERT INTO settings(key,value) VALUES (?1,?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![PERSONAL_GENERATION_KEY, next.to_string()],
+        )?;
+        let removed = tx.execute("DELETE FROM history", [])?;
+        tx.execute(
+            "DELETE FROM reading_positions WHERE NOT EXISTS (
+                 SELECT 1 FROM bookmarks
+                 WHERE bookmarks.project=reading_positions.project
+                   AND bookmarks.page_id=reading_positions.page_id
+             )",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(Some(removed))
+    }
+
     /// An asynchronous deletion must not erase data created after another
     /// process already completed a privacy reset. Check the captured generation
     /// and advance it in the same SQLite IMMEDIATE transaction as deletion.
@@ -2200,6 +2240,48 @@ mod tests {
             project: "enwiki".into(),
             page_id: 42,
         }
+    }
+
+    #[test]
+    fn clearing_history_also_clears_positions_of_unbookmarked_pages_only() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wiki-clear-positions-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut state = UserState::open(&root.join("state.sqlite")).unwrap();
+        let other = ArticleKey {
+            project: "enwiki".into(),
+            page_id: 43,
+        };
+        state.set_history_enabled(true).unwrap();
+        assert!(state.record_visit(&key(), 7, 1_700_000_000).unwrap());
+        state.set_reading_position(&key(), 7, 500).unwrap();
+        state.set_reading_position(&other, 8, 900).unwrap();
+        state.set_bookmark(&other, 8, "").unwrap();
+        let generation = state.personal_generation().unwrap();
+        assert_eq!(
+            state
+                .clear_history_and_unbookmarked_positions_for_generation(generation)
+                .unwrap(),
+            Some(1)
+        );
+        assert!(state.recent_history(10).unwrap().is_empty());
+        assert_eq!(state.reading_position(&key()).unwrap(), None);
+        assert_eq!(state.reading_position(&other).unwrap(), Some((8, 900)));
+        // The generation moved on: a stale clear changes nothing.
+        assert_eq!(state.personal_generation().unwrap(), generation + 1);
+        assert_eq!(
+            state
+                .clear_history_and_unbookmarked_positions_for_generation(generation)
+                .unwrap(),
+            None
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

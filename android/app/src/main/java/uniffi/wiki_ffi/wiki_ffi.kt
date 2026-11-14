@@ -784,9 +784,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_readerstate_is_bookmarked(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_position(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_readerstate_record_visit(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_readerstate_remove_bookmark(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_method_readerstate_save_position(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_readerstate_saved_content(
     ): Int
@@ -939,9 +943,13 @@ external fun uniffi_wiki_ffi_fn_method_readerstate_clear_history(`ptr`: Long,uni
 ): Long
 external fun uniffi_wiki_ffi_fn_method_readerstate_is_bookmarked(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_wiki_ffi_fn_method_readerstate_position(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_readerstate_record_visit(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_wiki_ffi_fn_method_readerstate_remove_bookmark(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_wiki_ffi_fn_method_readerstate_save_position(`ptr`: Long,`project`: RustBuffer.ByValue,`pageId`: Long,`revisionId`: Long,`position`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
 external fun uniffi_wiki_ffi_fn_method_readerstate_saved_content(`ptr`: Long,`library`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1193,16 +1201,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_wiki_ffi_checksum_method_packsource_read() != 38010) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_clear_history() != 42589) {
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_clear_history() != 20777) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_readerstate_is_bookmarked() != 45978) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_position() != 42016) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_readerstate_record_visit() != 23512) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_readerstate_remove_bookmark() != 35309) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_readerstate_save_position() != 18617) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_readerstate_saved_content() != 42228) {
@@ -4260,11 +4274,18 @@ public object FfiConverterTypePackSource: FfiConverter<PackSource, Long> {
 public interface ReaderStateInterface {
     
     /**
-     * Delete all visits; returns how many there were. Bookmarks are kept.
+     * Delete all visits and the reading positions of pages that are not
+     * bookmarked; returns how many visits there were. Bookmarks are kept.
      */
     fun `clearHistory`(): kotlin.ULong
     
     fun `isBookmarked`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean
+    
+    /**
+     * Where the page was left (millionths of its scrollable length), only
+     * for the exact revision it was saved for.
+     */
+    fun `position`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.UInt?
     
     /**
      * Record that the page was shown, only if history is on; returns
@@ -4276,6 +4297,12 @@ public interface ReaderStateInterface {
      * Remove a bookmark; returns whether there was one.
      */
     fun `removeBookmark`(`project`: kotlin.String, `pageId`: kotlin.ULong): kotlin.Boolean
+    
+    /**
+     * Remember where the page was left, only while history is on or the
+     * page is bookmarked; returns whether it was saved.
+     */
+    fun `savePosition`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `position`: kotlin.UInt): kotlin.Boolean
     
     /**
      * Bookmarks, the history choice and recent visits, with titles from
@@ -4408,7 +4435,8 @@ open class ReaderState: Disposable, AutoCloseable, ReaderStateInterface
 
     
     /**
-     * Delete all visits; returns how many there were. Bookmarks are kept.
+     * Delete all visits and the reading positions of pages that are not
+     * bookmarked; returns how many visits there were. Bookmarks are kept.
      */
     @Throws(ReaderStateException::class)override fun `clearHistory`(): kotlin.ULong {
             return FfiConverterULong.lift(
@@ -4431,6 +4459,24 @@ open class ReaderState: Disposable, AutoCloseable, ReaderStateInterface
     UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_is_bookmarked(
         it,
         FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Where the page was left (millionths of its scrollable length), only
+     * for the exact revision it was saved for.
+     */
+    @Throws(ReaderStateException::class)override fun `position`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong): kotlin.UInt? {
+            return FfiConverterOptionalUInt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_position(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),_status)
 }
     }
     )
@@ -4466,6 +4512,24 @@ open class ReaderState: Disposable, AutoCloseable, ReaderStateInterface
     UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_remove_bookmark(
         it,
         FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Remember where the page was left, only while history is on or the
+     * page is bookmarked; returns whether it was saved.
+     */
+    @Throws(ReaderStateException::class)override fun `savePosition`(`project`: kotlin.String, `pageId`: kotlin.ULong, `revisionId`: kotlin.ULong, `position`: kotlin.UInt): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(ReaderStateException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_readerstate_save_position(
+        it,
+        FfiConverterString.lower(`project`),FfiConverterULong.lower(`pageId`),FfiConverterULong.lower(`revisionId`),FfiConverterUInt.lower(`position`),_status)
 }
     }
     )

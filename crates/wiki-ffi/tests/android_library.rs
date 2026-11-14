@@ -1188,6 +1188,49 @@ mod reader_state {
     }
 
     #[test]
+    fn positions_are_kept_only_with_history_or_a_bookmark_and_for_the_exact_revision() {
+        let (_dir, _library, state) = setup("positions");
+        // Neither history nor a bookmark: nothing is kept.
+        assert!(!state
+            .save_position("enwiki".into(), 1, 7001, 500_000)
+            .unwrap());
+        assert_eq!(state.position("enwiki".into(), 1, 7001).unwrap(), None);
+        // A bookmarked page keeps its place, for that revision only.
+        state.toggle_bookmark("enwiki".into(), 1, 7001).unwrap();
+        assert!(state
+            .save_position("enwiki".into(), 1, 7001, 500_000)
+            .unwrap());
+        assert_eq!(
+            state.position("enwiki".into(), 1, 7001).unwrap(),
+            Some(500_000)
+        );
+        assert_eq!(state.position("enwiki".into(), 1, 7002).unwrap(), None);
+        // Removing the bookmark without history forgets it.
+        state.toggle_bookmark("enwiki".into(), 1, 7001).unwrap();
+        assert_eq!(state.position("enwiki".into(), 1, 7001).unwrap(), None);
+        // With history on, any page keeps its place until history is cleared,
+        // except bookmarked pages.
+        state.set_history_enabled(true).unwrap();
+        assert!(state
+            .save_position("enwiki".into(), 2, 7002, 250_000)
+            .unwrap());
+        state.toggle_bookmark("enwiki".into(), 1, 7001).unwrap();
+        assert!(state
+            .save_position("enwiki".into(), 1, 7001, 750_000)
+            .unwrap());
+        state.clear_history().unwrap();
+        assert_eq!(state.position("enwiki".into(), 2, 7002).unwrap(), None);
+        assert_eq!(
+            state.position("enwiki".into(), 1, 7001).unwrap(),
+            Some(750_000)
+        );
+        assert_eq!(
+            state.save_position("enwiki".into(), 1, 7001, 1_000_001),
+            Err(ReaderStateError::InvalidInput)
+        );
+    }
+
+    #[test]
     fn clearing_chats_and_reading_data_also_clears_bookmarks_and_bad_input_is_refused() {
         let (dir, _library, state) = setup("cleared");
         state.toggle_bookmark("enwiki".into(), 2, 7002).unwrap();

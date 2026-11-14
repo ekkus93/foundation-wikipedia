@@ -45,6 +45,14 @@ class RustReaderState private constructor(
 
     suspend fun setHistoryEnabled(enabled: Boolean) = call { it.setHistoryEnabled(enabled) }
 
+    /** Where the exact revision was left, in millionths of its length. */
+    suspend fun position(project: String, pageId: Long, revisionId: Long): Int? =
+        call { it.position(project, pageId.toULong(), revisionId.toULong())?.toInt() }
+
+    /** Kept only while history is on or the page is bookmarked. */
+    suspend fun savePosition(project: String, pageId: Long, revisionId: Long, millionths: Int): Boolean =
+        call { it.savePosition(project, pageId.toULong(), revisionId.toULong(), millionths.toUInt()) }
+
     suspend fun clearHistory(): Long = call { it.clearHistory().toLong() }
 
     /** Without titles (no library); see [RustOfflineLibrary.savedContent]. */

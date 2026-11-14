@@ -15,6 +15,8 @@ use crate::android::OfflineLibrary;
 
 /// Bounded like the desktop panel.
 const MAX_BOOKMARKS: usize = 100;
+/// Reading positions are fractions of the page in millionths.
+const POSITION_SCALE: u32 = 1_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum ReaderStateError {
@@ -82,6 +84,20 @@ impl ReaderState {
         Ok(key)
     }
 
+    /// Without history, an unbookmarked page keeps no reading position.
+    fn forget_position_unless_history(
+        state: &UserState,
+        generation: u64,
+        key: &ArticleKey,
+    ) -> Result<(), ReaderStateError> {
+        if !state.history_enabled().map_err(store_error)? {
+            state
+                .remove_reading_position_for_generation(generation, key)
+                .map_err(store_error)?;
+        }
+        Ok(())
+    }
+
     fn check_revision(revision_id: u64) -> Result<(), ReaderStateError> {
         if revision_id == 0 || revision_id > i64::MAX as u64 {
             return Err(ReaderStateError::InvalidInput);
@@ -142,6 +158,7 @@ impl ReaderState {
             {
                 return Err(ReaderStateError::Changed);
             }
+            Self::forget_position_unless_history(&state, generation, &key)?;
             false
         } else {
             // An empty anchor is a page-level bookmark.
@@ -161,8 +178,57 @@ impl ReaderState {
         let key = Self::key(project, page_id)?;
         let state = self.open()?;
         let generation = state.personal_generation().map_err(store_error)?;
-        state
+        let removed = state
             .remove_bookmark_for_generation(generation, &key)
+            .map_err(store_error)?;
+        Self::forget_position_unless_history(&state, generation, &key)?;
+        Ok(removed)
+    }
+
+    /// Where the page was left (millionths of its scrollable length), only
+    /// for the exact revision it was saved for.
+    pub fn position(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+    ) -> Result<Option<u32>, ReaderStateError> {
+        let key = Self::key(project, page_id)?;
+        Self::check_revision(revision_id)?;
+        let saved = self
+            .open()?
+            .reading_position_for_revision(&key, revision_id)
+            .map_err(store_error)?;
+        Ok(saved
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value <= POSITION_SCALE))
+    }
+
+    /// Remember where the page was left, only while history is on or the
+    /// page is bookmarked; returns whether it was saved.
+    pub fn save_position(
+        &self,
+        project: String,
+        page_id: u64,
+        revision_id: u64,
+        position: u32,
+    ) -> Result<bool, ReaderStateError> {
+        let key = Self::key(project, page_id)?;
+        Self::check_revision(revision_id)?;
+        if position > POSITION_SCALE {
+            return Err(ReaderStateError::InvalidInput);
+        }
+        let state = self.open()?;
+        // Captured first: turning history off or clearing advances it, so
+        // the guarded write below then changes nothing.
+        let generation = state.personal_generation().map_err(store_error)?;
+        let allowed = state.history_enabled().map_err(store_error)?
+            || state.bookmark(&key).map_err(store_error)?.is_some();
+        if !allowed {
+            return Ok(false);
+        }
+        state
+            .set_reading_position_for_generation(generation, &key, revision_id, u64::from(position))
             .map_err(store_error)
     }
 
@@ -202,12 +268,13 @@ impl ReaderState {
         Ok(())
     }
 
-    /// Delete all visits; returns how many there were. Bookmarks are kept.
+    /// Delete all visits and the reading positions of pages that are not
+    /// bookmarked; returns how many visits there were. Bookmarks are kept.
     pub fn clear_history(&self) -> Result<u64, ReaderStateError> {
         let mut state = self.open()?;
         let generation = state.personal_generation().map_err(store_error)?;
         let removed = state
-            .clear_history_for_generation(generation)
+            .clear_history_and_unbookmarked_positions_for_generation(generation)
             .map_err(store_error)?
             .ok_or(ReaderStateError::Changed)?;
         Ok(removed as u64)

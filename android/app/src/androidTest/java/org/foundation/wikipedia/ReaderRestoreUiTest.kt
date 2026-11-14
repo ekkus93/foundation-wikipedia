@@ -65,8 +65,7 @@ class ReaderRestoreUiTest {
     private fun scrollable(web: WebView) =
         (web.contentHeight * web.resources.displayMetrics.density).toInt() - web.height
 
-    @Test
-    fun recreationReturnsToTheSameArticleAtTheSameScrollPosition() {
+    private fun openMoon() {
         compose.onNode(hasSetTextAction()).performTextInput("moon")
         compose.onNodeWithText("Search").performClick()
         compose.waitUntil(timeoutMillis = 15_000) {
@@ -76,6 +75,33 @@ class ReaderRestoreUiTest {
         compose.waitUntil(timeoutMillis = 30_000) {
             onWebView { it.title == "Moon" && scrollable(it) > 2 * it.height } == true
         }
+    }
+
+    @Test
+    fun aBookmarkedPageReturnsToItsStoredPlaceOnAFreshStartAndScrollingStoresIt(): Unit = runBlocking {
+        // Moon (revision 7001) is bookmarked and was left half way, as if in
+        // an earlier run of the app: this activity has no saved scroll state.
+        val state = ReaderStateHolder.get(context)
+        if (!state.isBookmarked("enwiki", 1)) state.toggleBookmark("enwiki", 1, 7001)
+        assertTrue(state.savePosition("enwiki", 1, 7001, 500_000))
+        try {
+            openMoon()
+            compose.waitUntil(timeoutMillis = 15_000) { onWebView { it.scrollY > 0 } == true }
+            val restored = onWebView { it.scrollY.toFloat() / scrollable(it) }!!
+            assertTrue("$restored", kotlin.math.abs(restored - 0.5f) < 0.05f)
+            // Scrolling elsewhere is stored once it stops.
+            onWebView { it.scrollTo(0, scrollable(it) / 4) }
+            compose.waitUntil(timeoutMillis = 10_000) {
+                runBlocking { state.position("enwiki", 1, 7001) }?.let { it in 200_000..300_000 } == true
+            }
+        } finally {
+            if (state.isBookmarked("enwiki", 1)) state.toggleBookmark("enwiki", 1, 7001)
+        }
+    }
+
+    @Test
+    fun recreationReturnsToTheSameArticleAtTheSameScrollPosition() {
+        openMoon()
         // Scroll half way down, as a reader would.
         onWebView { it.scrollTo(0, scrollable(it) / 2) }
         compose.waitForIdle()
