@@ -364,11 +364,12 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
     - **Test vectors:** committed in `fixtures/synthetic/signature/` (throwaway key `[7; 32]`) and verified independently with OpenSSL 3.5, which also rejected a one-byte change.
     - **Licences:** `fiat-crypto`'s `MIT OR Apache-2.0 OR BSD-1-Clause` is allowed as a choice including already-approved licences.
     - **Code and CI:** SHAs **`0fbba57a`** (all five workflows passed, incl. [Android Rust ABI 43868403506](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43868403506) and the record codec probe) and **`fe3debdc`** (CLI). On `fe3debdc` all workflows passed except the Android FFI bridge, which failed only on the intermittent long-press selection test (MOB-003; no Android change). Test-only follow-up **`d45ded1e`** varies the long-press gesture; all four workflows passed there, incl. [Android FFI bridge 43870382785](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43870382785).
-    - **Not yet:**
-      - **No production key:** the owner has not generated and pinned a publisher key; `OFFICIAL_KEYS` is empty, so nothing can show Verified publisher.
-      - **Procedure:** the key-management procedure in ADR 0008 is proposed, not accepted.
-      - **No release path:** there is no way yet to export an official-origin pack.
-      - **Not wired in:** the Android/desktop UIs and catalog (TRUST-002, MOBPACK-001, UPD-001).
+    - **Update (2026-11-16, key pinned and release export):** the owner delegated key generation and procedure acceptance ("Can't you just do this for me?").
+      - **Key:** publisher `foundation-wikipedia`, key ID `ee24d083334a607f`, valid from snapshot `20260101`, pinned in `OFFICIAL_KEYS`. The secret stays outside the repository (0600) on the maintainer workstation.
+      - **Procedure:** ADR 0008 is Accepted, recording that online-workstation custody is weaker than recommended and must move offline (or the key rotate) before the first public release.
+      - **Export:** `wiki-pack export-official` builds an official-origin pack. End-to-end with the real key: export → `sign-pack` → `verify-pack-signature` against the built-in keyring reported Verified publisher; a one-byte change was refused.
+      - **CI:** SHA **`ca836d29`**; all five workflows passed, incl. [Rust workspace 43877437717](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43877437717) and [Android FFI bridge 43877437901](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43877437901).
+    - **Not yet:** the Android/desktop UIs and catalog (TRUST-002, MOBPACK-001, UPD-001).
     - **TRUST-001 remains unchecked.**
   - [ ] Canonical signature scope, pinned publisher key, key rotation/revocation procedure and test vectors.
   - [ ] Verify origin + integrity for “Verified publisher”, not just a matching checksum.
@@ -750,6 +751,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 ## Phase 15 — Official pack publication and update distribution
 
 - [ ] **UPD-001** Choose documented publisher catalog hosting/keys and initial release pipeline. **Depends:** TRUST-001, PACK-004.  
+  - **Progress (2026-11-16, partial — hosting and key decided):** decision delegated by the owner. [ADR 0009](adr/0009-official-pack-hosting.md) chooses GitHub Releases (tags `packs-<snapshot>` and `catalog`, stable catalog URLs), a catalog signed by the pinned publisher key (ADR 0008) under its own domain prefix with a rollback-defeating sequence number, maintainer-only upload credentials (none in CI), and a narrow redirect exception to GitHub's asset host. Limits recorded: 2 GiB per asset, IP disclosure to GitHub. `wiki-pack export-official` plus `sign-pack` form the start of the release pipeline (SHA `ca836d29`, all workflows passed). Not yet: catalog format and signing, download client, a test official pack from an authoritative snapshot (needs PACK-004), anything published. **UPD-001 remains unchecked.**
   - [ ] Evaluate CDN/hosting/mirror, signed catalog, stable URLs, transfer size, storage and credentials.
   - [ ] Produce a test official pack tied to an authoritative Wikimedia snapshot.
   - **Accept:** desktop/Android clean install can discover and cryptographically verify published pack.
