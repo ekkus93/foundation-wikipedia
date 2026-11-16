@@ -218,7 +218,7 @@ fn unsafe_label_character(c: char) -> bool {
         || (scalar & 0xfffe) == 0xfffe
 }
 
-fn safe_id(value: &str) -> bool {
+pub(crate) fn safe_id(value: &str) -> bool {
     value == value.trim()
         && value.len() <= 256
         && value != "."
@@ -233,7 +233,7 @@ fn safe_id(value: &str) -> bool {
 }
 
 /// Pack project identity must match the source and article-key edition syntax.
-fn valid_wiki_project(value: &str) -> bool {
+pub(crate) fn valid_wiki_project(value: &str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 255

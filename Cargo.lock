@@ -1921,6 +1921,8 @@ name = "wiki-pack-format"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "serde",
+ "serde_json",
  "sha2",
  "unicode-normalization",
  "wiki-model",

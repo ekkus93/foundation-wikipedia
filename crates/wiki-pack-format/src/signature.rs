@@ -130,7 +130,8 @@ pub fn key_id(public_key: &[u8; 32]) -> [u8; 8] {
     id
 }
 
-fn transcript_digest(manifest: &Manifest) -> Result<[u8; 32], SignatureError> {
+/// SHA-256 of the manifest identity transcript, as named in signature files.
+pub fn transcript_digest(manifest: &Manifest) -> Result<[u8; 32], SignatureError> {
     Ok(Sha256::digest(manifest.identity_transcript()?).into())
 }
 
@@ -151,7 +152,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// Strict lowercase hex of exactly `N` bytes.
-fn unhex<const N: usize>(text: &str) -> Result<[u8; N], SignatureError> {
+pub(crate) fn unhex<const N: usize>(text: &str) -> Result<[u8; N], SignatureError> {
     if text.len() != 2 * N {
         return Err(SignatureError::Malformed);
     }
@@ -227,13 +228,13 @@ pub fn sign(manifest: &Manifest, secret_key: &[u8; 32]) -> Result<PackSignature,
 }
 
 /// The value of a `name value` line.
-fn field<'a>(line: &'a str, name: &str) -> Result<&'a str, SignatureError> {
+pub(crate) fn field<'a>(line: &'a str, name: &str) -> Result<&'a str, SignatureError> {
     line.strip_prefix(name)
         .and_then(|rest| rest.strip_prefix(' '))
         .ok_or(SignatureError::Malformed)
 }
 
-fn is_date(value: &str) -> bool {
+pub(crate) fn is_date(value: &str) -> bool {
     value.len() == 8 && value.bytes().all(|b| b.is_ascii_digit())
 }
 

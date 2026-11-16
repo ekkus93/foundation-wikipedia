@@ -21,16 +21,18 @@ The project is a public GitHub repository, `ekkus93/foundation-wikipedia`. There
   - `https://github.com/ekkus93/foundation-wikipedia/releases/download/catalog/catalog.json`
   - `https://github.com/ekkus93/foundation-wikipedia/releases/download/catalog/catalog.json.sig`
 
-**Catalog (to be specified with MOBPACK-001).**
-- **Contents:** a bounded, canonical JSON document listing each pack with:
+**Catalog** (implemented in `wiki_pack_format::publisher_catalog`, MOBPACK-001).
+- **Contents:** a JSON document (`format` `foundation-wikipedia/catalog/v1`, at most 1 MiB and 1024 packs) with the publisher, a `generated` `YYYYMMDD` date, and a monotonically increasing `sequence`, which defeats rollback to an older catalog. Each pack lists:
   - pack ID, project, snapshot and title;
-  - download URL and size;
-  - the pack's manifest transcript SHA-256;
-  - its signature file URL;
-  - a monotonically increasing catalog sequence number, which defeats rollback to an older catalog.
+  - HTTPS download URL and exact size;
+  - HTTPS signature-file URL;
+  - the pack's manifest transcript SHA-256, which its signature file must also name.
 - **Signing:**
-  - It is signed with the publisher key under a **different domain prefix** from packs, `foundation-wikipedia/catalog-signature/v1\0`, so a pack signature can never be presented as a catalog signature, or the reverse.
+  - The signature covers the catalog's **exact bytes**: `foundation-wikipedia/catalog-signature/v1\0 || SHA-256(bytes)`, signed with the publisher key. No JSON canonicalisation is needed, and the document is parsed only after the signature verifies, then strictly (unknown fields, duplicate pack IDs, non-HTTPS URLs and oversize values are refused).
+  - The **different domain prefix** from packs means a pack signature can never be presented as a catalog signature, or the reverse; the two signature files also have different headers.
+  - `catalog.json.sig` is a four-line file like the pack signature: header, `key-id`, `catalog-sha256`, `signature`.
   - A catalog lists packs. It never makes a pack trusted: every pack is still verified against its own signature and bytes before activation.
+- **Tools:** `wiki-pack catalog-entry` (verifies a signed pack and prints its entry), `catalog-build`, `sign-catalog` and `verify-catalog`.
 
 **Credentials.**
 - **Uploading:** releases are created by the maintainer's own `gh` login on the workstation that holds the signing key.
@@ -56,5 +58,6 @@ The project is a public GitHub repository, `ekkus93/foundation-wikipedia`. There
 
 This is a decision record only.
 - **Not yet published:** no release, catalog or pack exists on GitHub.
-- **Not yet built:** catalog signing and the narrow redirect are unimplemented.
+- **Built:** catalog format, signing, verification and release tooling.
+- **Not yet built:** the download client with the narrow redirect, and the Android catalog screen.
 - **Exists:** TRUST-001 signing and verification (ADR 0008).

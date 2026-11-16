@@ -72,6 +72,10 @@ fn usage() {
     println!("       wiki-pack signing-key-generate <new-secret-key-file>");
     println!("       wiki-pack sign-pack <secret-key-file> <official.wpack>");
     println!("       wiki-pack verify-pack-signature <file.wpack> <file.wpack.sig> [<publisher> <public-key-hex> <valid-from-YYYYMMDD>]");
+    println!("       wiki-pack catalog-entry <official.wpack> <official.wpack.sig> <title> <pack-url> <signature-url>");
+    println!("       wiki-pack catalog-build <publisher> <sequence> <generated-YYYYMMDD> <output-catalog.json> <entry.json>...");
+    println!("       wiki-pack sign-catalog <secret-key-file> <catalog.json>");
+    println!("       wiki-pack verify-catalog <catalog.json> <catalog.json.sig> [<publisher> <public-key-hex> <valid-from-YYYYMMDD>]");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -1329,6 +1333,86 @@ fn main() {
             };
             if let Err(error) =
                 signing::verify_pack_signature(PathBuf::from(pack), PathBuf::from(sig), key)
+            {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("catalog-entry") => {
+            let fields: Vec<String> = args.map(|a| a.to_string_lossy().into_owned()).collect();
+            let [pack, sig, title, url, sig_url] = fields.as_slice() else {
+                eprintln!("catalog-entry requires <official.wpack> <official.wpack.sig> <title> <pack-url> <signature-url>");
+                std::process::exit(2);
+            };
+            if let Err(error) = signing::catalog_entry(
+                PathBuf::from(pack),
+                PathBuf::from(sig),
+                title.clone(),
+                url.clone(),
+                sig_url.clone(),
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("catalog-build") => {
+            let fields: Vec<OsString> = args.collect();
+            let text = |value: &OsString| value.to_str().map(str::to_owned);
+            let [publisher, sequence, generated, output, entries @ ..] = fields.as_slice() else {
+                eprintln!("catalog-build requires <publisher> <sequence> <generated> <output> <entry.json>...");
+                std::process::exit(2);
+            };
+            let (Some(publisher), Some(Ok(sequence)), Some(generated)) = (
+                text(publisher),
+                text(sequence).map(|value| value.parse::<u64>()),
+                text(generated),
+            ) else {
+                eprintln!("publisher, sequence (a number) and date must be UTF-8");
+                std::process::exit(2);
+            };
+            if let Err(error) = signing::catalog_build(
+                publisher,
+                sequence,
+                generated,
+                entries.iter().map(PathBuf::from).collect(),
+                PathBuf::from(output),
+            ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("sign-catalog") => {
+            let fields: Vec<OsString> = args.collect();
+            let [key, catalog] = fields.as_slice() else {
+                eprintln!("sign-catalog requires a secret key file and a catalog.json");
+                std::process::exit(2);
+            };
+            if let Err(error) = signing::sign_catalog(PathBuf::from(key), PathBuf::from(catalog)) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("verify-catalog") => {
+            let fields: Vec<OsString> = args.collect();
+            let text = |value: &OsString| value.to_str().map(str::to_owned);
+            let (catalog, sig, key) = match fields.as_slice() {
+                [catalog, sig] => (catalog, sig, None),
+                [catalog, sig, publisher, public, from] => {
+                    let (Some(publisher), Some(public), Some(from)) =
+                        (text(publisher), text(public), text(from))
+                    else {
+                        eprintln!("publisher, public key and date must be UTF-8");
+                        std::process::exit(2);
+                    };
+                    (catalog, sig, Some((publisher, public, from)))
+                }
+                _ => {
+                    eprintln!("verify-catalog requires a catalog, its signature, and optionally <publisher> <public-key-hex> <valid-from>");
+                    std::process::exit(2);
+                }
+            };
+            if let Err(error) =
+                signing::verify_catalog(PathBuf::from(catalog), PathBuf::from(sig), key)
             {
                 eprintln!("{error}");
                 std::process::exit(1);

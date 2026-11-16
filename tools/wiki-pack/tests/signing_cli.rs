@@ -223,3 +223,117 @@ fn export_official_writes_an_unsigned_official_pack_that_sign_pack_then_signs() 
     assert!(text(&verified.stdout).contains("Verified publisher: foundation"));
     fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn a_catalog_built_from_a_signed_pack_signs_verifies_and_refuses_tampering() {
+    let dir = temp_dir();
+    let key = dir.join("publisher.key");
+    let generated = run(&[OsStr::new("signing-key-generate"), key.as_os_str()]);
+    let public = text(&generated.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("public-key "))
+        .unwrap()
+        .to_owned();
+    let pack = dir.join("official.wpack");
+    write_pack(
+        &pack,
+        Origin::Official {
+            publisher: "foundation".into(),
+        },
+    );
+    assert!(
+        run(&[OsStr::new("sign-pack"), key.as_os_str(), pack.as_os_str()])
+            .status
+            .success()
+    );
+    let pack_sig = dir.join("official.wpack.sig");
+
+    let entry_out = run(&[
+        OsStr::new("catalog-entry"),
+        pack.as_os_str(),
+        pack_sig.as_os_str(),
+        OsStr::new("Signed sample"),
+        OsStr::new("https://example.org/signed-pack.wpack"),
+        OsStr::new("https://example.org/signed-pack.wpack.sig"),
+    ]);
+    assert!(entry_out.status.success(), "{}", text(&entry_out.stderr));
+    let entry: serde_json::Value = serde_json::from_slice(&entry_out.stdout).unwrap();
+    assert_eq!(entry["pack_id"], "signed-pack");
+    assert_eq!(entry["bytes"], fs::metadata(&pack).unwrap().len());
+    let signature_text = fs::read_to_string(&pack_sig).unwrap();
+    let transcript = entry["transcript_sha256"].as_str().unwrap();
+    assert!(signature_text.contains(&format!("transcript-sha256 {transcript}\n")));
+    let entry_file = dir.join("entry.json");
+    fs::write(&entry_file, &entry_out.stdout).unwrap();
+
+    // An http URL is refused when building the entry.
+    let http = run(&[
+        OsStr::new("catalog-entry"),
+        pack.as_os_str(),
+        pack_sig.as_os_str(),
+        OsStr::new("Signed sample"),
+        OsStr::new("http://example.org/signed-pack.wpack"),
+        OsStr::new("https://example.org/signed-pack.wpack.sig"),
+    ]);
+    assert!(!http.status.success());
+
+    let catalog = dir.join("catalog.json");
+    let built = run(&[
+        OsStr::new("catalog-build"),
+        OsStr::new("foundation"),
+        OsStr::new("3"),
+        OsStr::new("20261116"),
+        catalog.as_os_str(),
+        entry_file.as_os_str(),
+    ]);
+    assert!(built.status.success(), "{}", text(&built.stderr));
+    let signed = run(&[
+        OsStr::new("sign-catalog"),
+        key.as_os_str(),
+        catalog.as_os_str(),
+    ]);
+    assert!(signed.status.success(), "{}", text(&signed.stderr));
+    let catalog_sig = dir.join("catalog.json.sig");
+
+    let verify = |catalog: &Path, sig: &Path, pinned: bool| {
+        let mut args = vec![
+            OsStr::new("verify-catalog"),
+            catalog.as_os_str(),
+            sig.as_os_str(),
+        ];
+        if !pinned {
+            args.extend([
+                OsStr::new("foundation"),
+                OsStr::new(public.as_str()),
+                OsStr::new("20260101"),
+            ]);
+        }
+        run(&args)
+    };
+    let ok = verify(&catalog, &catalog_sig, false);
+    assert!(ok.status.success(), "{}", text(&ok.stderr));
+    assert!(text(&ok.stdout).contains("Verified catalog: foundation sequence 3 (1 packs"));
+    // The throwaway key is not pinned in the app.
+    assert!(text(&verify(&catalog, &catalog_sig, true).stderr).contains("unrecognized"));
+    // A pack signature is not a catalog signature.
+    assert!(!verify(&catalog, &pack_sig, false).status.success());
+    // One changed byte fails.
+    let tampered = dir.join("tampered.json");
+    fs::write(
+        &tampered,
+        fs::read_to_string(&catalog)
+            .unwrap()
+            .replace("Signed sample", "Signed sampla"),
+    )
+    .unwrap();
+    assert!(text(&verify(&tampered, &catalog_sig, false).stderr).contains("different bytes"));
+    // Neither the catalog nor its signature is overwritten.
+    assert!(!run(&[
+        OsStr::new("sign-catalog"),
+        key.as_os_str(),
+        catalog.as_os_str()
+    ])
+    .status
+    .success());
+    fs::remove_dir_all(dir).ok();
+}
