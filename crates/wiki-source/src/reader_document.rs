@@ -87,6 +87,54 @@ pub fn sanitize_article_html(html: &str) -> String {
     builder.clean(html).to_string()
 }
 
+/// Image hosts an online article may load from (DUI-001): Wikimedia's
+/// media store and its math-rendering service. Protocol-relative sources
+/// become https; any other source is removed (alt text remains).
+const ONLINE_IMAGE_PREFIXES: [&str; 2] = [
+    "https://upload.wikimedia.org/",
+    "https://wikimedia.org/api/rest_v1/media/math/render/",
+];
+
+fn online_image_source(value: &str) -> Option<String> {
+    let absolute = match value.strip_prefix("//") {
+        Some(rest) => format!("https://{rest}"),
+        None => value.to_owned(),
+    };
+    let safe = absolute.len() <= 2048
+        && absolute
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'\\' | b'<' | b'>' | b'`'));
+    (safe
+        && ONLINE_IMAGE_PREFIXES
+            .iter()
+            .any(|prefix| absolute.starts_with(prefix)))
+    .then_some(absolute)
+}
+
+/// Sanitize live rendered HTML (MediaWiki `action=parse`) for the desktop's
+/// online reader. Like [`sanitize_article_html`] it removes scripts, styles,
+/// event handlers and forms and keeps `id`/`class` for Wikipedia-like
+/// styling, but it keeps article links as they are (the app validates each
+/// clicked `href` itself), keeps image sources only from Wikimedia's media
+/// and math hosts, and drops MathML source (the math image with its TeX
+/// alt text is shown instead, as on Wikipedia).
+pub fn sanitize_online_article_html(html: &str) -> String {
+    let mut builder = Builder::default();
+    builder
+        .url_schemes(HashSet::from(["http", "https"]))
+        .add_generic_attributes(["id", "class"])
+        .rm_tag_attributes("img", ["srcset"])
+        .add_clean_content_tags(["math"])
+        .id_prefix(None)
+        .attribute_filter(|element, attribute, value| match (element, attribute) {
+            (_, "id") if value.starts_with(RESERVED_ID_PREFIX) => None,
+            ("img", "src") => online_image_source(value).map(Cow::Owned),
+            _ => Some(value.into()),
+        })
+        .link_rel(Some("noopener noreferrer nofollow"));
+    builder.clean(html).to_string()
+}
+
 fn escape_text(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
@@ -350,6 +398,53 @@ fn wrap_document(article: &Article, theme: ReaderTheme, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn online_html_keeps_wikipedia_structure_and_only_wikimedia_images() {
+        let html = concat!(
+            "<table class=\"infobox\" id=\"box\"><tr><td>",
+            "<img src=\"//upload.wikimedia.org/a/b.png\" srcset=\"//evil.example/x 2x\" alt=\"Map\" width=\"220\">",
+            "</td></tr></table>",
+            "<p>See <a href=\"/wiki/Moon\" title=\"Moon\">Moon</a> and ",
+            "<a class=\"external\" href=\"https://example.org/\">a site</a>.</p>",
+            "<span class=\"mwe-math-element\"><span class=\"mwe-math-mathml-inline\" style=\"display:none\">",
+            "<math><semantics><mi>x</mi><annotation>x^2</annotation></semantics></math></span>",
+            "<img src=\"https://wikimedia.org/api/rest_v1/media/math/render/svg/abc\" alt=\"x^2\" class=\"mwe-math-fallback-image-inline\"></span>",
+            "<img src=\"https://evil.example/track.gif\" alt=\"t\">",
+            "<img src=\"data:image/png;base64,AAAA\" alt=\"d\">",
+            "<div id=\"foundation-cited\" onclick=\"x()\" style=\"color:red\">c</div>",
+            "<script>bad()</script><style>p{}</style>",
+        );
+        let clean = sanitize_online_article_html(html);
+        assert!(clean.contains("class=\"infobox\""), "{clean}");
+        assert!(
+            clean.contains("src=\"https://upload.wikimedia.org/a/b.png\""),
+            "{clean}"
+        );
+        assert!(
+            clean.contains("src=\"https://wikimedia.org/api/rest_v1/media/math/render/svg/abc\"")
+        );
+        assert!(clean.contains("href=\"/wiki/Moon\""), "{clean}");
+        assert!(clean.contains("href=\"https://example.org/\""));
+        for forbidden in [
+            "srcset",
+            "evil.example",
+            "data:",
+            "<math",
+            "<annotation",
+            "x^2</",
+            "onclick",
+            "style=",
+            "<script",
+            "bad()",
+            "foundation-cited",
+        ] {
+            assert!(!clean.contains(forbidden), "{forbidden} in {clean}");
+        }
+        // Alt text of removed images remains for the reader.
+        assert!(clean.contains("alt=\"t\""));
+    }
+
     use super::*;
     use wiki_model::{ArticleKey, Revision, ARTICLE_SCHEMA_VERSION};
 

@@ -210,6 +210,8 @@ impl WikipediaRequests {
             ("action", "parse".to_owned()),
             ("oldid", revision_id.to_string()),
             ("prop", "text".to_owned()),
+            // No "[edit]" links: the reader cannot edit.
+            ("disableeditsection", "1".to_owned()),
         ]))
     }
 

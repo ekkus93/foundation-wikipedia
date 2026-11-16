@@ -4,7 +4,6 @@
 //! render that exact oldid. Parsing these two responses does not authenticate
 //! the endpoint, acquire mandatory media, or authorize AI citation evidence.
 
-use ammonia::Builder;
 use serde_json::Value;
 use wiki_model::ArticleKey;
 
@@ -246,7 +245,7 @@ pub fn parse_rendered_revision(
         .and_then(Value::as_str)
         .filter(|html| !html.trim().is_empty())
         .ok_or(OnlineArticleError::InvalidResponse)?;
-    let html = Builder::default().clean(raw_html).to_string();
+    let html = crate::reader_document::sanitize_online_article_html(raw_html);
     if html.trim().is_empty() {
         return Err(OnlineArticleError::UnsafeHtml);
     }

@@ -270,6 +270,33 @@ async fn open_wikipedia_page(
 }
 
 
+/// DUI-001 external-browser policy: only a short, printable `http(s)` URL
+/// with a host and no credentials is handed to the system browser, and the
+/// reader calls this only after the user confirmed that exact URL.
+fn external_link_allowed(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    url.len() <= 2048
+        && !authority.is_empty()
+        && !authority.contains('@')
+        && url
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && !matches!(b, b'"' | b'\\' | b'<' | b'>' | b'`'))
+}
+
+#[tauri::command]
+fn open_external_link(url: String) -> Result<(), String> {
+    if !external_link_allowed(&url) {
+        return Err("Only web links can be opened".to_owned());
+    }
+    open::that_detached(&url).map_err(|_| "Cannot open the web browser".to_owned())
+}
+
 fn open_private_bookmark_store(app: &tauri::AppHandle) -> Result<UserState, String> {
     let base = app.path().app_data_dir()
         .map_err(|_| "Cannot find the app data directory")?;
@@ -1594,6 +1621,7 @@ pub fn run() {
         .manage(local_ai::LocalAiDiscoveryRegistry::default())
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
+            open_external_link,
             local_ai::discover_local_ai_models,
             local_ai::begin_local_ai_model_discovery,
             local_ai::cancel_local_ai_model_discovery,
@@ -1635,4 +1663,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Wikipedia desktop failed to start");
+}
+
+#[cfg(test)]
+mod external_link_tests {
+    use super::external_link_allowed;
+
+    #[test]
+    fn only_plain_web_links_reach_the_system_browser() {
+        for good in [
+            "https://example.org/",
+            "http://example.org/a?b=1#c",
+            "https://en.wikipedia.org/wiki/File:Moon.jpg",
+        ] {
+            assert!(external_link_allowed(good), "{good}");
+        }
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https://",
+            "https://user:pw@example.org/",
+            "https://example.org/a b",
+            "https://example.org/\"x",
+            "smb://host/share",
+            " https://example.org/",
+            "HTTPS://example.org/",
+        ] {
+            assert!(!external_link_allowed(bad), "{bad}");
+        }
+        assert!(!external_link_allowed(&format!("https://e.org/{}", "a".repeat(2048))));
+    }
 }

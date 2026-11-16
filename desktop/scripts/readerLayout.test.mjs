@@ -59,3 +59,30 @@ test("sandboxed preview honors explicit and system themes without CSS injection"
   assert.doesNotMatch(safe, /example.com/);
   assert.match(safe, /default-src 'none'/);
 });
+
+test("online article documents load only Wikimedia images and the nonce'd link script", async () => {
+  const { readerDocumentNonce, LINK_MESSAGE_KEY } = await import("../src/readerLayout.ts");
+  const html = "<p>Physics</p>";
+  const nonce = readerDocumentNonce();
+  assert.match(nonce, /^[A-Za-z0-9]{16,64}$/);
+  assert.notEqual(nonce, readerDocumentNonce());
+  const online = isolatedReaderDocument(html, "standard", "standard", "light", { images: true, linkNonce: nonce });
+  assert.match(online, /img-src https:\/\/upload\.wikimedia\.org https:\/\/wikimedia\.org;/);
+  assert.match(online, new RegExp(`script-src 'nonce-${nonce}'`));
+  assert.match(online, new RegExp(`<script nonce="${nonce}">`));
+  assert.match(online, new RegExp(LINK_MESSAGE_KEY));
+  assert.doesNotMatch(online, /pointer-events:none/);
+  assert.match(online, /\.infobox\{float:right/);
+  // Offline or text-only: no images, no script, inert links.
+  const offline = isolatedReaderDocument(html, "standard", "standard", "light", { images: false });
+  assert.match(offline, /img-src 'none'/);
+  assert.match(offline, /script-src 'none'/);
+  assert.doesNotMatch(offline, /<script/);
+  assert.match(offline, /a\{pointer-events:none\}/);
+  // A malformed nonce never enables scripts.
+  for (const bad of ["short", "has space in it 1234567", "x'; script-src *", "a".repeat(65)]) {
+    const doc = isolatedReaderDocument(html, "standard", "standard", "light", { linkNonce: bad });
+    assert.match(doc, /script-src 'none'/);
+    assert.doesNotMatch(doc, /<script/);
+  }
+});

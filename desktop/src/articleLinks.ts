@@ -84,3 +84,31 @@ export function extractWikiArticleLinks(html: string, project: string): WikiArti
   }
   return links;
 }
+
+/** What a link clicked inside the article frame should do (DUI-001). */
+export type ReaderLinkAction =
+  | { kind: "article"; title: string }
+  | { kind: "external"; url: string };
+
+/** Classify a clicked href. Same-edition mainspace articles open in the app;
+ * other http(s) destinations (including other Wikipedia pages such as
+ * files or categories) are offered to the system browser after the user
+ * confirms. Anything else (scripts, data, relative junk) does nothing. */
+export function classifyReaderLink(href: unknown, project: string): ReaderLinkAction | null {
+  if (typeof href !== "string" || !EDITIONS.has(project) || href.length > 2048) return null;
+  const title = normalizeWikiHref(href, project);
+  if (title) return { kind: "article", title };
+  if (!wellFormedTitleUnicode(href) || unsafeNavigationUnicode(href) || href.trim() !== href) return null;
+  const lang = project.slice(0, -4);
+  let url: URL;
+  try {
+    if (/^https?:\/\//iu.test(href)) url = new URL(href);
+    else if (href.startsWith("//")) url = new URL(`https:${href}`);
+    else if (/^\/(?:wiki|w)\//u.test(href)) url = new URL(href, `https://${lang}.wikipedia.org/`);
+    else return null;
+  } catch {
+    return null;
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || !url.hostname) return null;
+  return { kind: "external", url: url.href };
+}

@@ -168,3 +168,22 @@ test("rejects directional-format and C1 control characters in article-link desti
   // Natural right-to-left letters without directional format controls are legitimate.
   assert.equal(normalizeWikiHref("./%D7%A4%D7%99%D7%96%D7%99%D7%A7%D7%94", "enwiki"), "פיזיקה");
 });
+
+test("clicked links open articles in the app and offer everything else to the browser", async () => {
+  const { classifyReaderLink } = await import("../src/articleLinks.ts");
+  assert.deepEqual(classifyReaderLink("/wiki/Moon", "enwiki"), { kind: "article", title: "Moon" });
+  assert.deepEqual(classifyReaderLink("https://en.wikipedia.org/wiki/Tide", "enwiki"), { kind: "article", title: "Tide" });
+  assert.deepEqual(classifyReaderLink("https://example.org/a?b=1", "enwiki"), { kind: "external", url: "https://example.org/a?b=1" });
+  assert.deepEqual(classifyReaderLink("/wiki/File:Moon.jpg", "enwiki"),
+    { kind: "external", url: "https://en.wikipedia.org/wiki/File:Moon.jpg" });
+  assert.deepEqual(classifyReaderLink("//de.wikipedia.org/wiki/Mond", "enwiki"),
+    { kind: "external", url: "https://de.wikipedia.org/wiki/Mond" });
+  for (const bad of [
+    "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "relative/path", "./x?y",
+    "https://user:pw@example.org/", " https://example.org/", "https://exa‮mple.org/",
+    "mailto:a@b.c", 42, null, "x".repeat(2049),
+  ]) {
+    assert.equal(classifyReaderLink(bad, "enwiki"), null, String(bad));
+  }
+  assert.equal(classifyReaderLink("/wiki/Moon", "xxwiki"), null);
+});

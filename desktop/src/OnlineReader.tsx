@@ -1,13 +1,13 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { isolatedReaderDocument, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { isolatedReaderDocument, LINK_MESSAGE_KEY, readerDocumentNonce, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
-import { extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
-import { normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
+import { classifyReaderLink, extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
+import { navigationTitleKey, normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
 export interface ReaderArticleContext {
@@ -75,6 +75,19 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  // DUI-001: each article frame forwards clicked links to this component.
+  const frames = useRef(new Map<number, HTMLIFrameElement>());
+  const frameNonces = useRef(new Map<number, string>());
+  const [externalLink, setExternalLink] = useState<string | null>(null);
+  const imagesAllowed = !offline && connected;
+  function frameNonce(frameId: number): string {
+    let nonce = frameNonces.current.get(frameId);
+    if (!nonce) {
+      nonce = readerDocumentNonce();
+      frameNonces.current.set(frameId, nonce);
+    }
+    return nonce;
+  }
 
   // Apply the shared offline transition to hidden tabs too. Late responses
   // are ignored; existing in-memory text-only previews remain readable.
@@ -150,6 +163,41 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     };
   }, []);
 
+  // Links clicked inside the current article frame. Only messages from that
+  // exact frame are accepted; the href is untrusted and classified here.
+  useEffect(() => {
+    if (!article) return;
+    const current = article;
+    const onMessage = (event: MessageEvent) => {
+      const frame = frames.current.get(current.frameId);
+      if (!frame || event.source !== frame.contentWindow) return;
+      const data: unknown = event.data;
+      if (typeof data !== "object" || data === null) return;
+      const action = classifyReaderLink((data as Record<string, unknown>)[LINK_MESSAGE_KEY], current.project);
+      if (!action) return;
+      if (action.kind === "article") {
+        if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
+          setNotice("Linked articles cannot be opened while offline. The current article is unchanged.");
+          return;
+        }
+        void openTitle(action.title, current.project);
+      } else {
+        setExternalLink(action.url);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  });
+
+  async function openExternalLink(url: string) {
+    setExternalLink(null);
+    try {
+      await invoke("open_external_link", { url });
+    } catch {
+      setNotice("The link could not be opened in your browser.");
+    }
+  }
+
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy || offlineMode.getSnapshot() || !connected || !navigator.onLine) return;
@@ -190,6 +238,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       ), args.pageId);
       if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject) }));
+      if (args.title && navigationTitleKey(args.title) !== navigationTitleKey(canonicalTitle)) {
+        setNotice(`Redirected from “${args.title}”.`);
+      }
     } catch (error) {
       if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) setNotice(`Article unavailable: ${String(error)}`);
     } finally {
@@ -261,10 +312,18 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       }} /> Work offline across all tabs (no new network requests)</label>
       <p className="preview-warning">
         {offline || !connected ? "Network disabled: only previously loaded in-memory text previews can be read; complete offline articles require an installed pack. " : ""}
-        Online text preview only. Images, equations, and other required media are not saved;
-        this page is not offline-ready. Links inside the isolated preview are disabled; verified same-edition article links are listed below.
+        Online article. Images and equations load from Wikimedia while online and are not saved;
+        this page is not offline-ready. Article links open here; other links ask before opening your browser.
       </p>
       {notice && <p role="status">{notice}</p>}
+      {externalLink && (
+        <div className="external-link-confirm" role="alertdialog" aria-label="Open link in your browser">
+          <p>Open this link in your web browser?</p>
+          <p className="external-link-url">{externalLink}</p>
+          <button type="button" onClick={() => void openExternalLink(externalLink)}>Open in browser</button>
+          <button type="button" autoFocus onClick={() => setExternalLink(null)}>Cancel</button>
+        </div>
+      )}
       {busy && <p role="status">Loading Wikipedia…</p>}
       {!article && navigation.forward.length > 0 && <button type="button" disabled={busy} onClick={() => setNavigation(forwardReaderArticle)}>→ Forward to article</button>}
       {article && (
@@ -294,34 +353,30 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
         </div>
       )}
       {/* Hidden sandboxed iframes remain mounted for nearby navigation history.
-          Never add allow-same-origin/allow-scripts just to read their scroll. */}
+          Never add allow-same-origin: article frames must not reach the app. */}
       <div className="article-preview-frames" hidden={!article}>
         {mountedFrames.map((snapshot) => (
           <iframe
             key={snapshot.frameId}
-            title={`Sanitized Wikipedia article: ${snapshot.title}`}
+            ref={(element) => {
+              if (element) frames.current.set(snapshot.frameId, element);
+              else {
+                frames.current.delete(snapshot.frameId);
+                frameNonces.current.delete(snapshot.frameId);
+              }
+            }}
+            title={`Wikipedia article: ${snapshot.title}`}
             hidden={!article || snapshot.frameId !== article.frameId}
-            sandbox=""
+            // Scripts only for the app's nonce'd link forwarder; no same-origin
+            // access, popups, forms or top navigation (see readerLayout).
+            sandbox="allow-scripts"
             referrerPolicy="no-referrer"
             className="article-preview-frame"
-            srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme)}
+            srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme,
+              { images: imagesAllowed, linkNonce: frameNonce(snapshot.frameId) })}
           />
         ))}
       </div>
-      {article && article.links.length > 0 && (
-        <nav aria-label="Internal Wikipedia article links">
-          <h3>Article links</h3>
-          <ul>
-            {article.links.map((link) => (
-              <li key={link.title}>
-                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openTitle(link.title, article.project)}>
-                  {link.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      )}
       {!article && hits.length > 0 && (
         <div className="online-results">
           <h2>Search results</h2>
