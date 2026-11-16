@@ -31,6 +31,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.wiki_ffi.ChatAnswer
+import uniffi.wiki_ffi.ChatLocality
 import uniffi.wiki_ffi.ChatAnswerPart
 import uniffi.wiki_ffi.ChatProgressUpdate
 import uniffi.wiki_ffi.LibraryException
@@ -194,19 +195,31 @@ class LocalChatAndSelectionTest {
     }
 
     @Test
-    fun aLocalModelAnswersAboutASelectionWithACitationAndProgress(): Unit = runBlocking {
+    fun aLocalModelAnswersAboutASelectionWithACitationAndProgress(): Unit =
+        groundedLocalAnswer(LocalAiProtocol.OLLAMA)
+
+    /** AI-002: the OpenAI-compatible adapter (llama-server, Ollama's /v1). */
+    @Test
+    fun anOpenAiCompatibleLocalServerAlsoGivesAGroundedAnswer(): Unit =
+        groundedLocalAnswer(LocalAiProtocol.OPEN_AI_COMPATIBLE)
+
+    private fun groundedLocalAnswer(protocol: LocalAiProtocol): Unit = runBlocking {
         val arguments = InstrumentationRegistry.getArguments()
         val endpoint = arguments.getString("ollama")
         val model = arguments.getString("ollamaModel")
         assumeTrue("pass -e ollama <url> -e ollamaModel <model> to run", endpoint != null && model != null)
         val local = RustLocalAi()
-        val server = local.discover(LocalAiProtocol.OLLAMA, endpoint!!)
+        val server = local.discover(protocol, endpoint!!)
         assertTrue(server.models().toString(), model in server.models())
+        // The emulator reaches the host at 10.0.2.2, a private address: it
+        // must be labelled as the local network, never this device or cloud.
+        assertEquals(ChatLocality.LOCAL_NETWORK, server.locality())
         val library = OfflineLibraryHolder.get(context)
         val chat = local.prepareArticleChat(
             library, "enwiki", 2, "What do tides follow?", server, model!!,
             selection = "Moon's gravity",
         )
+        assertEquals(ChatLocality.LOCAL_NETWORK, chat.locality())
         assertEquals("wkb:enwiki:2:7002:b0", chat.selectedPassage()?.blockId)
         val updates = CopyOnWriteArrayList<ChatProgressUpdate>()
         val reply = local.send(chat) { updates += it }
@@ -219,6 +232,6 @@ class LocalChatAndSelectionTest {
             },
         )
         assertTrue("$updates", updates.last().finished && updates.last().firstOutputMs != null)
-        android.util.Log.i("LocalChatTest", "local answer took ${updates.last().elapsedMs} ms: $answer")
+        android.util.Log.i("LocalChatTest", "$protocol answer took ${updates.last().elapsedMs} ms: $answer")
     }
 }
