@@ -75,9 +75,14 @@ class PackLibraryTrustUiTest {
         val card = compose.onAllNodesWithTag(custom).onFirst().fetchSemanticsNode()
         val spoken = card.config[SemanticsProperties.ContentDescription].single()
         assertTrue(spoken, spoken.startsWith("Trust status: Custom — integrity verified."))
+        // Only packs that verified as official show the publisher status
+        // (an official pack from an earlier live run may be installed).
+        val official = runBlocking {
+            OfflineLibraryHolder.get(context).listPacks().count { it.trust == PackTrust.VERIFIED_PUBLISHER }
+        }
         assertEquals(
             "a custom pack never shows a publisher status",
-            0,
+            official,
             compose.onAllNodesWithTag(packTrustTag(PackTrust.VERIFIED_PUBLISHER))
                 .fetchSemanticsNodes().size,
         )

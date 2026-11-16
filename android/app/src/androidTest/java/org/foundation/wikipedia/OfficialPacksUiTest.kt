@@ -99,8 +99,10 @@ class OfficialPacksUiTest {
 
     @Test
     fun theDisclosureComesFirstAndOfflineModeBlocksTheRequest(): Unit = runBlocking {
+        // A catalog stored by an earlier (live) run is fine; it must not change.
+        val storedBefore = OfflineLibraryHolder.get(context).officialCatalog()
         openOfflineDataSettings()
-        assertTrue(shown("No official pack list yet."))
+        if (storedBefore == null) assertTrue(shown("No official pack list yet."))
         assertTrue("Wi-Fi only by default", shown("Download over mobile data"))
         assertFalse(
             OfficialPackPreference.mobileDataAllowed(
@@ -129,7 +131,7 @@ class OfficialPacksUiTest {
             ),
         )
         assertFalse(shown("Checking for official packs…"))
-        assertEquals(null, OfflineLibraryHolder.get(context).officialCatalog())
+        assertEquals(storedBefore, OfflineLibraryHolder.get(context).officialCatalog())
 
         // Asking again does not show the disclosure a second time.
         compose.onNodeWithText("Check for official packs").performScrollTo().performClick()

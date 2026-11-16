@@ -877,3 +877,21 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 }
+
+/// Live check against the published release (ADR 0009); run explicitly with
+/// `cargo test -p wiki-ffi -- --ignored live_`.
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs the network and the published catalog release"]
+    fn live_catalog_and_pack_signature_download() {
+        let connector = TlsConnector::platform().unwrap();
+        let never: &dyn Fn() -> bool = &|| false;
+        let catalog = fetch_small(&connector, CATALOG_URL, 1 << 20, never).unwrap();
+        assert!(catalog.starts_with(b"{"));
+        let signature = fetch_small(&connector, CATALOG_SIGNATURE_URL, 512, never).unwrap();
+        assert!(signature.starts_with(b"foundation-wikipedia/catalog-signature/v1\n"));
+    }
+}

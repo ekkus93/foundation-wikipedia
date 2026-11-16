@@ -96,14 +96,18 @@ class RustOfflineLibrary private constructor(
     suspend fun officialCatalog(): OfficialCatalogInfo? = call { it.officialCatalog() }
 
     /**
-     * Fetch and verify the official catalog. Only call after the user accepted
+     * Fetch and verify the official catalog (initialising Android certificate
+     * verification for [app] first). Only call after the user accepted
      * the download disclosure and the network policy allows it. Cancelling the
      * coroutine stops the transfer.
      */
-    suspend fun refreshOfficialCatalog(): OfficialCatalogInfo {
+    suspend fun refreshOfficialCatalog(app: android.content.Context): OfficialCatalogInfo {
         val context = currentCoroutineContext()
         val observer = observer(context) { _, _ -> }
-        return call { it.refreshOfficialCatalog(observer) }
+        return call {
+            RustTls.init(app)
+            it.refreshOfficialCatalog(observer)
+        }
     }
 
     /**
@@ -113,6 +117,7 @@ class RustOfflineLibrary private constructor(
      * download and keeps what arrived for a later resume.
      */
     suspend fun downloadOfficialPack(
+        app: android.content.Context,
         packId: String,
         onProgress: (done: Long, total: Long) -> Unit,
         approve: suspend (PackReview) -> Boolean,
@@ -123,7 +128,10 @@ class RustOfflineLibrary private constructor(
         val reviewer = object : InstallReviewer {
             override fun approve(review: PackReview): Boolean = runBlocking { decide(review) }
         }
-        return call { it.downloadOfficialPack(packId, observer, reviewer) }
+        return call {
+            RustTls.init(app)
+            it.downloadOfficialPack(packId, observer, reviewer)
+        }
     }
 
     private fun observer(

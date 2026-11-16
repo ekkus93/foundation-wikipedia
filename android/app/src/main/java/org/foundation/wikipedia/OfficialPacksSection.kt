@@ -135,7 +135,7 @@ fun OfficialPacksSection(
             busy = true
             message = "Checking for official packs…"
             message = try {
-                catalog = library.refreshOfficialCatalog()
+                catalog = library.refreshOfficialCatalog(context)
                 val count = catalog?.packs?.size ?: 0
                 if (count == 0) "No official packs are available yet." else null
             } catch (error: Exception) {
@@ -154,6 +154,7 @@ fun OfficialPacksSection(
             progress = DownloadProgress(pack.packId, pack.downloadedBytes.toLong(), pack.bytes.toLong())
             message = try {
                 val installed = library.downloadOfficialPack(
+                    context,
                     pack.packId,
                     onProgress = { done, total ->
                         progress = DownloadProgress(pack.packId, done, total)
