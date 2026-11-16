@@ -637,9 +637,13 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 
 ## Phase 9 — M3 Expressive action hub and desktop chat
 
-- [ ] **UX-001** Bottom-right expressive FAB/speed dial. **Depends:** DUI-001.  
-  - [ ] Expand/collapse, labels; stable nearest-first actions Chat, Bookmark, Offline, Settings.
-  - [ ] Keyboard, touch, reduced-motion, screen-reader labels, outside click/Escape and focus restoration.
+- [x] **UX-001** Bottom-right expressive FAB/speed dial. **Depends:** DUI-001.  
+  - **Qualification (2026-11-16):**
+    - **Behaviour:** the desktop hub is a fixed bottom-right button (`aria-expanded`, `aria-controls`, "Open/Close reader actions") whose speed dial lists Chat, Bookmark, Offline, Settings nearest-first (order pinned by `check-reader-actions.mjs`), 48 px targets, a visible focus ring and `prefers-reduced-motion` support. Opening focuses the nearest action; Escape closes and returns focus to the button; a pointer press outside closes it; and (fixed here) it also closes when focus leaves it, because clicks inside the sandboxed article frame never reach the app document.
+    - **Seen in the app (Xvfb):** the open dial overlays the article without changing its layout; clicking into the article closes it; Enter opens it with focus on Chat; Escape closes it with focus back on the button.
+    - **CI:** **`b8a9ff6a`** passed [Rust workspace 43961983815](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43961983815), [Platform shells 43961983936](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43961983936) and [Desktop launch smoke 43961984125](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43961984125).
+  - [x] Expand/collapse, labels; stable nearest-first actions Chat, Bookmark, Offline, Settings.
+  - [x] Keyboard, touch, reduced-motion, screen-reader labels, outside click/Escape and focus restoration.
   - **Accept:** overlay never changes Wikipedia layout or blocks standard navigation.
 - [ ] **UX-002** Movable desktop chat surface. **Depends:** UX-001, AI-005.  
   - **Progress (2026-11-01, partial — movable/resizable/minimizable desktop history panel):** The read-only exact-revision Chat panel now supports pointer dragging, accessible arrow-key repositioning, native CSS resizing, explicit minimize/restore and viewport clamping on drag, resize and viewport changes. The panel remains mounted (but hidden) while Settings is open, preserving window position, size and minimized state, and closing it returns focus to the reader action hub. Pure geometry regressions cover all edges, viewport shrink, oversize panels and invalid coordinates. Implementation SHAs **`f30fc9a6b46d66fa9d86692ddadc8475badd50bc`** and **`8fbfd51a5d79181d4f1868348aecf543b8ae4440`** passed [Rust workspace 41323314299](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41323314299), [Platform shells 41323314273](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41323314273) and [Desktop launch smoke 41323314249](https://github.com/ekkus93/foundation-wikipedia/actions/runs/41323314249). [Scoped report](UX_002_DESKTOP_FLOATING_CHAT_WINDOW_2026-11-01.md). No interactive drag/resize acceptance, generated answers, validated citation links or physical-device evidence is claimed. **UX-002 and AI-005 remain unchecked.**
