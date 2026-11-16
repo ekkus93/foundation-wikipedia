@@ -7,6 +7,7 @@ mod curated_catalog;
 mod fetch_public_dump;
 mod media_maintenance;
 mod preview_topic;
+mod signing;
 mod visual_diagnostic;
 
 use std::env;
@@ -65,6 +66,9 @@ fn usage() {
     );
     println!("       wiki-pack verify-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack inspect-stdin [--json] <max-input-bytes>");
+    println!("       wiki-pack signing-key-generate <new-secret-key-file>");
+    println!("       wiki-pack sign-pack <secret-key-file> <official.wpack>");
+    println!("       wiki-pack verify-pack-signature <file.wpack> <file.wpack.sig> [<publisher> <public-key-hex> <valid-from-YYYYMMDD>]");
     println!("       wiki-pack --help");
     println!(
         "verify/inspect check every object; export-custom creates an unsigned custom envelope."
@@ -1247,6 +1251,54 @@ fn main() {
                 PathBuf::from(&fields[6]),
                 json_output,
             ) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("signing-key-generate") => {
+            let fields: Vec<OsString> = args.collect();
+            let [path] = fields.as_slice() else {
+                eprintln!("signing-key-generate requires the path of a new secret key file");
+                std::process::exit(2);
+            };
+            if let Err(error) = signing::generate_key(PathBuf::from(path)) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("sign-pack") => {
+            let fields: Vec<OsString> = args.collect();
+            let [key, pack] = fields.as_slice() else {
+                eprintln!("sign-pack requires a secret key file and an official .wpack");
+                std::process::exit(2);
+            };
+            if let Err(error) = signing::sign_pack(PathBuf::from(key), PathBuf::from(pack)) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        Some("verify-pack-signature") => {
+            let fields: Vec<OsString> = args.collect();
+            let text = |value: &OsString| value.to_str().map(str::to_owned);
+            let (pack, sig, key) = match fields.as_slice() {
+                [pack, sig] => (pack, sig, None),
+                [pack, sig, publisher, public, from] => {
+                    let (Some(publisher), Some(public), Some(from)) =
+                        (text(publisher), text(public), text(from))
+                    else {
+                        eprintln!("publisher, public key and date must be UTF-8");
+                        std::process::exit(2);
+                    };
+                    (pack, sig, Some((publisher, public, from)))
+                }
+                _ => {
+                    eprintln!("verify-pack-signature requires a pack, its signature, and optionally <publisher> <public-key-hex> <valid-from>");
+                    std::process::exit(2);
+                }
+            };
+            if let Err(error) =
+                signing::verify_pack_signature(PathBuf::from(pack), PathBuf::from(sig), key)
+            {
                 eprintln!("{error}");
                 std::process::exit(1);
             }

@@ -52,6 +52,10 @@ signature <128 lowercase hex Ed25519 signature>
   - The 32-byte secret is kept off any CI runner and out of this repository: an offline machine or hardware token, with an encrypted offline backup.
   - Only the public key is committed, as a `TrustedKey` entry with publisher, `valid_from`, `valid_until: None` and `revoked: false`.
 - **Signing:** done by the owner on the offline machine, over the exact `.wpack` that will be published. Before upload, the result is checked with the same verifier against the pinned keyring.
+- **Tooling** (`wiki-pack`, host only):
+  - `signing-key-generate <new-key-file>`: draws 32 bytes from OS randomness into a new file with owner-only (0600) permissions. It never overwrites an existing file and prints only the public key and key ID.
+  - `sign-pack <key-file> <official.wpack>`: refuses a key file readable by others and verifies every pack byte first. It then writes `<pack>.sig`, refusing to overwrite an existing one.
+  - `verify-pack-signature <pack> <sig> [<publisher> <public-key-hex> <valid-from>]`: checks against one given key, or against the app's pinned keyring.
 - **Rotation (planned):**
   1. Add the new key with a `valid_from` date.
   2. Set the old key's `valid_until` to the last snapshot date it signs.
@@ -80,6 +84,10 @@ signature <128 lowercase hex Ed25519 signature>
   - unknown, revoked and wrong-publisher keys, a rotated-out key, an undated snapshot, a custom pack, and the empty production keyring;
   - exact-form parsing.
 - **Committed test vectors** in `fixtures/synthetic/signature/`: transcript, signature and public key from the throwaway key `[7; 32]`. OpenSSL 3.5 verified them independently on 2026-11-16 (`openssl pkeyutl -verify -rawin` over `SIGNED_PREFIX || SHA-256(transcript)`) and rejected a one-byte change to the message.
+- `wiki-pack` CLI test `signing_cli`, using a freshly generated throwaway key:
+  - the secret is never printed, the key file is 0600, and an existing key is not overwritten;
+  - a signed pack verifies with the given key but not with the empty pinned keyring or another publisher;
+  - a tampered pack is neither signed nor verified, a custom pack is not signed, and a key file readable by others is refused.
 - `wiki-store` installer tests:
   - a signed official pack installs as "Verified publisher" and reads back;
   - its label becomes "Verification failed" when the key is revoked or unpinned, and under the empty production keyring;
