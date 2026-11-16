@@ -6,8 +6,9 @@
 //!
 //! 1. stages the envelope through `wiki_pack_format::stage` into the private
 //!    `<root>/staging/` directory (two-pass digest verification, 0700/0600);
-//! 2. refuses an `Origin::Official` claim outright: until TRUST-001 verifies
-//!    publisher signatures, an official label cannot be earned by hashes;
+//! 2. accepts an `Origin::Official` claim only through `install_official_pack*`
+//!    with a publisher signature that a pinned key verifies over the staged
+//!    manifest (TRUST-001); an official label is never earned by hashes alone;
 //! 3. checks the layout, treats every other object as a manifest-pinned shard,
 //!    rebuilds an omitted search index from those verified shards, and opens
 //!    the staged tree through `VerifiedOfflineCatalogReader`;
@@ -36,6 +37,7 @@ use wiki_pack_format::container::ContainerError;
 use wiki_pack_format::manifest::{
     Counts, IndexEntry, IndexRole, License, Manifest, Origin, PackMetadata, SourceSnapshot,
 };
+use wiki_pack_format::signature::{self, PackSignature, SignatureError, TrustedKey};
 use wiki_pack_format::stage;
 use wiki_pack_format::trust::{classify, IntegrityState, TrustStatus};
 
@@ -81,8 +83,12 @@ pub enum PackInstallError {
     Io(io::Error),
     UnsafeRoot,
     Container(ContainerError),
-    /// An unsigned official-origin claim; refused until TRUST-001.
+    /// An official-origin claim without a publisher signature.
     UnsignedOfficialPack,
+    /// The publisher signature did not verify against a pinned key.
+    PublisherVerificationFailed(SignatureError),
+    /// A publisher signature was supplied for a pack that is not official.
+    NotOfficialPack,
     /// `pack_id` is not a valid snapshot directory name.
     InvalidSnapshotId,
     /// An object the snapshot layout reserves or cannot use.
@@ -120,8 +126,43 @@ pub fn install_custom_pack<R: Read + Seek>(
     max_input_bytes: u64,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
 ) -> Result<InstalledPack, PackInstallError> {
-    install_with(root, confirm, |parent, name| {
+    install_with(root, None, confirm, |parent, name| {
         stage::stage_container_with_budget(input, parent, name, max_input_bytes)
+    })
+}
+
+/// The publisher signature an official pack is installed with, and the
+/// pinned keys it must verify against (`signature::OFFICIAL_KEYS` in the app).
+#[derive(Clone, Copy, Debug)]
+pub struct PublisherProof<'a> {
+    pub signature: &'a PackSignature,
+    pub keyring: &'a [TrustedKey],
+}
+
+/// Install a seekable official `.wpack`: as `install_custom_pack`, but the
+/// staged manifest must claim official origin and `proof` must verify it.
+pub fn install_official_pack<R: Read + Seek>(
+    root: &Path,
+    input: &mut R,
+    max_input_bytes: u64,
+    proof: PublisherProof<'_>,
+    confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
+) -> Result<InstalledPack, PackInstallError> {
+    install_with(root, Some(proof), confirm, |parent, name| {
+        stage::stage_container_with_budget(input, parent, name, max_input_bytes)
+    })
+}
+
+/// `install_official_pack` for an unseekable stream (a download).
+pub fn install_official_pack_stream<R: Read>(
+    root: &Path,
+    input: &mut R,
+    max_spool_bytes: u64,
+    proof: PublisherProof<'_>,
+    confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
+) -> Result<InstalledPack, PackInstallError> {
+    install_with(root, Some(proof), confirm, |parent, name| {
+        stage::stage_container_stream_with_budget(input, parent, name, max_spool_bytes)
     })
 }
 
@@ -133,7 +174,7 @@ pub fn install_custom_pack_stream<R: Read>(
     max_spool_bytes: u64,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
 ) -> Result<InstalledPack, PackInstallError> {
-    install_with(root, confirm, |parent, name| {
+    install_with(root, None, confirm, |parent, name| {
         stage::stage_container_stream_with_budget(input, parent, name, max_spool_bytes)
     })
 }
@@ -223,15 +264,17 @@ pub fn reclaim_abandoned_staging(root: &Path) -> Result<(usize, usize), PackInst
 
 fn install_with(
     root: &Path,
+    proof: Option<PublisherProof<'_>>,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
     stage_into: impl FnOnce(&Path, &str) -> Result<(Manifest, PathBuf), ContainerError>,
 ) -> Result<InstalledPack, PackInstallError> {
-    install_with_sync(root, confirm, stage_into, sync_dir)
+    install_with_sync(root, proof, confirm, stage_into, sync_dir)
 }
 
 // Injectable directory-sync seam for fault tests of publication.
 fn install_with_sync(
     root: &Path,
+    proof: Option<PublisherProof<'_>>,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
     stage_into: impl FnOnce(&Path, &str) -> Result<(Manifest, PathBuf), ContainerError>,
     mut sync: impl FnMut(&Path) -> io::Result<()>,
@@ -247,7 +290,7 @@ fn install_with_sync(
     );
     let (manifest, staged) = stage_into(&staging, &name).map_err(PackInstallError::Container)?;
 
-    let prepared = prepare_staged(&manifest, &staged, &snapshots, confirm, &mut sync);
+    let prepared = prepare_staged(&manifest, proof, &staged, &snapshots, confirm, &mut sync);
     let (id, trust, shards) = match prepared {
         Ok(prepared) => prepared,
         Err(cause) => return Err(rollback(&staging, &staged, cause, &mut sync)),
@@ -291,19 +334,27 @@ fn rollback(
 
 fn prepare_staged(
     manifest: &Manifest,
+    proof: Option<PublisherProof<'_>>,
     staged: &Path,
     snapshots: &Path,
     confirm: impl FnOnce(&PackInstallReview<'_>) -> bool,
     sync: &mut impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(String, TrustStatus, ShardInventory), PackInstallError> {
-    if !matches!(manifest.origin, Origin::Custom { .. }) {
-        return Err(PackInstallError::UnsignedOfficialPack);
-    }
     manifest
         .validate()
         .map_err(|error| PackInstallError::Container(ContainerError::Manifest(error)))?;
-    // Staging rehashed every object byte, so integrity has passed.
-    let trust = classify(manifest, IntegrityState::Passed);
+    // Staging rehashed every object byte against this manifest, so a valid
+    // signature over it authenticates every installed byte.
+    let (trust, signing_key) = match (&manifest.origin, proof) {
+        (Origin::Custom { .. }, None) => (classify(manifest, IntegrityState::Passed), None),
+        (Origin::Custom { .. }, Some(_)) => return Err(PackInstallError::NotOfficialPack),
+        (Origin::Official { .. }, None) => return Err(PackInstallError::UnsignedOfficialPack),
+        (Origin::Official { .. }, Some(proof)) => {
+            signature::verify(manifest, proof.signature, proof.keyring)
+                .map_err(PackInstallError::PublisherVerificationFailed)?;
+            (TrustStatus::VerifiedPublisher, Some(proof.signature.key_id))
+        }
+    };
     let id = manifest.pack_id.clone();
     if !safe_id(&id) {
         return Err(PackInstallError::InvalidSnapshotId);
@@ -393,7 +444,7 @@ fn prepare_staged(
         });
     }
 
-    write_snapshot_manifest(staged, manifest)?;
+    write_snapshot_manifest(staged, manifest, trust, signing_key)?;
     sync(staged)?;
 
     match fs::symlink_metadata(snapshots.join(&id)) {
@@ -486,8 +537,41 @@ pub struct InstalledSnapshotInfo {
 }
 
 /// List installed snapshots in ID order. Never adopts staging residue.
+/// A "Verified publisher" label is kept only while its signing key is still
+/// pinned and unrevoked in `signature::OFFICIAL_KEYS`.
 pub fn list_installed_snapshots(
     root: &Path,
+) -> Result<Vec<InstalledSnapshotInfo>, PackInstallError> {
+    list_installed_snapshots_with_keyring(root, signature::OFFICIAL_KEYS)
+}
+
+/// The publisher label recorded at install, rechecked against `keyring`.
+fn current_trust_label(
+    value: &serde_json::Value,
+    recorded: String,
+    keyring: &[TrustedKey],
+) -> String {
+    if recorded != TrustStatus::VerifiedPublisher.label() {
+        return recorded;
+    }
+    let official = &value["origin"]["official"];
+    let still_trusted = official["key_id"].as_str().is_some_and(|key_id| {
+        keyring.iter().any(|key| {
+            !key.revoked
+                && Some(key.publisher) == official["publisher"].as_str()
+                && signature::hex(&key.key_id()) == key_id
+        })
+    });
+    if still_trusted {
+        recorded
+    } else {
+        TrustStatus::VerificationFailed.label().to_owned()
+    }
+}
+
+pub fn list_installed_snapshots_with_keyring(
+    root: &Path,
+    keyring: &[TrustedKey],
 ) -> Result<Vec<InstalledSnapshotInfo>, PackInstallError> {
     let (snapshots, _) = prepare_root(root)?;
     let mut listed = Vec::new();
@@ -507,7 +591,7 @@ pub fn list_installed_snapshots(
             .and_then(|value| {
                 Some((
                     value["project"].as_str()?.to_owned(),
-                    value["trust"].as_str()?.to_owned(),
+                    current_trust_label(&value, value["trust"].as_str()?.to_owned(), keyring),
                     value["counts"]["articles"].as_u64()?,
                 ))
             });
@@ -623,10 +707,20 @@ pub fn installed_shard_inventory(snapshot: &Path) -> Result<ShardInventory, Pack
 
 /// The installer, not the pack, owns `manifest.json`: it records the verified
 /// envelope identity and object inventory the snapshot was installed from.
-fn write_snapshot_manifest(staged: &Path, manifest: &Manifest) -> io::Result<()> {
-    let definition_id = match &manifest.origin {
-        Origin::Custom { definition_id } => definition_id.as_str(),
-        Origin::Official { .. } => unreachable!("official packs are refused earlier"),
+fn write_snapshot_manifest(
+    staged: &Path,
+    manifest: &Manifest,
+    trust: TrustStatus,
+    signing_key: Option<[u8; 8]>,
+) -> io::Result<()> {
+    let origin = match &manifest.origin {
+        Origin::Custom { definition_id } => {
+            serde_json::json!({ "custom": { "definition_id": definition_id } })
+        }
+        Origin::Official { publisher } => serde_json::json!({ "official": {
+            "publisher": publisher,
+            "key_id": signing_key.map(|id| signature::hex(&id)),
+        } }),
     };
     let objects: Vec<_> = manifest
         .objects
@@ -644,8 +738,8 @@ fn write_snapshot_manifest(staged: &Path, manifest: &Manifest) -> io::Result<()>
         "pack_id": manifest.pack_id,
         "project": manifest.project,
         "snapshot": manifest.snapshot,
-        "origin": { "custom": { "definition_id": definition_id } },
-        "trust": TrustStatus::CustomIntegrityVerified.label(),
+        "origin": origin,
+        "trust": trust.label(),
         "source": {
             "kind": manifest.metadata.source.kind.name(),
             "snapshot_id": manifest.metadata.source.snapshot_id,
@@ -968,6 +1062,149 @@ mod tests {
             Err(PackInstallError::UnsignedOfficialPack)
         ));
         assert!(!root.join("snapshots/official-pack").exists());
+        assert_eq!(staging_entries(&root), 0);
+    }
+
+    /// An official pack (snapshot 20261101) and its bytes, for signing tests.
+    fn official_pack(tree: &Path, pack_id: &str) -> (Manifest, Vec<u8>) {
+        let mut manifest =
+            custom_manifest_from_tree(tree, pack_id, "enwiki", "20261101", "x", metadata_for(tree))
+                .unwrap();
+        manifest.origin = Origin::Official {
+            publisher: "foundation".into(),
+        };
+        let mut bytes = Vec::new();
+        write_container(&mut bytes, &manifest, |object, writer| {
+            writer.write_all(&fs::read(tree.join(&object.path))?)
+        })
+        .unwrap();
+        (manifest, bytes)
+    }
+
+    /// A throwaway publisher key, never pinned in the production keyring.
+    const TEST_SECRET: [u8; 32] = [7; 32];
+
+    fn test_keyring() -> Vec<TrustedKey> {
+        vec![TrustedKey {
+            publisher: "foundation",
+            public_key: signature::public_key(&TEST_SECRET),
+            valid_from: "20260101",
+            valid_until: None,
+            revoked: false,
+        }]
+    }
+
+    #[test]
+    fn a_signed_official_pack_installs_as_verified_publisher_until_its_key_is_revoked() {
+        let dir = test_dir("signed");
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3006, true);
+        let (manifest, bytes) = official_pack(&tree, "signed-pack");
+        let signed = signature::sign(&manifest, &TEST_SECRET).unwrap();
+        let keyring = test_keyring();
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let mut reviewed = None;
+        let installed = install_official_pack(
+            &root,
+            &mut Cursor::new(bytes.as_slice()),
+            1 << 30,
+            PublisherProof {
+                signature: &signed,
+                keyring: &keyring,
+            },
+            |review| {
+                reviewed = Some(review.trust);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(reviewed, Some(TrustStatus::VerifiedPublisher));
+        assert_eq!(installed.trust, TrustStatus::VerifiedPublisher);
+        assert_eq!(open_revision(&installed), 3006);
+        let recorded: serde_json::Value =
+            serde_json::from_slice(&fs::read(installed.path.join(MANIFEST_FILE)).unwrap()).unwrap();
+        assert_eq!(recorded["origin"]["official"]["publisher"], "foundation");
+        assert_eq!(recorded["trust"], "Verified publisher");
+
+        let label = |keyring: &[TrustedKey]| {
+            list_installed_snapshots_with_keyring(&root, keyring).unwrap()[0]
+                .trust_label
+                .clone()
+        };
+        assert_eq!(label(&keyring), "Verified publisher");
+        // Revoking (or no longer pinning) the key withdraws the label.
+        let revoked = vec![TrustedKey {
+            revoked: true,
+            ..keyring[0].clone()
+        }];
+        assert_eq!(label(&revoked), "Verification failed");
+        assert_eq!(label(&[]), "Verification failed");
+        assert_eq!(
+            list_installed_snapshots(&root).unwrap()[0].trust_label,
+            "Verification failed",
+            "the production keyring pins no key yet"
+        );
+    }
+
+    #[test]
+    fn a_tampered_or_wrongly_signed_official_pack_never_installs() {
+        let dir = test_dir("forged");
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3007, true);
+        let (manifest, bytes) = official_pack(&tree, "forged-pack");
+        let signed = signature::sign(&manifest, &TEST_SECRET).unwrap();
+        let keyring = test_keyring();
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let install = |bytes: &[u8], proof: PublisherProof<'_>| {
+            install_official_pack(&root, &mut Cursor::new(bytes), 1 << 30, proof, |_| {
+                panic!("a forged pack must never reach confirmation")
+            })
+        };
+        let proof = PublisherProof {
+            signature: &signed,
+            keyring: &keyring,
+        };
+        // One flipped payload bit: the bytes no longer match the signed manifest.
+        let mut tampered = bytes.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(matches!(
+            install(&tampered, proof),
+            Err(PackInstallError::Container(_))
+        ));
+        // A forged signature, an unpinned key, and a signature of another pack.
+        let mut forged = signed.clone();
+        forged.signature[10] ^= 1;
+        let other = signature::sign(&manifest, &[9; 32]).unwrap();
+        let (other_manifest, _) = official_pack(&tree, "other-pack");
+        let elsewhere = signature::sign(&other_manifest, &TEST_SECRET).unwrap();
+        for (bad, why) in [
+            (&forged, SignatureError::BadSignature),
+            (&other, SignatureError::UnknownKey),
+            (&elsewhere, SignatureError::TranscriptMismatch),
+        ] {
+            let result = install(
+                &bytes,
+                PublisherProof {
+                    signature: bad,
+                    keyring: &keyring,
+                },
+            );
+            assert!(
+                matches!(&result, Err(PackInstallError::PublisherVerificationFailed(e)) if *e == why),
+                "{result:?}"
+            );
+        }
+        assert!(!root.join("snapshots/forged-pack").exists());
+        assert_eq!(staging_entries(&root), 0);
+
+        // A custom pack cannot be installed through the official path.
+        let custom = pack_bytes(&tree, "custom-pack");
+        assert!(matches!(
+            install(&custom, proof),
+            Err(PackInstallError::NotOfficialPack)
+        ));
         assert_eq!(staging_entries(&root), 0);
     }
 
@@ -1325,6 +1562,7 @@ mod tests {
             let mut calls = 0;
             let result = install_with_sync(
                 &root,
+                None,
                 |_| true,
                 |parent, name| {
                     stage::stage_container(&mut Cursor::new(bytes.as_slice()), parent, name)

@@ -29,6 +29,9 @@ ALLOWED = {
     "Apache-2.0 OR ISC OR MIT",  # rustls, rustls-native-certs
     "Unlicense/MIT",  # Legacy spelling of "Unlicense OR MIT" (walkdir, same-file)
     "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",  # wasi
+    # TRUST-001 Ed25519 (ed25519-dalek -> curve25519-dalek): a choice that
+    # includes MIT and Apache-2.0, both allowed individually.
+    "MIT OR Apache-2.0 OR BSD-1-Clause",  # fiat-crypto
     # Owner-approved 2026-11-13: permissive data license for Mozilla's root
     # certificate list (webpki-root-certs). Only a wasm32 dependency of
     # rustls-platform-verifier, never compiled into the desktop/Android apps;

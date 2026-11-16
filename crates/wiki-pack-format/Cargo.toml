@@ -11,4 +11,5 @@ workspace = true
 [dependencies]
 wiki-model = { path = "../wiki-model" }
 sha2 = "0.10"
+ed25519-dalek = "2"
 unicode-normalization = "0.1.25"

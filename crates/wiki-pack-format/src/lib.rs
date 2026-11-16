@@ -1,14 +1,14 @@
 //! Portable versioned .wpack format and verification.
 //!
-//! Provisional manifest, local object-integrity, and pack-trust primitives.
-//! The complete signed publisher format and installation acceptance are not
-//! yet implemented.
+//! Manifest, object-integrity, pack-trust and publisher-signature
+//! (`signature`, ADR 0008) primitives.
 
 pub mod container;
 pub mod export;
 pub mod manifest;
 pub mod media_coverage;
 pub mod objects;
+pub mod signature;
 pub mod stage;
 pub mod trust;
 

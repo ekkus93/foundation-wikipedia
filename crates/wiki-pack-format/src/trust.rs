@@ -1,7 +1,9 @@
-//! Conservative pack trust labels until cryptographic publisher verification exists.
+//! Conservative pack trust labels.
 //!
 //! A manifest declaring Origin::Official is merely a claim. In particular,
-//! a matching object digest never establishes publisher identity.
+//! a matching object digest never establishes publisher identity: only the
+//! installer's `install_official_pack*`, after `signature::verify` against
+//! pinned keys (TRUST-001, ADR 0008), labels a pack "Verified publisher".
 
 use crate::manifest::{Manifest, Origin};
 
@@ -14,7 +16,8 @@ pub enum IntegrityState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustStatus {
-    /// Reserved for a future pinned-key signature verifier; not emitted yet.
+    /// Only after a pinned-key publisher signature verified (ADR 0008);
+    /// `classify` never returns it.
     VerifiedPublisher,
     CustomIntegrityVerified,
     NotYetChecked,

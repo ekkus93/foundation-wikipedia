@@ -1,0 +1,6 @@
+{
+  "source": "synthetic",
+  "description": "Public key (lowercase hex) of the throwaway TRUST-001 test signing key [7; 32]; never pinned in the production keyring; pinned to the same test",
+  "license": "CC0-1.0",
+  "sha256": "52ae2a9b4c641fe431a9ca578223ad018baf6fa3eecd4c8c441b9f68fb7a63cc"
+}

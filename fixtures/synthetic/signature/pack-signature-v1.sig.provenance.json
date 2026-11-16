@@ -1,0 +1,6 @@
+{
+  "source": "synthetic",
+  "description": "TRUST-001 pack signature v1 test vector: Ed25519 signature of that transcript by the throwaway test key [7; 32] (never a publisher key); pinned to the same test",
+  "license": "CC0-1.0",
+  "sha256": "b19119b843c4dbc02cebbff17e6ed8682cadb352c1e8a5310007cdb62e50a666"
+}

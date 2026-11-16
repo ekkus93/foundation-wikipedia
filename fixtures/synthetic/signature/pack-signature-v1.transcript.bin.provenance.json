@@ -1,0 +1,6 @@
+{
+  "source": "synthetic",
+  "description": "Manifest identity transcript (ADR 0007 v2) of the synthetic official test manifest signed in the TRUST-001 test vectors; pinned to wiki-pack-format signature tests, regenerate with WPACK_WRITE_FIXTURE=1 cargo test -p wiki-pack-format committed_signature_test_vectors",
+  "license": "CC0-1.0",
+  "sha256": "0e36ec8882eb773438e4762f35f553186330d026c60c2f8dab92e2646b8b7372"
+}
