@@ -34,7 +34,8 @@ const MAX_RESULTS: u32 = 100;
 pub enum LibraryError {
     /// A path, query, identifier or limit was rejected before any work.
     InvalidInput,
-    /// The pack claims official origin; signatures are not verifiable yet.
+    /// The pack claims official origin but arrived without its publisher
+    /// signature (official packs install only from the signed catalog).
     UnsignedOfficialPack,
     /// The user has not accepted installing this custom pack.
     ConfirmationRequired,
@@ -51,6 +52,14 @@ pub enum LibraryError {
     SnapshotActive,
     /// The app-side pack source failed while being read.
     SourceFailed,
+    /// A download failed (no connection, timeout, refused redirect, bad
+    /// size). A partial pack download is kept so a retry resumes.
+    Network,
+    /// The user cancelled a download.
+    Cancelled,
+    /// The official catalog failed verification or is older than one
+    /// already accepted; the previously verified catalog is kept.
+    CatalogRejected,
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for LibraryError {
@@ -1883,5 +1892,163 @@ mod reader_url_tests {
         assert_eq!(encode_title_path("C#"), "C%23");
         assert_eq!(encode_title_path("What? 100%"), "What%3F_100%25");
         assert_eq!(encode_title_path("Éclair"), "%C3%89clair");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MOBPACK-001: official catalog, verified downloads and installation.
+
+use crate::official_packs::{self, OfficialError, OfficialSource};
+use crate::pack_download::{DownloadError, TlsConnector, CATALOG_SIGNATURE_URL, CATALOG_URL};
+use wiki_pack_format::publisher_catalog::Catalog;
+use wiki_pack_format::signature::OFFICIAL_KEYS;
+
+impl From<OfficialError> for LibraryError {
+    fn from(error: OfficialError) -> Self {
+        match error {
+            OfficialError::Download(DownloadError::Cancelled) => Self::Cancelled,
+            OfficialError::Download(DownloadError::Storage) | OfficialError::Storage => {
+                Self::Storage
+            }
+            OfficialError::Download(_) => Self::Network,
+            OfficialError::Catalog(_) => Self::CatalogRejected,
+            OfficialError::NotInCatalog => Self::InvalidInput,
+            OfficialError::Mismatch => Self::VerificationFailed,
+            OfficialError::Install(error) => error.into(),
+        }
+    }
+}
+
+/// One pack the verified official catalog offers.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OfficialPackInfo {
+    pub pack_id: String,
+    pub project: String,
+    /// `YYYYMMDD` Wikimedia snapshot.
+    pub snapshot: String,
+    pub title: String,
+    /// Exact download size.
+    pub bytes: u64,
+    /// Already downloaded by an interrupted earlier attempt.
+    pub downloaded_bytes: u64,
+    /// Free space needed to finish: the rest of the download plus the
+    /// installed copy (verification unpacks it before the download is
+    /// deleted).
+    pub required_free_bytes: u64,
+    pub installed: bool,
+}
+
+/// The verified official catalog.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OfficialCatalogInfo {
+    pub publisher: String,
+    pub sequence: u64,
+    /// `YYYYMMDD` publication date.
+    pub generated: String,
+    pub packs: Vec<OfficialPackInfo>,
+}
+
+/// Progress and cancellation for catalog refreshes and pack downloads.
+/// Called on the downloading thread.
+#[uniffi::export(with_foreign)]
+pub trait DownloadObserver: Send + Sync {
+    fn progress(&self, done_bytes: u64, total_bytes: u64);
+    fn is_cancelled(&self) -> bool;
+}
+
+fn production_source() -> Result<OfficialSource, LibraryError> {
+    let connector = TlsConnector::platform().map_err(|_| LibraryError::Network)?;
+    Ok(OfficialSource {
+        connector: Arc::new(connector),
+        keyring: OFFICIAL_KEYS.to_vec(),
+        catalog_url: CATALOG_URL.to_owned(),
+        catalog_signature_url: CATALOG_SIGNATURE_URL.to_owned(),
+    })
+}
+
+impl OfflineLibrary {
+    fn catalog_info(&self, catalog: Catalog) -> OfficialCatalogInfo {
+        let packs = catalog
+            .packs
+            .into_iter()
+            .map(|pack| {
+                let downloaded = official_packs::partial_bytes(&self.root, &pack.pack_id);
+                OfficialPackInfo {
+                    installed: self.root.join("snapshots").join(&pack.pack_id).is_dir(),
+                    downloaded_bytes: downloaded.min(pack.bytes),
+                    required_free_bytes: (pack.bytes - downloaded.min(pack.bytes))
+                        .saturating_add(pack.bytes),
+                    pack_id: pack.pack_id,
+                    project: pack.project,
+                    snapshot: pack.snapshot,
+                    title: pack.title,
+                    bytes: pack.bytes,
+                }
+            })
+            .collect();
+        OfficialCatalogInfo {
+            publisher: catalog.publisher,
+            sequence: catalog.sequence,
+            generated: catalog.generated,
+            packs,
+        }
+    }
+}
+
+#[uniffi::export]
+impl OfflineLibrary {
+    /// The last verified official catalog, re-verified against the pinned
+    /// keys, without any network access. `None` before the first refresh.
+    pub fn official_catalog(&self) -> Option<OfficialCatalogInfo> {
+        official_packs::stored_catalog(&self.root, OFFICIAL_KEYS)
+            .map(|catalog| self.catalog_info(catalog))
+    }
+
+    /// Download and verify the official catalog from the release host. The
+    /// caller must already have the user's consent and an allowed network.
+    pub fn refresh_official_catalog(
+        &self,
+        observer: Arc<dyn DownloadObserver>,
+    ) -> Result<OfficialCatalogInfo, LibraryError> {
+        let source = production_source()?;
+        let catalog =
+            official_packs::refresh_catalog(&self.root, &source, &|| observer.is_cancelled())?;
+        Ok(self.catalog_info(catalog))
+    }
+
+    /// Download (resuming any earlier attempt) and install an official pack
+    /// listed in the verified catalog. `reviewer` sees it, labelled Verified
+    /// publisher, only after its signature and every byte verified.
+    pub fn download_official_pack(
+        &self,
+        pack_id: String,
+        observer: Arc<dyn DownloadObserver>,
+        reviewer: Arc<dyn InstallReviewer>,
+    ) -> Result<InstalledPack, LibraryError> {
+        let source = production_source()?;
+        let installed = official_packs::download_and_install(
+            &self.root,
+            &source,
+            &pack_id,
+            &|| observer.is_cancelled(),
+            &|done, total| observer.progress(done, total),
+            |review| {
+                reviewer.approve(PackReview {
+                    snapshot_id: review.manifest.pack_id.clone(),
+                    project: review.manifest.project.clone(),
+                    trust: review.trust.into(),
+                    trust_label: review.trust.label().to_owned(),
+                    articles: review.manifest.metadata.counts.articles,
+                    declared_bytes: review.declared_bytes,
+                })
+            },
+        )?;
+        Ok(InstalledPack {
+            snapshot_id: installed.snapshot_id,
+            project: installed.manifest.project.clone(),
+            trust: installed.trust.into(),
+            trust_label: installed.trust.label().to_owned(),
+            articles: installed.manifest.metadata.counts.articles,
+        })
     }
 }

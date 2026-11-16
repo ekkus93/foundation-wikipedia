@@ -1869,6 +1869,8 @@ name = "wiki-ffi"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "rcgen",
+ "rustls",
  "rustls-platform-verifier",
  "uniffi",
  "wiki-ai",

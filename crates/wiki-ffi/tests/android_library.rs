@@ -1282,3 +1282,15 @@ fn trust_statuses_have_distinct_shared_text() {
         "Verification failed"
     );
 }
+
+#[test]
+fn no_official_catalog_is_offered_before_a_verified_refresh() {
+    let dir = test_dir("official-catalog");
+    let library = library(&dir.0);
+    assert_eq!(library.official_catalog(), None);
+    // A planted, unsigned catalog record is never trusted.
+    let record = dir.0.join("library/official-catalog/verified-catalog");
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(&record, b"not\na\nsignature\nfile\n{}").unwrap();
+    assert_eq!(library.official_catalog(), None);
+}

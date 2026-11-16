@@ -10,7 +10,9 @@ pub mod android;
 #[cfg(target_os = "android")]
 pub mod android_tls;
 pub mod article_chat;
+pub mod official_packs;
 pub mod online_reader;
+pub mod pack_download;
 pub mod reader_state;
 
 uniffi::setup_scaffolding!();
