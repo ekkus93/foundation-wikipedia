@@ -354,6 +354,22 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
 ## Phase 5 — Publisher signatures, custom trust and hostile import protection
 
 - [ ] **TRUST-001** Implement official signing and trust-root verification. **Depends:** PACK-001.  
+  - **Progress (2026-11-16, partial — Ed25519 publisher signatures, installer and signing tools):**
+    - **Scheme:** owner decision 2026-11-16: Ed25519 (`ed25519-dalek`) in our own small format, with publisher keys pinned in the app. Recorded in [ADR 0008](adr/0008-official-pack-signing.md).
+    - **What is signed:** `wiki_pack_format::signature` signs the canonical manifest identity transcript (ADR 0007), which commits to every object's hash, under a domain-separated prefix.
+    - **Signature file:** a four-line v1 file that travels next to the pack; only the exact canonical form parses. `FWPACK01` framing is unchanged.
+    - **Verification:** requires a pinned, unrevoked key of the manifest's publisher whose `YYYYMMDD` validity window covers the snapshot. Each failure is reported distinctly: unknown key, revoked key, wrong publisher, outside validity, transcript mismatch, bad signature.
+    - **Installer:** `wiki_store::pack_install::install_official_pack(_stream)` installs an official pack only after its signature verifies over the staged manifest, once every object byte has been checked, and labels it **Verified publisher**. Listing withdraws that label once the key is revoked or unpinned. Unsigned, forged, tampered and misattributed packs never install and leave staging empty; a custom pack cannot use the official path.
+    - **Tools:** `wiki-pack signing-key-generate` (0600, never overwrites, prints only the public key), `sign-pack` (refuses a key readable by others; verifies every pack byte first) and `verify-pack-signature`.
+    - **Test vectors:** committed in `fixtures/synthetic/signature/` (throwaway key `[7; 32]`) and verified independently with OpenSSL 3.5, which also rejected a one-byte change.
+    - **Licences:** `fiat-crypto`'s `MIT OR Apache-2.0 OR BSD-1-Clause` is allowed as a choice including already-approved licences.
+    - **Code and CI:** SHAs **`0fbba57a`** (all five workflows passed, incl. [Android Rust ABI 43868403506](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43868403506) and the record codec probe) and **`fe3debdc`** (CLI). On `fe3debdc` all workflows passed except the Android FFI bridge, which failed only on the intermittent long-press selection test (MOB-003; no Android change). Test-only follow-up **`d45ded1e`** varies the long-press gesture; all four workflows passed there, incl. [Android FFI bridge 43870382785](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43870382785).
+    - **Not yet:**
+      - **No production key:** the owner has not generated and pinned a publisher key; `OFFICIAL_KEYS` is empty, so nothing can show Verified publisher.
+      - **Procedure:** the key-management procedure in ADR 0008 is proposed, not accepted.
+      - **No release path:** there is no way yet to export an official-origin pack.
+      - **Not wired in:** the Android/desktop UIs and catalog (TRUST-002, MOBPACK-001, UPD-001).
+    - **TRUST-001 remains unchecked.**
   - [ ] Canonical signature scope, pinned publisher key, key rotation/revocation procedure and test vectors.
   - [ ] Verify origin + integrity for “Verified publisher”, not just a matching checksum.
   - **Accept:** tampered/forged official pack cannot install or display as verified.
