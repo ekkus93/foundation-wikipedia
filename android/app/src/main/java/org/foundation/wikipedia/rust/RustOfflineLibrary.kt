@@ -5,6 +5,8 @@ import java.io.File
 import java.io.InputStream
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import uniffi.wiki_ffi.ArticlePage
@@ -19,6 +21,8 @@ import uniffi.wiki_ffi.OfflineLibrary
 import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
 import uniffi.wiki_ffi.CitedReaderPage
+import uniffi.wiki_ffi.DownloadObserver
+import uniffi.wiki_ffi.OfficialCatalogInfo
 import uniffi.wiki_ffi.ReaderPage
 import uniffi.wiki_ffi.SavedContent
 import uniffi.wiki_ffi.SearchHit
@@ -87,6 +91,50 @@ class RustOfflineLibrary private constructor(
     }
 
     suspend fun listPacks(): List<InstalledSnapshot> = call { it.listPacks() }
+
+    /** The last verified official catalog (no network); null before a refresh. */
+    suspend fun officialCatalog(): OfficialCatalogInfo? = call { it.officialCatalog() }
+
+    /**
+     * Fetch and verify the official catalog. Only call after the user accepted
+     * the download disclosure and the network policy allows it. Cancelling the
+     * coroutine stops the transfer.
+     */
+    suspend fun refreshOfficialCatalog(): OfficialCatalogInfo {
+        val context = currentCoroutineContext()
+        val observer = observer(context) { _, _ -> }
+        return call { it.refreshOfficialCatalog(observer) }
+    }
+
+    /**
+     * Download (resuming an earlier attempt) and install an official pack from
+     * the verified catalog. [approve] sees it only after its publisher
+     * signature and every byte verified. Cancelling the coroutine stops the
+     * download and keeps what arrived for a later resume.
+     */
+    suspend fun downloadOfficialPack(
+        packId: String,
+        onProgress: (done: Long, total: Long) -> Unit,
+        approve: suspend (PackReview) -> Boolean,
+    ): InstalledPack {
+        val context = currentCoroutineContext()
+        val observer = observer(context, onProgress)
+        val decide = approve
+        val reviewer = object : InstallReviewer {
+            override fun approve(review: PackReview): Boolean = runBlocking { decide(review) }
+        }
+        return call { it.downloadOfficialPack(packId, observer, reviewer) }
+    }
+
+    private fun observer(
+        context: kotlin.coroutines.CoroutineContext,
+        onProgress: (Long, Long) -> Unit,
+    ) = object : DownloadObserver {
+        override fun progress(doneBytes: ULong, totalBytes: ULong) =
+            onProgress(doneBytes.toLong(), totalBytes.toLong())
+
+        override fun isCancelled(): Boolean = !context.isActive
+    }
 
     /** Remove an inactive pack; the active pack is refused. */
     suspend fun removePack(snapshotId: String) = call { it.removePack(snapshotId) }

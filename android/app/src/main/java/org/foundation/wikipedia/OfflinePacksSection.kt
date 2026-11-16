@@ -65,6 +65,11 @@ fun packErrorMessage(error: Throwable): String = when (error) {
         "The selected file could not be read."
     is LibraryException.Storage -> "Storage error. Check free space and try again."
     is LibraryException.InvalidInput -> "That request was not valid."
+    is LibraryException.Network ->
+        "The download failed. Check your connection and try again; it will resume."
+    is LibraryException.Cancelled -> "Download paused. Choose Resume to continue."
+    is LibraryException.CatalogRejected ->
+        "The official pack list failed its signature check, so it was not used."
     else -> "Something went wrong with the offline pack."
 }
 
@@ -215,6 +220,9 @@ fun OfflinePacksSection() {
 
     pendingReview?.let { review ->
         PackReviewDialog(review) { approved -> decision?.complete(approved) }
+    }
+    library?.let { lib ->
+        OfficialPacksSection(lib, enabled = !busy, onInstalled = { refresh(lib) })
     }
 }
 
