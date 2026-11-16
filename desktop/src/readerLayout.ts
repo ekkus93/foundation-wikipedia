@@ -37,14 +37,21 @@ export const IMAGE_SOURCES = "https://upload.wikimedia.org https://thumb.wikimed
 /** Message a clicked link sends from the article frame to the reader. */
 export const LINK_MESSAGE_KEY = "foundationReaderLink";
 
-/** The only script in an article frame: forward link activations (click or
- * keyboard) to the parent, which decides what to open. In-page fragments
- * scroll normally. It reads nothing else and has no same-origin access.
- * It is allowed by its fixed hash in both the frame's CSP and the app
- * window's CSP (a srcdoc frame inherits the window's policy). */
-export const LINK_SCRIPT = `document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();parent.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);`;
+/** Messages between the article frame's script and the reader. */
+export const SCROLL_MESSAGE_KEY = "foundationReaderScroll";
+export const SCROLL_TO_KEY = "foundationReaderScrollTo";
+export const READY_MESSAGE_KEY = "foundationReaderReady";
+
+/** The only script in an article frame. It forwards link activations
+ * (click or keyboard) to the parent, which decides what to open; reports
+ * the scroll position (debounced) and that the page loaded; and scrolls to
+ * a position only when the parent window asks. In-page fragments scroll
+ * normally. It reads nothing else and has no same-origin access. It is
+ * allowed by its fixed hash in both the frame's CSP and the app window's
+ * CSP (a srcdoc frame inherits the window's policy). */
+export const LINK_SCRIPT = `(function(){var P=parent;document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();P.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);var w=0;addEventListener("scroll",function(){clearTimeout(w);w=setTimeout(function(){P.postMessage({${SCROLL_MESSAGE_KEY}:Math.round(scrollY)},"*");},150);},{passive:true});addEventListener("message",function(e){var d=e.data;if(e.source===P&&d&&typeof d.${SCROLL_TO_KEY}==="number")scrollTo(0,d.${SCROLL_TO_KEY});});P.postMessage({${READY_MESSAGE_KEY}:true},"*");})();`;
 /** CSP source for exactly {@link LINK_SCRIPT}; a test keeps it in sync. */
-export const LINK_SCRIPT_HASH = "'sha256-3jHvBjkKjjIBo/BT67TkmFV1JKSreKzYq3y/1uBxxdA='";
+export const LINK_SCRIPT_HASH = "'sha256-aXNwRRep/7hE126OkpM78nSbv1kBiv+EJlC2ze4J3zU='";
 
 /** Wikipedia-like presentation for the classes MediaWiki emits. */
 function wikipediaStyle(dark: boolean): string {

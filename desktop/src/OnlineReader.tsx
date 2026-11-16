@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { isolatedReaderDocument, LINK_MESSAGE_KEY, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { isolatedReaderDocument, LINK_MESSAGE_KEY, READY_MESSAGE_KEY, SCROLL_MESSAGE_KEY, SCROLL_TO_KEY, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
@@ -81,6 +81,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   // DUI-001: each article frame forwards clicked links to this component.
   const frames = useRef(new Map<number, HTMLIFrameElement>());
+  // DUI-003: last scroll position of each article, restored whenever its
+  // frame is recreated (older history, theme or offline changes).
+  const scrollPositions = useRef(new Map<number, number>());
   const [externalLink, setExternalLink] = useState<string | null>(null);
   const imagesAllowed = !offline && connected;
 
@@ -158,17 +161,32 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     };
   }, []);
 
-  // Links clicked inside the current article frame. Only messages from that
-  // exact frame are accepted; the href is untrusted and classified here.
+  // Messages from article frames. Each is matched to the exact frame that
+  // sent it; links are accepted only from the visible article. Data is
+  // untrusted and validated here.
   useEffect(() => {
-    if (!article) return;
     const current = article;
     const onMessage = (event: MessageEvent) => {
-      const frame = frames.current.get(current.frameId);
-      if (!frame || event.source !== frame.contentWindow) return;
+      let frameId: number | null = null;
+      for (const [id, frame] of frames.current) {
+        if (frame.contentWindow !== null && event.source === frame.contentWindow) frameId = id;
+      }
+      if (frameId === null) return;
       const data: unknown = event.data;
       if (typeof data !== "object" || data === null) return;
-      const action = classifyReaderLink((data as Record<string, unknown>)[LINK_MESSAGE_KEY], current.project);
+      const record = data as Record<string, unknown>;
+      const scroll = record[SCROLL_MESSAGE_KEY];
+      if (typeof scroll === "number" && Number.isFinite(scroll) && scroll >= 0 && scroll <= 10_000_000) {
+        scrollPositions.current.set(frameId, scroll);
+        return;
+      }
+      if (record[READY_MESSAGE_KEY] === true) {
+        const saved = scrollPositions.current.get(frameId);
+        if (saved) frames.current.get(frameId)?.contentWindow?.postMessage({ [SCROLL_TO_KEY]: saved }, "*");
+        return;
+      }
+      if (!current || frameId !== current.frameId) return;
+      const action = classifyReaderLink(record[LINK_MESSAGE_KEY], current.project);
       if (!action) return;
       if (action.kind === "article") {
         if (current.source === "pack") {
