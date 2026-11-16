@@ -96,6 +96,10 @@ export type ReaderLinkAction =
  * confirms. Anything else (scripts, data, relative junk) does nothing. */
 export function classifyReaderLink(href: unknown, project: string): ReaderLinkAction | null {
   if (typeof href !== "string" || !EDITIONS.has(project) || href.length > 2048) return null;
+  // Installed-pack articles link to the reserved in-app origin (see the
+  // Rust pack sanitizer); they always mean an article in the same pack.
+  const packTitle = packArticleTitle(href);
+  if (packTitle) return { kind: "article", title: packTitle };
   const title = normalizeWikiHref(href, project);
   if (title) return { kind: "article", title };
   if (!wellFormedTitleUnicode(href) || unsafeNavigationUnicode(href) || href.trim() !== href) return null;
@@ -111,4 +115,20 @@ export function classifyReaderLink(href: unknown, project: string): ReaderLinkAc
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || !url.hostname) return null;
   return { kind: "external", url: url.href };
+}
+
+const PACK_ARTICLE_PREFIX = "https://foundation.invalid/wiki/";
+
+/** The title of an in-pack article link, or null. */
+function packArticleTitle(href: string): string | null {
+  if (!href.startsWith(PACK_ARTICLE_PREFIX)) return null;
+  const raw = href.slice(PACK_ARTICLE_PREFIX.length).split("#", 1)[0];
+  if (!raw || raw.includes("?") || raw.length > 1536) return null;
+  let title: string;
+  try {
+    title = decodeURIComponent(raw).replaceAll("_", " ");
+  } catch {
+    return null;
+  }
+  return validReaderTitleInput(title) ? title : null;
 }

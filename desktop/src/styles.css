@@ -105,3 +105,11 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .external-link-confirm p { margin: 0 0 8px; }
 .external-link-confirm .external-link-url { font-family: ui-monospace, monospace; font-size: .85em; overflow-wrap: anywhere; color: var(--reader-muted); }
 .external-link-confirm button { margin-right: 8px; }
+/* DUI-001: offline packs in Settings. */
+.offline-packs .pack-trust { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; padding: 6px 10px; border-left: 4px solid var(--reader-link); background: var(--reader-surface); }
+.offline-packs .pack-trust span { color: var(--reader-muted); font-size: .9em; }
+.offline-packs .pack-review { margin: 12px 0; padding: 12px 16px; border: 1px solid var(--reader-border); border-radius: 8px; background: var(--reader-surface); }
+.offline-packs .pack-review dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; }
+.offline-packs .installed-packs { list-style: none; padding: 0; }
+.offline-packs .installed-packs li { padding: 10px 0; border-bottom: 1px solid var(--reader-border); }
+.offline-packs button { margin-right: 8px; }

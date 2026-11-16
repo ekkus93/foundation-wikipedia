@@ -19,6 +19,10 @@ wiki-source = { path = "../../crates/wiki-source" }
 wiki-store = { path = "../../crates/wiki-store" }
 wiki-model = { path = "../../crates/wiki-model" }
 wiki-ai = { path = "../../crates/wiki-ai" }
+# DUI-001: the shared offline library (verified install, offline reading).
+wiki-ffi = { path = "../../crates/wiki-ffi" }
+# Native file picker for importing packs (called from Rust only).
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # DUI-001: hand a user-confirmed web link to the system browser.

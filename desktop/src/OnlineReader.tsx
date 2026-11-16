@@ -30,6 +30,8 @@ interface ArticlePreview {
   title: string;
   html: string;
   links: WikiArticleLink[];
+  /** Where it was read from: live Wikipedia, or the active installed pack. */
+  source: "online" | "pack";
 }
 
 // Isolated preview HTML is built using whitelisted, app-controlled layout choices.
@@ -52,6 +54,8 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   const nextFrameId = useRef(1);
   const lastBookmarkRequestId = useRef(0);
   const [hits, setHits] = useState<ReaderSearchHit[]>([]);
+  // Whether the current search results came from the installed pack.
+  const [hitsFromPack, setHitsFromPack] = useState(false);
   const [navigation, setNavigation] = useState<ReaderNavigation<ArticlePreview>>(() => emptyReaderNavigation());
   const article = navigation.current;
   const mountedFrames = mountedReaderFrames(navigation);
@@ -118,7 +122,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       const [pageId, revisionId, title, html] = parseReaderArticle(result, bookmarkRequest.pageId);
       if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       const next = { project: bookmarkRequest.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
-        links: extractWikiArticleLinks(html, bookmarkRequest.project) };
+        links: extractWikiArticleLinks(html, bookmarkRequest.project), source: "online" as const };
       setNavigation((previous) => openBookmarkedReaderArticle(previous, next));
       setProject(bookmarkRequest.project);
       setHits([]);
@@ -167,6 +171,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       const action = classifyReaderLink((data as Record<string, unknown>)[LINK_MESSAGE_KEY], current.project);
       if (!action) return;
       if (action.kind === "article") {
+        if (current.source === "pack") {
+          void openPackArticle("open_offline_title", { project: current.project, title: action.title });
+          return;
+        }
         if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
           setNotice("Linked articles cannot be opened while offline. The current article is unchanged.");
           return;
@@ -191,10 +199,14 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || offlineMode.getSnapshot() || !connected || !navigator.onLine) return;
+    if (busy) return;
     const requestedQuery = normalizedReaderSearchQuery(query);
     if (!requestedQuery) {
       setNotice("Invalid search: use a nonempty query of at most 512 UTF-8 bytes without control or invisible formatting characters.");
+      return;
+    }
+    if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
+      await searchPack(requestedQuery);
       return;
     }
     const epoch = requestEpoch.current.begin();
@@ -205,12 +217,61 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       const result = parseReaderSearchHits(await invoke<unknown>("search_wikipedia", { query: requestedQuery, project, offline: offline || !connected || !navigator.onLine }));
       if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
       setHits(result);
+      setHitsFromPack(false);
       setNavigation(emptyReaderNavigation());
       if (!result.length) setNotice("No Wikipedia articles matched that search.");
     } catch (error) {
       if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) {
         setNotice(`Search unavailable: ${String(error)}`);
       }
+    } finally {
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
+    }
+  }
+
+  /** Search the active installed pack (no network). */
+  async function searchPack(requestedQuery: string) {
+    const epoch = requestEpoch.current.begin();
+    setBusy(true);
+    setNotice(null);
+    try {
+      const raw = await invoke<unknown>("search_offline_packs", { query: requestedQuery });
+      if (!requestEpoch.current.matches(epoch)) return;
+      if (!Array.isArray(raw)) throw new Error("invalid offline search result");
+      const sameEdition = raw
+        .filter((hit): hit is [string, number, string] => Array.isArray(hit) && hit.length === 3 && hit[0] === project)
+        .map(([, pageId, title]) => [pageId, title]);
+      const result = parseReaderSearchHits(sameEdition);
+      setHits(result);
+      setHitsFromPack(true);
+      setNavigation(emptyReaderNavigation());
+      if (!result.length) setNotice("No articles in the installed pack matched that search.");
+    } catch (error) {
+      if (requestEpoch.current.matches(epoch)) setNotice(`Offline search unavailable: ${String(error)}`);
+    } finally {
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
+    }
+  }
+
+  /** Open an article from the active installed pack (no network). */
+  async function openPackArticle(command: "open_offline_page" | "open_offline_title", args: { project: string; pageId?: number; title?: string }) {
+    if (busy) return;
+    const epoch = requestEpoch.current.begin();
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await invoke<unknown>(command, args);
+      if (!requestEpoch.current.matches(epoch)) return;
+      if (result === null) {
+        setNotice(args.title ? `“${args.title}” is not in the installed pack.` : "That article is not in the installed pack.");
+        return;
+      }
+      const [pageId, revisionId, title, html] = parseReaderArticle(result, args.pageId);
+      setNavigation((state) => openReaderArticle(state, {
+        project: args.project, frameId: nextFrameId.current++, pageId, revisionId, title, html, links: [], source: "pack",
+      }));
+    } catch (error) {
+      if (requestEpoch.current.matches(epoch)) setNotice(`Offline article unavailable: ${String(error)}`);
     } finally {
       if (requestEpoch.current.matches(epoch)) setBusy(false);
     }
@@ -228,7 +289,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
         { ...args, project: requestedProject, offline: offline || !connected || !navigator.onLine },
       ), args.pageId);
       if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
-      setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject) }));
+      setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject), source: "online" }));
       if (args.title && navigationTitleKey(args.title) !== navigationTitleKey(canonicalTitle)) {
         setNotice(`Redirected from “${args.title}”.`);
       }
@@ -253,6 +314,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       setNotice("Invalid Wikipedia article title. Enter a mainspace title without control characters.");
       return;
     }
+    if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
+      return openPackArticle("open_offline_title", { project: requestedProject, title });
+    }
     return openArticle("open_wikipedia_title", { title }, requestedProject);
   }
 
@@ -261,6 +325,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       setNotice("Invalid Wikipedia page identity in search results.");
       return;
     }
+    if (hitsFromPack) return openPackArticle("open_offline_page", { project, pageId });
     return openArticle("open_wikipedia_page", { pageId });
   }
 
@@ -290,8 +355,8 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             placeholder="Article or topic"
             disabled={busy}
           />
-          <button type="submit" disabled={busy || offline || !connected || !navigator.onLine || !normalizedReaderSearchQuery(query)}>Search</button>
-          <button type="button" disabled={busy || offline || !connected || !navigator.onLine || !normalizedReaderSearchQuery(query)}
+          <button type="submit" disabled={busy || !normalizedReaderSearchQuery(query)}>Search</button>
+          <button type="button" disabled={busy || !normalizedReaderSearchQuery(query)}
             onClick={() => void openTitle(normalizedReaderSearchQuery(query) ?? "")}>Open exact title</button>
         </div>
       </form>
@@ -302,9 +367,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
         offlineMode.setOffline(event.target.checked);
       }} /> Work offline across all tabs (no new network requests)</label>
       <p className="preview-warning">
-        {offline || !connected ? "Network disabled: only previously loaded in-memory text previews can be read; complete offline articles require an installed pack. " : ""}
-        Online article. Images and equations load from Wikimedia while online and are not saved;
-        this page is not offline-ready. Article links open here; other links ask before opening your browser.
+        {offline || !connected
+          ? "Offline: search and articles come from the active installed pack (Settings › Wikipedia & Offline Data). Pack images are not installed yet, so articles show text only. Links to other articles open from the same pack."
+          : "Online: articles come from live Wikipedia. Images and equations load from Wikimedia and are not saved, so these pages are not available offline. Article links open here; other links ask before opening your browser."}
       </p>
       {notice && <p role="status">{notice}</p>}
       {externalLink && (
@@ -328,7 +393,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             setNotice(null);
           }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
-          <p>{offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
+          <p>{article.source === "pack" ? "Installed pack revision" : offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
           {(() => {
             const url = revisionSourceUrl(article.project, article.pageId, article.revisionId);
             return url && (
@@ -361,7 +426,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             referrerPolicy="no-referrer"
             className="article-preview-frame"
             srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme,
-              { images: imagesAllowed, links: true })}
+              { images: imagesAllowed && snapshot.source === "online", links: true })}
           />
         ))}
       </div>
@@ -371,7 +436,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
           <ul>
             {hits.map(([pageId, title]) => (
               <li key={pageId}>
-                <button type="button" disabled={busy || offline || !connected || !navigator.onLine} onClick={() => void openPage(pageId)}>
+                <button type="button" disabled={busy || (!hitsFromPack && (offline || !connected || !navigator.onLine))} onClick={() => void openPage(pageId)}>
                   {title}
                 </button>
               </li>

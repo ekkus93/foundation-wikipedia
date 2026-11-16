@@ -4,6 +4,7 @@
 mod hosted_ai_keys;
 mod local_ai;
 mod local_ai_profiles;
+mod offline_packs;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1615,6 +1616,8 @@ mod bookmark_tests {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(offline_packs::OfflineLibraryState::default())
         .manage(DesktopOnlineCache::default())
         .manage(DesktopPersonalDataGate::default())
         .manage(local_ai::LocalAiProbeRegistry::default())
@@ -1622,6 +1625,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             open_external_link,
+            offline_packs::pick_offline_pack,
+            offline_packs::review_offline_pack,
+            offline_packs::install_offline_pack,
+            offline_packs::list_offline_packs,
+            offline_packs::activate_offline_pack,
+            offline_packs::remove_offline_pack,
+            offline_packs::search_offline_packs,
+            offline_packs::open_offline_page,
+            offline_packs::open_offline_title,
             local_ai::discover_local_ai_models,
             local_ai::begin_local_ai_model_discovery,
             local_ai::cancel_local_ai_model_discovery,

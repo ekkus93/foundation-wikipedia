@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AiAssistantSettings from "./AiAssistantSettings";
+import OfflinePacksSettings from "./OfflinePacksSettings";
 import ReaderChatHistory from "./ReaderChatHistory";
 import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
@@ -522,7 +523,7 @@ export default function App() {
             </section>
           ))}
           <h2 id="roadmap">Under development</h2>
-          <p>Offline media, installed packs, grounded AI, bookmarks, and complete article navigation are still in development.</p>
+          <p>Offline images in packs, official pack downloads, article chat and some settings are still in development on the desktop.</p>
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">
@@ -612,6 +613,7 @@ export default function App() {
             </div>
           )}
         </section> : settingsSection === "AI Assistant" ? <AiAssistantSettings offlineMode={offlineMode} />
+        : settingsSection === "Wikipedia & Offline Data" ? <OfflinePacksSettings />
         : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}
       {chatOpen && (() => {

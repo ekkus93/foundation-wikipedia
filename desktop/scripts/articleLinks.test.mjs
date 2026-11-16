@@ -187,3 +187,18 @@ test("clicked links open articles in the app and offer everything else to the br
   }
   assert.equal(classifyReaderLink("/wiki/Moon", "xxwiki"), null);
 });
+
+test("installed-pack article links open within the pack", async () => {
+  const { classifyReaderLink } = await import("../src/articleLinks.ts");
+  assert.deepEqual(classifyReaderLink("https://foundation.invalid/wiki/Isaac_Newton", "enwiki"),
+    { kind: "article", title: "Isaac Newton" });
+  assert.deepEqual(classifyReaderLink("https://foundation.invalid/wiki/%C3%89clair#History", "frwiki"),
+    { kind: "article", title: "Éclair" });
+  for (const bad of [
+    "https://foundation.invalid/wiki/", "https://foundation.invalid/wiki/A?b=c",
+    "https://foundation.invalid/wiki/%ZZ", "https://foundation.invalid/wiki/a%0Ab",
+  ]) {
+    const action = classifyReaderLink(bad, "enwiki");
+    assert.notEqual(action?.kind, "article", bad);
+  }
+});
