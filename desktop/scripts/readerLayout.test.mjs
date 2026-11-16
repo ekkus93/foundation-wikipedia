@@ -60,16 +60,24 @@ test("sandboxed preview honors explicit and system themes without CSS injection"
   assert.match(safe, /default-src 'none'/);
 });
 
-test("online article documents load only Wikimedia images and the nonce'd link script", async () => {
-  const { readerDocumentNonce, LINK_MESSAGE_KEY } = await import("../src/readerLayout.ts");
+test("online article documents load only Wikimedia images and the hash-pinned link script", async () => {
+  const { LINK_MESSAGE_KEY, LINK_SCRIPT, LINK_SCRIPT_HASH, IMAGE_SOURCES } = await import("../src/readerLayout.ts");
+  const { createHash } = await import("node:crypto");
+  const { readFileSync } = await import("node:fs");
+  const digest = createHash("sha256").update(LINK_SCRIPT).digest("base64");
+  assert.equal(LINK_SCRIPT_HASH, `'sha256-${digest}'`);
+  // The srcdoc frame inherits the app window's CSP, which must allow the
+  // same script hash and image hosts (and nothing broader).
+  const csp = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url))).app.security.csp;
+  assert.match(csp, new RegExp(`script-src 'self' ${LINK_SCRIPT_HASH.replace(/[+/=]/g, "\\$&")};`));
+  assert.ok(csp.includes(`img-src 'self' data: ${IMAGE_SOURCES};`), csp);
+  assert.doesNotMatch(csp, /unsafe-inline'[^;]*script|script-src[^;]*unsafe/);
+
   const html = "<p>Physics</p>";
-  const nonce = readerDocumentNonce();
-  assert.match(nonce, /^[A-Za-z0-9]{16,64}$/);
-  assert.notEqual(nonce, readerDocumentNonce());
-  const online = isolatedReaderDocument(html, "standard", "standard", "light", { images: true, linkNonce: nonce });
-  assert.match(online, /img-src https:\/\/upload\.wikimedia\.org https:\/\/wikimedia\.org;/);
-  assert.match(online, new RegExp(`script-src 'nonce-${nonce}'`));
-  assert.match(online, new RegExp(`<script nonce="${nonce}">`));
+  const online = isolatedReaderDocument(html, "standard", "standard", "light", { images: true, links: true });
+  assert.match(online, /img-src https:\/\/upload\.wikimedia\.org https:\/\/thumb\.wikimedia\.org https:\/\/wikimedia\.org;/);
+  assert.ok(online.includes(`script-src ${LINK_SCRIPT_HASH}`));
+  assert.ok(online.includes(`<script>${LINK_SCRIPT}</script>`));
   assert.match(online, new RegExp(LINK_MESSAGE_KEY));
   assert.doesNotMatch(online, /pointer-events:none/);
   assert.match(online, /\.infobox\{float:right/);
@@ -79,10 +87,8 @@ test("online article documents load only Wikimedia images and the nonce'd link s
   assert.match(offline, /script-src 'none'/);
   assert.doesNotMatch(offline, /<script/);
   assert.match(offline, /a\{pointer-events:none\}/);
-  // A malformed nonce never enables scripts.
-  for (const bad of ["short", "has space in it 1234567", "x'; script-src *", "a".repeat(65)]) {
-    const doc = isolatedReaderDocument(html, "standard", "standard", "light", { linkNonce: bad });
+  for (const bad of [1, "yes", null]) {
+    const doc = isolatedReaderDocument(html, "standard", "standard", "light", { links: bad });
     assert.match(doc, /script-src 'none'/);
-    assert.doesNotMatch(doc, /<script/);
   }
 });

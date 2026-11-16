@@ -196,7 +196,10 @@ impl WikipediaRequests {
             ("prop", "revisions".to_owned()),
             ("pageids", page_id.to_string()),
             ("rvprop", "ids|timestamp".to_owned()),
-            ("rvlimit", "1".to_owned()),
+            // No `rvlimit`: with it MediaWiki lists revisions and answers
+            // with a `continue` token for older ones, which the strict parser
+            // (correctly) refuses as partial. Without it, the reply is just
+            // the latest revision and is complete (`batchcomplete`).
         ]))
     }
 
@@ -346,7 +349,10 @@ mod tests {
         let current = query(&api.current_revision(42).unwrap());
         assert_eq!(current.get("pageids").unwrap(), "42");
         assert_eq!(current.get("rvprop").unwrap(), "ids|timestamp");
-        assert_eq!(current.get("rvlimit").unwrap(), "1");
+        assert!(
+            !current.contains_key("rvlimit"),
+            "rvlimit makes MediaWiki return a continuation the parser refuses"
+        );
         assert_eq!(current.get("action").unwrap(), "query");
         assert!(!current.contains_key("redirects"));
         let rendered = query(&api.rendered_revision(300).unwrap());

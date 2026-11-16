@@ -90,9 +90,67 @@ pub fn sanitize_article_html(html: &str) -> String {
 /// Image hosts an online article may load from (DUI-001): Wikimedia's
 /// media store and its math-rendering service. Protocol-relative sources
 /// become https; any other source is removed (alt text remains).
-const ONLINE_IMAGE_PREFIXES: [&str; 2] = [
+const ONLINE_IMAGE_PREFIXES: [&str; 3] = [
     "https://upload.wikimedia.org/",
+    "https://thumb.wikimedia.org/",
     "https://wikimedia.org/api/rest_v1/media/math/render/",
+];
+
+/// Presentation MathML elements an online article may use (no scripting,
+/// links or external resources exist in this set).
+const MATHML_TAGS: [&str; 26] = [
+    "math",
+    "semantics",
+    "mrow",
+    "mi",
+    "mn",
+    "mo",
+    "ms",
+    "mtext",
+    "mspace",
+    "msup",
+    "msub",
+    "msubsup",
+    "mfrac",
+    "msqrt",
+    "mroot",
+    "mstyle",
+    "mpadded",
+    "mphantom",
+    "menclose",
+    "mover",
+    "munder",
+    "munderover",
+    "mtable",
+    "mtr",
+    "mtd",
+    "mmultiscripts",
+];
+
+/// Layout-only MathML attributes (none take URLs or script).
+const MATHML_ATTRIBUTES: [&str; 22] = [
+    "display",
+    "displaystyle",
+    "scriptlevel",
+    "mathvariant",
+    "stretchy",
+    "fence",
+    "separator",
+    "accent",
+    "accentunder",
+    "lspace",
+    "rspace",
+    "linethickness",
+    "columnalign",
+    "rowalign",
+    "columnspacing",
+    "rowspacing",
+    "notation",
+    "minsize",
+    "maxsize",
+    "movablelimits",
+    "symmetric",
+    "largeop",
 ];
 
 fn online_image_source(value: &str) -> Option<String> {
@@ -116,15 +174,19 @@ fn online_image_source(value: &str) -> Option<String> {
 /// event handlers and forms and keeps `id`/`class` for Wikipedia-like
 /// styling, but it keeps article links as they are (the app validates each
 /// clicked `href` itself), keeps image sources only from Wikimedia's media
-/// and math hosts, and drops MathML source (the math image with its TeX
-/// alt text is shown instead, as on Wikipedia).
+/// and math hosts, and keeps presentation MathML (without its TeX
+/// annotation) because Wikipedia now sends formulas only as MathML.
 pub fn sanitize_online_article_html(html: &str) -> String {
     let mut builder = Builder::default();
     builder
         .url_schemes(HashSet::from(["http", "https"]))
         .add_generic_attributes(["id", "class"])
         .rm_tag_attributes("img", ["srcset"])
-        .add_clean_content_tags(["math"])
+        // Wikipedia renders formulas as native MathML (no fallback image),
+        // so presentation MathML is kept; its TeX annotation is dropped.
+        .add_tags(MATHML_TAGS)
+        .add_generic_attributes(MATHML_ATTRIBUTES)
+        .add_clean_content_tags(["annotation", "annotation-xml"])
         .id_prefix(None)
         .attribute_filter(|element, attribute, value| match (element, attribute) {
             (_, "id") if value.starts_with(RESERVED_ID_PREFIX) => None,
@@ -408,8 +470,9 @@ mod tests {
             "<p>See <a href=\"/wiki/Moon\" title=\"Moon\">Moon</a> and ",
             "<a class=\"external\" href=\"https://example.org/\">a site</a>.</p>",
             "<span class=\"mwe-math-element\"><span class=\"mwe-math-mathml-inline\" style=\"display:none\">",
-            "<math><semantics><mi>x</mi><annotation>x^2</annotation></semantics></math></span>",
+            "<math display=\"block\" href=\"javascript:x()\"><semantics><msup><mi>x</mi><mn>2</mn></msup><annotation>x^2</annotation></semantics></math></span>",
             "<img src=\"https://wikimedia.org/api/rest_v1/media/math/render/svg/abc\" alt=\"x^2\" class=\"mwe-math-fallback-image-inline\"></span>",
+            "<img src=\"//thumb.wikimedia.org/wikipedia/commons/thumb/x/40px-x.png\" alt=\"s\">",
             "<img src=\"https://evil.example/track.gif\" alt=\"t\">",
             "<img src=\"data:image/png;base64,AAAA\" alt=\"d\">",
             "<div id=\"foundation-cited\" onclick=\"x()\" style=\"color:red\">c</div>",
@@ -430,10 +493,10 @@ mod tests {
             "srcset",
             "evil.example",
             "data:",
-            "<math",
             "<annotation",
             "x^2</",
             "onclick",
+            "javascript:",
             "style=",
             "<script",
             "bad()",
@@ -441,6 +504,8 @@ mod tests {
         ] {
             assert!(!clean.contains(forbidden), "{forbidden} in {clean}");
         }
+        // Native MathML is kept for display (its TeX annotation is not).
+        assert!(clean.contains("<math display=\"block\"><semantics><msup><mi>x</mi><mn>2</mn></msup></semantics></math>"), "{clean}");
         // Alt text of removed images remains for the reader.
         assert!(clean.contains("alt=\"t\""));
     }

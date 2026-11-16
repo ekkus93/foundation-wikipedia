@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { isolatedReaderDocument, LINK_MESSAGE_KEY, readerDocumentNonce, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { isolatedReaderDocument, LINK_MESSAGE_KEY, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
@@ -77,17 +77,8 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   // DUI-001: each article frame forwards clicked links to this component.
   const frames = useRef(new Map<number, HTMLIFrameElement>());
-  const frameNonces = useRef(new Map<number, string>());
   const [externalLink, setExternalLink] = useState<string | null>(null);
   const imagesAllowed = !offline && connected;
-  function frameNonce(frameId: number): string {
-    let nonce = frameNonces.current.get(frameId);
-    if (!nonce) {
-      nonce = readerDocumentNonce();
-      frameNonces.current.set(frameId, nonce);
-    }
-    return nonce;
-  }
 
   // Apply the shared offline transition to hidden tabs too. Late responses
   // are ignored; existing in-memory text-only previews remain readable.
@@ -360,20 +351,17 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
             key={snapshot.frameId}
             ref={(element) => {
               if (element) frames.current.set(snapshot.frameId, element);
-              else {
-                frames.current.delete(snapshot.frameId);
-                frameNonces.current.delete(snapshot.frameId);
-              }
+              else frames.current.delete(snapshot.frameId);
             }}
             title={`Wikipedia article: ${snapshot.title}`}
             hidden={!article || snapshot.frameId !== article.frameId}
-            // Scripts only for the app's nonce'd link forwarder; no same-origin
+            // Scripts only for the app's hash-pinned link forwarder; no same-origin
             // access, popups, forms or top navigation (see readerLayout).
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
             className="article-preview-frame"
             srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme,
-              { images: imagesAllowed, linkNonce: frameNonce(snapshot.frameId) })}
+              { images: imagesAllowed, links: true })}
           />
         ))}
       </div>

@@ -105,7 +105,7 @@ pub(crate) fn valid_utc_timestamp(stamp: &str) -> bool {
 }
 
 /// Validate a single page's latest revision returned by
-/// 'action=query&prop=revisions&rvprop=ids|timestamp&rvlimit=1&
+/// 'action=query&prop=revisions&rvprop=ids|timestamp&
 /// pageids=<id>&formatversion=2&format=json'.
 ///
 /// The requested page is an identity precondition, not a title-based lookup.
