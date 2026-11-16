@@ -714,4 +714,34 @@ mod tests {
         assert!(!clean.contains("foundation-"), "{clean}");
         assert!(clean.contains("id=\"History\""));
     }
+    /// STATE-003 A/V policy: audio and video are never played or fetched by
+    /// either reader; their elements and media URLs are removed, the caption
+    /// text stays.
+    #[test]
+    fn audio_and_video_never_stream_from_either_sanitizer() {
+        let html = concat!(
+            "<figure><video autoplay controls poster=\"https://upload.wikimedia.org/p.jpg\" ",
+            "src=\"https://upload.wikimedia.org/v.webm\"><source src=\"https://upload.wikimedia.org/v.webm\">",
+            "<track src=\"https://upload.wikimedia.org/v.vtt\"></video><figcaption>Launch film</figcaption></figure>",
+            "<audio autoplay src=\"https://upload.wikimedia.org/a.ogg\"></audio>",
+            "<object data=\"https://upload.wikimedia.org/x.swf\"></object><embed src=\"https://upload.wikimedia.org/e\">",
+            "<iframe src=\"https://commons.wikimedia.org/embed\"></iframe><p>Text</p>",
+        );
+        for sanitized in [
+            sanitize_article_html(html),
+            sanitize_online_article_html(html),
+        ] {
+            for banned in [
+                "<video", "<audio", "<source", "<track", "<object", "<embed", "<iframe",
+                "autoplay", ".webm", ".ogg", ".vtt", ".swf", "/embed",
+            ] {
+                assert!(
+                    !sanitized.contains(banned),
+                    "{banned} survived: {sanitized}"
+                );
+            }
+            assert!(sanitized.contains("Launch film"));
+            assert!(sanitized.contains("<p>Text</p>"));
+        }
+    }
 }

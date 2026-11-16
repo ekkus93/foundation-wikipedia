@@ -86,6 +86,7 @@ export function PrivacySettings({ offlineMode, onOpenHistory }: { offlineMode: R
     <ul>
       <li>Online reading: searches and article requests go to Wikipedia (wikipedia.org); images and formulas load from Wikimedia servers. Nothing is requested while Work offline is on.</li>
       <li>Links to other sites open in your browser only after you confirm each one.</li>
+      <li>Audio and video in articles are not played or downloaded; only their captions are shown.</li>
       <li>AI chat: nothing is sent until you review a request and choose Send. A local or local-network model receives the question and the listed passages; a hosted provider (Anthropic or OpenAI) receives them over the internet.</li>
       <li>Installed packs, search in packs and saved data stay on this computer. The app sends no analytics or usage data.</li>
     </ul>

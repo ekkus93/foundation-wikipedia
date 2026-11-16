@@ -5,12 +5,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,6 +74,7 @@ fun HostedAiSection() {
     var model by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(provider) {
         configured = try {
@@ -143,13 +146,7 @@ fun HostedAiSection() {
             }
         }) { Text(if (configured == true) "Replace key" else "Save key") }
         if (configured == true) {
-            OutlinedButton(enabled = !busy, onClick = {
-                perform {
-                    hosted.deleteKey(provider)
-                    configured = false
-                    "Deleted the ${provider.title()} key."
-                }
-            }) { Text("Delete key") }
+            OutlinedButton(enabled = !busy, onClick = { confirmDelete = true }) { Text("Delete key…") }
         }
     }
     OutlinedTextField(
@@ -175,4 +172,29 @@ fun HostedAiSection() {
         style = MaterialTheme.typography.bodySmall,
     )
     message?.let { Text(it) }
+
+    if (confirmDelete) {
+        val chosen = provider
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete the ${chosen.title()} key?") },
+            text = {
+                Text(
+                    "The key is removed from this device's secure storage. Questions can no " +
+                        "longer go to ${chosen.title()} until you enter a key again.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    perform {
+                        hosted.deleteKey(chosen)
+                        configured = false
+                        "Deleted the ${chosen.title()} key."
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
 }

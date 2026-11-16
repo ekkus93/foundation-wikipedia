@@ -92,6 +92,7 @@ fun OfflinePacksSection() {
     var packs by remember { mutableStateOf<List<InstalledSnapshot>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf<InstalledSnapshot?>(null) }
     var pendingReview by remember { mutableStateOf<PackReview?>(null) }
     // Trust of the pack being imported: Not yet checked while Rust verifies
     // it, Verification failed if it was rejected, cleared otherwise.
@@ -198,24 +199,42 @@ fun OfflinePacksSection() {
                     }) { Text("Activate") }
                 }
                 if (!pack.active) {
-                    OutlinedButton(enabled = !busy, onClick = {
-                        val lib = library ?: return@OutlinedButton
-                        scope.launch {
-                            busy = true
-                            message = try {
-                                lib.removePack(pack.snapshotId)
-                                refresh(lib)
-                                "Removed ${pack.snapshotId}."
-                            } catch (error: Exception) {
-                                packErrorMessage(error)
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    }) { Text("Remove") }
+                    OutlinedButton(enabled = !busy, onClick = { confirmRemove = pack }) { Text("Remove…") }
                 }
             }
         }
+    }
+
+    confirmRemove?.let { pack ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text("Remove ${pack.snapshotId}?") },
+            text = {
+                Text(
+                    "Its articles will no longer be available offline. Bookmarks and history are " +
+                        "kept. You can install the pack again later.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemove = null
+                    val lib = library ?: return@TextButton
+                    scope.launch {
+                        busy = true
+                        message = try {
+                            lib.removePack(pack.snapshotId)
+                            refresh(lib)
+                            "Removed ${pack.snapshotId}."
+                        } catch (error: Exception) {
+                            packErrorMessage(error)
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemove = null }) { Text("Cancel") } },
+        )
     }
 
     pendingReview?.let { review ->

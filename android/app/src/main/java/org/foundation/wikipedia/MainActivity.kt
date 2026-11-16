@@ -497,6 +497,8 @@ private fun FoundationApp() {
                             LocalAiSection()
                             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             HostedAiSection()
+                        } else if (category == ReaderSettingsCategory.PRIVACY_NETWORK) {
+                            PrivacyNetworkSection()
                         } else {
                             Text(category.title, style = MaterialTheme.typography.titleLarge)
                             Text(
