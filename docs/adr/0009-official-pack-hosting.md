@@ -1,6 +1,6 @@
 # ADR 0009 — Hosting official packs and their catalog
 
-**Status:** Accepted (decision delegated by the owner to Claude on 2026-11-16, "Can't you just do this for me?"). **Nothing is published yet.** The first upload of a real pack will be confirmed with the owner, because it is public and permanent.
+**Status:** Accepted (decision delegated by the owner to Claude on 2026-11-16, "Can't you just do this for me?"). On 2026-11-16 the owner approved publishing a small **test** release (see Status of evidence). The first real pack will be confirmed with the owner, because it is public and permanent.
 **Date:** 2026-11-16
 **Requirements:** UPD-001, MOBPACK-001, TRUST-001 (ADR 0008)
 
@@ -57,7 +57,12 @@ The project is a public GitHub repository, `ekkus93/foundation-wikipedia`. There
 ## Status of evidence
 
 This is a decision record only.
-- **Not yet published:** no release, catalog or pack exists on GitHub.
+- **Published test release (owner-approved, 2026-11-16):**
+  - Pre-release `packs-20261101`: `test-sample.wpack` (30,215 bytes; two synthetic sample articles, not real Wikipedia content) and its signature, by key `ee24d083334a607f`.
+  - Pre-release `catalog`: `catalog.json` (sequence **1**, listing only the test pack) and `catalog.json.sig`. The next catalog must use sequence 2 or higher.
+  - Observed: each asset URL answers with exactly one `302` to `release-assets.githubusercontent.com`, which serves an exact `Content-Length`, no transfer or content encoding, and honours `Range` (`206` with `Content-Range`).
+  - The Android emulator fetched the catalog, downloaded and installed the pack as Verified publisher, and after a force-stop with the network off still listed it as verified, active and searchable (`OfficialPackLiveTest`).
+- **No real pack is published:** that needs PACK-004.
 - **Built:** catalog format, signing, verification and release tooling.
-- **Not yet built:** the download client with the narrow redirect, and the Android catalog screen.
+- **Built:** the download client with the narrow redirect and resume, and the Android catalog screen (MOBPACK-001).
 - **Exists:** TRUST-001 signing and verification (ADR 0008).
