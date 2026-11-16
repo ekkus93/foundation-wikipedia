@@ -69,6 +69,12 @@ fn article(page_id: u64, title: &str, text: &str) -> Article {
 
 /// Build a two-article pack file and return its path.
 fn build_pack(dir: &Path, pack_id: &str) -> PathBuf {
+    build_pack_at(dir, pack_id, 7000)
+}
+
+/// Like `build_pack`, with each article's revision ID `base + page_id`
+/// (a newer snapshot of the same pages).
+fn build_pack_at(dir: &Path, pack_id: &str, revision_base: u64) -> PathBuf {
     let tree = dir.join(format!("{pack_id}-tree"));
     fs::create_dir_all(&tree).unwrap();
     let mut shard = Vec::new();
@@ -102,6 +108,8 @@ fn build_pack(dir: &Path, pack_id: &str) -> PathBuf {
             tide
         },
     ] {
+        let mut article = article;
+        article.revision.revision_id = revision_base + article.key.page_id;
         let offset = shard.len() as u64;
         append_record_frame(&mut shard, &PageRecord::Article(Box::new(article))).unwrap();
         frames.push((offset, shard.len() as u64 - offset));
@@ -1349,4 +1357,46 @@ fn chat_history_can_use_an_existing_private_user_state_file() {
         .threads("enwiki".into(), 1, 7001)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn page_bookmarks_reopen_the_newest_installed_revision_after_a_snapshot_update() {
+    use wiki_ffi::reader_state::ReaderState;
+    let dir = test_dir("bookmark-update");
+    let library = library(&dir.0);
+    let older = build_pack_at(&dir.0, "moon-older", 7000);
+    library
+        .install_pack(older.to_string_lossy().into_owned(), true)
+        .unwrap();
+    library.activate("moon-older".into()).unwrap();
+    let state = ReaderState::new(dir.0.join("state").to_string_lossy().into_owned()).unwrap();
+    assert!(state.toggle_bookmark("enwiki".into(), 1, 7001).unwrap());
+
+    // A newer snapshot of the same page replaces the active pack.
+    let newer = build_pack_at(&dir.0, "moon-newer", 8000);
+    library
+        .install_pack(newer.to_string_lossy().into_owned(), true)
+        .unwrap();
+    library.activate("moon-newer".into()).unwrap();
+    library.remove_pack("moon-older".into()).unwrap();
+
+    // The bookmark survived and is page-level: reopening it by page ID
+    // (as both apps do) gives the newest installed revision.
+    let saved = state.saved_content(Some(library.clone())).unwrap();
+    assert_eq!(saved.bookmarks.len(), 1);
+    assert_eq!(saved.bookmarks[0].page_id, 1);
+    assert_eq!(
+        saved.bookmarks[0].revision_id, 7001,
+        "the saved revision is kept"
+    );
+    let page = library
+        .open_page("enwiki".into(), saved.bookmarks[0].page_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.revision_id, 8001);
+
+    // And it survives a restart of both stores.
+    drop(state);
+    let reopened = ReaderState::new(dir.0.join("state").to_string_lossy().into_owned()).unwrap();
+    assert!(reopened.is_bookmarked("enwiki".into(), 1).unwrap());
 }

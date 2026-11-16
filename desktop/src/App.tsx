@@ -469,7 +469,7 @@ export default function App() {
         void invoke<boolean>("toggle_reader_bookmark", { project: current.project, pageId: current.pageId, revisionId: current.revisionId })
           .then((saved) => {
             if (session.accepts(revision)) setMessage(saved
-              ? "Page bookmark saved. Article text and images were not downloaded for offline use."
+              ? "Page bookmark saved. It opens the newest available revision of this page."
               : "Page bookmark removed.");
           })
           .catch(() => {
@@ -600,7 +600,7 @@ export default function App() {
               aria-label={`Remove bookmark for ${project} page ${pageId}`}
               onClick={() => void removeSavedBookmark(project, pageId)}>Remove</button>
           </li>)}</ul>
-          <p>Opening saved pages requires a connection and displays an online text preview, not a complete offline article. Restoring saved reading positions across revisions is not available yet.</p>
+          <p>“Open latest” opens the newest revision available: from live Wikipedia when online, or from the active installed pack when Work offline is on. Bookmarks keep working when a pack is updated to a newer snapshot.</p>
           <h2>Visit history</h2>
           <label><input type="checkbox" checked={historyEnabled === true}
             disabled={savedBusy || historyBusy || historyEnabled === null}

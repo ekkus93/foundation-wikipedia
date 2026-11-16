@@ -116,36 +116,42 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
 
   // Bookmark reopening is explicit user navigation. Never bypass offline mode,
   // and do not discard the active revision/history on a failed fetch.
+  // Bookmarks are page-level: they open the latest revision available, from
+  // live Wikipedia when online or from the active installed pack offline.
   useEffect(() => {
     if (!bookmarkRequest || bookmarkRequest.id <= lastBookmarkRequestId.current) return;
     lastBookmarkRequestId.current = bookmarkRequest.id;
-    if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
-      setNotice("Cannot open this saved page without a connection. The current article is unchanged.");
-      return;
-    }
     if (!Number.isSafeInteger(bookmarkRequest.pageId) || bookmarkRequest.pageId <= 0 ||
         !["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"].includes(bookmarkRequest.project)) {
       setNotice("Invalid saved Wikipedia page identity.");
       return;
     }
+    const request = bookmarkRequest;
+    const fromPack = offlineMode.getSnapshot() || !connected || !navigator.onLine;
     const epoch = requestEpoch.current.begin();
     setBusy(true);
     setNotice(null);
-    void invoke<unknown>("open_wikipedia_page", {
-      project: bookmarkRequest.project,
-      pageId: bookmarkRequest.pageId,
-      offline: false,
-    }).then((result) => {
-      const [pageId, revisionId, title, html] = parseReaderArticle(result, bookmarkRequest.pageId);
-      if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
-      const next = { project: bookmarkRequest.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
-        links: extractWikiArticleLinks(html, bookmarkRequest.project), source: "online" as const };
+    const opened = fromPack
+      ? invoke<unknown>("open_offline_page", { project: request.project, pageId: request.pageId })
+      : invoke<unknown>("open_wikipedia_page", { project: request.project, pageId: request.pageId, offline: false });
+    void opened.then((result) => {
+      if (!requestEpoch.current.matches(epoch)) return;
+      if (fromPack && result === null) {
+        setNotice("This saved page is not in the active installed pack, and opening it online needs a connection. The current article is unchanged.");
+        return;
+      }
+      if (!fromPack && offlineMode.getSnapshot()) return;
+      const [pageId, revisionId, title, html] = parseReaderArticle(result, request.pageId);
+      const next = { project: request.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
+        links: fromPack ? [] : extractWikiArticleLinks(html, request.project), source: fromPack ? "pack" as const : "online" as const };
       setNavigation((previous) => openBookmarkedReaderArticle(previous, next));
-      setProject(bookmarkRequest.project);
+      setProject(request.project);
       setHits([]);
-      setNotice("Opened the latest available online revision. This is not a complete offline article.");
+      setNotice(fromPack
+        ? `Opened the saved page from the installed pack (revision ${revisionId}).`
+        : "Opened the latest available online revision. This is not a complete offline article.");
     }).catch(() => {
-      if (requestEpoch.current.matches(epoch) && !offlineMode.getSnapshot()) {
+      if (requestEpoch.current.matches(epoch)) {
         setNotice("Saved page could not be reopened. The previous article was preserved.");
       }
     }).finally(() => {
