@@ -241,6 +241,36 @@ class StreamedDraftUiTest {
         }
     }
 
+    /** AI-005: a model that finds no support says so; nothing is cited. */
+    @Test
+    fun anAnswerWithoutEvidenceIsShownAsUnanswered() {
+        askAboutTide(FakeOllama("[NO_EVIDENCE]", ""))
+        server!!.release.countDown()
+        compose.waitUntil(timeoutMillis = 30_000) {
+            shown("The article passages do not answer this question.", substring = false)
+        }
+        assertTrue(!shown("[NO_EVIDENCE]"))
+        assertTrue(!shown("Show cited passage", substring = true))
+        assertTrue(!shown(DRAFT_LABEL, substring = false))
+    }
+
+    /** AI-005: Stop cancels a streaming answer; the draft is discarded. */
+    @Test
+    fun stoppingAStreamingAnswerDiscardsItsDraft() {
+        askAboutTide(FakeOllama("Tides follow the Moon [[cite:wkb:enwiki:2:7002:b0]]", " and more."))
+        compose.waitUntil(timeoutMillis = 30_000) { shown(DRAFT_LABEL, substring = false) }
+        compose.onNodeWithText("Stop").performClick()
+        compose.waitUntil(timeoutMillis = 15_000) { shown("Stopped. No answer was shown.") }
+        assertTrue(!shown(DRAFT_LABEL, substring = false))
+        assertTrue(!shown("Show cited passage", substring = true))
+        // A late end of the stream cannot bring the answer back.
+        server!!.release.countDown()
+        Thread.sleep(1_000)
+        compose.waitForIdle()
+        assertTrue(!shown("and more", substring = true))
+        assertTrue(!shown("Show cited passage", substring = true))
+    }
+
     @Test
     fun aDraftWhoseCitationsFailTheCheckIsRemoved() {
         askAboutTide(FakeOllama("Tides follow the Moon [[cite:wkb:enwiki:2:9999:b0]]", "."))
