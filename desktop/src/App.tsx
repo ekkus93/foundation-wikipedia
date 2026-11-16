@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AiAssistantSettings from "./AiAssistantSettings";
 import HostedAiSettings from "./HostedAiSettings";
+import { AboutSettings, AdvancedSettings, GeneralSettings, PrivacySettings, StorageSettings } from "./SettingsPages";
 import OfflinePacksSettings from "./OfflinePacksSettings";
 import ReaderChatHistory from "./ReaderChatHistory";
 import ArticleChat from "./ArticleChat";
@@ -558,6 +559,11 @@ export default function App() {
           ← {settingsSection === null ? "Return to article" : "All settings"}
         </button>
         <h1>{settingsSection ?? "Settings"}</h1>
+        {settingsSection !== null && <nav className="settings-rail" aria-label="Settings categories">
+          {SETTINGS_SECTIONS.map((section) => <button key={section} type="button"
+            aria-current={section === settingsSection ? "page" : undefined}
+            onClick={() => setSettingsSection(section)}>{section}</button>)}
+        </nav>}
         {settingsSection === null ? <nav className="settings-sections" aria-label="Settings sections">
           {SETTINGS_SECTIONS.map((section) => <button key={section} onClick={() => setSettingsSection(section)}>{section} →</button>)}
         </nav> : settingsSection === "Appearance & Reading" ? <fieldset className="theme-choice">
@@ -640,7 +646,11 @@ export default function App() {
           )}
         </section> : settingsSection === "AI Assistant" ? <><AiAssistantSettings offlineMode={offlineMode} /><HostedAiSettings offlineMode={offlineMode} /></>
         : settingsSection === "Wikipedia & Offline Data" ? <OfflinePacksSettings />
-        : <p>Settings for {settingsSection} are not available in this development preview.</p>}
+        : settingsSection === "General" ? <GeneralSettings />
+        : settingsSection === "Storage" ? <StorageSettings onOpenPacks={() => setSettingsSection("Wikipedia & Offline Data")} />
+        : settingsSection === "Privacy & Network" ? <PrivacySettings offlineMode={offlineMode} onOpenHistory={() => setSettingsSection("History & Saved Content")} />
+        : settingsSection === "Advanced" ? <AdvancedSettings />
+        : <AboutSettings />}
       </main>}
       {chatOpen && (() => {
         const article = tabArticleRef.current.get(readerTabs.activeId);

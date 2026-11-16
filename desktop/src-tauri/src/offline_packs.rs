@@ -303,6 +303,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tree_sizes_count_files_without_following_links() {
+        let dir = std::env::temp_dir().join(format!("tree-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("a/b")).unwrap();
+        std::fs::write(dir.join("a/one"), [0u8; 10]).unwrap();
+        std::fs::write(dir.join("a/b/two"), [0u8; 5]).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/usr", dir.join("link")).unwrap();
+        let mut budget = 100;
+        assert_eq!(tree_bytes(&dir, &mut budget), 15);
+        let mut tiny = 1;
+        assert!(tree_bytes(&dir, &mut tiny) <= 15);
+        assert_eq!(tree_bytes(&dir.join("missing"), &mut budget), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn only_existing_absolute_files_are_accepted_as_packs() {
         assert!(pack_path("relative/pack.wpack").is_err());
         assert!(pack_path("/definitely/not/here.wpack").is_err());
@@ -323,4 +340,79 @@ mod tests {
         assert!(!official.to_lowercase().contains("verified publisher"));
         assert!(message(LibraryError::SnapshotActive).contains("Activate another pack"));
     }
+}
+
+/// Bytes used on disk, by area (STATE-002 Storage settings).
+#[derive(Serialize)]
+pub struct StorageUsageDto {
+    /// `(pack ID, bytes)` of each installed snapshot.
+    packs: Vec<(String, u64)>,
+    /// Partial downloads kept for resuming.
+    downloads: u64,
+    /// Interrupted-install residue (cleared automatically).
+    staging: u64,
+    /// The private reading-state database (bookmarks, history, chats, settings).
+    personal_data: u64,
+}
+
+/// Sum regular-file sizes under `path`, never following symbolic links and
+/// visiting at most `budget` entries.
+fn tree_bytes(path: &std::path::Path, budget: &mut usize) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if meta.is_file() {
+        return meta.len();
+    }
+    if !meta.is_dir() {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        total += tree_bytes(&entry.path(), budget);
+    }
+    total
+}
+
+#[tauri::command]
+pub async fn offline_storage_usage(app: tauri::AppHandle) -> Result<StorageUsageDto, String> {
+    blocking(move || {
+        let base = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Cannot find the app data directory")?;
+        let library = base.join("offline-library");
+        let mut budget = 200_000;
+        let mut packs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(library.join("snapshots")) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                packs.push((name, tree_bytes(&entry.path(), &mut budget)));
+            }
+        }
+        packs.sort();
+        Ok(StorageUsageDto {
+            packs,
+            downloads: tree_bytes(&library.join("downloads"), &mut budget),
+            staging: tree_bytes(&library.join("staging"), &mut budget),
+            personal_data: tree_bytes(&base.join("reader-state"), &mut budget),
+        })
+    })
+    .await
+}
+
+/// Where the app keeps its data, for the Advanced settings page.
+#[tauri::command]
+pub fn app_data_location(app: tauri::AppHandle) -> Result<String, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|_| "Cannot find the app data directory".to_owned())
 }

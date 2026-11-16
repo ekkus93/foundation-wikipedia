@@ -4,6 +4,7 @@ import { isolatedReaderDocument, LINK_MESSAGE_KEY, READY_MESSAGE_KEY, SCROLL_MES
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
+import { loadDefaultEdition } from "./defaultEdition";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { classifyReaderLink, extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
@@ -61,7 +62,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
   const projectFieldId = `${uniqueId}-project`;
   const queryFieldId = `${uniqueId}-query`;
   const [query, setQuery] = useState("");
-  const [project, setProject] = useState("enwiki");
+  const [project, setProject] = useState<string>(loadDefaultEdition);
   const offline = useSyncExternalStore(offlineMode.subscribe, offlineMode.getSnapshot, offlineMode.getSnapshot);
   const [connected, setConnected] = useState(() => navigator.onLine);
   const requestEpoch = useRef(new RequestEpoch());

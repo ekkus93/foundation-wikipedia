@@ -1636,6 +1636,8 @@ pub fn run() {
             offline_packs::search_offline_packs,
             offline_packs::open_offline_page,
             offline_packs::open_offline_title,
+            offline_packs::offline_storage_usage,
+            offline_packs::app_data_location,
             pack_chat::prepare_pack_chat,
             pack_chat::send_pack_chat,
             pack_chat::cancel_pack_chat,
