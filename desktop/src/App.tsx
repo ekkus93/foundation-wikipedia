@@ -222,11 +222,21 @@ export default function App() {
       }
     }
 
+    // Clicks inside the sandboxed article frame never reach this document,
+    // but they move focus out of the hub (as Tab past the last action does).
+    function onFocusOut(event: FocusEvent) {
+      const next = event.relatedTarget as Node | null;
+      if (!next || !hubRef.current?.contains(next)) setExpanded(false);
+    }
+    const hub = hubRef.current;
+
     document.addEventListener("keydown", onEscape);
     document.addEventListener("pointerdown", onOutsidePointer);
+    hub?.addEventListener("focusout", onFocusOut);
     return () => {
       document.removeEventListener("keydown", onEscape);
       document.removeEventListener("pointerdown", onOutsidePointer);
+      hub?.removeEventListener("focusout", onFocusOut);
     };
   }, [expanded]);
 
