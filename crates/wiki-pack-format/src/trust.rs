@@ -34,6 +34,43 @@ impl TrustStatus {
             Self::VerificationFailed => "Verification failed",
         }
     }
+
+    /// A plain-language explanation for screen readers and pack details.
+    /// Only `VerifiedPublisher` mentions the publisher; no other status may
+    /// suggest where a pack came from.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::VerifiedPublisher => {
+                "Signed by the official publisher, and every file matches that signature."
+            }
+            Self::CustomIntegrityVerified => {
+                "Every file is intact, but this pack is not from a verified publisher. \
+                 Use it only if you trust where it came from."
+            }
+            Self::NotYetChecked => "This pack has not been checked yet. Do not rely on it.",
+            Self::VerificationFailed => {
+                "This pack is damaged, was modified, or its publisher key is no longer \
+                 trusted. It cannot be used."
+            }
+        }
+    }
+
+    /// All statuses, for exhaustive presentation tests.
+    pub const ALL: [Self; 4] = [
+        Self::VerifiedPublisher,
+        Self::CustomIntegrityVerified,
+        Self::NotYetChecked,
+        Self::VerificationFailed,
+    ];
+
+    /// Parse a label the installer recorded for an installed pack. Only
+    /// the two statuses an install can produce are accepted; anything else
+    /// means the record was altered, so the caller must treat it as failed.
+    pub fn from_installed_label(label: &str) -> Option<Self> {
+        [Self::VerifiedPublisher, Self::CustomIntegrityVerified]
+            .into_iter()
+            .find(|status| status.label() == label)
+    }
 }
 
 /// Show structural failures immediately, and never promote unsigned official
@@ -117,6 +154,40 @@ mod tests {
         .unwrap();
         let (_, status) = verify_and_classify(&mut encoded.as_slice()).unwrap();
         assert_eq!(status, TrustStatus::NotYetChecked);
+    }
+
+    #[test]
+    fn statuses_have_distinct_labels_and_descriptions() {
+        let labels: std::collections::HashSet<_> =
+            TrustStatus::ALL.iter().map(|s| s.label()).collect();
+        let descriptions: std::collections::HashSet<_> =
+            TrustStatus::ALL.iter().map(|s| s.description()).collect();
+        assert_eq!(labels.len(), 4);
+        assert_eq!(descriptions.len(), 4);
+        for status in TrustStatus::ALL {
+            let publisher_claim = status.description().contains("official publisher");
+            assert_eq!(publisher_claim, status == TrustStatus::VerifiedPublisher);
+        }
+    }
+
+    #[test]
+    fn only_installable_statuses_parse_from_installed_records() {
+        assert_eq!(
+            TrustStatus::from_installed_label("Verified publisher"),
+            Some(TrustStatus::VerifiedPublisher)
+        );
+        assert_eq!(
+            TrustStatus::from_installed_label("Custom — integrity verified"),
+            Some(TrustStatus::CustomIntegrityVerified)
+        );
+        for other in [
+            "Not yet checked",
+            "Verification failed",
+            "",
+            "verified publisher",
+        ] {
+            assert_eq!(TrustStatus::from_installed_label(other), None);
+        }
     }
 
     #[test]

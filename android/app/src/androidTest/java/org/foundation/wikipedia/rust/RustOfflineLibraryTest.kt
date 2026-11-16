@@ -53,6 +53,7 @@ class RustOfflineLibraryTest {
             val installed = library.installPack(pack, acceptCustomPack = true)
             assertEquals("android-sample", installed.snapshotId)
             assertEquals("Custom — integrity verified", installed.trustLabel)
+            assertEquals(uniffi.wiki_ffi.PackTrust.CUSTOM_INTEGRITY_VERIFIED, installed.trust)
             assertEquals(2UL, installed.articles)
 
             library.activate(installed.snapshotId)
@@ -98,6 +99,7 @@ class RustOfflineLibraryTest {
                 }
             }
             assertEquals("Custom — integrity verified", reviews.single().trustLabel)
+            assertEquals(uniffi.wiki_ffi.PackTrust.CUSTOM_INTEGRITY_VERIFIED, reviews.single().trust)
             assertEquals(2UL, reviews.single().articles)
             assertTrue(library.listPacks().isEmpty())
 

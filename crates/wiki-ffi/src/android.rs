@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use wiki_model::{Article, ArticleKey};
+use wiki_pack_format::trust::TrustStatus;
 use wiki_store::activation::ActiveSnapshotStore;
 use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
 use wiki_store::pack_install::{
@@ -82,10 +83,58 @@ impl From<PackInstallError> for LibraryError {
     }
 }
 
+/// The four trust statuses every pack surface must distinguish (TRUST-002).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PackTrust {
+    /// Signed by a pinned, unrevoked publisher key (ADR 0008).
+    VerifiedPublisher,
+    /// An unsigned custom pack whose every byte verified.
+    CustomIntegrityVerified,
+    /// Not verified yet, e.g. while an import is still being checked.
+    NotYetChecked,
+    /// Damaged, modified, or its publisher key is no longer trusted.
+    VerificationFailed,
+}
+
+impl From<TrustStatus> for PackTrust {
+    fn from(status: TrustStatus) -> Self {
+        match status {
+            TrustStatus::VerifiedPublisher => Self::VerifiedPublisher,
+            TrustStatus::CustomIntegrityVerified => Self::CustomIntegrityVerified,
+            TrustStatus::NotYetChecked => Self::NotYetChecked,
+            TrustStatus::VerificationFailed => Self::VerificationFailed,
+        }
+    }
+}
+
+impl From<PackTrust> for TrustStatus {
+    fn from(trust: PackTrust) -> Self {
+        match trust {
+            PackTrust::VerifiedPublisher => Self::VerifiedPublisher,
+            PackTrust::CustomIntegrityVerified => Self::CustomIntegrityVerified,
+            PackTrust::NotYetChecked => Self::NotYetChecked,
+            PackTrust::VerificationFailed => Self::VerificationFailed,
+        }
+    }
+}
+
+/// The shared visible label, e.g. "Custom — integrity verified".
+#[uniffi::export]
+pub fn pack_trust_label(trust: PackTrust) -> String {
+    TrustStatus::from(trust).label().to_owned()
+}
+
+/// The shared plain-language explanation for screen readers and details.
+#[uniffi::export]
+pub fn pack_trust_description(trust: PackTrust) -> String {
+    TrustStatus::from(trust).description().to_owned()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct InstalledPack {
     pub snapshot_id: String,
     pub project: String,
+    pub trust: PackTrust,
     /// Accessible trust text, e.g. "Custom — integrity verified".
     pub trust_label: String,
     pub articles: u64,
@@ -96,8 +145,9 @@ pub struct InstalledPack {
 pub struct PackReview {
     pub snapshot_id: String,
     pub project: String,
-    /// Always "Custom — integrity verified" for an installable pack; never
-    /// a publisher-verified label (official packs are refused).
+    /// Always `CustomIntegrityVerified` for an installable pack; never
+    /// publisher-verified (official packs are refused on this path).
+    pub trust: PackTrust,
     pub trust_label: String,
     pub articles: u64,
     pub declared_bytes: u64,
@@ -108,6 +158,7 @@ pub struct PackReview {
 pub struct InstalledSnapshot {
     pub snapshot_id: String,
     pub project: String,
+    pub trust: PackTrust,
     pub trust_label: String,
     pub articles: u64,
     pub active: bool,
@@ -251,6 +302,7 @@ impl OfflineLibrary {
         Ok(InstalledPack {
             snapshot_id: installed.snapshot_id,
             project: installed.manifest.project.clone(),
+            trust: installed.trust.into(),
             trust_label: installed.trust.label().to_owned(),
             articles: installed.manifest.metadata.counts.articles,
         })
@@ -273,6 +325,7 @@ impl OfflineLibrary {
             reviewer.approve(PackReview {
                 snapshot_id: review.manifest.pack_id.clone(),
                 project: review.manifest.project.clone(),
+                trust: review.trust.into(),
                 trust_label: review.trust.label().to_owned(),
                 articles: review.manifest.metadata.counts.articles,
                 declared_bytes: review.declared_bytes,
@@ -281,6 +334,7 @@ impl OfflineLibrary {
         Ok(InstalledPack {
             snapshot_id: installed.snapshot_id,
             project: installed.manifest.project.clone(),
+            trust: installed.trust.into(),
             trust_label: installed.trust.label().to_owned(),
             articles: installed.manifest.metadata.counts.articles,
         })
@@ -295,7 +349,8 @@ impl OfflineLibrary {
                 active: active.as_deref() == Some(info.snapshot_id.as_str()),
                 snapshot_id: info.snapshot_id,
                 project: info.project,
-                trust_label: info.trust_label,
+                trust: info.trust.into(),
+                trust_label: info.trust.label().to_owned(),
                 articles: info.articles,
                 damaged: info.damaged,
             })

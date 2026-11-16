@@ -710,6 +710,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_func_hosted_ai_ready(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_func_pack_trust_description(
+    ): Int
+    external fun uniffi_wiki_ffi_checksum_func_pack_trust_label(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_articlechat_article_title(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_articlechat_cancel(
@@ -965,6 +969,10 @@ external fun uniffi_wiki_ffi_fn_func_hosted_ai_key_is_valid(`apiKey`: RustBuffer
 ): Byte
 external fun uniffi_wiki_ffi_fn_func_hosted_ai_ready(uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_wiki_ffi_fn_func_pack_trust_description(`trust`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_wiki_ffi_fn_func_pack_trust_label(`trust`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun ffi_wiki_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun ffi_wiki_ffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1094,6 +1102,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_func_hosted_ai_ready() != 12470) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_func_pack_trust_description() != 49130) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_func_pack_trust_label() != 31977) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_articlechat_article_title() != 63286) {
@@ -5072,6 +5086,8 @@ data class InstalledPack (
     , 
     var `project`: kotlin.String
     , 
+    var `trust`: PackTrust
+    , 
     /**
      * Accessible trust text, e.g. "Custom — integrity verified".
      */
@@ -5096,6 +5112,7 @@ public object FfiConverterTypeInstalledPack: FfiConverterRustBuffer<InstalledPac
         return InstalledPack(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterTypePackTrust.read(buf),
             FfiConverterString.read(buf),
             FfiConverterULong.read(buf),
         )
@@ -5104,6 +5121,7 @@ public object FfiConverterTypeInstalledPack: FfiConverterRustBuffer<InstalledPac
     override fun allocationSize(value: InstalledPack) = (
             FfiConverterString.allocationSize(value.`snapshotId`) +
             FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterTypePackTrust.allocationSize(value.`trust`) +
             FfiConverterString.allocationSize(value.`trustLabel`) +
             FfiConverterULong.allocationSize(value.`articles`)
     )
@@ -5111,6 +5129,7 @@ public object FfiConverterTypeInstalledPack: FfiConverterRustBuffer<InstalledPac
     override fun write(value: InstalledPack, buf: ByteBuffer) {
             FfiConverterString.write(value.`snapshotId`, buf)
             FfiConverterString.write(value.`project`, buf)
+            FfiConverterTypePackTrust.write(value.`trust`, buf)
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
     }
@@ -5125,6 +5144,8 @@ data class InstalledSnapshot (
     var `snapshotId`: kotlin.String
     , 
     var `project`: kotlin.String
+    , 
+    var `trust`: PackTrust
     , 
     var `trustLabel`: kotlin.String
     , 
@@ -5154,6 +5175,7 @@ public object FfiConverterTypeInstalledSnapshot: FfiConverterRustBuffer<Installe
         return InstalledSnapshot(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterTypePackTrust.read(buf),
             FfiConverterString.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterBoolean.read(buf),
@@ -5164,6 +5186,7 @@ public object FfiConverterTypeInstalledSnapshot: FfiConverterRustBuffer<Installe
     override fun allocationSize(value: InstalledSnapshot) = (
             FfiConverterString.allocationSize(value.`snapshotId`) +
             FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterTypePackTrust.allocationSize(value.`trust`) +
             FfiConverterString.allocationSize(value.`trustLabel`) +
             FfiConverterULong.allocationSize(value.`articles`) +
             FfiConverterBoolean.allocationSize(value.`active`) +
@@ -5173,6 +5196,7 @@ public object FfiConverterTypeInstalledSnapshot: FfiConverterRustBuffer<Installe
     override fun write(value: InstalledSnapshot, buf: ByteBuffer) {
             FfiConverterString.write(value.`snapshotId`, buf)
             FfiConverterString.write(value.`project`, buf)
+            FfiConverterTypePackTrust.write(value.`trust`, buf)
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterBoolean.write(value.`active`, buf)
@@ -5274,9 +5298,11 @@ data class PackReview (
     var `project`: kotlin.String
     , 
     /**
-     * Always "Custom — integrity verified" for an installable pack; never
-     * a publisher-verified label (official packs are refused).
+     * Always `CustomIntegrityVerified` for an installable pack; never
+     * publisher-verified (official packs are refused on this path).
      */
+    var `trust`: PackTrust
+    , 
     var `trustLabel`: kotlin.String
     , 
     var `articles`: kotlin.ULong
@@ -5300,6 +5326,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
         return PackReview(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterTypePackTrust.read(buf),
             FfiConverterString.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
@@ -5309,6 +5336,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
     override fun allocationSize(value: PackReview) = (
             FfiConverterString.allocationSize(value.`snapshotId`) +
             FfiConverterString.allocationSize(value.`project`) +
+            FfiConverterTypePackTrust.allocationSize(value.`trust`) +
             FfiConverterString.allocationSize(value.`trustLabel`) +
             FfiConverterULong.allocationSize(value.`articles`) +
             FfiConverterULong.allocationSize(value.`declaredBytes`)
@@ -5317,6 +5345,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
     override fun write(value: PackReview, buf: ByteBuffer) {
             FfiConverterString.write(value.`snapshotId`, buf)
             FfiConverterString.write(value.`project`, buf)
+            FfiConverterTypePackTrust.write(value.`trust`, buf)
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterULong.write(value.`declaredBytes`, buf)
@@ -6751,6 +6780,57 @@ public object FfiConverterTypeLocalAiProtocol: FfiConverterRustBuffer<LocalAiPro
 
 
 
+/**
+ * The four trust statuses every pack surface must distinguish (TRUST-002).
+ */
+
+enum class PackTrust {
+    
+    /**
+     * Signed by a pinned, unrevoked publisher key (ADR 0008).
+     */
+    VERIFIED_PUBLISHER,
+    /**
+     * An unsigned custom pack whose every byte verified.
+     */
+    CUSTOM_INTEGRITY_VERIFIED,
+    /**
+     * Not verified yet, e.g. while an import is still being checked.
+     */
+    NOT_YET_CHECKED,
+    /**
+     * Damaged, modified, or its publisher key is no longer trusted.
+     */
+    VERIFICATION_FAILED;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePackTrust: FfiConverterRustBuffer<PackTrust> {
+    override fun read(buf: ByteBuffer) = try {
+        PackTrust.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: PackTrust) = 4UL
+
+    override fun write(value: PackTrust, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 
 sealed class ReaderStateException: kotlin.Exception() {
@@ -7618,6 +7698,32 @@ public object FfiConverterSequenceTypeSavedAnswerPart: FfiConverterRustBuffer<Li
     UniffiLib.uniffi_wiki_ffi_fn_func_hosted_ai_ready(
     
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * The shared plain-language explanation for screen readers and details.
+         */ fun `packTrustDescription`(`trust`: PackTrust): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_pack_trust_description(
+    
+        FfiConverterTypePackTrust.lower(`trust`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * The shared visible label, e.g. "Custom — integrity verified".
+         */ fun `packTrustLabel`(`trust`: PackTrust): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_func_pack_trust_label(
+    
+        FfiConverterTypePackTrust.lower(`trust`),_status)
 }
     )
     }

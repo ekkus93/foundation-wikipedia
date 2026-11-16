@@ -531,7 +531,7 @@ const MAX_INSTALLED_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 pub struct InstalledSnapshotInfo {
     pub snapshot_id: String,
     pub project: String,
-    pub trust_label: String,
+    pub trust: TrustStatus,
     pub articles: u64,
     pub damaged: bool,
 }
@@ -545,27 +545,28 @@ pub fn list_installed_snapshots(
     list_installed_snapshots_with_keyring(root, signature::OFFICIAL_KEYS)
 }
 
-/// The publisher label recorded at install, rechecked against `keyring`.
-fn current_trust_label(
-    value: &serde_json::Value,
-    recorded: String,
-    keyring: &[TrustedKey],
-) -> String {
-    if recorded != TrustStatus::VerifiedPublisher.label() {
-        return recorded;
-    }
-    let official = &value["origin"]["official"];
-    let still_trusted = official["key_id"].as_str().is_some_and(|key_id| {
-        keyring.iter().any(|key| {
-            !key.revoked
-                && Some(key.publisher) == official["publisher"].as_str()
-                && signature::hex(&key.key_id()) == key_id
-        })
-    });
-    if still_trusted {
-        recorded
-    } else {
-        TrustStatus::VerificationFailed.label().to_owned()
+/// The status recorded at install, rechecked against `keyring`. An
+/// unrecognised record, or a publisher key that is no longer pinned and
+/// unrevoked, yields `VerificationFailed`.
+fn current_trust(value: &serde_json::Value, recorded: &str, keyring: &[TrustedKey]) -> TrustStatus {
+    match TrustStatus::from_installed_label(recorded) {
+        Some(TrustStatus::VerifiedPublisher) => {
+            let official = &value["origin"]["official"];
+            let still_trusted = official["key_id"].as_str().is_some_and(|key_id| {
+                keyring.iter().any(|key| {
+                    !key.revoked
+                        && Some(key.publisher) == official["publisher"].as_str()
+                        && signature::hex(&key.key_id()) == key_id
+                })
+            });
+            if still_trusted {
+                TrustStatus::VerifiedPublisher
+            } else {
+                TrustStatus::VerificationFailed
+            }
+        }
+        Some(status) => status,
+        None => TrustStatus::VerificationFailed,
     }
 }
 
@@ -591,22 +592,22 @@ pub fn list_installed_snapshots_with_keyring(
             .and_then(|value| {
                 Some((
                     value["project"].as_str()?.to_owned(),
-                    current_trust_label(&value, value["trust"].as_str()?.to_owned(), keyring),
+                    current_trust(&value, value["trust"].as_str()?, keyring),
                     value["counts"]["articles"].as_u64()?,
                 ))
             });
         listed.push(match parsed {
-            Some((project, trust_label, articles)) => InstalledSnapshotInfo {
+            Some((project, trust, articles)) => InstalledSnapshotInfo {
                 snapshot_id: id,
                 project,
-                trust_label,
+                trust,
                 articles,
                 damaged: false,
             },
             None => InstalledSnapshotInfo {
                 snapshot_id: id,
                 project: String::new(),
-                trust_label: TrustStatus::VerificationFailed.label().to_owned(),
+                trust: TrustStatus::VerificationFailed,
                 articles: 0,
                 damaged: true,
             },
@@ -1129,8 +1130,8 @@ mod tests {
 
         let label = |keyring: &[TrustedKey]| {
             list_installed_snapshots_with_keyring(&root, keyring).unwrap()[0]
-                .trust_label
-                .clone()
+                .trust
+                .label()
         };
         assert_eq!(label(&keyring), "Verified publisher");
         // Revoking (or no longer pinning) the key withdraws the label.
@@ -1141,7 +1142,7 @@ mod tests {
         assert_eq!(label(&revoked), "Verification failed");
         assert_eq!(label(&[]), "Verification failed");
         assert_eq!(
-            list_installed_snapshots(&root).unwrap()[0].trust_label,
+            list_installed_snapshots(&root).unwrap()[0].trust.label(),
             "Verification failed",
             "the throwaway test key is not in the production keyring"
         );
@@ -1490,7 +1491,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["alpha", "beta"]
         );
-        assert_eq!(listed[0].trust_label, "Custom — integrity verified");
+        assert_eq!(listed[0].trust, TrustStatus::CustomIntegrityVerified);
         assert_eq!((listed[0].articles, listed[0].damaged), (1, false));
 
         let store = ActiveSnapshotStore::new(&root);
@@ -1524,8 +1525,31 @@ mod tests {
             .find(|s| s.snapshot_id == "gamma")
             .unwrap();
         assert!(gamma.damaged);
-        assert_eq!(gamma.trust_label, "Verification failed");
+        assert_eq!(gamma.trust, TrustStatus::VerificationFailed);
         remove_installed_snapshot(&root, "gamma").unwrap();
+    }
+
+    #[test]
+    fn altered_installed_trust_records_are_shown_as_failed() {
+        let dir = test_dir("altered-trust");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("delta");
+        snapshot_tree(&tree, 3023, true);
+        let installed = install(&root, &pack_bytes(&tree, "delta")).unwrap();
+        let manifest_path = installed.path.join(MANIFEST_FILE);
+        let original: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        // Promoting a custom pack, or any status an install never records,
+        // must not be believed.
+        for altered in ["Verified publisher", "Not yet checked", "trusted"] {
+            let mut value = original.clone();
+            value["trust"] = altered.into();
+            fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
+            let listed = &list_installed_snapshots(&root).unwrap()[0];
+            assert_eq!(listed.trust, TrustStatus::VerificationFailed, "{altered}");
+            assert!(!listed.damaged);
+        }
     }
 
     #[test]

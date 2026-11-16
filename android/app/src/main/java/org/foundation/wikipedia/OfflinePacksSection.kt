@@ -33,6 +33,7 @@ import org.foundation.wikipedia.rust.RustOfflineLibrary
 import uniffi.wiki_ffi.InstalledSnapshot
 import uniffi.wiki_ffi.LibraryException
 import uniffi.wiki_ffi.PackReview
+import uniffi.wiki_ffi.PackTrust
 
 /** One Rust library per process: it owns its data directory exclusively. */
 object OfflineLibraryHolder {
@@ -51,7 +52,7 @@ fun packErrorMessage(error: Throwable): String = when (error) {
     is LibraryException.VerificationFailed ->
         "This pack failed verification: it is damaged or was modified. Nothing was installed."
     is LibraryException.UnsignedOfficialPack ->
-        "This pack claims to be official, but publisher signatures cannot be verified yet, " +
+        "This pack claims to be official but came without a verifiable publisher signature, " +
             "so it was not installed."
     is LibraryException.ConfirmationRequired -> "Import cancelled. Nothing was installed."
     is LibraryException.AlreadyInstalled -> "This pack is already installed."
@@ -87,6 +88,9 @@ fun OfflinePacksSection() {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var pendingReview by remember { mutableStateOf<PackReview?>(null) }
+    // Trust of the pack being imported: Not yet checked while Rust verifies
+    // it, Verification failed if it was rejected, cleared otherwise.
+    var importTrust by remember { mutableStateOf<PackTrust?>(null) }
     var decision by remember { mutableStateOf<CompletableDeferred<Boolean>?>(null) }
 
     suspend fun refresh(lib: RustOfflineLibrary) {
@@ -111,6 +115,7 @@ fun OfflinePacksSection() {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = true
+            importTrust = PackTrust.NOT_YET_CHECKED
             message = "Verifying pack…"
             message = try {
                 val installed = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -121,9 +126,15 @@ fun OfflinePacksSection() {
                         answer.await()
                     }
                 } ?: throw java.io.IOException("unreadable document")
+                importTrust = null
                 refresh(lib)
                 "Installed ${installed.snapshotId}. Activate it to read it offline."
             } catch (error: Exception) {
+                importTrust = if (error is LibraryException.VerificationFailed) {
+                    PackTrust.VERIFICATION_FAILED
+                } else {
+                    null
+                }
                 packErrorMessage(error)
             } finally {
                 pendingReview = null
@@ -148,6 +159,7 @@ fun OfflinePacksSection() {
             "coming from a verified publisher.",
         style = MaterialTheme.typography.bodySmall,
     )
+    importTrust?.let { PackTrustBadge(it) }
     message?.let { Text(it) }
     if (packs.isEmpty() && library != null) {
         Text("No offline packs are installed.")
@@ -158,7 +170,7 @@ fun OfflinePacksSection() {
                 pack.snapshotId + if (pack.active) " (active)" else "",
                 style = MaterialTheme.typography.titleSmall,
             )
-            Text(pack.trustLabel)
+            PackTrustBadge(pack.trust)
             if (!pack.damaged) {
                 Text("${pack.project} · ${pack.articles} articles")
             }
@@ -202,28 +214,46 @@ fun OfflinePacksSection() {
     }
 
     pendingReview?.let { review ->
-        AlertDialog(
-            onDismissRequest = { decision?.complete(false) },
-            title = { Text("Install custom pack?") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(review.trustLabel, style = MaterialTheme.typography.titleSmall)
-                    Text("Pack: ${review.snapshotId}")
-                    Text("Wikipedia edition: ${review.project}")
-                    Text("Articles: ${review.articles}")
-                    Text("Size: ${formatBytes(review.declaredBytes)}")
-                    Text(
-                        "Its contents passed integrity checks, but it is not from a verified " +
-                            "publisher. Install it only if you trust where it came from.",
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { decision?.complete(true) }) { Text("Install") }
-            },
-            dismissButton = {
-                TextButton(onClick = { decision?.complete(false) }) { Text("Cancel") }
-            },
-        )
+        PackReviewDialog(review) { approved -> decision?.complete(approved) }
     }
+}
+
+/**
+ * The install confirmation for a verified pack. Its trust status and
+ * description come from Rust; only a verified status offers "Install".
+ */
+@Composable
+fun PackReviewDialog(review: PackReview, onDecision: (Boolean) -> Unit) {
+    // Defence in depth: only a verified status may be confirmed here.
+    val installable = review.trust == PackTrust.CUSTOM_INTEGRITY_VERIFIED ||
+        review.trust == PackTrust.VERIFIED_PUBLISHER
+    AlertDialog(
+        onDismissRequest = { onDecision(false) },
+        title = {
+            Text(
+                when (review.trust) {
+                    PackTrust.CUSTOM_INTEGRITY_VERIFIED -> "Install custom pack?"
+                    PackTrust.VERIFIED_PUBLISHER -> "Install official pack?"
+                    else -> "This pack cannot be installed"
+                },
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                PackTrustBadge(review.trust)
+                Text("Pack: ${review.snapshotId}")
+                Text("Wikipedia edition: ${review.project}")
+                Text("Articles: ${review.articles}")
+                Text("Size: ${formatBytes(review.declaredBytes)}")
+            }
+        },
+        confirmButton = {
+            if (installable) {
+                TextButton(onClick = { onDecision(true) }) { Text("Install") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDecision(false) }) { Text("Cancel") }
+        },
+    )
 }

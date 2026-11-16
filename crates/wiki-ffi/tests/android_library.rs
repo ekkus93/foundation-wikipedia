@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use wiki_ffi::android::{LibraryError, OfflineLibrary};
+use wiki_ffi::android::{
+    pack_trust_description, pack_trust_label, LibraryError, OfflineLibrary, PackTrust,
+};
 use wiki_model::{
     Article, ArticleKey, Block, BlockContent, PageRecord, Revision, ARTICLE_SCHEMA_VERSION,
 };
@@ -150,8 +152,12 @@ fn install_activate_search_and_open_through_the_exported_api() {
     let installed = library.install_pack(pack_path.clone(), true).unwrap();
     assert_eq!(installed.snapshot_id, "moon-pack");
     assert_eq!(installed.project, "enwiki");
+    assert_eq!(installed.trust, PackTrust::CustomIntegrityVerified);
     assert_eq!(installed.trust_label, "Custom — integrity verified");
     assert_eq!(installed.articles, 2);
+    let listed = library.list_packs().unwrap();
+    assert_eq!(listed[0].trust, PackTrust::CustomIntegrityVerified);
+    assert_eq!(listed[0].trust_label, "Custom — integrity verified");
     assert_eq!(
         library.install_pack(pack_path, true),
         Err(LibraryError::AlreadyInstalled)
@@ -338,6 +344,7 @@ mod streamed {
         );
         let review = declined.seen.lock().unwrap()[0].clone();
         assert_eq!(review.snapshot_id, "moon-pack");
+        assert_eq!(review.trust, PackTrust::CustomIntegrityVerified);
         assert_eq!(review.trust_label, "Custom — integrity verified");
         assert_eq!(review.articles, 2);
         assert!(library.list_packs().unwrap().is_empty());
@@ -1252,4 +1259,26 @@ mod reader_state {
         );
         assert!(ReaderState::new("relative/dir".into()).is_err());
     }
+}
+
+#[test]
+fn trust_statuses_have_distinct_shared_text() {
+    let all = [
+        PackTrust::VerifiedPublisher,
+        PackTrust::CustomIntegrityVerified,
+        PackTrust::NotYetChecked,
+        PackTrust::VerificationFailed,
+    ];
+    let labels: std::collections::HashSet<_> = all.iter().map(|t| pack_trust_label(*t)).collect();
+    let descriptions: std::collections::HashSet<_> =
+        all.iter().map(|t| pack_trust_description(*t)).collect();
+    assert_eq!((labels.len(), descriptions.len()), (4, 4));
+    assert_eq!(
+        pack_trust_label(PackTrust::NotYetChecked),
+        "Not yet checked"
+    );
+    assert_eq!(
+        pack_trust_label(PackTrust::VerificationFailed),
+        "Verification failed"
+    );
 }
