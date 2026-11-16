@@ -16,7 +16,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 use wiki_ai::hosted_codec::HostedProvider;
 use wiki_ffi::android::{
-    discover_local_ai, ArticleChat, ChatAnswer, ChatAnswerPart, ChatError, ChatLocality,
+    discover_local_ai, ArticleChat, ChatAnswer, ChatHistory, ChatAnswerPart, ChatError, ChatLocality,
     ChatPassage, ChatProgress, ChatProgressUpdate, HostedAiProvider, HostedChatRequest,
     LocalAiError, LocalAiProtocol, LocalChatRequest,
 };
@@ -68,6 +68,8 @@ pub struct ChatPreviewDto {
     revision_id: u64,
     passages: Vec<PassageDto>,
     selected_passage: Option<PassageDto>,
+    /// The exchange will be saved to the private history (history is on).
+    saved: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -85,6 +87,13 @@ pub struct ChatProgressDto {
 pub enum AnswerPartDto {
     Text { text: String },
     Citation { passage: PassageDto },
+}
+
+/// A sent question's result; `thread_id` is the saved conversation, if any.
+#[derive(Serialize)]
+pub struct ChatReplyDto {
+    answer: AnswerDto,
+    thread_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -125,6 +134,7 @@ fn chat_message(error: ChatError) -> String {
             "The article or question changed. Review the request again."
         }
         ChatError::ConsentRequired => "Nothing was sent.",
+        ChatError::Storage => "The answer could not be saved to the private history.",
         ChatError::InvalidKey => {
             "The saved API key is not valid. Replace it in Settings › AI Assistant."
         }
@@ -187,6 +197,28 @@ fn provider_label(provider: HostedAiProvider) -> &'static str {
     }
 }
 
+/// The private history to save into, only when the user turned reading
+/// history on (the same consent as Android). Saved chats live in the
+/// desktop's private user state, so its privacy reset clears them too.
+fn chat_history(app: &tauri::AppHandle) -> Result<Option<Arc<ChatHistory>>, String> {
+    let state = crate::open_private_bookmark_store(app)?;
+    if !state
+        .history_enabled()
+        .map_err(|_| "Cannot read the history preference")?
+    {
+        return Ok(None);
+    }
+    let database = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Cannot find the app data directory")?
+        .join("reader-state")
+        .join("user-state.sqlite");
+    ChatHistory::open_database(database)
+        .map(Some)
+        .map_err(|_| "Cannot open the private chat history".to_owned())
+}
+
 /// Prepare a question without sending it. A hosted key is read natively
 /// from `store` and kept only in the prepared request's memory.
 fn prepare(
@@ -197,8 +229,13 @@ fn prepare(
     page_id: u64,
     question: String,
     selection: Option<String>,
-) -> Result<(String, Arc<ArticleChat>), String> {
+    thread_id: Option<i64>,
+) -> Result<(String, Arc<ArticleChat>, bool), String> {
     let library = library(app)?;
+    let history = chat_history(app)?;
+    let saved = history.is_some();
+    // A thread is continued only in the saved history.
+    let thread_id = thread_id.filter(|_| saved);
     match provider {
         ChatProvider::Local => {
             let (profile, protocol, endpoint, model) = crate::local_ai_profiles::active_profile(
@@ -218,13 +255,13 @@ fn prepare(
                         question,
                         server,
                         model,
-                        thread_id: None,
+                        thread_id,
                         selection,
                     },
-                    None,
+                    history,
                 )
                 .map_err(chat_message)?;
-            Ok((profile, chat))
+            Ok((profile, chat, saved))
         }
         ChatProvider::Hosted(provider, model) => {
             let key = load_key(store, HostedProvider::from(provider))?;
@@ -236,14 +273,14 @@ fn prepare(
                         question,
                         provider,
                         model,
-                        thread_id: None,
+                        thread_id,
                         selection,
                     },
                     key.expose_for_storage().to_owned(),
-                    None,
+                    history,
                 )
                 .map_err(chat_message)?;
-            Ok((provider_label(provider).to_owned(), chat))
+            Ok((provider_label(provider).to_owned(), chat, saved))
         }
     }
 }
@@ -259,6 +296,7 @@ pub async fn prepare_pack_chat(
     selection: Option<String>,
     provider: String,
     model: Option<String>,
+    thread_id: Option<i64>,
 ) -> Result<ChatPreviewDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let question = bounded(&question, MAX_QUESTION_CHARS)?;
@@ -267,7 +305,7 @@ pub async fn prepare_pack_chat(
             None => None,
         };
         let provider = parse_provider(&provider, model)?;
-        let (profile, chat) = prepare(
+        let (profile, chat, saved) = prepare(
             &app,
             &OsKeychain,
             provider,
@@ -275,6 +313,7 @@ pub async fn prepare_pack_chat(
             page_id,
             question,
             selection,
+            thread_id,
         )?;
         let state = app.state::<PackChatState>();
         let id = state.next.fetch_add(1, Ordering::Relaxed) + 1;
@@ -288,6 +327,7 @@ pub async fn prepare_pack_chat(
             revision_id: chat.revision_id(),
             passages: chat.passages().into_iter().map(Into::into).collect(),
             selected_passage: chat.selected_passage().map(Into::into),
+            saved,
         };
         let mut chats = state.chats.lock().map_err(|_| "Chat unavailable")?;
         if chats.len() >= MAX_PENDING {
@@ -325,7 +365,7 @@ impl ChatProgress for EmitProgress {
 
 /// Send a prepared question after the user reviewed and confirmed it.
 #[tauri::command]
-pub async fn send_pack_chat(app: tauri::AppHandle, id: u64) -> Result<AnswerDto, String> {
+pub async fn send_pack_chat(app: tauri::AppHandle, id: u64) -> Result<ChatReplyDto, String> {
     let chat = app
         .state::<PackChatState>()
         .chats
@@ -345,7 +385,7 @@ pub async fn send_pack_chat(app: tauri::AppHandle, id: u64) -> Result<AnswerDto,
         chats.remove(&id);
     }
     let reply = result.map_err(chat_message)?;
-    Ok(match reply.answer {
+    let answer = match reply.answer {
         ChatAnswer::InsufficientEvidence => AnswerDto::InsufficientEvidence,
         ChatAnswer::Supported { parts } => AnswerDto::Supported {
             parts: parts
@@ -358,6 +398,10 @@ pub async fn send_pack_chat(app: tauri::AppHandle, id: u64) -> Result<AnswerDto,
                 })
                 .collect(),
         },
+    };
+    Ok(ChatReplyDto {
+        answer,
+        thread_id: reply.thread_id,
     })
 }
 

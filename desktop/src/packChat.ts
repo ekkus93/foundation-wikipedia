@@ -18,6 +18,8 @@ export interface ChatPreview {
   revisionId: number;
   passages: ChatPassage[];
   selectedPassage: ChatPassage | null;
+  /** The exchange will be saved to the private history. */
+  saved: boolean;
 }
 
 export type AnswerPart = { kind: "text"; text: string } | { kind: "citation"; passage: ChatPassage };
@@ -69,6 +71,7 @@ export function parseChatPreview(value: unknown): ChatPreview {
     revisionId: count(item.revision_id),
     passages,
     selectedPassage: item.selected_passage == null ? null : parsePassage(item.selected_passage),
+    saved: item.saved === true,
   };
 }
 
@@ -85,6 +88,13 @@ export function parseChatAnswer(value: unknown): ChatAnswer {
       return fail();
     }),
   };
+}
+
+/** A sent question's result and its saved conversation, if any. */
+export function parseChatReply(value: unknown): { answer: ChatAnswer; threadId: number | null } {
+  const item = record(value);
+  const threadId = item.thread_id == null ? null : count(item.thread_id);
+  return { answer: parseChatAnswer(item.answer), threadId };
 }
 
 export function parseChatProgress(value: unknown): ChatProgress | null {

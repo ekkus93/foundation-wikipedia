@@ -92,3 +92,10 @@ test("late thread-list responses cannot select a conversation from another artic
   fence.invalidate();
   assert.equal(fence.isCurrent(repeated, article), false);
 });
+
+test("saved answers never show raw citation IDs", async () => {
+  const { displaySavedAnswer } = await import("../src/readerChatHistory.ts");
+  assert.equal(displaySavedAnswer("Tides follow the Moon [[cite:wkb:enwiki:2:7002:b0]]."), "Tides follow the Moon […].");
+  assert.equal(displaySavedAnswer("[NO_EVIDENCE]"), "");
+  assert.equal(displaySavedAnswer("Plain [[text]]"), "Plain [[text]]");
+});

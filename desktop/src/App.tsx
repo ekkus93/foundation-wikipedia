@@ -23,7 +23,8 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   // UX-002: each article's conversation is kept while the chat is closed.
-  const [conversations, setConversations] = useState<Map<string, ChatExchange[]>>(() => new Map());
+  const [conversations, setConversations] = useState<Map<string, { exchanges: ChatExchange[]; threadId: number | null }>>(() => new Map());
+  const [chatHistoryVersion, setChatHistoryVersion] = useState(0);
   const [selections, setSelections] = useState<Map<number, string>>(() => new Map());
   const [citationRequest, setCitationRequest] = useState<(ReaderCitationRequest & { tabId: number }) | null>(null);
   const [, setArticleVersion] = useState(0);
@@ -651,12 +652,18 @@ export default function App() {
             article={article} onClose={() => {
               setChatOpen(false);
               mainActionRef.current?.focus();
-            }} chat={(() => {
+            }} historyVersion={chatHistoryVersion} chat={(() => {
               const key = `${article.project}:${article.pageId}:${article.revisionId}`;
               const tabId = readerTabs.activeId;
-              return <ArticleChat article={article} exchanges={conversations.get(key) ?? []}
-                onExchange={(exchange) => setConversations((previous) =>
-                  new Map(previous).set(key, [...(previous.get(key) ?? []), exchange]))}
+              const conversation = conversations.get(key);
+              return <ArticleChat article={article} exchanges={conversation?.exchanges ?? []}
+                threadId={conversation?.threadId ?? null}
+                onExchange={(exchange, threadId) => {
+                  setConversations((previous) => new Map(previous).set(key, {
+                    exchanges: [...(previous.get(key)?.exchanges ?? []), exchange], threadId,
+                  }));
+                  if (threadId !== null) setChatHistoryVersion((value) => value + 1);
+                }}
                 selection={selections.get(tabId) ?? null}
                 onClearSelection={() => setSelections((previous) => {
                   const next = new Map(previous);

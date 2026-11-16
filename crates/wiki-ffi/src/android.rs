@@ -1389,6 +1389,18 @@ pub struct ChatHistory {
 }
 
 impl ChatHistory {
+    /// Use an existing private user-state database file, so saved chats share
+    /// that store's consent and privacy resets (the desktop's reader state).
+    /// The caller must have created it in a private app directory.
+    pub fn open_database(database: PathBuf) -> Result<Arc<Self>, ChatError> {
+        if !database.is_absolute() || !database.is_file() {
+            return Err(ChatError::InvalidInput);
+        }
+        let history = Self { database };
+        history.open()?;
+        Ok(Arc::new(history))
+    }
+
     fn open(&self) -> Result<wiki_store::user_state::UserState, ChatError> {
         wiki_store::user_state::UserState::open(&self.database).map_err(|_| ChatError::Storage)
     }

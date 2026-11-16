@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { numberCitations, parseChatAnswer, parseChatPreview, parseChatProgress } from "../src/packChat.ts";
+import { numberCitations, parseChatAnswer, parseChatPreview, parseChatProgress, parseChatReply } from "../src/packChat.ts";
 
 const passage = (n) => ({ block_id: `wkb:enwiki:2:7002:b${n}`, heading_path: [], excerpt: `Passage ${n}` });
 
@@ -40,4 +40,12 @@ test("malformed progress events are ignored", () => {
   assert.equal(parseChatProgress({ id: 1 }), null);
   assert.deepEqual(parseChatProgress({ id: 2, elapsed_ms: 10, first_output_ms: null, finished: false, draft: "Tides […]" }),
     { id: 2, elapsedMs: 10, firstOutputMs: null, finished: false, draft: "Tides […]" });
+});
+
+test("replies carry the saved conversation, if any", () => {
+  assert.deepEqual(parseChatReply({ answer: { kind: "insufficient_evidence" }, thread_id: null }),
+    { answer: { kind: "insufficient_evidence" }, threadId: null });
+  assert.equal(parseChatReply({ answer: { kind: "insufficient_evidence" }, thread_id: 7 }).threadId, 7);
+  assert.throws(() => parseChatReply({ answer: { kind: "insufficient_evidence" }, thread_id: -1 }));
+  assert.throws(() => parseChatReply({ thread_id: 1 }));
 });

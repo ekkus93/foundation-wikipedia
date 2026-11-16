@@ -3,13 +3,15 @@ import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWi
 import { invoke } from "@tauri-apps/api/core";
 import ReaderChatProviderStatus from "./ReaderChatProviderStatus";
 import type { ReaderArticleContext } from "./OnlineReader";
-import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, ReaderChatThreadListFence, type ReaderChatExchange } from "./readerChatHistory";
+import { displaySavedAnswer, parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence, ReaderChatExchangeReadFence, ReaderChatThreadListFence, type ReaderChatExchange } from "./readerChatHistory";
 
 /** Read-only historical transcript: an online HTML preview is not canonical RAG
  * evidence, so this component never generates, transmits or certifies citations. */
-export default function ReaderChatHistory({ article, onClose, chat }: {
+export default function ReaderChatHistory({ article, onClose, chat, historyVersion = 0 }: {
   article: ReaderArticleContext;
   onClose: () => void;
+  /** Changes when a chat answer was saved, to reload the saved list. */
+  historyVersion?: number;
   /** The live article chat (UX-002), shown above the saved history. */
   chat?: ReactNode;
 }) {
@@ -138,7 +140,7 @@ export default function ReaderChatHistory({ article, onClose, chat }: {
       deleteFenceRef.current.invalidate();
       exchangeReadFenceRef.current.invalidate();
     };
-  }, [article.project, article.pageId, article.revisionId]);
+  }, [article.project, article.pageId, article.revisionId, historyVersion]);
 
   useEffect(() => {
     const fence = exchangeReadFenceRef.current;
@@ -257,7 +259,7 @@ export default function ReaderChatHistory({ article, onClose, chat }: {
     <ol className="reader-chat-exchanges">{(loadedThread === selectedThread ? exchanges : []).map(([questionId, answerId, question, answer]) =>
       <li key={questionId + ":" + answerId}>
         <p><strong>Question</strong></p><p className="reader-chat-text">{question}</p>
-        <p><strong>Saved answer (unverified)</strong></p><p className="reader-chat-text">{answer}</p>
+        <p><strong>Saved answer (unverified)</strong></p><p className="reader-chat-text">{displaySavedAnswer(answer)}</p>
       </li>)}</ol>
     </div>
   </aside>;

@@ -101,3 +101,9 @@ export class ReaderChatThreadListFence {
     this.active = null;
   }
 }
+
+/** Saved answers are not revalidated, so their raw citation markers are
+ * shown as neutral placeholders (as in an unchecked draft), never as IDs. */
+export function displaySavedAnswer(text: string): string {
+  return text.replace(/\[\[cite:[^\]\s]{1,256}\]\]/gu, "[…]").replace(/\[NO_EVIDENCE\]/gu, "");
+}

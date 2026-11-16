@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  DRAFT_LABEL, numberCitations, parseChatAnswer, parseChatPreview, parseChatProgress,
+  DRAFT_LABEL, numberCitations, parseChatPreview, parseChatProgress, parseChatReply,
   type ChatExchange, type ChatPassage, type ChatPreview,
 } from "./packChat";
 import type { ReaderArticleContext } from "./OnlineReader";
@@ -50,10 +50,12 @@ async function loadChoices(): Promise<ChatChoice[]> {
  * anything leaves the app; the answer's citations open the cited passage of
  * the same revision in the reader.
  */
-export default function ArticleChat({ article, exchanges, onExchange, selection, onClearSelection, onCitation }: {
+export default function ArticleChat({ article, exchanges, threadId, onExchange, selection, onClearSelection, onCitation }: {
   article: ReaderArticleContext;
   exchanges: ChatExchange[];
-  onExchange: (exchange: ChatExchange) => void;
+  /** The saved conversation this chat continues, if any. */
+  threadId: number | null;
+  onExchange: (exchange: ChatExchange, threadId: number | null) => void;
   selection: string | null;
   onClearSelection: () => void;
   onCitation: (passage: ChatPassage) => void;
@@ -112,7 +114,7 @@ export default function ArticleChat({ article, exchanges, onExchange, selection,
       if (!choice) throw new Error("Set up a local or hosted model in Settings › AI Assistant first.");
       setPreview(parseChatPreview(await invoke<unknown>("prepare_pack_chat", {
         project: article.project, pageId: article.pageId, question, selection,
-        provider: choice.provider, model: choice.model,
+        provider: choice.provider, model: choice.model, threadId,
       })));
     } catch (error) {
       setMessage(String(error));
@@ -128,8 +130,8 @@ export default function ArticleChat({ article, exchanges, onExchange, selection,
     setDraft(null);
     setMessage(null);
     try {
-      const answer = parseChatAnswer(await invoke<unknown>("send_pack_chat", { id: pending.id }));
-      onExchange({ question: asked, answer });
+      const reply = parseChatReply(await invoke<unknown>("send_pack_chat", { id: pending.id }));
+      onExchange({ question: asked, answer: reply.answer }, reply.threadId ?? threadId);
       setQuestion("");
       if (selection) onClearSelection();
     } catch (error) {
@@ -176,6 +178,9 @@ export default function ArticleChat({ article, exchanges, onExchange, selection,
       <p>{preview.passages.length} passage{preview.passages.length === 1 ? "" : "s"} from “{preview.articleTitle}”, revision {preview.revisionId}:</p>
       <ul>{preview.passages.map((passage) => <li key={passage.blockId}>
         {passage.headingPath.join(" › ") || "Introduction"}: {passage.excerpt.slice(0, 280)}</li>)}</ul>
+      <p className="article-chat-note">{preview.saved
+        ? "A supported answer and this question will be saved in your private history on this device."
+        : "This conversation will not be saved: reading history is off (Settings › History & Saved Content)."}</p>
       <button type="button" onClick={() => void send(preview)}>Send</button>
       <button type="button" onClick={() => { void invoke("cancel_pack_chat", { id: preview.id }); setPreview(null); setMessage("Nothing was sent."); }}>Cancel</button>
     </div> : sending === null && <form onSubmit={(event) => { event.preventDefault(); void review(); }}>

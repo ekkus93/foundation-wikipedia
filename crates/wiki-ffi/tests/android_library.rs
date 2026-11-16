@@ -1328,3 +1328,25 @@ fn a_damaged_search_index_is_rebuilt_on_open_without_any_download() {
         Err(LibraryError::VerificationFailed)
     );
 }
+
+#[test]
+fn chat_history_can_use_an_existing_private_user_state_file() {
+    use wiki_ffi::android::{ChatError, ChatHistory};
+    let dir = test_dir("history-file");
+    assert!(matches!(
+        ChatHistory::open_database("relative/user-state.sqlite".into()),
+        Err(ChatError::InvalidInput)
+    ));
+    let database = dir.0.join("user-state.sqlite");
+    assert!(matches!(
+        ChatHistory::open_database(database.clone()),
+        Err(ChatError::InvalidInput)
+    ));
+    // The desktop creates its user state first; chats then share it.
+    wiki_store::user_state::UserState::open(&database).unwrap();
+    let history = ChatHistory::open_database(database).unwrap();
+    assert!(history
+        .threads("enwiki".into(), 1, 7001)
+        .unwrap()
+        .is_empty());
+}
