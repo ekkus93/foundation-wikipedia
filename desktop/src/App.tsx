@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AiAssistantSettings from "./AiAssistantSettings";
+import HostedAiSettings from "./HostedAiSettings";
 import OfflinePacksSettings from "./OfflinePacksSettings";
 import ReaderChatHistory from "./ReaderChatHistory";
 import ArticleChat from "./ArticleChat";
@@ -547,7 +548,7 @@ export default function App() {
             </section>
           ))}
           <h2 id="roadmap">Under development</h2>
-          <p>Offline images in packs, official pack downloads, hosted AI chat and some settings are still in development on the desktop.</p>
+          <p>Offline images in packs, official pack downloads and some settings are still in development on the desktop.</p>
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">
@@ -636,7 +637,7 @@ export default function App() {
               <button type="button" disabled={savedBusy} onClick={() => setConfirmClearReading(false)}>Cancel</button>
             </div>
           )}
-        </section> : settingsSection === "AI Assistant" ? <AiAssistantSettings offlineMode={offlineMode} />
+        </section> : settingsSection === "AI Assistant" ? <><AiAssistantSettings offlineMode={offlineMode} /><HostedAiSettings offlineMode={offlineMode} /></>
         : settingsSection === "Wikipedia & Offline Data" ? <OfflinePacksSettings />
         : <p>Settings for {settingsSection} are not available in this development preview.</p>}
       </main>}

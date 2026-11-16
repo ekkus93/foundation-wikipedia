@@ -126,3 +126,7 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .article-chat-review ul { font-size: .85em; }
 .article-chat-selection { font-style: italic; color: var(--reader-muted); }
 .article-chat-note { font-size: .85em; color: var(--reader-muted); }
+.article-chat-internet { font-weight: 600; color: #b32424; }
+:root[data-theme="dark"] .article-chat-internet { color: #fd7865; }
+.hosted-ai .hosted-provider { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.hosted-ai .hosted-provider label { display: flex; flex-direction: column; gap: 2px; }

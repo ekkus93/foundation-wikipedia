@@ -14,10 +14,14 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager};
+use wiki_ai::hosted_codec::HostedProvider;
 use wiki_ffi::android::{
     discover_local_ai, ArticleChat, ChatAnswer, ChatAnswerPart, ChatError, ChatLocality,
-    ChatPassage, ChatProgress, ChatProgressUpdate, LocalAiError, LocalAiProtocol, LocalChatRequest,
+    ChatPassage, ChatProgress, ChatProgressUpdate, HostedAiProvider, HostedChatRequest,
+    LocalAiError, LocalAiProtocol, LocalChatRequest,
 };
+
+use crate::hosted_ai_keys::{load_key, OsKeychain, SecretStore};
 
 use crate::offline_packs::library;
 
@@ -121,6 +125,10 @@ fn chat_message(error: ChatError) -> String {
             "The article or question changed. Review the request again."
         }
         ChatError::ConsentRequired => "Nothing was sent.",
+        ChatError::InvalidKey => {
+            "The saved API key is not valid. Replace it in Settings › AI Assistant."
+        }
+        ChatError::InvalidInput => "Enter a question and a valid model name.",
         _ => "Something went wrong with the chat request.",
     }
     .to_owned()
@@ -147,8 +155,101 @@ fn bounded(text: &str, max: usize) -> Result<String, String> {
     Ok(trimmed.to_owned())
 }
 
-/// Prepare (no network beyond reading the active local server's model list)
-/// a question about an article of the active pack.
+/// Where a question goes: the active local model profile, or a hosted
+/// provider (with its model name) whose key is in OS secret storage.
+#[derive(Debug, PartialEq, Eq)]
+enum ChatProvider {
+    Local,
+    Hosted(HostedAiProvider, String),
+}
+
+fn parse_provider(provider: &str, model: Option<String>) -> Result<ChatProvider, String> {
+    let hosted = |provider| -> Result<ChatProvider, String> {
+        let model = model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && model.len() <= 256)
+            .ok_or("Enter the model name for this provider in Settings › AI Assistant.")?;
+        Ok(ChatProvider::Hosted(provider, model.to_owned()))
+    };
+    match provider {
+        "local" => Ok(ChatProvider::Local),
+        "anthropic" => hosted(HostedAiProvider::Anthropic),
+        "openai" => hosted(HostedAiProvider::OpenAi),
+        _ => Err("Unknown chat provider.".to_owned()),
+    }
+}
+
+fn provider_label(provider: HostedAiProvider) -> &'static str {
+    match provider {
+        HostedAiProvider::Anthropic => "Anthropic",
+        HostedAiProvider::OpenAi => "OpenAI",
+    }
+}
+
+/// Prepare a question without sending it. A hosted key is read natively
+/// from `store` and kept only in the prepared request's memory.
+fn prepare(
+    app: &tauri::AppHandle,
+    store: &dyn SecretStore,
+    provider: ChatProvider,
+    project: String,
+    page_id: u64,
+    question: String,
+    selection: Option<String>,
+) -> Result<(String, Arc<ArticleChat>), String> {
+    let library = library(app)?;
+    match provider {
+        ChatProvider::Local => {
+            let (profile, protocol, endpoint, model) = crate::local_ai_profiles::active_profile(
+                app,
+            )?
+            .ok_or("Chat needs an active local model. Choose one in Settings › AI Assistant.")?;
+            let protocol = match protocol.as_str() {
+                "ollama" => LocalAiProtocol::Ollama,
+                _ => LocalAiProtocol::OpenAiCompatible,
+            };
+            let server = discover_local_ai(protocol, endpoint).map_err(local_message)?;
+            let chat = library
+                .prepare_local_chat(
+                    LocalChatRequest {
+                        project,
+                        page_id,
+                        question,
+                        server,
+                        model,
+                        thread_id: None,
+                        selection,
+                    },
+                    None,
+                )
+                .map_err(chat_message)?;
+            Ok((profile, chat))
+        }
+        ChatProvider::Hosted(provider, model) => {
+            let key = load_key(store, HostedProvider::from(provider))?;
+            let chat = library
+                .prepare_hosted_chat(
+                    HostedChatRequest {
+                        project,
+                        page_id,
+                        question,
+                        provider,
+                        model,
+                        thread_id: None,
+                        selection,
+                    },
+                    key.expose_for_storage().to_owned(),
+                    None,
+                )
+                .map_err(chat_message)?;
+            Ok((provider_label(provider).to_owned(), chat))
+        }
+    }
+}
+
+/// Prepare (no request is sent; a local provider's model list is read) a
+/// question about an article of the active pack.
 #[tauri::command]
 pub async fn prepare_pack_chat(
     app: tauri::AppHandle,
@@ -156,6 +257,8 @@ pub async fn prepare_pack_chat(
     page_id: u64,
     question: String,
     selection: Option<String>,
+    provider: String,
+    model: Option<String>,
 ) -> Result<ChatPreviewDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let question = bounded(&question, MAX_QUESTION_CHARS)?;
@@ -163,27 +266,16 @@ pub async fn prepare_pack_chat(
             Some(text) => Some(bounded(&text, MAX_SELECTION_CHARS)?),
             None => None,
         };
-        let (profile, protocol, endpoint, model) = crate::local_ai_profiles::active_profile(&app)?
-            .ok_or("Chat needs an active local model. Choose one in Settings › AI Assistant.")?;
-        let protocol = match protocol.as_str() {
-            "ollama" => LocalAiProtocol::Ollama,
-            _ => LocalAiProtocol::OpenAiCompatible,
-        };
-        let server = discover_local_ai(protocol, endpoint).map_err(local_message)?;
-        let chat = library(&app)?
-            .prepare_local_chat(
-                LocalChatRequest {
-                    project,
-                    page_id,
-                    question,
-                    server,
-                    model,
-                    thread_id: None,
-                    selection,
-                },
-                None,
-            )
-            .map_err(chat_message)?;
+        let provider = parse_provider(&provider, model)?;
+        let (profile, chat) = prepare(
+            &app,
+            &OsKeychain,
+            provider,
+            project,
+            page_id,
+            question,
+            selection,
+        )?;
         let state = app.state::<PackChatState>();
         let id = state.next.fetch_add(1, Ordering::Relaxed) + 1;
         let preview = ChatPreviewDto {
@@ -333,6 +425,29 @@ mod tests {
         );
         assert_eq!(article_body("<p>no main</p>"), None);
         assert_eq!(article_body("</main><main>"), None);
+    }
+
+    #[test]
+    fn providers_are_explicit_and_hosted_ones_need_a_model() {
+        assert_eq!(parse_provider("local", None), Ok(ChatProvider::Local));
+        assert_eq!(
+            parse_provider("anthropic", Some(" claude-x ".into())),
+            Ok(ChatProvider::Hosted(
+                HostedAiProvider::Anthropic,
+                "claude-x".into()
+            ))
+        );
+        assert_eq!(
+            parse_provider("openai", Some("gpt-x".into())),
+            Ok(ChatProvider::Hosted(
+                HostedAiProvider::OpenAi,
+                "gpt-x".into()
+            ))
+        );
+        assert!(parse_provider("anthropic", None).is_err());
+        assert!(parse_provider("openai", Some("  ".into())).is_err());
+        assert!(parse_provider("cloud", Some("m".into())).is_err());
+        assert!(parse_provider("", None).is_err());
     }
 
     #[test]

@@ -491,6 +491,6 @@ export default function AiAssistantSettings({ offlineMode }: { offlineMode: Read
       {selectedModel && canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel) && <p role="status">Selected <strong>{selectedModel}</strong> on {inventory.locality === "localhost" ? "localhost" : "your LAN"}. Use Save local profile to retain this selection across restarts. Chat remains unavailable.</p>}
       {selectedModel && <button type="button" disabled={saving || testing || offline || needsReview || !canSaveAiLocalChoice(inventory, protocol, endpoint, selectedModel)} onClick={() => void saveChoice()}>{saving ? "Saving…" : "Save local profile"}</button>}
     </div>}
-    <p>This page never selects a cloud provider or automatically falls back to one. Article-grounded AI answers, remote credentials and model inference are not wired to the reader yet.</p>
+    <p>A local model is never replaced by a cloud provider automatically: chat uses only the provider you choose for each question, and shows every request for review first.</p>
   </section>;
 }
