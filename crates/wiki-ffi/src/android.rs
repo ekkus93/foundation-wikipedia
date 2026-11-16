@@ -22,7 +22,7 @@ use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
 use wiki_store::pack_install::{
     install_custom_pack, install_custom_pack_stream, installed_shard_inventory,
     list_installed_snapshots, reclaim_abandoned_staging, remove_installed_snapshot,
-    PackInstallError, CATALOG_OBJECT, SEARCH_OBJECT,
+    repair_installed_search_index, PackInstallError, CATALOG_OBJECT, SEARCH_OBJECT,
 };
 
 const MAX_PACK_BYTES: u64 = 8 << 30;
@@ -258,13 +258,22 @@ fn open_snapshot(root: &Path, id: &str) -> Result<VerifiedOfflineCatalogReader, 
         return Err(LibraryError::NotInstalled);
     }
     let inventory = installed_shard_inventory(&snapshot)?;
-    VerifiedOfflineCatalogReader::open_with_manifest_shards(
-        &snapshot.join(CATALOG_OBJECT),
-        &snapshot.join(SEARCH_OBJECT),
-        &snapshot,
-        &inventory,
-    )
-    .map_err(|_| LibraryError::VerificationFailed)
+    let open = || {
+        VerifiedOfflineCatalogReader::open_with_manifest_shards(
+            &snapshot.join(CATALOG_OBJECT),
+            &snapshot.join(SEARCH_OBJECT),
+            &snapshot,
+            &inventory,
+        )
+    };
+    if let Ok(reader) = open() {
+        return Ok(reader);
+    }
+    // STORE-004: the search index is derived data. Rebuild it from the
+    // verified shards (no download) and retry once; a damaged catalog or
+    // shard is refused by the repair and reported as a failed verification.
+    repair_installed_search_index(root, id).map_err(|_| LibraryError::VerificationFailed)?;
+    open().map_err(|_| LibraryError::VerificationFailed)
 }
 
 #[uniffi::export]

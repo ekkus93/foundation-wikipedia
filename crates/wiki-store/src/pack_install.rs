@@ -661,6 +661,108 @@ fn remove_installed_snapshot_with_sync(
     Ok(())
 }
 
+/// What a search index repair found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchIndexRepair {
+    /// The existing index already verified; nothing was changed.
+    AlreadyValid,
+    /// The index was missing or failed verification and was rebuilt from
+    /// the snapshot's verified shards.
+    Rebuilt,
+}
+
+/// STORE-004: repair an installed snapshot's derived search index without
+/// any download. The catalog must still match the digest the installer
+/// recorded and every shard must rehash to the installed manifest; only
+/// then is `search.sqlite` regenerated (atomically, and verified against
+/// the catalog before it replaces the old file). Damaged canonical content
+/// (catalog or shards) is refused: it can only be fixed by reinstalling.
+/// The caller must not hold the snapshot open while repairing it.
+pub fn repair_installed_search_index(
+    root: &Path,
+    snapshot_id: &str,
+) -> Result<SearchIndexRepair, PackInstallError> {
+    if !safe_id(snapshot_id) {
+        return Err(PackInstallError::InvalidSnapshotId);
+    }
+    let (snapshots, _) = prepare_root(root)?;
+    let snapshot = snapshots.join(snapshot_id);
+    if !real_directory(&snapshot)? {
+        return Err(PackInstallError::NotInstalled);
+    }
+    let catalog_path = snapshot.join(CATALOG_OBJECT);
+    let search_path = snapshot.join(SEARCH_OBJECT);
+    let shards = installed_shard_inventory(&snapshot)?;
+    if VerifiedOfflineCatalogReader::open_with_manifest_shards(
+        &catalog_path,
+        &search_path,
+        &snapshot,
+        &shards,
+    )
+    .is_ok()
+    {
+        return Ok(SearchIndexRepair::AlreadyValid);
+    }
+    verify_recorded_catalog(&snapshot)?;
+    let catalog = SnapshotCatalog::open_read_only(&catalog_path)
+        .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
+    OfflineSearchIndex::replace_persisted_from_verified_shards(
+        &search_path,
+        &catalog,
+        &snapshot,
+        &shards,
+    )
+    .map_err(PackInstallError::Search)?;
+    drop(catalog);
+    VerifiedOfflineCatalogReader::open_with_manifest_shards(
+        &catalog_path,
+        &search_path,
+        &snapshot,
+        &shards,
+    )
+    .map_err(PackInstallError::Reader)?;
+    Ok(SearchIndexRepair::Rebuilt)
+}
+
+/// The catalog file must still be byte-identical to the one installed.
+fn verify_recorded_catalog(snapshot: &Path) -> Result<(), PackInstallError> {
+    use sha2::{Digest, Sha256};
+    let invalid = || PackInstallError::UnsupportedObject(MANIFEST_FILE.into());
+    let path = snapshot.join(MANIFEST_FILE);
+    let meta = fs::symlink_metadata(&path)?;
+    if !meta.is_file() || meta.len() > MAX_INSTALLED_MANIFEST_BYTES {
+        return Err(invalid());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path)?).map_err(|_| invalid())?;
+    let recorded = value["objects"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .find(|object| object["path"].as_str() == Some(CATALOG_OBJECT))
+        .ok_or_else(invalid)?;
+    let (Some(sha256), Some(bytes)) = (recorded["sha256"].as_str(), recorded["bytes"].as_u64())
+    else {
+        return Err(invalid());
+    };
+    let catalog = snapshot.join(CATALOG_OBJECT);
+    let meta = fs::symlink_metadata(&catalog)?;
+    let damaged = || {
+        PackInstallError::Reader(ReaderError::Catalog(
+            crate::catalog::CatalogError::DigestMismatch,
+        ))
+    };
+    if !meta.is_file() || meta.len() != bytes {
+        return Err(damaged());
+    }
+    let mut hasher = Sha256::new();
+    io::copy(&mut File::open(&catalog)?, &mut hasher)?;
+    if !signature::hex(&hasher.finalize()[..]).eq_ignore_ascii_case(sha256) {
+        return Err(damaged());
+    }
+    Ok(())
+}
+
 /// Reopen an installed snapshot's pinned shard inventory from the
 /// installer-owned `manifest.json`, for verified opening after a restart.
 /// Index files and the attribution object are excluded exactly as at install
@@ -1527,6 +1629,146 @@ mod tests {
         assert!(gamma.damaged);
         assert_eq!(gamma.trust, TrustStatus::VerificationFailed);
         remove_installed_snapshot(&root, "gamma").unwrap();
+    }
+
+    #[test]
+    fn a_damaged_or_missing_search_index_is_rebuilt_from_verified_shards() {
+        let dir = test_dir("repair-index");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("epsilon");
+        snapshot_tree(&tree, 3030, true);
+        let installed = install(&root, &pack_bytes(&tree, "epsilon")).unwrap();
+        let search = installed.path.join(SEARCH_OBJECT);
+        let open = || {
+            VerifiedOfflineCatalogReader::open_with_manifest_shards(
+                &installed.path.join(CATALOG_OBJECT),
+                &search,
+                &installed.path,
+                &installed_shard_inventory(&installed.path).unwrap(),
+            )
+        };
+        let titles = || {
+            let reader = open().unwrap();
+            reader
+                .reader()
+                .search_articles("planet", 10)
+                .unwrap()
+                .into_iter()
+                .map(|article| article.title)
+                .collect::<Vec<_>>()
+        };
+        let expected = titles();
+        assert!(!expected.is_empty());
+        assert_eq!(
+            repair_installed_search_index(&root, "epsilon").unwrap(),
+            SearchIndexRepair::AlreadyValid
+        );
+
+        let shard_bytes = |path: &Path| {
+            let mut files: Vec<_> = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "shard"))
+                .map(|path| fs::read(path).unwrap())
+                .collect();
+            files.sort();
+            files
+        };
+        let shards_before = shard_bytes(&installed.path);
+        let catalog_before = fs::read(installed.path.join(CATALOG_OBJECT)).unwrap();
+
+        for damage in ["garbage", "truncate", "missing"] {
+            match damage {
+                "garbage" => fs::write(&search, b"not a database").unwrap(),
+                "truncate" => {
+                    let bytes = fs::read(&search).unwrap();
+                    fs::write(&search, &bytes[..bytes.len() / 2]).unwrap();
+                }
+                _ => fs::remove_file(&search).unwrap(),
+            }
+            assert!(open().is_err(), "{damage}: damaged index must not open");
+            assert_eq!(
+                repair_installed_search_index(&root, "epsilon").unwrap(),
+                SearchIndexRepair::Rebuilt,
+                "{damage}"
+            );
+            assert_eq!(titles(), expected, "{damage}");
+        }
+        // Canonical content was only read, never rewritten.
+        assert_eq!(shard_bytes(&installed.path), shards_before);
+        assert_eq!(
+            fs::read(installed.path.join(CATALOG_OBJECT)).unwrap(),
+            catalog_before
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&search).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        assert!(!fs::read_dir(&installed.path).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".offline-fts.")));
+    }
+
+    #[test]
+    fn damaged_canonical_content_is_never_repaired_by_a_rebuild() {
+        let dir = test_dir("repair-refuse");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("zeta");
+        snapshot_tree(&tree, 3031, true);
+        let installed = install(&root, &pack_bytes(&tree, "zeta")).unwrap();
+        let search = installed.path.join(SEARCH_OBJECT);
+        fs::write(&search, b"broken").unwrap();
+
+        // A changed shard byte: the index stays broken; reinstall is needed.
+        let shard = fs::read_dir(&installed.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "shard"))
+            .unwrap();
+        let original = fs::read(&shard).unwrap();
+        let mut changed = original.clone();
+        *changed.last_mut().unwrap() ^= 1;
+        fs::write(&shard, &changed).unwrap();
+        assert!(repair_installed_search_index(&root, "zeta").is_err());
+        assert_eq!(fs::read(&search).unwrap(), b"broken");
+        fs::write(&shard, &original).unwrap();
+
+        // A changed catalog is refused before anything is rebuilt.
+        let catalog = installed.path.join(CATALOG_OBJECT);
+        let original = fs::read(&catalog).unwrap();
+        let mut changed = original.clone();
+        let last = changed.len() - 1;
+        changed[last] ^= 1;
+        fs::write(&catalog, &changed).unwrap();
+        assert!(matches!(
+            repair_installed_search_index(&root, "zeta"),
+            Err(PackInstallError::Reader(ReaderError::Catalog(
+                crate::catalog::CatalogError::DigestMismatch
+            )))
+        ));
+        assert_eq!(fs::read(&search).unwrap(), b"broken");
+        fs::write(&catalog, &original).unwrap();
+        assert_eq!(
+            repair_installed_search_index(&root, "zeta").unwrap(),
+            SearchIndexRepair::Rebuilt
+        );
+
+        assert!(matches!(
+            repair_installed_search_index(&root, "missing"),
+            Err(PackInstallError::NotInstalled)
+        ));
+        assert!(matches!(
+            repair_installed_search_index(&root, "../zeta"),
+            Err(PackInstallError::InvalidSnapshotId)
+        ));
     }
 
     #[test]

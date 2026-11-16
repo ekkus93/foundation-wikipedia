@@ -1294,3 +1294,37 @@ fn no_official_catalog_is_offered_before_a_verified_refresh() {
     fs::write(&record, b"not\na\nsignature\nfile\n{}").unwrap();
     assert_eq!(library.official_catalog(), None);
 }
+
+#[test]
+fn a_damaged_search_index_is_rebuilt_on_open_without_any_download() {
+    let dir = test_dir("index-repair");
+    let pack = build_pack(&dir.0, "moon-pack");
+    {
+        let library = library(&dir.0);
+        library
+            .install_pack(pack.to_string_lossy().into_owned(), true)
+            .unwrap();
+        library.activate("moon-pack".into()).unwrap();
+        assert_eq!(library.search("moon".into(), 10).unwrap().len(), 2);
+    }
+    // Simulate corruption while the app is not running.
+    let index = dir.0.join("library/snapshots/moon-pack/search.sqlite");
+    fs::write(&index, b"corrupted").unwrap();
+    let reopened = library(&dir.0);
+    let hits = reopened.search("moon".into(), 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_ne!(fs::read(&index).unwrap(), b"corrupted");
+
+    // Damaged canonical content is not "repaired": it fails verification.
+    drop(reopened);
+    let shard = dir.0.join("library/snapshots/moon-pack/articles.shard");
+    let mut bytes = fs::read(&shard).unwrap();
+    bytes[0] ^= 1;
+    fs::write(&shard, bytes).unwrap();
+    fs::write(&index, b"corrupted").unwrap();
+    let damaged = library(&dir.0);
+    assert_eq!(
+        damaged.search("moon".into(), 10),
+        Err(LibraryError::VerificationFailed)
+    );
+}
