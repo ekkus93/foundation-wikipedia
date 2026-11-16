@@ -41,17 +41,20 @@ export const LINK_MESSAGE_KEY = "foundationReaderLink";
 export const SCROLL_MESSAGE_KEY = "foundationReaderScroll";
 export const SCROLL_TO_KEY = "foundationReaderScrollTo";
 export const READY_MESSAGE_KEY = "foundationReaderReady";
+export const SELECTION_MESSAGE_KEY = "foundationReaderSelection";
 
 /** The only script in an article frame. It forwards link activations
  * (click or keyboard) to the parent, which decides what to open; reports
- * the scroll position (debounced) and that the page loaded; and scrolls to
- * a position only when the parent window asks. In-page fragments scroll
+ * the scroll position and the selected text (debounced) and that the page
+ * loaded; scrolls a highlighted citation (#foundation-cited, an id article
+ * markup cannot use) into view; and scrolls to a position only when the
+ * parent window asks. In-page fragments scroll
  * normally. It reads nothing else and has no same-origin access. It is
  * allowed by its fixed hash in both the frame's CSP and the app window's
  * CSP (a srcdoc frame inherits the window's policy). */
-export const LINK_SCRIPT = `(function(){var P=parent;document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();P.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);var w=0;addEventListener("scroll",function(){clearTimeout(w);w=setTimeout(function(){P.postMessage({${SCROLL_MESSAGE_KEY}:Math.round(scrollY)},"*");},150);},{passive:true});addEventListener("message",function(e){var d=e.data;if(e.source===P&&d&&typeof d.${SCROLL_TO_KEY}==="number")scrollTo(0,d.${SCROLL_TO_KEY});});P.postMessage({${READY_MESSAGE_KEY}:true},"*");})();`;
+export const LINK_SCRIPT = `(function(){var P=parent;document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();P.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);var w=0;addEventListener("scroll",function(){clearTimeout(w);w=setTimeout(function(){P.postMessage({${SCROLL_MESSAGE_KEY}:Math.round(scrollY)},"*");},150);},{passive:true});var q=0;document.addEventListener("selectionchange",function(){clearTimeout(q);q=setTimeout(function(){P.postMessage({${SELECTION_MESSAGE_KEY}:String(getSelection()).trim().slice(0,2000)},"*");},300);});addEventListener("message",function(e){var d=e.data;if(e.source===P&&d&&typeof d.${SCROLL_TO_KEY}==="number")scrollTo(0,d.${SCROLL_TO_KEY});});var c=document.getElementById("foundation-cited");if(c)c.scrollIntoView({block:"center"});P.postMessage({${READY_MESSAGE_KEY}:true},"*");})();`;
 /** CSP source for exactly {@link LINK_SCRIPT}; a test keeps it in sync. */
-export const LINK_SCRIPT_HASH = "'sha256-aXNwRRep/7hE126OkpM78nSbv1kBiv+EJlC2ze4J3zU='";
+export const LINK_SCRIPT_HASH = "'sha256-7nuxFt6xWtFfe28p/Eo8ERE0psDNywuxBg4omNEk2+s='";
 
 /** Wikipedia-like presentation for the classes MediaWiki emits. */
 function wikipediaStyle(dark: boolean): string {
@@ -85,6 +88,8 @@ function wikipediaStyle(dark: boolean): string {
     ".toc ul,#toc ul{list-style:none;margin:.3em 0 0 1em;padding:0}",
     ".navbox,.navbox-styles,.metadata,.noprint,.mw-empty-elt,.mw-editsection,.sistersitebox,.portalbox,.ambox,.mbox-small{display:none}",
     ".mwe-math-fallback-image-inline{display:inline-block;vertical-align:middle}",
+    `.foundation-cited{background:${dark ? "#3b3220" : "#fef6e7"};border-left:4px solid ${link};padding:.05em .7em;margin:0 -.7em}`,
+    `.foundation-cited-note{color:${muted};font-size:.85em;margin:0}`,
     ".mwe-math-fallback-image-display{display:block;margin:.5em auto}",
     "@media (max-width:720px){.infobox,.sidebar,.thumb,figure[typeof]{float:none;width:auto;max-width:100%;margin:1em 0}}",
   ].join("");

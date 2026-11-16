@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { isolatedReaderDocument, LINK_MESSAGE_KEY, READY_MESSAGE_KEY, SCROLL_MESSAGE_KEY, SCROLL_TO_KEY, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
+import { isolatedReaderDocument, LINK_MESSAGE_KEY, READY_MESSAGE_KEY, SCROLL_MESSAGE_KEY, SCROLL_TO_KEY, SELECTION_MESSAGE_KEY, type ReaderTextSize, type ReaderWidth } from "./readerLayout";
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
@@ -14,6 +14,17 @@ export interface ReaderArticleContext {
   project: string;
   pageId: number;
   revisionId: number;
+  /** Live Wikipedia, or the active installed pack (chat needs a pack). */
+  source: "online" | "pack";
+}
+
+/** Open the passage a chat answer cited, in the exact pack revision. */
+export interface ReaderCitationRequest {
+  id: number;
+  project: string;
+  pageId: number;
+  revisionId: number;
+  blockId: string;
 }
 
 export interface ReaderOpenPageRequest {
@@ -35,8 +46,11 @@ interface ArticlePreview {
 }
 
 // Isolated preview HTML is built using whitelisted, app-controlled layout choices.
-export default function OnlineReader({ onArticleChange, bookmarkRequest, textSize, readingWidth, theme, offlineMode }: {
+export default function OnlineReader({ onArticleChange, bookmarkRequest, citationRequest, onSelection, textSize, readingWidth, theme, offlineMode }: {
   onArticleChange?: (title: string | null, context: ReaderArticleContext | null) => void;
+  citationRequest?: ReaderCitationRequest | null;
+  /** Text the user selected in the visible installed-pack article ("" when none). */
+  onSelection?: (text: string) => void;
   bookmarkRequest?: ReaderOpenPageRequest | null;
   textSize: ReaderTextSize;
   readingWidth: ReaderWidth;
@@ -73,9 +87,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
   useEffect(() => {
     onArticleChange?.(
       article?.title ?? null,
-      article ? { project: article.project, pageId: article.pageId, revisionId: article.revisionId } : null,
+      article ? { project: article.project, pageId: article.pageId, revisionId: article.revisionId, source: article.source } : null,
     );
-  }, [article?.title, article?.pageId, article?.revisionId, article?.project, onArticleChange]);
+  }, [article?.title, article?.pageId, article?.revisionId, article?.project, article?.source, onArticleChange]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
@@ -161,6 +175,38 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
     };
   }, []);
 
+  // A chat citation: open that exact pack revision with the passage
+  // highlighted (the frame scrolls it into view).
+  const lastCitationRequestId = useRef(0);
+  useEffect(() => {
+    if (!citationRequest || citationRequest.id <= lastCitationRequestId.current) return;
+    lastCitationRequestId.current = citationRequest.id;
+    const request = citationRequest;
+    const epoch = requestEpoch.current.begin();
+    setBusy(true);
+    setNotice(null);
+    void invoke<unknown>("open_offline_citation", {
+      project: request.project, pageId: request.pageId, revisionId: request.revisionId, blockId: request.blockId,
+    }).then((result) => {
+      if (!requestEpoch.current.matches(epoch)) return;
+      if (result === null) {
+        setNotice("The cited revision is no longer in the active pack, so the passage cannot be shown.");
+        return;
+      }
+      if (!Array.isArray(result) || result.length !== 5 || typeof result[4] !== "boolean") throw new Error("invalid citation");
+      const [pageId, revisionId, title, html] = parseReaderArticle(result.slice(0, 4), request.pageId);
+      if (revisionId !== request.revisionId) throw new Error("citation revision changed");
+      setNavigation((state) => openReaderArticle(state, {
+        project: request.project, frameId: nextFrameId.current++, pageId, revisionId, title, html, links: [], source: "pack",
+      }));
+      setNotice(result[4] ? "The cited passage is highlighted." : "The cited passage is shown at the top: its exact place in the page could not be found.");
+    }).catch(() => {
+      if (requestEpoch.current.matches(epoch)) setNotice("The cited passage could not be opened.");
+    }).finally(() => {
+      if (requestEpoch.current.matches(epoch)) setBusy(false);
+    });
+  }, [citationRequest]);
+
   // Messages from article frames. Each is matched to the exact frame that
   // sent it; links are accepted only from the visible article. Data is
   // untrusted and validated here.
@@ -178,6 +224,13 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, textSiz
       const scroll = record[SCROLL_MESSAGE_KEY];
       if (typeof scroll === "number" && Number.isFinite(scroll) && scroll >= 0 && scroll <= 10_000_000) {
         scrollPositions.current.set(frameId, scroll);
+        return;
+      }
+      const selected = record[SELECTION_MESSAGE_KEY];
+      if (typeof selected === "string") {
+        if (current && frameId === current.frameId && current.source === "pack" && selected.length <= 2000) {
+          onSelection?.(selected);
+        }
         return;
       }
       if (record[READY_MESSAGE_KEY] === true) {

@@ -26,7 +26,7 @@ const MAX_PACK_BYTES: u64 = 8 << 30;
 #[derive(Default)]
 pub struct OfflineLibraryState(Mutex<Option<Arc<OfflineLibrary>>>);
 
-fn library(app: &tauri::AppHandle) -> Result<Arc<OfflineLibrary>, String> {
+pub(crate) fn library(app: &tauri::AppHandle) -> Result<Arc<OfflineLibrary>, String> {
     let state = app.state::<OfflineLibraryState>();
     let mut slot = state.0.lock().map_err(|_| "Offline library unavailable")?;
     if let Some(library) = slot.as_ref() {

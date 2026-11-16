@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import AiAssistantSettings from "./AiAssistantSettings";
 import OfflinePacksSettings from "./OfflinePacksSettings";
 import ReaderChatHistory from "./ReaderChatHistory";
-import OnlineReader, { type ReaderArticleContext, type ReaderOpenPageRequest } from "./OnlineReader";
+import ArticleChat from "./ArticleChat";
+import type { ChatExchange } from "./packChat";
+import OnlineReader, { type ReaderArticleContext, type ReaderCitationRequest, type ReaderOpenPageRequest } from "./OnlineReader";
 import { invoke } from "@tauri-apps/api/core";
 import { parseReaderSavedPanel, type ReaderBookmark, type ReaderVisit } from "./readerResponse";
 import { MAX_READER_TABS, adjacentReaderTabId, addReaderTab, canCloseReaderTab, closeReaderTab, initialReaderTabs, selectReaderTab, titleReaderTab } from "./readerTabs";
@@ -19,6 +21,10 @@ import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  // UX-002: each article's conversation is kept while the chat is closed.
+  const [conversations, setConversations] = useState<Map<string, ChatExchange[]>>(() => new Map());
+  const [selections, setSelections] = useState<Map<number, string>>(() => new Map());
+  const [citationRequest, setCitationRequest] = useState<(ReaderCitationRequest & { tabId: number }) | null>(null);
   const [, setArticleVersion] = useState(0);
   const [readerTabs, setReaderTabs] = useState(initialReaderTabs);
   const [readerSessionId, setReaderSessionId] = useState(0);
@@ -522,7 +528,15 @@ export default function App() {
           {readerTabs.tabs.map((tab) => (
             <section key={`${readerSessionId}:${tab.id}`} role="tabpanel" id={`reader-panel-${tab.id}`} aria-labelledby={`reader-tab-${tab.id}`} tabIndex={0}
               hidden={readerTabs.activeId !== tab.id}>
-              <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null} onArticleChange={(title, context) => {
+              <OnlineReader offlineMode={offlineMode} textSize={textSize} readingWidth={readingWidth} theme={theme} bookmarkRequest={bookmarkOpen?.tabId === tab.id ? bookmarkOpen : null}
+                citationRequest={citationRequest?.tabId === tab.id ? citationRequest : null}
+                onSelection={(text) => setSelections((previous) => {
+                  if ((previous.get(tab.id) ?? "") === text) return previous;
+                  const next = new Map(previous);
+                  if (text) next.set(tab.id, text); else next.delete(tab.id);
+                  return next;
+                })}
+                onArticleChange={(title, context) => {
                 const previous = tabArticleRef.current.get(tab.id);
                 if (context) tabArticleRef.current.set(tab.id, context);
                 else tabArticleRef.current.delete(tab.id);
@@ -533,7 +547,7 @@ export default function App() {
             </section>
           ))}
           <h2 id="roadmap">Under development</h2>
-          <p>Offline images in packs, official pack downloads, article chat and some settings are still in development on the desktop.</p>
+          <p>Offline images in packs, official pack downloads, hosted AI chat and some settings are still in development on the desktop.</p>
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">
@@ -636,7 +650,23 @@ export default function App() {
             article={article} onClose={() => {
               setChatOpen(false);
               mainActionRef.current?.focus();
-            }} />
+            }} chat={(() => {
+              const key = `${article.project}:${article.pageId}:${article.revisionId}`;
+              const tabId = readerTabs.activeId;
+              return <ArticleChat article={article} exchanges={conversations.get(key) ?? []}
+                onExchange={(exchange) => setConversations((previous) =>
+                  new Map(previous).set(key, [...(previous.get(key) ?? []), exchange]))}
+                selection={selections.get(tabId) ?? null}
+                onClearSelection={() => setSelections((previous) => {
+                  const next = new Map(previous);
+                  next.delete(tabId);
+                  return next;
+                })}
+                onCitation={(passage) => setCitationRequest((previous) => ({
+                  id: (previous?.id ?? 0) + 1, tabId, project: article.project, pageId: article.pageId,
+                  revisionId: article.revisionId, blockId: passage.blockId,
+                }))} />;
+            })()} />
         </div> : null;
       })()}
       {destination === "article" && message && <div className="notice" role="status">

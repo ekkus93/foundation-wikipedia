@@ -19,7 +19,7 @@ main h2 { font-size: 23px; font-weight: normal; border-bottom: 1px solid #a2a9b1
 main a { color: #36c; }
 .eyebrow { font: 11px system-ui, sans-serif; color: #72777d; letter-spacing: .15em; }
 .lead { font-size: 19px; }
-.hub { position: fixed; right: 30px; bottom: 28px; display: flex; align-items: flex-end; flex-direction: column; gap: 12px; }
+.hub { position: fixed; z-index: 20; right: 30px; bottom: 28px; display: flex; align-items: flex-end; flex-direction: column; gap: 12px; }
 .fab { cursor: pointer; border: 0; border-radius: 22px; background: #4b3a8b; color: white; width: 68px; height: 68px; font-size: 32px; box-shadow: 0 8px 26px #24154650; }
 .fab[aria-expanded=true] { border-radius: 50%; }
 .speed-dial { display: flex; flex-direction: column-reverse; gap: 8px; }
@@ -113,3 +113,16 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .offline-packs .installed-packs { list-style: none; padding: 0; }
 .offline-packs .installed-packs li { padding: 10px 0; border-bottom: 1px solid var(--reader-border); }
 .offline-packs button { margin-right: 8px; }
+/* UX-002: article chat inside the movable chat window. */
+.article-chat textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.article-chat button { margin: 4px 8px 4px 0; }
+.article-chat-exchanges { list-style: none; padding: 0; }
+.article-chat-exchanges > li { padding: 8px 0; border-bottom: 1px solid var(--reader-border); }
+.article-chat-question { font-weight: 600; }
+.article-chat-citations button { font-size: .85em; }
+.article-chat-draft { padding: 8px 12px; border-left: 4px solid var(--reader-muted); background: var(--reader-surface); }
+.article-chat-draft-label { font-size: .85em; color: var(--reader-muted); font-style: italic; margin: 0; }
+.article-chat-review { padding: 8px 12px; border: 1px solid var(--reader-border); border-radius: 6px; background: var(--reader-surface); }
+.article-chat-review ul { font-size: .85em; }
+.article-chat-selection { font-style: italic; color: var(--reader-muted); }
+.article-chat-note { font-size: .85em; color: var(--reader-muted); }

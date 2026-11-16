@@ -611,3 +611,19 @@ mod tests {
         }
     }
 }
+
+/// The explicitly active local profile as (name, protocol, endpoint,
+/// model), or `None` when local chat is off. Never picks another profile.
+pub(crate) fn active_profile(
+    app: &tauri::AppHandle,
+) -> Result<Option<(String, String, String, String)>, String> {
+    let profiles = read_profiles(&open_private_bookmark_store(app)?)?;
+    let Some(active) = profiles.active else {
+        return Ok(None);
+    };
+    Ok(profiles
+        .profiles
+        .into_iter()
+        .find(|profile| profile.name == active)
+        .map(|profile| (profile.name, profile.protocol, profile.endpoint, profile.model)))
+}

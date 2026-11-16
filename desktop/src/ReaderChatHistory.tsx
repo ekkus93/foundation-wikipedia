@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { clampReaderChatPosition, type ReaderChatPosition } from "./readerChatWindow";
 import { invoke } from "@tauri-apps/api/core";
 import ReaderChatProviderStatus from "./ReaderChatProviderStatus";
@@ -7,9 +7,11 @@ import { parseReaderChatExchanges, parseReaderChatThreads, ReaderChatDeleteFence
 
 /** Read-only historical transcript: an online HTML preview is not canonical RAG
  * evidence, so this component never generates, transmits or certifies citations. */
-export default function ReaderChatHistory({ article, onClose }: {
+export default function ReaderChatHistory({ article, onClose, chat }: {
   article: ReaderArticleContext;
   onClose: () => void;
+  /** The live article chat (UX-002), shown above the saved history. */
+  chat?: ReactNode;
 }) {
   const [threads, setThreads] = useState<number[]>([]);
   const [selectedThread, setSelectedThread] = useState<number | null>(null);
@@ -204,26 +206,28 @@ export default function ReaderChatHistory({ article, onClose }: {
   }
 
   return <aside ref={panelRef} className="reader-chat-history" role="dialog"
-    aria-label="Saved article conversations" data-minimized={minimized}
+    aria-label="Article chat" data-minimized={minimized}
     style={position ? { left: position.left, top: position.top, right: "auto" } : undefined}>
     <header>
       <div className="reader-chat-drag-handle" role="button" tabIndex={0}
-        aria-label="Move saved conversations window; use arrow keys"
+        aria-label="Move the chat window; use arrow keys"
         onPointerDown={startDrag} onPointerMove={drag}
         onPointerUp={stopDrag} onPointerCancel={stopDrag} onKeyDown={moveWithKeyboard}>
-        <strong>Saved article conversations</strong>
+        <strong>Ask about this article</strong>
       </div>
       <div className="reader-chat-header-actions">
         <button type="button" onClick={() => setMinimized((value) => !value)}
-          aria-expanded={!minimized} aria-label={minimized ? "Restore saved conversations" : "Minimize saved conversations"}>
+          aria-expanded={!minimized} aria-label={minimized ? "Restore the chat window" : "Minimize the chat window"}>
           {minimized ? "□" : "−"}
         </button>
-        <button type="button" onClick={onClose} aria-label="Close saved conversations">×</button>
+        <button type="button" onClick={onClose} aria-label="Close the chat window">×</button>
       </div>
     </header>
     <div className="reader-chat-body" hidden={minimized}>
     <p>Edition {article.project} · page {article.pageId} · revision {article.revisionId}</p>
-    <p className="reader-chat-disclaimer">Read-only history. Saved answers are plain text and their citation claims are not revalidated. The online preview cannot supply canonical article evidence for new AI questions.</p>
+    {chat}
+    <h3>Saved conversations</h3>
+    <p className="reader-chat-disclaimer">Read-only history. Saved answers are plain text and their citation claims are not revalidated.</p>
     <ReaderChatProviderStatus />
     {loadingThreads && <p role="status">Loading saved conversations…</p>}
     {error && <p role="alert">{error}</p>}

@@ -71,6 +71,6 @@ export default function ReaderChatProviderStatus() {
         <p>Destination: {active.endpoint}</p>
         <p>{aiLocalityDisclosure(active.locality)}</p>
       </> : <p>No local AI model is currently active. Select one in AI Assistant Settings.</p>}
-    <p className="reader-chat-disclaimer">This is a saved model hint, not a verified connection or permission to send passages. Chat generation is not yet available.</p>
+    <p className="reader-chat-disclaimer">Questions about installed-pack articles go to this model. Each request is shown for review first; nothing is sent until you choose Send.</p>
   </section>;
 }
