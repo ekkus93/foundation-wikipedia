@@ -37,7 +37,9 @@ export const IMAGE_SOURCES = "https://upload.wikimedia.org https://thumb.wikimed
 /** Message a clicked link sends from the article frame to the reader. */
 export const LINK_MESSAGE_KEY = "foundationReaderLink";
 
-/** Messages between the article frame's script and the reader. */
+/** Messages between the article frame's script and the reader. A scroll
+ * position is `block index + fraction scrolled into that block`, so it lands
+ * on the same text after a reload at another text size or width. */
 export const SCROLL_MESSAGE_KEY = "foundationReaderScroll";
 export const SCROLL_TO_KEY = "foundationReaderScrollTo";
 export const READY_MESSAGE_KEY = "foundationReaderReady";
@@ -52,9 +54,9 @@ export const SELECTION_MESSAGE_KEY = "foundationReaderSelection";
  * normally. It reads nothing else and has no same-origin access. It is
  * allowed by its fixed hash in both the frame's CSP and the app window's
  * CSP (a srcdoc frame inherits the window's policy). */
-export const LINK_SCRIPT = `(function(){var P=parent;document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();P.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);var w=0;addEventListener("scroll",function(){clearTimeout(w);w=setTimeout(function(){P.postMessage({${SCROLL_MESSAGE_KEY}:Math.round(scrollY)},"*");},150);},{passive:true});var q=0;document.addEventListener("selectionchange",function(){clearTimeout(q);q=setTimeout(function(){P.postMessage({${SELECTION_MESSAGE_KEY}:String(getSelection()).trim().slice(0,2000)},"*");},300);});addEventListener("message",function(e){var d=e.data;if(e.source===P&&d&&typeof d.${SCROLL_TO_KEY}==="number")scrollTo(0,d.${SCROLL_TO_KEY});});var c=document.getElementById("foundation-cited");if(c)c.scrollIntoView({block:"center"});P.postMessage({${READY_MESSAGE_KEY}:true},"*");})();`;
+export const LINK_SCRIPT = `(function(){var P=parent;document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;var h=a.getAttribute("href")||"";if(h.charAt(0)==="#")return;e.preventDefault();P.postMessage({${LINK_MESSAGE_KEY}:h},"*");},true);var B="p,h1,h2,h3,h4,h5,h6,li,dd,dt,table,figure,blockquote,pre";function at(){if(scrollY<1)return 0;var l=Array.prototype.slice.call(document.querySelectorAll(B)),e=null;for(var y=2;y<200&&!e;y+=24){var h=document.elementFromPoint(innerWidth*0.2,y);e=h&&h.closest?h.closest(B):null;}var i=e?l.indexOf(e):-1;if(i<0)return 0;var r=e.getBoundingClientRect();return i+Math.min(Math.max(-r.top/r.height,0),0.999);}var T=0;function Z(){return !innerWidth||!innerHeight;}function go(v){if(Z()){T=v;return;}var l=document.querySelectorAll(B),i=Math.floor(v),e=l[i];if(!e)return;var r=e.getBoundingClientRect();scrollTo(0,scrollY+r.top+(v-i)*r.height);}addEventListener("load",function(){if(T&&!Z()){go(T);T=0;}});addEventListener("resize",function(){if(T&&!Z()){var v=T;if(document.readyState==="complete")T=0;go(v);}});var w=0;addEventListener("scroll",function(){clearTimeout(w);w=setTimeout(function(){if(Z()||T)return;P.postMessage({${SCROLL_MESSAGE_KEY}:at()},"*");},150);},{passive:true});var q=0;document.addEventListener("selectionchange",function(){clearTimeout(q);q=setTimeout(function(){P.postMessage({${SELECTION_MESSAGE_KEY}:String(getSelection()).trim().slice(0,2000)},"*");},300);});addEventListener("message",function(e){var d=e.data;if(e.source===P&&d&&typeof d.${SCROLL_TO_KEY}==="number"){T=document.readyState==="complete"?0:d.${SCROLL_TO_KEY};go(d.${SCROLL_TO_KEY});}});var c=document.getElementById("foundation-cited");if(c)c.scrollIntoView({block:"center"});P.postMessage({${READY_MESSAGE_KEY}:true},"*");})();`;
 /** CSP source for exactly {@link LINK_SCRIPT}; a test keeps it in sync. */
-export const LINK_SCRIPT_HASH = "'sha256-7nuxFt6xWtFfe28p/Eo8ERE0psDNywuxBg4omNEk2+s='";
+export const LINK_SCRIPT_HASH = "'sha256-bRzVtMkXFtSC7xo9QSiz3N4t8DA5rh4hJejWm+BG/8s='";
 
 /** Wikipedia-like presentation for the classes MediaWiki emits. */
 function wikipediaStyle(dark: boolean): string {
