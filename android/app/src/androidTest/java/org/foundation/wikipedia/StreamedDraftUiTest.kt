@@ -49,12 +49,12 @@ class StreamedDraftUiTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private var saved: LocalAiChoice? = null
+    private var saved: LocalAiProfiles? = null
     private var server: FakeOllama? = null
 
     @Before
     fun installFixturePack(): Unit = runBlocking {
-        saved = LocalAiPreference.load(context)
+        saved = LocalAiPreference.profiles(context)
         val pack = File(context.cacheDir, "draft-sample-v2.wpack")
         InstrumentationRegistry.getInstrumentation().context.assets
             .open("android-sample-v2.wpack").use { input ->
@@ -73,7 +73,7 @@ class StreamedDraftUiTest {
     @After
     fun restoreChoice() {
         server?.close()
-        LocalAiPreference.save(context, saved)
+        saved?.let { LocalAiPreference.store(context, it) }
     }
 
     /** Streams [first], waits for [release], then streams [rest]. */

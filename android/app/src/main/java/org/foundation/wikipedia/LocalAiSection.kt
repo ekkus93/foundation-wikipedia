@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,31 +33,50 @@ import uniffi.wiki_ffi.LocalAiProtocol
 /** A chosen local model server and model; not secret. */
 data class LocalAiChoice(val protocol: LocalAiProtocol, val endpoint: String, val model: String)
 
-/** The saved local model choice (MOB-003). Malformed values mean "none". */
+/**
+ * Saved local model profiles (AI-004). The legacy single choice (MOB-003)
+ * becomes the one active profile. Malformed values mean no profiles.
+ */
 object LocalAiPreference {
     private const val FILE = "foundation_local_ai"
+    private const val KEY = "profiles"
 
-    fun load(context: Context): LocalAiChoice? = try {
+    fun profiles(context: Context): LocalAiProfiles = try {
         val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        LocalAiProfiles.decode(prefs.getString(KEY, null)) ?: legacy(prefs) ?: LocalAiProfiles()
+    } catch (_: ClassCastException) {
+        LocalAiProfiles()
+    }
+
+    private fun legacy(prefs: android.content.SharedPreferences): LocalAiProfiles? {
         val protocol = LocalAiProtocol.entries.firstOrNull { it.name == prefs.getString("protocol", null) }
         val endpoint = prefs.getString("endpoint", null)
         val model = prefs.getString("model", null)
-        if (protocol == null || endpoint.isNullOrBlank() || model.isNullOrBlank()) null
-        else LocalAiChoice(protocol, endpoint, model)
-    } catch (_: ClassCastException) {
-        null
+        if (protocol == null || endpoint.isNullOrBlank() || model.isNullOrBlank()) return null
+        val choice = LocalAiChoice(protocol, endpoint, model)
+        if (!LocalAiProfiles.isStorable(choice)) return null
+        return LocalAiProfiles(listOf(choice), choice)
     }
 
+    fun store(context: Context, profiles: LocalAiProfiles): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .clear()
+            .putString(KEY, profiles.encode())
+            .commit()
+
+    /** The active profile, if local chat is on. */
+    fun load(context: Context): LocalAiChoice? = profiles(context).active
+
+    /** Save and activate [choice], or turn local chat off with null. */
     fun save(context: Context, choice: LocalAiChoice?): Boolean {
-        val editor = context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
-        if (choice == null) {
-            editor.clear()
+        val current = profiles(context)
+        val next = if (choice == null) {
+            current.deactivate()
         } else {
-            editor.putString("protocol", choice.protocol.name)
-                .putString("endpoint", choice.endpoint)
-                .putString("model", choice.model)
+            if (!LocalAiProfiles.isStorable(choice)) return false
+            current.saveAndActivate(choice) ?: return false
         }
-        return editor.commit()
+        return store(context, next)
     }
 }
 
@@ -93,14 +114,46 @@ fun LocalAiSection() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val local = remember { RustLocalAi() }
-    val saved = remember { LocalAiPreference.load(context) }
-    var choice by remember { mutableStateOf(saved) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var profiles by remember { mutableStateOf(LocalAiPreference.profiles(context)) }
+    val saved = remember { profiles.active }
+    val choice = profiles.active
+    var confirmRemove by remember { mutableStateOf<LocalAiChoice?>(null) }
+
+    fun update(next: LocalAiProfiles, done: String) {
+        if (LocalAiPreference.store(context, next)) {
+            profiles = next
+            message = done
+        } else {
+            message = "Could not save the change."
+        }
+    }
+
+    fun test(profile: LocalAiChoice) {
+        scope.launch {
+            busy = true
+            message = "Testing ${profile.model}…"
+            message = try {
+                val server = local.discover(profile.protocol, profile.endpoint)
+                val available = profile.model in server.models()
+                val where = server.locality().describe()
+                server.close()
+                if (available) "Connected: ${profile.model} is available on $where."
+                else "Connected, but the server no longer offers ${profile.model}."
+            } catch (error: Exception) {
+                localAiErrorMessage(error)
+            } catch (error: LinkageError) {
+                localAiErrorMessage(error)
+            } finally {
+                busy = false
+            }
+        }
+    }
     var protocol by remember { mutableStateOf(saved?.protocol ?: LocalAiProtocol.OLLAMA) }
     var endpoint by remember { mutableStateOf(saved?.endpoint ?: "") }
     var models by remember { mutableStateOf<List<String>?>(null) }
     var locality by remember { mutableStateOf<ChatLocality?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
 
     Text("Local or LAN model", style = MaterialTheme.typography.titleMedium)
     Text(
@@ -153,14 +206,6 @@ fun LocalAiSection() {
                 }
             }
         }) { Text("Find models") }
-        if (choice != null) {
-            OutlinedButton(enabled = !busy, onClick = {
-                if (LocalAiPreference.save(context, null)) {
-                    choice = null
-                    message = "Local model removed."
-                }
-            }) { Text("Remove") }
-        }
     }
     Text(
         "Find models asks the server for its model list; no question or article text is sent.",
@@ -172,11 +217,11 @@ fun LocalAiSection() {
             Row(
                 modifier = Modifier.fillMaxWidth().clickable {
                     val chosen = LocalAiChoice(protocol, endpoint, model)
-                    if (LocalAiPreference.save(context, chosen)) {
-                        choice = chosen
-                        message = "Chat will use $model."
+                    val next = profiles.saveAndActivate(chosen)
+                    if (next == null) {
+                        message = "Up to ${LocalAiProfiles.MAX} models can be saved. Remove one first."
                     } else {
-                        message = "Could not save the choice."
+                        update(next, "Saved. Chat will use $model.")
                     }
                 },
                 verticalAlignment = Alignment.CenterVertically,
@@ -189,6 +234,67 @@ fun LocalAiSection() {
             }
         }
     }
+    if (profiles.profiles.isNotEmpty()) {
+        Text("Saved models", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
+                update(profiles.deactivate(), "Local chat is off. Saved models are kept.")
+            },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = choice == null, onClick = null)
+            Text("Off — don't use a local model")
+        }
+        for (profile in profiles.profiles) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
+                    update(profiles.activate(profile), "Chat will use ${profile.model}.")
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = profile == choice, onClick = null)
+                Text("${profile.model} at ${profile.endpoint}", modifier = Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = !busy, onClick = { test(profile) }) {
+                    Text("Test")
+                }
+                OutlinedButton(enabled = !busy, onClick = { confirmRemove = profile }) {
+                    Text("Remove")
+                }
+            }
+        }
+        Text(
+            "Test asks the server for its model list; no question or article text is sent.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
     choice?.let { Text("Chat can use ${it.model} at ${it.endpoint}.") }
+        ?: Text("Chat does not use a local model.")
     message?.let { Text(it) }
+
+    confirmRemove?.let { profile ->
+        AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { Text("Remove ${profile.model}?") },
+            text = {
+                Text(
+                    if (profile == choice) {
+                        "Chat is using it. Afterwards no local model is used until you choose one."
+                    } else {
+                        "It is removed from this list. Nothing changes on the server."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemove = null
+                    update(profiles.remove(profile), "Removed ${profile.model}.")
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
