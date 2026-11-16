@@ -109,13 +109,20 @@ class LocalChatAndSelectionTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         openTide()
         val words = device.wait(Until.findObject(By.textContains("gravity")), 30_000)
-        fun longPress() {
+        // On the slow CI emulator a swipe-made press was sometimes not taken
+        // as a long-press at all (no selection toolbar): each attempt uses a
+        // different gesture, and logs which one it was.
+        fun longPress(attempt: Int) {
             val target = words ?: device.findObject(By.textContains("gravity"))
             if (target != null) {
                 val box = target.visibleBounds
                 // Long-press inside "'s gravity." to select a word.
                 val x = box.left + box.width() * 2 / 3
-                device.swipe(x, box.centerY(), x, box.centerY(), 120)
+                when (attempt) {
+                    1 -> device.swipe(x, box.centerY(), x, box.centerY(), 120) // ~0.6 s
+                    2 -> target.longClick()
+                    else -> device.swipe(x, box.centerY(), x, box.centerY(), 400) // ~2 s
+                }
             } else {
                 // Slow emulators may not expose WebView text in time: press the
                 // lead paragraph ("Tides follow…"), about 130 dp below the top
@@ -137,10 +144,13 @@ class LocalChatAndSelectionTest {
         // toolbar that never appears): clear it and try again.
         var ask: androidx.test.uiautomator.UiObject2? = null
         for (attempt in 1..3) {
-            longPress()
+            longPress(attempt)
             ask = findAsk()
-            if (ask != null) break
-            android.util.Log.w("SelectionTest", "attempt $attempt: no \"Ask about this\" (text found: ${words != null})")
+            if (ask != null) {
+                android.util.Log.i("SelectionTest", "attempt $attempt (gesture $attempt) opened the selection menu")
+                break
+            }
+            android.util.Log.w("SelectionTest", "attempt $attempt (gesture $attempt): no \"Ask about this\" (text found: ${words != null})")
             // Tap the empty page below Tide's short text to clear any selection.
             val (left, top) = webViewOrigin()
             val density = context.resources.displayMetrics.density
