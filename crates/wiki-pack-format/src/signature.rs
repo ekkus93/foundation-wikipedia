@@ -53,10 +53,22 @@ impl TrustedKey {
     }
 }
 
-/// The production keyring. Empty until the publisher key is generated and
-/// its public half pinned here (the private key never enters this
-/// repository); until then no pack can show "Verified publisher".
-pub const OFFICIAL_KEYS: &[TrustedKey] = &[];
+/// The production keyring (ADR 0008). Only public keys live here; the
+/// private keys never enter this repository.
+pub const OFFICIAL_KEYS: &[TrustedKey] = &[
+    // Key ID ee24d083334a607f, generated 2026-11-16 (ADR 0008, "Custody").
+    TrustedKey {
+        publisher: "foundation-wikipedia",
+        public_key: [
+            0x64, 0x2a, 0x0d, 0xfa, 0x92, 0x00, 0x4f, 0xe0, 0x43, 0x31, 0xba, 0xaa, 0x81, 0x84,
+            0x5a, 0x13, 0x1a, 0xb5, 0x42, 0xe8, 0x70, 0x97, 0x48, 0xf0, 0xda, 0x1c, 0x2a, 0x2d,
+            0x9b, 0x77, 0x05, 0x6b,
+        ],
+        valid_from: "20260101",
+        valid_until: None,
+        revoked: false,
+    },
+];
 
 /// A parsed signature file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -405,7 +417,7 @@ mod tests {
             verify(&custom, &signature, &[trusted(&SECRET)]),
             Err(SignatureError::NotOfficial)
         );
-        // The production keyring trusts nothing until a key is pinned.
+        // A throwaway key is never trusted by the production keyring.
         assert_eq!(
             verify(&manifest, &signature, OFFICIAL_KEYS),
             Err(SignatureError::UnknownKey)
@@ -450,6 +462,20 @@ mod tests {
             verify(&manifest, &committed, &[trusted(&SECRET)]),
             Ok("foundation")
         );
+    }
+
+    #[test]
+    fn the_production_keyring_pins_the_publisher_key_by_its_id() {
+        assert_eq!(OFFICIAL_KEYS.len(), 1);
+        let key = &OFFICIAL_KEYS[0];
+        assert_eq!(hex(&key.key_id()), "ee24d083334a607f");
+        assert_eq!(
+            hex(&key.public_key),
+            "642a0dfa92004fe04331baaa81845a131ab542e8709748f0da1c2a2d9b77056b"
+        );
+        assert_eq!(key.publisher, "foundation-wikipedia");
+        assert!(!key.revoked && key.valid_until.is_none() && key.valid_from == "20260101");
+        assert!(VerifyingKey::from_bytes(&key.public_key).is_ok());
     }
 
     #[test]

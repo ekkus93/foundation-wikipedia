@@ -1143,7 +1143,7 @@ mod tests {
         assert_eq!(
             list_installed_snapshots(&root).unwrap()[0].trust_label,
             "Verification failed",
-            "the production keyring pins no key yet"
+            "the throwaway test key is not in the production keyring"
         );
     }
 

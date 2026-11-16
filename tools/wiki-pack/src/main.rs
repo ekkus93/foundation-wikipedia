@@ -20,7 +20,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wiki_pack_builder::wiki_pack_format::container::{
     verify_container, verify_container_with_budget,
 };
-use wiki_pack_builder::wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
+use wiki_pack_builder::wiki_pack_format::export::{
+    custom_manifest_from_tree, official_manifest_from_tree, write_custom_tree, write_official_tree,
+};
 
 static NEXT_EXPORT_TEMP: AtomicU64 = AtomicU64::new(0);
 use wiki_pack_builder::wiki_pack_format::manifest::{
@@ -66,6 +68,7 @@ fn usage() {
     );
     println!("       wiki-pack verify-stdin [--json] <max-input-bytes>");
     println!("       wiki-pack inspect-stdin [--json] <max-input-bytes>");
+    println!("       wiki-pack export-official [--json] <object-dir> <pack-id> <project> <snapshot> <publisher> <metadata.json> <output.wpack>");
     println!("       wiki-pack signing-key-generate <new-secret-key-file>");
     println!("       wiki-pack sign-pack <secret-key-file> <official.wpack>");
     println!("       wiki-pack verify-pack-signature <file.wpack> <file.wpack.sig> [<publisher> <public-key-hex> <valid-from-YYYYMMDD>]");
@@ -383,6 +386,8 @@ struct ExportIdentity<'a> {
     project: &'a str,
     snapshot: &'a str,
     definition_id: &'a str,
+    /// `Some(publisher)` exports an (unsigned) official pack instead.
+    official_publisher: Option<&'a str>,
 }
 
 fn export_custom_tree(
@@ -396,14 +401,24 @@ fn export_custom_tree(
         return Err("JSON export destination path must be UTF-8".into());
     }
     let metadata = read_metadata_file(&metadata_path)?;
-    let manifest = custom_manifest_from_tree(
-        &source,
-        identity.pack_id,
-        identity.project,
-        identity.snapshot,
-        identity.definition_id,
-        metadata,
-    )
+    let manifest = match identity.official_publisher {
+        None => custom_manifest_from_tree(
+            &source,
+            identity.pack_id,
+            identity.project,
+            identity.snapshot,
+            identity.definition_id,
+            metadata,
+        ),
+        Some(publisher) => official_manifest_from_tree(
+            &source,
+            identity.pack_id,
+            identity.project,
+            identity.snapshot,
+            publisher,
+            metadata,
+        ),
+    }
     .map_err(|error| format!("invalid source object tree or metadata: {error:?}"))?;
     let parent = destination
         .parent()
@@ -456,8 +471,11 @@ fn export_custom_tree(
     let (temp_path, mut file) =
         staged.ok_or_else(|| "cannot allocate unique temporary output".to_owned())?;
     let result = (|| -> Result<(), String> {
-        write_custom_tree(&source, &manifest, &mut file)
-            .map_err(|error| format!("pack export failed: {error:?}"))?;
+        match identity.official_publisher {
+            None => write_custom_tree(&source, &manifest, &mut file),
+            Some(_) => write_official_tree(&source, &manifest, &mut file),
+        }
+        .map_err(|error| format!("pack export failed: {error:?}"))?;
         file.sync_all()
             .map_err(|error| format!("cannot sync packed output: {error}"))?;
         drop(file);
@@ -497,12 +515,23 @@ fn export_custom_tree(
                 "snapshot": manifest.snapshot,
                 "object_count": manifest.objects.len(),
                 "declared_payload_bytes": declared_payload_bytes,
-                "claimed_origin": "custom",
-                "claimed_origin_identity": identity.definition_id,
+                "claimed_origin": if identity.official_publisher.is_some() { "official" } else { "custom" },
+                "claimed_origin_identity": identity.official_publisher.unwrap_or(identity.definition_id),
             })
         );
     } else {
-        println!("Custom envelope written: {}", destination.display());
+        if identity.official_publisher.is_some() {
+            println!(
+                "Official envelope written (UNSIGNED): {}",
+                destination.display()
+            );
+            println!(
+                "Sign it with: wiki-pack sign-pack <secret-key-file> {}",
+                destination.display()
+            );
+        } else {
+            println!("Custom envelope written: {}", destination.display());
+        }
         println!("Object digests: VERIFIED; publisher signature: NOT VERIFIED");
         println!("Offline media completeness: NOT VERIFIED; pack is NOT installed");
     }
@@ -1214,7 +1243,8 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some("export-custom") => {
+        Some(command @ ("export-custom" | "export-official")) => {
+            let official = command == "export-official";
             let supplied: Vec<OsString> = args.collect();
             let json_output = supplied
                 .first()
@@ -1225,7 +1255,7 @@ fn main() {
                 &supplied[..]
             };
             if fields.len() != 7 {
-                eprintln!("export-custom requires [--json] and exactly seven arguments");
+                eprintln!("{command} requires [--json] and exactly seven arguments");
                 if !json_output {
                     usage();
                 }
@@ -1246,6 +1276,7 @@ fn main() {
                     project: identity[1],
                     snapshot: identity[2],
                     definition_id: identity[3],
+                    official_publisher: official.then_some(identity[3]),
                 },
                 PathBuf::from(&fields[5]),
                 PathBuf::from(&fields[6]),

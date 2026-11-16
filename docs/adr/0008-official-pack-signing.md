@@ -1,6 +1,6 @@
 # ADR 0008 — Official `.wpack` publisher signatures
 
-**Status:** Accepted in part. The owner chose the scheme on 2026-11-16: Ed25519 with `ed25519-dalek`, in our own small format, with publisher keys pinned in the app. That scheme is implemented in `wiki-pack-format::signature` and `wiki-store::pack_install::install_official_pack*`. The key-management procedure below is **proposed**. No production publisher key exists yet, so nothing can show "Verified publisher".
+**Status:** Accepted. On 2026-11-16 the owner chose the scheme: Ed25519 with `ed25519-dalek`, in our own small format, with publisher keys pinned in the app. The same day the owner delegated the rest to Claude ("Can't you just do this for me?"): generating the first publisher key and pinning it, and accepting the key-management procedure below. The scheme is implemented in `wiki-pack-format::signature` and `wiki-store::pack_install::install_official_pack*`.
 **Date:** 2026-11-16
 **Requirements:** TRUST-001, TRUST-002, MOBPACK-001, UPD-001
 
@@ -43,16 +43,24 @@ signature <128 lowercase hex Ed25519 signature>
 - **Recorded key:** the installed `manifest.json` records the publisher and key ID.
 - **Labels when listing:** listing keeps "Verified publisher" only while that key is still pinned and unrevoked. Otherwise it shows "Verification failed".
 
-**Pinned keys.** `signature::OFFICIAL_KEYS` is the production keyring, compiled into the app. It is **empty** until the publisher key is generated. Tests use throwaway keys only.
+**Pinned keys.** `signature::OFFICIAL_KEYS` is the production keyring, compiled into the app. It holds the publisher key `foundation-wikipedia`, with key ID `ee24d083334a607f`, valid for snapshots from `20260101`, not revoked. Tests use throwaway keys only.
 
-## Key management (proposed procedure)
+## Key management
 
-- **Generation and custody:**
-  - The owner generates the Ed25519 key offline.
-  - The 32-byte secret is kept off any CI runner and out of this repository: an offline machine or hardware token, with an encrypted offline backup.
-  - Only the public key is committed, as a `TrustedKey` entry with publisher, `valid_from`, `valid_until: None` and `revoked: false`.
-- **Signing:** done by the owner on the offline machine, over the exact `.wpack` that will be published. Before upload, the result is checked with the same verifier against the pinned keyring.
+- **Custody of the current key (`ee24d083334a607f`):**
+  - Generated 2026-11-16 at the owner's request with `wiki-pack signing-key-generate`, on the owner's development workstation.
+  - The secret is at `~/.config/foundation-wikipedia/publisher-signing.key`, mode 0600 in a 0700 directory, outside this repository. It was never printed or committed.
+  - This is **weaker than the recommended custody**: the workstation is online, and coding agents run there. That is acceptable while no official pack is published.
+  - **Before the first public official release, either:**
+    - move the secret to offline storage, with an encrypted offline backup; or
+    - rotate (below) to a key generated offline, and set this key's `valid_until` to the last snapshot it signed.
+  - **Back it up now.** If the secret is lost, no new packs can be signed until a rotation ships.
+- **Recommended custody for later keys:**
+  - Generate the key offline. Keep the 32-byte secret off any CI runner and out of this repository: an offline machine or hardware token, with an encrypted offline backup.
+  - Commit only the public key, as a `TrustedKey` entry with publisher, `valid_from`, `valid_until: None` and `revoked: false`.
+- **Signing:** done by the key holder, over the exact `.wpack` that will be published. Before upload, the result is checked with the same verifier against the pinned keyring.
 - **Tooling** (`wiki-pack`, host only):
+  - `export-official <object-dir> <pack-id> <project> <snapshot> <publisher> <metadata.json> <out.wpack>`: writes an unsigned official pack with the same verified export as `export-custom`.
   - `signing-key-generate <new-key-file>`: draws 32 bytes from OS randomness into a new file with owner-only (0600) permissions. It never overwrites an existing file and prints only the public key and key ID.
   - `sign-pack <key-file> <official.wpack>`: refuses a key file readable by others and verifies every pack byte first. It then writes `<pack>.sig`, refusing to overwrite an existing one.
   - `verify-pack-signature <pack> <sig> [<publisher> <public-key-hex> <valid-from>]`: checks against one given key, or against the app's pinned keyring.
@@ -93,3 +101,4 @@ signature <128 lowercase hex Ed25519 signature>
   - its label becomes "Verification failed" when the key is revoked or unpinned, and under the empty production keyring;
   - a tampered payload, a forged signature, an unpinned key and a signature for another pack never install and leave staging empty;
   - a custom pack is refused on the official path.
+- **End to end with the pinned production key** (2026-11-16, on the owner's workstation): `export-official` built a pack for snapshot 20261116; `sign-pack` signed it with the secret; and `verify-pack-signature`, with no key given, accepted it against the compiled keyring ("Verified publisher: foundation-wikipedia (key ee24d083334a607f)"). The same signature on a pack with one changed byte was refused (`ObjectDigest`).

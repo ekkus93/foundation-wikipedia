@@ -241,6 +241,26 @@ fn verify_object_membership(root: &Path, manifest: &Manifest) -> Result<(), Expo
     Ok(())
 }
 
+/// Inventory a tree as `custom_manifest_from_tree` does, for an official
+/// pack of `publisher`. The result is unsigned: it must be signed
+/// (`signature::sign`, ADR 0008) before anyone can install it as official.
+pub fn official_manifest_from_tree(
+    root: &Path,
+    pack_id: &str,
+    project: &str,
+    snapshot: &str,
+    publisher: &str,
+    metadata: PackMetadata,
+) -> Result<Manifest, ExportError> {
+    let mut manifest =
+        custom_manifest_from_tree(root, pack_id, project, snapshot, pack_id, metadata)?;
+    manifest.origin = Origin::Official {
+        publisher: publisher.to_owned(),
+    };
+    manifest.validate()?;
+    Ok(manifest)
+}
+
 /// Verify every inventoried object again, then stream the canonical envelope.
 /// The output writer may contain partial bytes on error; never publish before
 /// this returns Ok AND the caller re-verifies and fsyncs the complete output.
@@ -249,10 +269,30 @@ pub fn write_custom_tree<W: Write>(
     manifest: &Manifest,
     output: &mut W,
 ) -> Result<(), ExportError> {
-    private_root(root)?;
     if !matches!(manifest.origin, Origin::Custom { .. }) {
         return Err(ExportError::InvalidTree);
     }
+    write_tree(root, manifest, output)
+}
+
+/// `write_custom_tree` for an official-origin manifest (still unsigned).
+pub fn write_official_tree<W: Write>(
+    root: &Path,
+    manifest: &Manifest,
+    output: &mut W,
+) -> Result<(), ExportError> {
+    if !matches!(manifest.origin, Origin::Official { .. }) {
+        return Err(ExportError::InvalidTree);
+    }
+    write_tree(root, manifest, output)
+}
+
+fn write_tree<W: Write>(
+    root: &Path,
+    manifest: &Manifest,
+    output: &mut W,
+) -> Result<(), ExportError> {
+    private_root(root)?;
     verify_object_membership(root, manifest)?;
     verify_manifest_directory(manifest, root).map_err(ExportError::Verify)?;
     write_container(output, manifest, |object, writer| {

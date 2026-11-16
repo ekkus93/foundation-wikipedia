@@ -120,7 +120,7 @@ fn generate_sign_and_verify_with_a_pinned_key_and_refuse_everything_else() {
     let ok = verify(&pack, Some(("foundation", &public)));
     assert!(ok.status.success(), "{}", text(&ok.stderr));
     assert!(text(&ok.stdout).contains("Verified publisher: foundation"));
-    // The app's keyring pins no key yet; another publisher's key is refused.
+    // A throwaway key is not in the app's keyring; another publisher's key is refused.
     let unpinned = verify(&pack, None);
     assert!(text(&unpinned.stderr).contains("unrecognized publisher key"));
     let other = verify(&pack, Some(("someone-else", &public)));
@@ -162,5 +162,64 @@ fn generate_sign_and_verify_with_a_pinned_key_and_refuse_everything_else() {
         let loose = run(&[OsStr::new("sign-pack"), key.as_os_str(), pack.as_os_str()]);
         assert!(text(&loose.stderr).contains("owner only"));
     }
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn export_official_writes_an_unsigned_official_pack_that_sign_pack_then_signs() {
+    let dir = temp_dir();
+    let objects = dir.join("objects");
+    let out = dir.join("out");
+    for path in [&dir, &objects, &out] {
+        fs::create_dir_all(path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    fs::write(objects.join("article.cbor"), b"article").unwrap();
+    let meta = dir.join("meta.json");
+    let zero = "0".repeat(64);
+    fs::write(
+        &meta,
+        format!(
+            r#"{{"source":{{"kind":"custom","snapshot_id":"fixture","manifest_sha256":"{zero}"}},"definition_sha256":"{zero}","license":{{"text_spdx":"CC-BY-SA-4.0","attribution_object":null}},"indexes":[],"counts":{{"articles":0,"redirects":0,"media":0}}}}"#
+        ),
+    )
+    .unwrap();
+    let pack = out.join("official.wpack");
+    let exported = run(&[
+        OsStr::new("export-official"),
+        objects.as_os_str(),
+        OsStr::new("science"),
+        OsStr::new("enwiki"),
+        OsStr::new("20261116"),
+        OsStr::new("foundation"),
+        meta.as_os_str(),
+        pack.as_os_str(),
+    ]);
+    assert!(exported.status.success(), "{}", text(&exported.stderr));
+    assert!(text(&exported.stdout).contains("Official envelope written (UNSIGNED)"));
+
+    let key = dir.join("throwaway.key");
+    let generated = run(&[OsStr::new("signing-key-generate"), key.as_os_str()]);
+    let public = text(&generated.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("public-key ").map(str::to_owned))
+        .unwrap();
+    let signed = run(&[OsStr::new("sign-pack"), key.as_os_str(), pack.as_os_str()]);
+    assert!(signed.status.success(), "{}", text(&signed.stderr));
+    let sig = out.join("official.wpack.sig");
+    let verified = run(&[
+        OsStr::new("verify-pack-signature"),
+        pack.as_os_str(),
+        sig.as_os_str(),
+        OsStr::new("foundation"),
+        OsStr::new(&public),
+        OsStr::new("20260101"),
+    ]);
+    assert!(verified.status.success(), "{}", text(&verified.stderr));
+    assert!(text(&verified.stdout).contains("Verified publisher: foundation"));
     fs::remove_dir_all(dir).ok();
 }
