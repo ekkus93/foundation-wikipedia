@@ -375,9 +375,16 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Verify origin + integrity for “Verified publisher”, not just a matching checksum.
   - **Accept:** tampered/forged official pack cannot install or display as verified.
 - [ ] **TRUST-002** Show distinct trust statuses across all pack surfaces. **Depends:** TRUST-001.  
-  - [ ] `Verified publisher`, `Custom — integrity verified`, `Not yet checked`, `Verification failed` with labels and accessible descriptions.
+  - **Progress (2026-11-16, partial — shared statuses and Android surfaces):**
+    - **Shared text:** `TrustStatus::description()` gives each of the four statuses a plain-language description; only Verified publisher mentions a publisher. UniFFI exports a `PackTrust` enum plus `pack_trust_label`/`pack_trust_description`, and every pack record (`InstalledPack`, `PackReview`, `InstalledSnapshot`) carries the typed status.
+    - **Tamper resistance:** listing parses the installer's recorded status strictly; an altered record (a custom pack promoted to Verified publisher, or any status an install never writes) is shown as Verification failed.
+    - **Android:** one `PackTrustBadge` (distinct glyph, label, description; spoken as a single "Trust status: …" element) on library cards, the import status (Not yet checked while verifying, Verification failed on rejection) and the install confirmation, which offers Install only for a verified status.
+    - **Tests:** Rust unit and FFI tests; instrumented `PackTrustUiTest` (all four statuses distinct, Accessibility Test Framework checks, dialog refuses unverified statuses) and `PackLibraryTrustUiTest` (the real Settings card shows Custom — integrity verified, never a publisher status).
+    - **CI:** SHA **`f41492d6`**; all six workflows passed, incl. [Rust workspace 43904644742](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43904644742) and [Android FFI bridge 43904644787](https://github.com/ekkus93/foundation-wikipedia/actions/runs/43904644787) (`OK (29 tests)`).
+    - **Not yet:** the desktop app has no pack library, details or import screens (PUI-001); they must use the same shared labels and descriptions. No official pack can be installed on Android yet (MOBPACK-001). **TRUST-002 remains unchecked.**
+  - [x] `Verified publisher`, `Custom — integrity verified`, `Not yet checked`, `Verification failed` with labels and accessible descriptions.
   - [ ] On all library cards, pack details and install/import confirmations.
-  - [ ] Block invalid/unverified installation; allow validated custom unsigned packs after clear confirmation.
+  - [x] Block invalid/unverified installation; allow validated custom unsigned packs after clear confirmation.
   - **Accept:** an imported custom pack never masquerades as an official pack.
 - [ ] **TRUST-003** Harden pack inputs. **Depends:** PACK-004.  
   - [ ] Protect against traversal, zip bombs, oversized objects, MIME spoofing, malformed manifests and unsafe HTML/SVG.
