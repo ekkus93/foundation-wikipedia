@@ -77,7 +77,13 @@ class StreamedDraftUiTest {
     }
 
     /** Streams [first], waits for [release], then streams [rest]. */
-    private class FakeOllama(private val first: String, private val rest: String) : AutoCloseable {
+    /** A local Ollama stand-in; with [failChat] it drops every chat request. */
+    private class FakeOllama(
+        private val first: String,
+        private val rest: String,
+        private val failChat: Boolean = false,
+    ) : AutoCloseable {
+        val chatRequests = java.util.concurrent.atomic.AtomicInteger()
         val release = CountDownLatch(1)
         private val socket = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val endpoint = "http://127.0.0.1:${socket.localPort}"
@@ -111,6 +117,8 @@ class StreamedDraftUiTest {
                 output.flush()
                 return
             }
+            chatRequests.incrementAndGet()
+            if (failChat) return // the connection closes with no response
             fun event(text: String) =
                 "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"$text\"},\"finish_reason\":null}]}\n\n"
             val start = event(first)
@@ -200,6 +208,37 @@ class StreamedDraftUiTest {
         handle.performCustomAccessibilityActionWithLabel("Expand")
         compose.waitUntil(timeoutMillis = 10_000) { shown("Review request", substring = false) }
         handle.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "half height"))
+    }
+
+    /**
+     * AI-004: with a hosted provider also configured, a failing local model
+     * shows an error and stays selected; nothing is retried elsewhere.
+     */
+    @Test
+    fun aFailedLocalModelNeverFallsBackToAConfiguredHostedProvider(): Unit = runBlocking {
+        val hosted = org.foundation.wikipedia.rust.RustHostedAi(context)
+        val provider = uniffi.wiki_ffi.HostedAiProvider.ANTHROPIC
+        // Never overwrite or delete a real key on this device.
+        val addedKey = !hosted.isKeyConfigured(provider)
+        if (addedKey) hosted.saveKey(provider, "test-key-never-used")
+        try {
+            val fake = FakeOllama("unused", "unused", failChat = true)
+            askAboutTide(fake)
+            compose.waitUntil(timeoutMillis = 30_000) {
+                shown("Could not connect securely", substring = true) ||
+                    shown("unexpected response", substring = true) ||
+                    shown("did not respond", substring = true)
+            }
+            assertTrue(fake.chatRequests.get() >= 1)
+            // The local model is still the chosen provider and no hosted
+            // request was reviewed or sent.
+            assertTrue(shown("Model fake:1b", substring = true))
+            assertTrue(!shown("api.anthropic.com", substring = true))
+            assertTrue(!shown(DRAFT_LABEL, substring = false))
+            assertTrue(!shown("Show cited passage", substring = true))
+        } finally {
+            if (addedKey) hosted.deleteKey(provider)
+        }
     }
 
     @Test
