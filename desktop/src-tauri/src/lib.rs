@@ -221,7 +221,7 @@ async fn open_wikipedia_title(
     project: String,
     offline: bool,
     cache: tauri::State<'_, DesktopOnlineCache>,
-) -> Result<(u64, u64, String, String), String> {
+) -> Result<(u64, u64, String, String, bool), String> {
     let generation = cache.1.load(Ordering::Acquire);
     let cache = (*cache).clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -236,17 +236,24 @@ async fn open_wikipedia_title(
 }
 
 /// Convert only authenticated, exact-revision rendered HTML into the preview DTO.
-fn preview_response(outcome: FetchOutcome) -> Result<(u64, u64, String, String), String> {
-    match outcome {
-        FetchOutcome::Rendered(article) => Ok((
-            article.revision.key.page_id,
-            article.revision.revision_id,
-            article.revision.title,
-            article.html,
-        )),
-        FetchOutcome::MissingOffline => Err("Article is not installed for offline reading; no network request was made".to_owned()),
-        _ => Err("No current online article is available".to_owned()),
-    }
+/// The last field says whether the HTML is the temporary copy (reused after
+/// a fresh check that it is still the current revision).
+fn preview_response(outcome: FetchOutcome) -> Result<(u64, u64, String, String, bool), String> {
+    let (article, cached) = match outcome {
+        FetchOutcome::Rendered(article) => (article, false),
+        FetchOutcome::CachedOnline(article) => (article, true),
+        FetchOutcome::MissingOffline => {
+            return Err("Article is not installed for offline reading; no network request was made".to_owned())
+        }
+        _ => return Err("No current online article is available".to_owned()),
+    };
+    Ok((
+        article.revision.key.page_id,
+        article.revision.revision_id,
+        article.revision.title,
+        article.html,
+        cached,
+    ))
 }
 
 /// Search hits carry page IDs. Re-resolving their mutable titles can select
@@ -257,7 +264,7 @@ async fn open_wikipedia_page(
     project: String,
     offline: bool,
     cache: tauri::State<'_, DesktopOnlineCache>,
-) -> Result<(u64, u64, String, String), String> {
+) -> Result<(u64, u64, String, String, bool), String> {
     let generation = cache.1.load(Ordering::Acquire);
     let cache = (*cache).clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -977,7 +984,11 @@ mod online_preview_cache_tests {
             another_command.1.load(Ordering::Acquire),
         )
         .unwrap();
-        assert_eq!(second, first);
+        // The same exact revision, now labelled as the temporary copy.
+        let FetchOutcome::Rendered(fetched) = first.clone() else {
+            panic!("first open fetches the HTML");
+        };
+        assert_eq!(second, FetchOutcome::CachedOnline(fetched));
         assert_eq!(transport.calls, 4);
         assert_eq!(cache.0.lock().unwrap().len(), 1);
 

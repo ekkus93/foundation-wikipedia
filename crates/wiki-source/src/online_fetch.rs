@@ -57,7 +57,11 @@ pub enum FetchOutcome {
     Local(ArticleVersion),
     CurrentOnline(ArticleVersion),
     MissingOffline,
+    /// Freshly fetched rendered HTML of the current revision.
     Rendered(OnlineRenderedRevision),
+    /// The current revision (just confirmed by a fresh metadata request),
+    /// served from the temporary in-memory copy instead of re-fetching it.
+    CachedOnline(OnlineRenderedRevision),
 }
 
 fn read_response<T: MediaWikiTransport>(
@@ -148,7 +152,7 @@ fn fetch_article_inner<T: MediaWikiTransport>(
     // Cache hits cannot replace the authoritative current-revision query.
     if let Some(cache) = cache.as_deref_mut() {
         if let Some(article) = cache.get(&render.pinned) {
-            return Ok(FetchOutcome::Rendered(article));
+            return Ok(FetchOutcome::CachedOnline(article));
         }
     }
     let html = read_response(
@@ -460,6 +464,15 @@ fn fetch_title_with_local_index_inner<T: MediaWikiTransport>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A repeat open served from the temporary copy is the same article,
+    /// labelled as cached.
+    fn as_cached(outcome: FetchOutcome) -> FetchOutcome {
+        match outcome {
+            FetchOutcome::Rendered(article) => FetchOutcome::CachedOnline(article),
+            other => other,
+        }
+    }
     use crate::online_selection::ArticleLocation;
     use std::collections::VecDeque;
     use url::Url;
@@ -564,7 +577,7 @@ mod tests {
                 Some(&index),
                 &mut cache,
             ),
-            Ok(first)
+            Ok(as_cached(first))
         );
         assert_eq!(client.requests.len(), 3);
 
@@ -692,7 +705,7 @@ mod tests {
                 Some(&index),
                 &mut cache,
             ),
-            Ok(first.clone())
+            Ok(as_cached(first.clone()))
         );
         assert_eq!(client.requests.len(), 5);
 
@@ -765,7 +778,7 @@ mod tests {
         let second =
             fetch_article_with_cache(&mut client, &key(), NetworkState::Online, &[], &mut cache)
                 .unwrap();
-        assert_eq!(second, first);
+        assert_eq!(second, as_cached(first.clone()));
         assert_eq!(client.requests.len(), 3);
 
         // Even an unchanged oldid cannot reuse a different title identity.
@@ -1306,7 +1319,7 @@ mod tests {
             &mut cache,
         )
         .unwrap();
-        assert_eq!(second, first);
+        assert_eq!(second, as_cached(first.clone()));
         assert_eq!(client.requests.len(), 5);
 
         client.answers.push_back(Ok(METADATA.as_bytes().to_vec()));
@@ -1319,7 +1332,7 @@ mod tests {
                 &[],
                 &mut cache,
             ),
-            Ok(first)
+            Ok(as_cached(first))
         );
         assert_eq!(client.requests.len(), 6);
         assert_eq!(

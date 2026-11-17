@@ -5,6 +5,10 @@ import { parseReaderArticle, parseReaderSearchHits, parseReaderBookmarks, parseR
 test("accepts bounded revision-scoped article and search IPC responses", () => {
   assert.deepEqual(parseReaderSearchHits([[12, "Physics"], [13, "Mathematics"]]), [[12, "Physics"], [13, "Mathematics"]]);
   assert.deepEqual(parseReaderArticle([12, 345, "Physics", "<p>safe</p>"], 12), [12, 345, "Physics", "<p>safe</p>"]);
+  // Online opens say whether the HTML is the temporary copy.
+  assert.deepEqual(parseReaderArticle([12, 345, "Physics", "<p>safe</p>", true], 12), [12, 345, "Physics", "<p>safe</p>", true]);
+  assert.throws(() => parseReaderArticle([12, 345, "Physics", "<p>safe</p>", "yes"]), /Invalid Wikipedia/);
+  assert.throws(() => parseReaderArticle([12, 345, "Physics", "<p>safe</p>", false, 1]), /Invalid Wikipedia/);
 });
 
 test("rejects malformed, duplicate and unsafe search identities", () => {

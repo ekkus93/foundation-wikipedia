@@ -44,6 +44,8 @@ interface ArticlePreview {
   links: WikiArticleLink[];
   /** Where it was read from: live Wikipedia, or the active installed pack. */
   source: "online" | "pack";
+  /** Online only: the temporary copy, reused after confirming it is current. */
+  cached?: boolean;
 }
 
 // Isolated preview HTML is built using whitelisted, app-controlled layout choices.
@@ -142,9 +144,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
         return;
       }
       if (!fromPack && offlineMode.getSnapshot()) return;
-      const [pageId, revisionId, title, html] = parseReaderArticle(result, request.pageId);
+      const [pageId, revisionId, title, html, cached] = parseReaderArticle(result, request.pageId);
       const next = { project: request.project, frameId: nextFrameId.current++, pageId, revisionId, title, html,
-        links: fromPack ? [] : extractWikiArticleLinks(html, request.project), source: fromPack ? "pack" as const : "online" as const };
+        links: fromPack ? [] : extractWikiArticleLinks(html, request.project), source: fromPack ? "pack" as const : "online" as const,
+        cached: !fromPack && cached === true };
       setNavigation((previous) => openBookmarkedReaderArticle(previous, next));
       setProject(request.project);
       setHits([]);
@@ -362,12 +365,12 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
     setNotice(null);
     // Keep the current article visible if the next fetch fails.
     try {
-      const [pageId, revisionId, canonicalTitle, html] = parseReaderArticle(await invoke<unknown>(
+      const [pageId, revisionId, canonicalTitle, html, cached] = parseReaderArticle(await invoke<unknown>(
         command,
         { ...args, project: requestedProject, offline: offline || !connected || !navigator.onLine },
       ), args.pageId);
       if (!requestEpoch.current.matches(epoch) || offlineMode.getSnapshot()) return;
-      setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject), source: "online" }));
+      setNavigation((state) => openReaderArticle(state, { project: requestedProject, frameId: nextFrameId.current++, pageId, revisionId, title: canonicalTitle, html, links: extractWikiArticleLinks(html, requestedProject), source: "online", cached: cached === true }));
       if (args.title && navigationTitleKey(args.title) !== navigationTitleKey(canonicalTitle)) {
         setNotice(`Redirected from “${args.title}”.`);
       }
@@ -467,7 +470,8 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
             setNotice(null);
           }}>→ Forward to article</button>}
           <h2>{article.title}</h2>
-          <p>{article.source === "pack" ? "Installed pack revision" : offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}</p>
+          <p>{article.source === "pack" ? "Installed pack revision" : offline || !connected ? "Retained online text preview" : "Online revision"} {article.revisionId} · page ID {article.pageId}
+            {article.source === "online" && article.cached && !offline && connected ? " · temporary copy, confirmed current just now" : ""}</p>
           {(() => {
             const url = revisionSourceUrl(article.project, article.pageId, article.revisionId);
             return url && (
