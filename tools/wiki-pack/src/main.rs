@@ -2,6 +2,7 @@
 //! These commands do not install packs or verify publisher signatures.
 mod audit_diagnostic;
 mod audit_public_dump;
+mod build_dump_pack;
 mod css_graph_diagnostic;
 mod curated_catalog;
 mod fetch_public_dump;
@@ -59,6 +60,7 @@ fn usage() {
     println!("       wiki-pack verify-public-generation-live [--json] <project> <generation> <SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack fetch-public-generation [--json] <project> <generation> <independent-SHA256SUMS-sha256> <private-source-dir> <max-compressed-bytes-per-member>");
     println!("       wiki-pack audit-diagnostic <revision-content.jsonl> <expected-ids.txt> <project> <generation> <namespace> <expected-sha256> [revision-sha256]");
+    println!("{}", build_dump_pack::USAGE);
     println!("       wiki-pack export-custom [--json] <object-dir> <pack-id> <project> <snapshot> <definition-id> <metadata.json> <output.wpack>");
     println!(
         "       wiki-pack stage-unsigned [--json] <file.wpack> <private-parent> <name> [max-input-bytes]"
@@ -1496,6 +1498,16 @@ fn main() {
             ) {
                 eprintln!("{error}");
                 std::process::exit(1);
+            }
+        }
+        Some("build-public-dump-pack") => {
+            let supplied: Vec<OsString> = args.collect();
+            match build_dump_pack::run(&supplied) {
+                Ok(summary) => println!("{summary}"),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
             }
         }
         _ => {

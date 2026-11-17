@@ -16,6 +16,7 @@ pub mod media_inventory;
 pub mod png_crc;
 pub mod png_preflight;
 pub mod preview;
+pub mod public_dump_pack;
 pub mod raster_preflight;
 pub mod related;
 pub mod rendered_dependencies;

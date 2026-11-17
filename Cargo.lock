@@ -1908,7 +1908,9 @@ dependencies = [
 name = "wiki-pack-builder"
 version = "0.1.0"
 dependencies = [
+ "bzip2",
  "html5ever",
+ "sha2",
  "url",
  "wiki-core",
  "wiki-model",
