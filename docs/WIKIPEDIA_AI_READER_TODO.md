@@ -852,10 +852,11 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [ ] Article revision/license/contributor links; per-image creator/source/license/derivative attribution.
   - [ ] Pack-level notices and attribution visible even offline; Wikimedia branding/non-affiliation review.
   - **Accept:** offline sample export contains attribution needed for all embedded sample media.
-- [ ] **SEC-003** LLM privacy and credentials audit. **Depends:** AI-004, STATE-003.  
-  - [ ] Inspect network for hidden cloud fallback/telemetry; log redaction and secure secret storage.
-  - [ ] Explicit local/LAN/cloud endpoint clarity and remote-context disclosure.
+- [x] **SEC-003** LLM privacy and credentials audit. **Depends:** AI-004, STATE-003.  
+  - [x] Inspect network for hidden cloud fallback/telemetry; log redaction and secure secret storage.
+  - [x] Explicit local/LAN/cloud endpoint clarity and remote-context disclosure.
   - **Accept:** selected local-only provider causes zero hosted-AI traffic.
+  - **Done (2026-11-16):** Audit record `docs/SEC_003_LLM_PRIVACY_AUDIT_2026-11-16.md`: static inventory of every network source (hosted HTTPS opens connections only in `HostedChatProvider::connect`; no telemetry clients; no logging in any app crate or Android `Log`), keys only in the OS keychain/Android Keystore with redacted `Debug`, locality and destination shown in Settings and in every request review. `5ee35990` adds `hosted_http::hosted_connection_attempts()` (positive control in the hosted unit test) and the separate test binary `crates/wiki-ffi/tests/local_only_traffic.rs`: local chats answered with a citation, with `[NO_EVIDENCE]`, and against a vanished server (error, no fallback) leave the hosted count at 0. Live desktop run under an `LD_PRELOAD` connect/getaddrinfo logger with a local Ollama profile, Work offline and a pack article: the cited answer arrived and the whole session contacted only `127.0.0.1:11434` and the Vite dev server, with no DNS lookups and no hosted host (a control run showed the logger catches hosted traffic). Android was not captured live; it uses the same `wiki-ffi` chat path covered by the CI test. Exact head `5ee35990c866e482a1958dd0cf2994f416017270` passed Rust workspace, Android FFI bridge, Android Rust ABI qualification and Platform shells CI.
 
 ## Phase 17 — Qualifying UX, reliability and performance
 
