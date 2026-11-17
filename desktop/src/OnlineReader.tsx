@@ -4,7 +4,7 @@ import { isolatedReaderDocument, LINK_MESSAGE_KEY, READY_MESSAGE_KEY, SCROLL_MES
 import type { Theme } from "./theme";
 import { revisionSourceUrl } from "./articleProvenance";
 import { RequestEpoch } from "./requestEpoch";
-import { loadDefaultEdition } from "./defaultEdition";
+import { EDITIONS, isEdition, loadDefaultEdition } from "./defaultEdition";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
 import { classifyReaderLink, extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
@@ -123,7 +123,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
     if (!bookmarkRequest || bookmarkRequest.id <= lastBookmarkRequestId.current) return;
     lastBookmarkRequestId.current = bookmarkRequest.id;
     if (!Number.isSafeInteger(bookmarkRequest.pageId) || bookmarkRequest.pageId <= 0 ||
-        !["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"].includes(bookmarkRequest.project)) {
+        !isEdition(bookmarkRequest.project)) {
       setNotice("Invalid saved Wikipedia page identity.");
       return;
     }
@@ -417,11 +417,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
           setNavigation(emptyReaderNavigation());
           setNotice(null);
         }}>
-          <option value="enwiki">English</option>
-          <option value="dewiki">Deutsch</option>
-          <option value="frwiki">Français</option>
-          <option value="eswiki">Español</option>
-          <option value="jawiki">日本語</option>
+          {EDITIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
         <label htmlFor={queryFieldId}>Search articles</label>
         <div>

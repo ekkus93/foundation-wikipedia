@@ -1,9 +1,10 @@
+import { EDITION_IDS } from "./defaultEdition.ts";
 /** Validate untrusted Tauri IPC results before rendering or navigation. */
 export type ReaderSearchHit = [pageId: number, title: string];
 export type ReaderArticle = [pageId: number, revisionId: number, title: string, html: string];
 export type ReaderBookmark = [project: string, pageId: number, revisionId: number];
 export type ReaderVisit = [project: string, pageId: number, revisionId: number, visitedAt: number];
-const SUPPORTED_PROJECTS = new Set(["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"]);
+const SUPPORTED_PROJECTS = EDITION_IDS;
 
 const MAX_HTML_BYTES = 2_000_000;
 

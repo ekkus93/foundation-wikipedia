@@ -7,6 +7,7 @@ test("exact-revision provenance uses only the correct Wikimedia host", () => {
     ["enwiki", "en.wikipedia.org"], ["dewiki", "de.wikipedia.org"],
     ["frwiki", "fr.wikipedia.org"], ["eswiki", "es.wikipedia.org"],
     ["jawiki", "ja.wikipedia.org"],
+    ["simplewiki", "simple.wikipedia.org"],
   ]) {
     const url = revisionSourceUrl(project, 42, 333);
     assert.equal(url, `https://${host}/w/index.php?oldid=333`);

@@ -1,8 +1,17 @@
 /** The Wikipedia edition new reader tabs start with (Settings › General). */
+/** The Wikipedia editions the reader supports: the one list every module
+ * uses (IPC validation, links, source URLs, the edition picker). */
 export const EDITIONS = [
-  ["enwiki", "English"], ["dewiki", "Deutsch"], ["frwiki", "Français"], ["eswiki", "Español"], ["jawiki", "日本語"],
+  ["enwiki", "English"], ["simplewiki", "Simple English"], ["dewiki", "Deutsch"],
+  ["frwiki", "Français"], ["eswiki", "Español"], ["jawiki", "日本語"],
 ] as const;
 export type Edition = (typeof EDITIONS)[number][0];
+export const EDITION_IDS: ReadonlySet<string> = new Set(EDITIONS.map(([id]) => id));
+
+/** `enwiki` → `en.wikipedia.org`, `simplewiki` → `simple.wikipedia.org`. */
+export function editionHost(edition: Edition): string {
+  return `${edition.slice(0, -"wiki".length)}.wikipedia.org`;
+}
 
 const KEY = "reader.defaultEdition.v1";
 

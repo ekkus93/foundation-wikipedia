@@ -2,6 +2,7 @@
  * The isolated preview iframe remains sandboxed with scripts and clicks disabled.
  * Only validated, same-edition mainspace titles reach the existing Rust adapter.
  */
+import { EDITION_IDS } from "./defaultEdition.ts";
 import { navigationTitleKey, unsafeNavigationUnicode, validReaderTitleInput, wellFormedTitleUnicode } from "./readerResponse.ts";
 
 export interface WikiArticleLink {
@@ -9,7 +10,7 @@ export interface WikiArticleLink {
   label: string;
 }
 
-const EDITIONS = new Set(["enwiki", "dewiki", "frwiki", "eswiki", "jawiki"]);
+const EDITIONS = EDITION_IDS;
 const MAX_LINKS = 80;
 const MAX_HTML_BYTES = 2_000_000;
 

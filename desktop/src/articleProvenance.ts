@@ -1,11 +1,7 @@
+import { EDITIONS, editionHost } from "./defaultEdition.ts";
 /** Revision-pinned source URLs for allowlisted Wikimedia projects only. */
-const WIKI_HOSTS: Readonly<Record<string, string>> = Object.freeze({
-  enwiki: "en.wikipedia.org",
-  dewiki: "de.wikipedia.org",
-  frwiki: "fr.wikipedia.org",
-  eswiki: "es.wikipedia.org",
-  jawiki: "ja.wikipedia.org",
-});
+const WIKI_HOSTS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(EDITIONS.map(([id]) => [id, editionHost(id)])));
 export function revisionSourceUrl(project: unknown, pageId: unknown, revisionId: unknown): string | null {
   if (typeof project !== "string" || !Object.hasOwn(WIKI_HOSTS, project) ||
       typeof pageId !== "number" || !Number.isSafeInteger(pageId) || pageId <= 0 ||

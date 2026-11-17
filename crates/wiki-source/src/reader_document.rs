@@ -74,6 +74,11 @@ pub fn sanitize_article_html(html: &str) -> String {
         // No verified offline media exists yet (PACK-003): drop image sources
         // so no image URL is ever requested; alt text remains.
         .rm_tag_attributes("img", ["src", "srcset"])
+        // Formulas are text (presentation MathML), so they work offline;
+        // Wikipedia renders math only as MathML (SRC-003).
+        .add_tags(MATHML_TAGS)
+        .add_generic_attributes(MATHML_ATTRIBUTES)
+        .add_clean_content_tags(["annotation", "annotation-xml"])
         .id_prefix(None)
         // The app's own anchors must not be claimed by article markup.
         .attribute_filter(|_, attribute, value| {
@@ -743,5 +748,26 @@ mod tests {
             assert!(sanitized.contains("Launch film"));
             assert!(sanitized.contains("<p>Text</p>"));
         }
+    }
+
+    /// SRC-003: pack articles keep their formulas (MathML), never scripts
+    /// or links inside them, and never TeX annotations.
+    #[test]
+    fn pack_articles_keep_mathml_formulas() {
+        let html = concat!(
+            "<p>Then <math class=\"mwe-math-element\" display=\"inline\"><semantics><mrow>",
+            "<msup><mi>a</mi><mn>2</mn></msup><mo stretchy=\"false\">+</mo>",
+            "<msup><mi href=\"javascript:x()\" onclick=\"x()\">b</mi><mn>2</mn></msup>",
+            "</mrow><annotation encoding=\"application/x-tex\">a^2+b^2</annotation>",
+            "</semantics></math>.</p>"
+        );
+        let sanitized = sanitize_article_html(html);
+        assert!(
+            sanitized.contains("<msup><mi>a</mi><mn>2</mn></msup>"),
+            "{sanitized}"
+        );
+        assert!(sanitized.contains("<mo stretchy=\"false\">+</mo>"));
+        assert!(!sanitized.contains("annotation") && !sanitized.contains("a^2+b^2"));
+        assert!(!sanitized.contains("javascript") && !sanitized.contains("onclick"));
     }
 }
