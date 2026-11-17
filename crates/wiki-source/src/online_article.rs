@@ -208,6 +208,16 @@ pub fn parse_rendered_revision(
     body: &str,
     pinned: &OnlineRevision,
 ) -> Result<OnlineRenderedRevision, OnlineArticleError> {
+    parse_rendered_revision_with_source(body, pinned).map(|(rendered, _)| rendered)
+}
+
+/// Like [`parse_rendered_revision`], also returning the identity-checked raw
+/// `parse.text`. The raw HTML is untrusted: use it only as input to a reader
+/// that emits plain text (`rendered_article`), never for display.
+pub fn parse_rendered_revision_with_source(
+    body: &str,
+    pinned: &OnlineRevision,
+) -> Result<(OnlineRenderedRevision, String), OnlineArticleError> {
     pinned
         .key
         .validate()
@@ -249,10 +259,13 @@ pub fn parse_rendered_revision(
     if html.trim().is_empty() {
         return Err(OnlineArticleError::UnsafeHtml);
     }
-    Ok(OnlineRenderedRevision {
-        revision: pinned.clone(),
-        html,
-    })
+    Ok((
+        OnlineRenderedRevision {
+            revision: pinned.clone(),
+            html,
+        },
+        raw_html.to_owned(),
+    ))
 }
 
 #[cfg(test)]

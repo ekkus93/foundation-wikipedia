@@ -1,0 +1,13 @@
+{
+  "source": "wikimedia",
+  "license": "CC BY-SA 4.0 (Wikipedia article text, contributors of revision history)",
+  "sha256": "e1a260326dd6a3409e7aecc0599ae696ad5aabc930a4abe4c6fba4a64350350a",
+  "source_url": "https://en.wikipedia.org/w/api.php?format=json&formatversion=2&action=parse&oldid=1383416967&prop=text&disableeditsection=1",
+  "project": "enwiki",
+  "page_id": 251366,
+  "revision_id": 1383416967,
+  "title": "Hypotenuse",
+  "timestamp": "2026-11-02T15:48:37Z",
+  "retrieved": "2026-11-16",
+  "description": "Exact Action API parse response for the current revision of Hypotenuse: inline MathML, three figures, one side box, references. SRC-003 rendered-article extraction fixture."
+}

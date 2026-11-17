@@ -98,7 +98,7 @@ const ONLINE_IMAGE_PREFIXES: [&str; 3] = [
 
 /// Presentation MathML elements an online article may use (no scripting,
 /// links or external resources exist in this set).
-const MATHML_TAGS: [&str; 26] = [
+pub(crate) const MATHML_TAGS: [&str; 26] = [
     "math",
     "semantics",
     "mrow",
@@ -128,7 +128,7 @@ const MATHML_TAGS: [&str; 26] = [
 ];
 
 /// Layout-only MathML attributes (none take URLs or script).
-const MATHML_ATTRIBUTES: [&str; 22] = [
+pub(crate) const MATHML_ATTRIBUTES: [&str; 22] = [
     "display",
     "displaystyle",
     "scriptlevel",
