@@ -132,9 +132,15 @@ class LocalChatAndSelectionTest {
             )
         }
         compose.waitUntil(timeoutMillis = 30_000) {
-            compose.onAllNodesWithText("Ask about “Tide”").fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodesWithText("Asking about: “gravity”", substring = true)
-                    .fetchSemanticsNodes().isNotEmpty()
+            // While the selection activity is in front and finishing, the
+            // reader has no Compose hierarchy for a moment; that is "not yet".
+            try {
+                compose.onAllNodesWithText("Ask about “Tide”").fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodesWithText("Asking about: “gravity”", substring = true)
+                        .fetchSemanticsNodes().isNotEmpty()
+            } catch (_: IllegalStateException) {
+                false
+            }
         }
         assertEquals(null, ReaderSelection.selections.value)
     }
