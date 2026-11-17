@@ -526,6 +526,7 @@ This is the **sole authoritative implementation checklist**. The SPEC is the sou
   - [x] Render stable block anchors and scroll/highlight citations.
   - [x] Report selection with page/revision/block context; safe local media protocol and controlled origins.
   - [ ] Test offline image and equation loads without network.
+  - **Progress (2026-11-17, partial — equations offline; images blocked on PACK-003):** Equations: pack articles now keep allowlisted presentation MathML (`7b4c3818`, `pack_articles_keep_mathml_formulas`); MathML is inline text, so a formula needs no request, and the desktop pack frame's CSP allows no image or network loads. Verified in the desktop app with Work offline on: the dump-built Pythagorean theorem (installed revision 11017205) shows a² + b² = c²; the same pack was searched and read inside a network namespace with only loopback (STORE-004). Images: packs carry no image bytes yet (owner decision 2026-11-16: required images recorded with licences, bytes from PACK-003), so offline image loading cannot be tested until PACK-003, which depends on PACK-001 (owner hold). **DUI-002 remains unchecked.**
   - **Accept:** AI citation highlights exact source block; no privileged bridge leakage.
 - [x] **DUI-003** Desktop tabs/back/history/reading-position behavior. **Depends:** DUI-001.  
   - **Qualification (2026-11-16):**
