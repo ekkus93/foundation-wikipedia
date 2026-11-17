@@ -20,7 +20,7 @@
 
 use std::io::{BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -79,6 +79,14 @@ impl std::fmt::Debug for HostedChatProvider {
 }
 
 static PLATFORM_VERIFIER_READY: AtomicBool = AtomicBool::new(false);
+static HOSTED_CONNECTION_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+
+/// How many times this process has started connecting to a hosted provider
+/// (counted before name resolution). Every hosted request goes through this
+/// counter, so an audit or test can prove a local-only flow sent none (SEC-003).
+pub fn hosted_connection_attempts() -> u64 {
+    HOSTED_CONNECTION_ATTEMPTS.load(Ordering::Acquire)
+}
 
 /// Record that the host app initialised the OS certificate verifier.
 ///
@@ -162,6 +170,7 @@ impl HostedChatProvider {
     }
 
     fn connect(&self, deadline: Instant) -> Result<TcpStream, ProviderError> {
+        HOSTED_CONNECTION_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
         let addresses = (self.target.host.as_str(), self.target.port)
             .to_socket_addrs()
             .map_err(|_| ProviderError::Transport)?;
@@ -469,6 +478,7 @@ mod tests {
             server.client_tls,
         );
         let mut text = String::new();
+        let attempts_before = hosted_connection_attempts();
         stream_selected(
             &hosted,
             &request(),
@@ -484,6 +494,8 @@ mod tests {
         .unwrap();
         assert_eq!(text, "Hello");
         assert!(server.handle.join().unwrap().contains("x-api-key"));
+        // Positive control for the SEC-003 counter (other tests may add more).
+        assert!(hosted_connection_attempts() > attempts_before);
     }
 
     #[test]
