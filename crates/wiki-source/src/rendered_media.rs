@@ -76,7 +76,7 @@ fn field(meta: &Value, name: &str) -> Option<String> {
 }
 
 /// An official upload URL without tracking parameters.
-fn upload_url(raw: &str) -> Option<String> {
+pub(crate) fn upload_url(raw: &str) -> Option<String> {
     let mut url = url::Url::parse(raw).ok()?;
     let official = url.scheme() == "https"
         && url.host_str() == Some("upload.wikimedia.org")
@@ -100,12 +100,10 @@ fn mime(value: &str) -> bool {
         && value.len() > 6
 }
 
-/// One `MediaAsset` per `files` entry, in the same order. `files` are the
-/// `File:` titles that were requested (as `rendered_article` names them).
-pub fn parse_image_metadata(
-    body: &str,
-    files: &[String],
-) -> Result<Vec<MediaAsset>, MediaMetadataError> {
+/// The `imageinfo` object of each requested file, in `files` order. `files`
+/// are the `File:` titles that were requested; titles the API normalized
+/// (e.g. underscores) map back to the request.
+pub(crate) fn image_infos(body: &str, files: &[String]) -> Result<Vec<Value>, MediaMetadataError> {
     if body.len() > MAX_RESPONSE_BYTES {
         return Err(MediaMetadataError::ResponseTooLarge);
     }
@@ -122,7 +120,6 @@ pub fn parse_image_metadata(
         .and_then(|query| query.get("pages"))
         .and_then(Value::as_array)
         .ok_or(MediaMetadataError::InvalidResponse)?;
-    // Titles the API normalized (e.g. underscores) map back to the request.
     let normalized: Vec<(String, String)> = value
         .get("query")
         .and_then(|query| query.get("normalized"))
@@ -146,15 +143,29 @@ pub fn parse_image_metadata(
                 .iter()
                 .find(|(from, _)| from == file)
                 .map_or(file.as_str(), |(_, to)| to.as_str());
-            let page = pages
+            pages
                 .iter()
                 .find(|page| page.get("title").and_then(Value::as_str) == Some(title))
-                .ok_or_else(|| MediaMetadataError::MissingFile(file.clone()))?;
-            let info = page
-                .get("imageinfo")
+                .and_then(|page| page.get("imageinfo"))
                 .and_then(Value::as_array)
                 .and_then(|infos| infos.first())
-                .ok_or_else(|| MediaMetadataError::MissingFile(file.clone()))?;
+                .cloned()
+                .ok_or_else(|| MediaMetadataError::MissingFile(file.clone()))
+        })
+        .collect()
+}
+
+/// One `MediaAsset` per `files` entry, in the same order. `files` are the
+/// `File:` titles that were requested (as `rendered_article` names them).
+pub fn parse_image_metadata(
+    body: &str,
+    files: &[String],
+) -> Result<Vec<MediaAsset>, MediaMetadataError> {
+    let infos = image_infos(body, files)?;
+    files
+        .iter()
+        .zip(&infos)
+        .map(|(file, info)| {
             let source_url = info
                 .get("url")
                 .and_then(Value::as_str)

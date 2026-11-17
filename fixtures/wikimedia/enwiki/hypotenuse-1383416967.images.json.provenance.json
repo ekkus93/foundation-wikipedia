@@ -1,11 +1,11 @@
 {
   "source": "wikimedia",
   "license": "Metadata from Wikimedia Commons file description pages (CC BY-SA 4.0 / CC0 as published by Wikimedia); describes CC BY-SA 3.0 files",
-  "sha256": "8164ec5c81632965396cfac385a8d3cfc4c0301ad104f81846abc5236e423e1f",
-  "source_url": "https://en.wikipedia.org/w/api.php?format=json&formatversion=2&action=query&prop=imageinfo&titles=File%3AHypotenuse.svg%7CFile%3APythagorean.svg%7CFile%3ATrigono+sine+en2.svg&iiprop=url%7Cmime%7Cextmetadata&iiextmetadatafilter=LicenseShortName%7CArtist%7CAttribution%7CCredit%7CAttributionRequired",
+  "sha256": "21ddf02140c324ced971ff2a6b358a949281b78eb34be66b32470c50e69a2db7",
+  "source_url": "https://en.wikipedia.org/w/api.php?format=json&formatversion=2&action=query&prop=imageinfo&titles=File%3AHypotenuse.svg%7CFile%3APythagorean.svg%7CFile%3ATrigono+sine+en2.svg&iiprop=url%7Cmime%7Csize%7Csha1%7Cextmetadata&iiurlwidth=1280&iiextmetadatafilter=LicenseShortName%7CArtist%7CAttribution%7CCredit%7CAttributionRequired",
   "project": "enwiki",
   "page_id": 251366,
   "revision_id": 1383416967,
-  "retrieved": "2026-11-16",
-  "description": "Exact Action API imageinfo response for the three images in revision 1383416967 of Hypotenuse (page/revision fields identify that article revision, not the file pages). SRC-003 media-metadata fixture."
+  "retrieved": "2026-11-17",
+  "description": "Exact Action API imageinfo response for the three images in revision 1383416967 of Hypotenuse (page/revision fields identify that article revision, not the file pages). SRC-003 media-metadata and PACK-003 download (size, SHA-1, 1280px rendering) fixture."
 }

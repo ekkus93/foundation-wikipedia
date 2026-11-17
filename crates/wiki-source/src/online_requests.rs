@@ -47,6 +47,9 @@ pub enum OnlineRequestError {
 
 /// File pages per image-metadata request (the Action API's normal limit).
 pub const MAX_IMAGE_TITLES: usize = 50;
+/// Width of the stored rendering of an SVG or a wider raster (PACK-003):
+/// enough for diagram labels to stay legible when zoomed on a phone.
+pub const OFFLINE_IMAGE_WIDTH: u32 = 1280;
 
 /// A deliberately restricted Wikipedia endpoint. This does not accept a
 /// caller-controlled host, port, scheme, credentials, or URL path.
@@ -242,7 +245,10 @@ impl WikipediaRequests {
             ("action", "query".to_owned()),
             ("prop", "imageinfo".to_owned()),
             ("titles", files.join("|")),
-            ("iiprop", "url|mime|extmetadata".to_owned()),
+            // size and sha1 verify an original download; iiurlwidth asks for
+            // the bounded rendering used for SVG and large rasters (PACK-003).
+            ("iiprop", "url|mime|size|sha1|extmetadata".to_owned()),
+            ("iiurlwidth", OFFLINE_IMAGE_WIDTH.to_string()),
             (
                 "iiextmetadatafilter",
                 "LicenseShortName|Artist|Attribution|Credit|AttributionRequired".to_owned(),

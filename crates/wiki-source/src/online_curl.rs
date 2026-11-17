@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 
 use url::Url;
 
+use crate::media_download::{media_url_allowed, MediaFileTransport};
 use crate::online_fetch::MediaWikiTransport;
 use crate::online_requests::WikipediaRequests;
 
@@ -102,6 +103,34 @@ impl MediaWikiTransport for CurlTransport {
 
     fn get(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
         Self::checked_url(url)?;
+        self.fetch(url, max_bytes, "application/json")
+    }
+}
+
+impl MediaFileTransport for CurlTransport {
+    type Error = CurlTransportError;
+
+    /// Image bytes from Wikimedia's media hosts only (PACK-003).
+    fn get_media(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
+        if !media_url_allowed(url) {
+            return Err(CurlTransportError::InvalidRequest);
+        }
+        self.fetch(
+            url,
+            max_bytes,
+            "image/png, image/jpeg, image/gif, image/webp",
+        )
+    }
+}
+
+impl CurlTransport {
+    /// `url` must already be checked by the caller.
+    fn fetch(
+        &self,
+        url: &str,
+        max_bytes: usize,
+        accept: &str,
+    ) -> Result<Vec<u8>, CurlTransportError> {
         if max_bytes == 0 || max_bytes > MAX_RESPONSE_BYTES {
             return Err(CurlTransportError::InvalidLimit);
         }
@@ -119,7 +148,7 @@ impl MediaWikiTransport for CurlTransport {
                     "--user-agent",
                     "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)",
                     "--header",
-                    "Accept: application/json",
+                    &format!("Accept: {accept}"),
                     "--proto",
                     "=https",
                     "--max-time",
@@ -242,6 +271,40 @@ mod tests {
             },
             path,
         )
+    }
+
+    #[test]
+    fn media_requests_accept_only_wikimedia_media_urls() {
+        let (mut client, path) = fake_curl("exit 99");
+        for url in [
+            "https://en.wikipedia.org/w/api.php?action=query&prop=imageinfo",
+            "https://evil.example/wikipedia/commons/a/ab/A.png",
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png?x=1",
+        ] {
+            assert_eq!(
+                client.get_media(url, 1024),
+                Err(CurlTransportError::InvalidRequest),
+                "{url}"
+            );
+        }
+        // An API URL is no media URL, and a media URL is no API URL.
+        assert_eq!(
+            client.get(
+                "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png",
+                1024
+            ),
+            Err(CurlTransportError::InvalidRequest)
+        );
+        let (mut real, real_path) =
+            fake_curl("printf '\\211PNG'; printf '\\nFW_HTTP_CODE:200\\n' >&2");
+        assert!(real
+            .get_media(
+                "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png",
+                1024
+            )
+            .is_ok());
+        fs::remove_file(path).unwrap();
+        fs::remove_file(real_path).unwrap();
     }
 
     #[test]

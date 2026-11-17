@@ -9,6 +9,7 @@ pub mod enterprise_pinned_deletions;
 pub mod enterprise_verified;
 pub mod join;
 pub mod local_title_index;
+pub mod media_download;
 pub mod online_article;
 pub mod online_cache;
 #[cfg(not(target_os = "android"))]
