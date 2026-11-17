@@ -103,8 +103,53 @@ class LocalChatAndSelectionTest {
         return title
     }
 
+    /**
+     * The selection menu's "Ask about this" is Android's PROCESS_TEXT entry
+     * for this app; the WebView starts it for a result with the selected
+     * text. Both halves are checked deterministically here; the real
+     * long-press gesture is [longPressingArticleTextOffersAskAboutThisOnADevice].
+     */
     @Test
-    fun longPressingArticleTextOffersAskAboutThisWhichOpensTheChat() {
+    fun theSelectionMenuOffersAskAboutThisWhichOpensTheChat() {
+        val offered = context.packageManager.queryIntentActivities(
+            Intent(Intent.ACTION_PROCESS_TEXT).setType("text/plain"),
+            0,
+        ).filter { it.activityInfo.packageName == context.packageName }
+        assertEquals(1, offered.size)
+        assertEquals(AskSelectionActivity::class.java.name, offered[0].activityInfo.name)
+        assertEquals("Ask about this", offered[0].loadLabel(context.packageManager).toString())
+
+        openTide()
+        // As the WebView does: started for a result, so this app is the caller.
+        compose.runOnUiThread {
+            @Suppress("DEPRECATION")
+            compose.activity.startActivityForResult(
+                Intent(Intent.ACTION_PROCESS_TEXT)
+                    .setComponent(ComponentName(context, AskSelectionActivity::class.java))
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_PROCESS_TEXT, "gravity"),
+                1,
+            )
+        }
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodesWithText("Ask about “Tide”").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithText("Asking about: “gravity”", substring = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(null, ReaderSelection.selections.value)
+    }
+
+    /**
+     * The real gesture through the system WebView selection toolbar. Its
+     * timing depends on the device (it was intermittent on the CI emulator),
+     * so it runs only with `-e selectionGesture true`, for device checks.
+     */
+    @Test
+    fun longPressingArticleTextOffersAskAboutThisOnADevice() {
+        assumeTrue(
+            "pass -e selectionGesture true to run the real long-press",
+            InstrumentationRegistry.getArguments().getString("selectionGesture") == "true",
+        )
         // Connect UiAutomation first so accessibility is on before the
         // WebView builds its page, then the page exposes its text runs.
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())

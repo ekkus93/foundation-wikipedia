@@ -361,13 +361,20 @@ fun ArticleReader(
                                 return
                             }
                             // After the page has laid out, return to its place. The
-                            // content height can still read 0 when it is first drawn,
-                            // so wait (briefly) until the page is measurably long.
+                            // content height can still read 0, or be growing, when it
+                            // is first drawn (slow devices): wait until the page is
+                            // taller than the view and its height has stopped
+                            // changing, else the place lands near the top.
                             val document = served.get()?.first
+                            var lastPx = -1
+                            var steady = 0
                             fun restore(attempt: Int) {
                                 if (served.get()?.first != document) return // another page now
                                 val contentPx = (web.contentHeight * web.resources.displayMetrics.density).toInt()
-                                if (contentPx <= web.height && attempt < 40) {
+                                steady = if (contentPx == lastPx) steady + 1 else 0
+                                lastPx = contentPx
+                                val settled = contentPx > web.height && steady >= 2
+                                if (!settled && attempt < 40) {
                                     web.postDelayed({ restore(attempt + 1) }, 50)
                                     return
                                 }

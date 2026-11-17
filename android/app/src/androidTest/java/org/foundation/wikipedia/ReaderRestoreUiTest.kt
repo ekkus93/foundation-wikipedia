@@ -86,9 +86,17 @@ class ReaderRestoreUiTest {
         assertTrue(state.savePosition("enwiki", 1, 7001, 500_000))
         try {
             openMoon()
-            compose.waitUntil(timeoutMillis = 15_000) { onWebView { it.scrollY > 0 } == true }
-            val restored = onWebView { it.scrollY.toFloat() / scrollable(it) }!!
-            assertTrue("$restored", kotlin.math.abs(restored - 0.5f) < 0.05f)
+            // Wait for the restored place itself, not just any scroll: the
+            // page may still be laying out when the first scroll happens.
+            val restoredNearHalf = {
+                onWebView { scrollable(it) > 0 && kotlin.math.abs(it.scrollY.toFloat() / scrollable(it) - 0.5f) < 0.05f } == true
+            }
+            try {
+                compose.waitUntil(timeoutMillis = 15_000) { restoredNearHalf() }
+            } catch (error: androidx.compose.ui.test.ComposeTimeoutException) {
+                val restored = onWebView { it.scrollY.toFloat() / scrollable(it) }
+                throw AssertionError("not restored to half way: $restored", error)
+            }
             // Scrolling elsewhere is stored once it stops.
             onWebView { it.scrollTo(0, scrollable(it) / 4) }
             compose.waitUntil(timeoutMillis = 10_000) {
