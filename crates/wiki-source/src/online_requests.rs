@@ -45,6 +45,9 @@ pub enum OnlineRequestError {
     InvalidLimit,
 }
 
+/// File pages per image-metadata request (the Action API's normal limit).
+pub const MAX_IMAGE_TITLES: usize = 50;
+
 /// A deliberately restricted Wikipedia endpoint. This does not accept a
 /// caller-controlled host, port, scheme, credentials, or URL path.
 /// Other Wikimedia projects need explicit separately reviewed mappings.
@@ -128,6 +131,9 @@ impl WikipediaRequests {
                         .and_then(|limit| self.search(search, limit).ok())
                 })
             }
+            Some("query") if value("prop") == Some("imageinfo") => value("titles")
+                .map(|titles| titles.split('|').map(str::to_owned).collect::<Vec<_>>())
+                .and_then(|files| self.image_metadata(&files).ok()),
             Some("query") if value("titles").is_some() => {
                 value("titles").and_then(|title| self.resolve_title(title).ok())
             }
@@ -215,6 +221,32 @@ impl WikipediaRequests {
             ("prop", "text".to_owned()),
             // No "[edit]" links: the reader cannot edit.
             ("disableeditsection", "1".to_owned()),
+        ]))
+    }
+
+    /// Request licence, creator and file URL for up to
+    /// [`MAX_IMAGE_TITLES`] `File:` pages (SRC-003 media metadata). The
+    /// response is untrusted; see `rendered_media::parse_image_metadata`.
+    pub fn image_metadata(&self, files: &[String]) -> Result<String, OnlineRequestError> {
+        if files.is_empty() || files.len() > MAX_IMAGE_TITLES {
+            return Err(OnlineRequestError::InvalidLimit);
+        }
+        if files.iter().any(|file| {
+            !file.starts_with("File:")
+                || file.contains('|')
+                || !safe_navigation_text(file, MAX_QUERY_BYTES)
+        }) {
+            return Err(OnlineRequestError::InvalidTitle);
+        }
+        Ok(self.request(&[
+            ("action", "query".to_owned()),
+            ("prop", "imageinfo".to_owned()),
+            ("titles", files.join("|")),
+            ("iiprop", "url|mime|extmetadata".to_owned()),
+            (
+                "iiextmetadatafilter",
+                "LicenseShortName|Artist|Attribution|Credit|AttributionRequired".to_owned(),
+            ),
         ]))
     }
 

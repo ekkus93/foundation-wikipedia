@@ -47,6 +47,7 @@ pub mod public_dump_xml_structure;
 pub mod public_dump_xml_text;
 pub mod reader_document;
 pub mod rendered_article;
+pub mod rendered_media;
 
 mod strict_json;
 
