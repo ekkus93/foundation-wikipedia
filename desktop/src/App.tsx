@@ -550,7 +550,7 @@ export default function App() {
             </section>
           ))}
           <h2 id="roadmap">Under development</h2>
-          <p>Offline images in packs, official pack downloads and some settings are still in development on the desktop.</p>
+          <p>Official pack downloads and some settings are still in development on the desktop.</p>
         </main>
       </div>
       {destination === "settings" && <main className="settings-view" aria-label="Settings">

@@ -57,12 +57,29 @@ private sealed interface ReaderContent {
 
 /**
  * Every request other than the current document is refused: the document has
- * no scripts or styles to fetch, image sources are removed until verified
- * offline media exists (PACK-003), and the reserved origin never reaches the
- * network. Verified local media will be served here from the active pack.
+ * no scripts or styles to fetch, and the reserved origin never reaches the
+ * network. The only other answered request is a pack image (PACK-003):
+ * [imageResponse] serves it from the active pack, re-hashed in Rust.
  */
 internal fun refuseResource(): WebResourceResponse =
     WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+
+/** One verified image of the active pack, or a refusal if it holds none. */
+internal fun imageResponse(library: RustOfflineLibrary?, digest: String): WebResourceResponse {
+    val image = try {
+        library?.readImageBlocking(digest)
+    } catch (_: Exception) {
+        null
+    } ?: return refuseResource()
+    return WebResourceResponse(
+        image.mime,
+        null,
+        200,
+        "OK",
+        mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
+        ByteArrayInputStream(image.bytes),
+    )
+}
 
 /** The current document, served by the WebView client for its exact URL. */
 internal fun documentResponse(html: String): WebResourceResponse = WebResourceResponse(
@@ -136,6 +153,8 @@ fun ArticleReader(
     var results by remember { mutableStateOf<List<SearchHit>?>(null) }
     var busy by remember { mutableStateOf(false) }
     val served = remember { AtomicReference<Pair<String, String>?>(null) }
+    // The library for image requests, read on WebView background threads.
+    val imageLibrary = remember { AtomicReference<RustOfflineLibrary?>(null) }
     // The chat citation to highlight while its article is the current entry.
     var highlight by remember { mutableStateOf<CitationRequest?>(null) }
 
@@ -172,7 +191,7 @@ fun ArticleReader(
 
     LaunchedEffect(Unit) {
         library = try {
-            OfflineLibraryHolder.get(context)
+            OfflineLibraryHolder.get(context).also { imageLibrary.set(it) }
         } catch (_: LinkageError) {
             onMessage("The offline reader is not available in this build.", null)
             null
@@ -414,11 +433,12 @@ fun ArticleReader(
                         ): WebResourceResponse {
                             val shown = served.get() ?: return refuseResource()
                             val url = request?.url?.toString() ?: return refuseResource()
-                            return if (ReaderLinks.isDocumentRequest(url, request.isForMainFrame, shown.first)) {
-                                documentResponse(shown.second)
-                            } else {
-                                refuseResource()
+                            if (ReaderLinks.isDocumentRequest(url, request.isForMainFrame, shown.first)) {
+                                return documentResponse(shown.second)
                             }
+                            val digest = ReaderLinks.imageDigest(url, request.isForMainFrame)
+                                ?: return refuseResource()
+                            return imageResponse(imageLibrary.get(), digest)
                         }
                     }
                     val shown = content

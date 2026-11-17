@@ -56,8 +56,8 @@ fun packErrorMessage(error: Throwable): String = when (error) {
             "so it was not installed."
     is LibraryException.ConfirmationRequired -> "Import cancelled. Nothing was installed."
     is LibraryException.AlreadyInstalled -> "This pack is already installed."
-    is LibraryException.MediaNotSupported ->
-        "This pack includes images or media, which cannot be installed yet."
+    is LibraryException.MediaInvalid ->
+        "This pack's images are missing or damaged, so it was not installed."
     is LibraryException.SnapshotActive ->
         "This pack is in use. Activate another pack before removing it."
     is LibraryException.NotInstalled -> "That pack is no longer installed."

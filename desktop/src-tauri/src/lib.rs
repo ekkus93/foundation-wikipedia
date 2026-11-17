@@ -1629,6 +1629,14 @@ mod bookmark_tests {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Pack images for the offline article frame (PACK-003), read off
+        // the UI thread.
+        .register_asynchronous_uri_scheme_protocol("packimage", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                responder.respond(offline_packs::pack_image_response(&app, &request));
+            });
+        })
         .manage(offline_packs::OfflineLibraryState::default())
         .manage(offline_packs::ReviewedPack::default())
         .manage(pack_chat::PackChatState::default())

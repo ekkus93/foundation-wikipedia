@@ -54,8 +54,8 @@ fn message(error: LibraryError) -> String {
         }
         LibraryError::ConfirmationRequired => "Import cancelled. Nothing was installed.",
         LibraryError::AlreadyInstalled => "This pack is already installed.",
-        LibraryError::MediaNotSupported => {
-            "This pack includes images or media, which cannot be installed yet."
+        LibraryError::MediaInvalid => {
+            "This pack's images are missing or damaged, so it was not installed."
         }
         LibraryError::SnapshotActive => "This pack is in use. Activate another pack before removing it.",
         LibraryError::NotInstalled => "No offline pack is active.",
@@ -292,13 +292,56 @@ pub async fn search_offline_packs(
 /// article, or `None` if the active pack does not have it.
 pub type OfflineArticle = Option<(u64, u64, String, String)>;
 
+/// Where the article frame loads pack images: the app's `packimage`
+/// scheme, which Tauri exposes as `http://packimage.localhost/` on Windows.
+pub const PACK_IMAGE_BASE: &str = if cfg!(windows) {
+    "http://packimage.localhost/"
+} else {
+    "packimage://localhost/"
+};
+
 fn sanitized(page: wiki_ffi::android::ArticlePage) -> (u64, u64, String, String) {
+    let images = wiki_source::reader_document::PackImageSources {
+        base: PACK_IMAGE_BASE.to_owned(),
+        by_file: page.images,
+    };
     (
         page.page_id,
         page.revision_id,
         page.display_title,
-        wiki_source::reader_document::sanitize_article_html(&page.html),
+        wiki_source::reader_document::sanitize_pack_article_html(&page.html, &images),
     )
+}
+
+/// Serve `packimage://localhost/<sha256>` from the active pack, re-hashed;
+/// anything else is 404. Only `GET` of a bare digest path is answered.
+pub fn pack_image_response(
+    app: &tauri::AppHandle,
+    request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || {
+        tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .expect("static response")
+    };
+    if request.method() != tauri::http::Method::GET {
+        return not_found();
+    }
+    let digest = request.uri().path().trim_start_matches('/');
+    let Ok(library) = library(app) else {
+        return not_found();
+    };
+    match library.read_image(digest.to_owned()) {
+        Ok(Some(image)) => tauri::http::Response::builder()
+            .status(200)
+            .header("Content-Type", image.mime)
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Cache-Control", "no-store")
+            .body(image.bytes)
+            .unwrap_or_else(|_| not_found()),
+        _ => not_found(),
+    }
 }
 
 #[tauri::command]

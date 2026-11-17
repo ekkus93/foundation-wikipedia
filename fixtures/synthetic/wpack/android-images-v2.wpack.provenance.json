@@ -1,0 +1,6 @@
+{
+  "source": "synthetic",
+  "description": "One-article FWPACK01 manifest-v2 custom pack with one pack image (a synthetic 32x32 red PNG) and its media index, installed by the PACK-003 Android instrumented test; pinned to the wiki-ffi test builder, regenerate with WPACK_WRITE_FIXTURE=1 cargo test -p wiki-ffi --test pack_images committed_android_image_fixture",
+  "license": "CC0-1.0",
+  "sha256": "5a59e2698a02e402754fe518eea2edc31c392ddb52ce205697312714760729f0"
+}

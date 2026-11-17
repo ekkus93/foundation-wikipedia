@@ -24,8 +24,10 @@ const WIDTH_CH: Record<ReaderWidth, number> = { narrow: 58, standard: 74, wide: 
 
 /** Options for an article document. Both default to off (text only). */
 export interface ReaderDocumentOptions {
-  /** Load images from Wikimedia's media and math hosts (online only). */
-  images?: boolean;
+  /** `true`: load images from Wikimedia's media and math hosts (online
+   * only). `"pack"`: load only the installed pack's own images, which the
+   * Rust sanitizer points at the app's `packimage` scheme. */
+  images?: boolean | "pack";
   /** Include the app's link-forwarding script. */
   links?: boolean;
 }
@@ -33,6 +35,9 @@ export interface ReaderDocumentOptions {
 /** Image hosts the article frame may load from; matches the Rust sanitizer
  * and the app window's CSP (tauri.conf.json), which the frame inherits. */
 export const IMAGE_SOURCES = "https://upload.wikimedia.org https://thumb.wikimedia.org https://wikimedia.org";
+/** Where a pack article's images load from: the app's own `packimage`
+ * scheme (`http://packimage.localhost` on Windows); also in the window CSP. */
+export const PACK_IMAGE_SOURCES = "packimage: http://packimage.localhost";
 
 /** Message a clicked link sends from the article frame to the reader. */
 export const LINK_MESSAGE_KEY = "foundationReaderLink";
@@ -115,11 +120,12 @@ export function isolatedReaderDocument(
   const systemDark = theme === "system"
     ? "@media (prefers-color-scheme: dark){html{background:#202122}body{color:#eaecf0}}"
     : "";
-  const images = options.images === true;
+  const images = options.images === true || options.images === "pack";
+  const imageSources = options.images === "pack" ? PACK_IMAGE_SOURCES : IMAGE_SOURCES;
   const links = options.links === true;
   const csp = [
     "default-src 'none'",
-    `img-src ${images ? IMAGE_SOURCES : "'none'"}`,
+    `img-src ${images ? imageSources : "'none'"}`,
     "font-src 'none'", "connect-src 'none'", "media-src 'none'", "frame-src 'none'",
     "form-action 'none'", "base-uri 'none'", "style-src 'unsafe-inline'",
     `script-src ${links ? LINK_SCRIPT_HASH : "'none'"}`,

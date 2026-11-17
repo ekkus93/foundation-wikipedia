@@ -814,6 +814,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_local_chat(
     ): Int
+    external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_read_image(
+    ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_refresh_official_catalog(
     ): Int
     external fun uniffi_wiki_ffi_checksum_method_offlinelibrary_remove_pack(
@@ -978,6 +980,8 @@ external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_hosted_chat(`ptr`:
 ): Long
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_local_chat(`ptr`: Long,`request`: RustBuffer.ByValue,`history`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Long
+external fun uniffi_wiki_ffi_fn_method_offlinelibrary_read_image(`ptr`: Long,`sha256`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_refresh_official_catalog(`ptr`: Long,`observer`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_wiki_ffi_fn_method_offlinelibrary_remove_pack(`ptr`: Long,`snapshotId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1271,6 +1275,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_prepare_local_chat() != 32534) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_read_image() != 20598) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_wiki_ffi_checksum_method_offlinelibrary_refresh_official_catalog() != 19433) {
@@ -3903,6 +3910,12 @@ public interface OfflineLibraryInterface {
     fun `prepareLocalChat`(`request`: LocalChatRequest, `history`: ChatHistory?): ArticleChat
     
     /**
+     * One image of the active pack by SHA-256, re-hashed on every read;
+     * `None` if the pack holds no such image (PACK-003).
+     */
+    fun `readImage`(`sha256`: kotlin.String): PackImageFile?
+    
+    /**
      * Download and verify the official catalog from the release host. The
      * caller must already have the user's consent and an allowed network.
      */
@@ -4258,6 +4271,24 @@ open class OfflineLibrary: Disposable, AutoCloseable, OfflineLibraryInterface
     UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_prepare_local_chat(
         it,
         FfiConverterTypeLocalChatRequest.lower(`request`),FfiConverterOptionalTypeChatHistory.lower(`history`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * One image of the active pack by SHA-256, re-hashed on every read;
+     * `None` if the pack holds no such image (PACK-003).
+     */
+    @Throws(LibraryException::class)override fun `readImage`(`sha256`: kotlin.String): PackImageFile? {
+            return FfiConverterOptionalTypePackImageFile.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LibraryException) { _status ->
+    UniffiLib.uniffi_wiki_ffi_fn_method_offlinelibrary_read_image(
+        it,
+        FfiConverterString.lower(`sha256`),_status)
 }
     }
     )
@@ -5142,6 +5173,12 @@ data class ArticlePage (
      * Canonical rendered article HTML from the installed snapshot.
      */
     var `html`: kotlin.String
+    , 
+    /**
+     * Images the pack holds for this article: Wikimedia file name (as in
+     * image URLs, e.g. `Hypotenuse.svg`) → SHA-256 for [`OfflineLibrary::read_image`].
+     */
+    var `images`: Map<kotlin.String, kotlin.String>
     
 ){
     
@@ -5164,6 +5201,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterMapStringString.read(buf),
         )
     }
 
@@ -5173,7 +5211,8 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterULong.allocationSize(value.`revisionId`) +
             FfiConverterString.allocationSize(value.`title`) +
             FfiConverterString.allocationSize(value.`displayTitle`) +
-            FfiConverterString.allocationSize(value.`html`)
+            FfiConverterString.allocationSize(value.`html`) +
+            FfiConverterMapStringString.allocationSize(value.`images`)
     )
 
     override fun write(value: ArticlePage, buf: ByteBuffer) {
@@ -5183,6 +5222,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.write(value.`title`, buf)
             FfiConverterString.write(value.`displayTitle`, buf)
             FfiConverterString.write(value.`html`, buf)
+            FfiConverterMapStringString.write(value.`images`, buf)
     }
 }
 
@@ -5907,6 +5947,50 @@ public object FfiConverterTypeOfficialPackInfo: FfiConverterRustBuffer<OfficialP
             FfiConverterULong.write(value.`downloadedBytes`, buf)
             FfiConverterULong.write(value.`requiredFreeBytes`, buf)
             FfiConverterBoolean.write(value.`installed`, buf)
+    }
+}
+
+
+
+/**
+ * One verified image of the active pack.
+ */
+data class PackImageFile (
+    /**
+     * `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+     */
+    var `mime`: kotlin.String
+    , 
+    var `bytes`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePackImageFile: FfiConverterRustBuffer<PackImageFile> {
+    override fun read(buf: ByteBuffer): PackImageFile {
+        return PackImageFile(
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PackImageFile) = (
+            FfiConverterString.allocationSize(value.`mime`) +
+            FfiConverterByteArray.allocationSize(value.`bytes`)
+    )
+
+    override fun write(value: PackImageFile, buf: ByteBuffer) {
+            FfiConverterString.write(value.`mime`, buf)
+            FfiConverterByteArray.write(value.`bytes`, buf)
     }
 }
 
@@ -7072,9 +7156,9 @@ sealed class LibraryException: kotlin.Exception() {
     }
     
     /**
-     * Packs with media cannot be installed yet.
+     * The pack's images are incomplete, mislabelled or damaged (PACK-003).
      */
-    class MediaNotSupported(
+    class MediaInvalid(
         ) : LibraryException() {
         override val message
             get() = ""
@@ -7161,7 +7245,7 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
             4 -> LibraryException.VerificationFailed()
             5 -> LibraryException.AlreadyInstalled()
             6 -> LibraryException.NotInstalled()
-            7 -> LibraryException.MediaNotSupported()
+            7 -> LibraryException.MediaInvalid()
             8 -> LibraryException.Storage()
             9 -> LibraryException.SnapshotActive()
             10 -> LibraryException.SourceFailed()
@@ -7198,7 +7282,7 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
-            is LibraryException.MediaNotSupported -> (
+            is LibraryException.MediaInvalid -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
@@ -7255,7 +7339,7 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
                 buf.putInt(6)
                 Unit
             }
-            is LibraryException.MediaNotSupported -> {
+            is LibraryException.MediaInvalid -> {
                 buf.putInt(7)
                 Unit
             }
@@ -8064,6 +8148,38 @@ public object FfiConverterOptionalTypeOfficialCatalogInfo: FfiConverterRustBuffe
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypePackImageFile: FfiConverterRustBuffer<PackImageFile?> {
+    override fun read(buf: ByteBuffer): PackImageFile? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypePackImageFile.read(buf)
+    }
+
+    override fun allocationSize(value: PackImageFile?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypePackImageFile.allocationSize(value)
+        }
+    }
+
+    override fun write(value: PackImageFile?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypePackImageFile.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeReaderPage: FfiConverterRustBuffer<ReaderPage?> {
     override fun read(buf: ByteBuffer): ReaderPage? {
         if (buf.get().toInt() == 0) {
@@ -8394,6 +8510,45 @@ public object FfiConverterSequenceTypeSavedAnswerPart: FfiConverterRustBuffer<Li
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeSavedAnswerPart.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.String>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.String>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterString.write(v, buf)
         }
     }
 }

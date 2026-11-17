@@ -445,7 +445,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
       }} /> Work offline across all tabs (no new network requests)</label>
       <p className="preview-warning">
         {offline || !connected
-          ? "Offline: search and articles come from the active installed pack (Settings › Wikipedia & Offline Data). Pack images are not installed yet, so articles show text only. Links to other articles open from the same pack."
+          ? "Offline: search and articles come from the active installed pack (Settings › Wikipedia & Offline Data). Images stored in the pack show with no connection; other images and media stay unloaded. Links to other articles open from the same pack."
           : "Online: articles come from live Wikipedia. Images and equations load from Wikimedia and are not saved, so these pages are not available offline. Article links open here; other links ask before opening your browser."}
       </p>
       {notice && <p role="status">{notice}</p>}
@@ -504,7 +504,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
             referrerPolicy="no-referrer"
             className="article-preview-frame"
             srcDoc={isolatedReaderDocument(snapshot.html, textSize, readingWidth, theme,
-              { images: imagesAllowed && snapshot.source === "online", links: true })}
+              { images: snapshot.source === "pack" ? "pack" : imagesAllowed && snapshot.source === "online", links: true })}
           />
         ))}
       </div>

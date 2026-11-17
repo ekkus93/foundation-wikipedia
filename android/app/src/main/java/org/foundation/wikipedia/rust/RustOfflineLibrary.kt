@@ -18,6 +18,7 @@ import uniffi.wiki_ffi.InstalledSnapshot
 import uniffi.wiki_ffi.LibraryException
 import uniffi.wiki_ffi.LocalChatRequest
 import uniffi.wiki_ffi.OfflineLibrary
+import uniffi.wiki_ffi.PackImageFile
 import uniffi.wiki_ffi.PackReview
 import uniffi.wiki_ffi.PackSource
 import uniffi.wiki_ffi.CitedReaderPage
@@ -159,6 +160,15 @@ class RustOfflineLibrary private constructor(
     suspend fun openPage(project: String, pageId: Long): ArticlePage? {
         require(pageId > 0) { "pageId must be positive" }
         return call { it.openPage(project, pageId.toULong()) }
+    }
+
+    /**
+     * One image of the active pack by SHA-256, re-hashed in Rust; `null` if
+     * the pack holds none. Blocking: for WebView request threads only.
+     */
+    fun readImageBlocking(sha256: String): PackImageFile? {
+        requireOffMainThread()
+        return library.readImage(sha256)
     }
 
     /** An article of the active pack as a sanitized reader document. */

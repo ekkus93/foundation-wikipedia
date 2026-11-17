@@ -1,7 +1,8 @@
 //! `wiki-pack build-public-dump-pack`: a custom pack of selected articles
 //! from a checksum-pinned public dump member, rendered by the free public
-//! Action API at exactly the dump's revisions (SRC-003). Image bytes are not
-//! included; each article records its required images with real licences.
+//! Action API at exactly the dump's revisions (SRC-003). Every image an
+//! article shows is downloaded from Wikimedia's media hosts, checked and
+//! included with its licence (PACK-003); the build fails if one cannot be.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use wiki_pack_builder::public_dump_pack::{
-    render_dump_article, select_dump_pages, write_dump_pack, DumpPackIdentity,
+    render_dump_article, select_dump_pages, write_dump_pack, DumpMediaStore, DumpPackIdentity,
 };
 use wiki_source::online_curl::CurlTransport;
 use wiki_source::public_dump::DumpChecksum;
@@ -73,8 +74,13 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     let (titles, definition_sha256) = read_titles(&PathBuf::from(titles_path))?;
     let work_dir = PathBuf::from(work_dir);
     let output = PathBuf::from(output);
-    if work_dir.exists() || output.exists() {
-        return Err("the work directory and output must not exist yet".into());
+    // Downloaded images wait beside the work directory until packed.
+    let image_dir = PathBuf::from(format!("{}-images", work_dir.display()));
+    if work_dir.exists() || output.exists() || image_dir.exists() {
+        return Err(format!(
+            "the work directory, {} and the output must not exist yet",
+            image_dir.display()
+        ));
     }
 
     let file = File::open(&member_path).map_err(|e| format!("dump member: {e}"))?;
@@ -94,6 +100,7 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     .map_err(|e| e.to_string())?;
 
     let mut transport = CurlTransport::new();
+    let mut media = DumpMediaStore::create(&image_dir).map_err(|e| e.to_string())?;
     let mut articles = Vec::with_capacity(selected.len());
     let mut images = 0;
     for (index, selection) in selected.iter().enumerate() {
@@ -105,7 +112,7 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
             selection.page.page_id,
             selection.page.revision_id
         );
-        let article = render_dump_article(&mut transport, project, language, selection)
+        let article = render_dump_article(&mut transport, project, language, selection, &mut media)
             .map_err(|e| e.to_string())?;
         images += article.media.len();
         articles.push(article);
@@ -124,15 +131,17 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
         definition_sha256: &definition_sha256,
         definition_id,
     };
-    if let Err(error) = write_dump_pack(&articles, &identity, &work_dir, &mut file) {
+    if let Err(error) = write_dump_pack(&articles, &media, &identity, &work_dir, &mut file) {
         drop(file);
         let _ = fs::remove_file(&output);
         return Err(error.to_string());
     }
     file.sync_all().map_err(|e| e.to_string())?;
+    let stored = fs::read_dir(media.path()).map_or(0, Iterator::count);
+    fs::remove_dir_all(media.path()).map_err(|e| format!("image directory: {e}"))?;
     Ok(format!(
-        "Wrote {} with {} articles from {project} {generation}. {images} required images are \
-         recorded with their licences but NOT included (image download is not built yet).",
+        "Wrote {} with {} articles from {project} {generation}. All {images} article images \
+         are included ({stored} distinct files), each with its licence and creator.",
         output.display(),
         articles.len()
     ))

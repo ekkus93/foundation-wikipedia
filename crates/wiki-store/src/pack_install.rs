@@ -44,6 +44,10 @@ use wiki_pack_format::trust::{classify, IntegrityState, TrustStatus};
 use crate::activation::safe_id;
 use crate::catalog::SnapshotCatalog;
 use crate::offline_reader::{ReaderError, VerifiedOfflineCatalogReader};
+use crate::pack_media::{
+    check_pack_media, is_media_object, parse_media_index, required_images, PackMediaError,
+    MEDIA_INDEX_OBJECT,
+};
 use crate::search_index::{OfflineSearchIndex, SearchError};
 
 pub const CATALOG_OBJECT: &str = "catalog.sqlite";
@@ -102,8 +106,8 @@ pub enum PackInstallError {
     SnapshotActive,
     /// No installed snapshot has this ID.
     NotInstalled,
-    /// The manifest declares media; pack media installation is not built yet.
-    MediaNotSupported,
+    /// The pack's images are incomplete, unused, mislabelled or damaged.
+    Media(PackMediaError),
     /// Declared article/redirect counts disagree with the verified catalog.
     CountMismatch {
         declared: Counts,
@@ -361,9 +365,6 @@ fn prepare_staged(
     }
 
     let metadata = &manifest.metadata;
-    if metadata.counts.media > 0 {
-        return Err(PackInstallError::MediaNotSupported);
-    }
     // Index objects are located from the manifest's declared roles; the
     // snapshot layout fixes their paths and supported schema versions.
     let mut has_catalog = false;
@@ -403,7 +404,8 @@ fn prepare_staged(
         if path == SEARCH_OBJECT {
             return Err(PackInstallError::UnsupportedObject(object.path.clone()));
         }
-        if Some(path) == attribution {
+        // Images are checked against the articles below, not as shards.
+        if Some(path) == attribution || is_media_object(path) {
             continue;
         }
         shards.insert(
@@ -435,7 +437,16 @@ fn prepare_staged(
     )
     .map_err(PackInstallError::Reader)?;
     drop(reader);
-    let actual = count_catalog_records(&catalog_path, staged)?;
+    let (actual, required, without_bytes) = scan_catalog_records(&catalog_path, staged)?;
+    check_pack_media(
+        staged,
+        &manifest.objects,
+        attribution,
+        metadata.counts.media,
+        &required,
+        &without_bytes,
+    )
+    .map_err(PackInstallError::Media)?;
     if actual.articles != metadata.counts.articles || actual.redirects != metadata.counts.redirects
     {
         return Err(PackInstallError::CountMismatch {
@@ -467,26 +478,61 @@ fn prepare_staged(
 
 /// Count verified catalog records by kind, decoding one frame at a time.
 fn count_catalog_records(catalog_path: &Path, root: &Path) -> Result<Counts, PackInstallError> {
+    scan_catalog_records(catalog_path, root).map(|(counts, _, _)| counts)
+}
+
+/// Counts, the images articles require (digest → format) and the titles of
+/// articles with an image that has no bytes, from one verified scan.
+type CatalogScan = (Counts, BTreeMap<String, String>, Vec<String>);
+
+fn scan_catalog_records(catalog_path: &Path, root: &Path) -> Result<CatalogScan, PackInstallError> {
     let catalog = SnapshotCatalog::open_read_only(catalog_path)
         .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
     let mut counts = Counts::default();
+    let mut required = BTreeMap::new();
+    let mut without_bytes = Vec::new();
+    let mut conflict = None;
     catalog
         .visit_records(root, |record| {
             match record {
-                wiki_model::PageRecord::Article(_) => counts.articles += 1,
+                wiki_model::PageRecord::Article(article) => {
+                    counts.articles += 1;
+                    match required_images([&*article]) {
+                        Ok((images, missing)) => {
+                            for (digest, mime) in images {
+                                if let Some(previous) =
+                                    required.insert(digest.clone(), mime.clone())
+                                {
+                                    if previous != mime {
+                                        conflict = Some(digest);
+                                    }
+                                }
+                            }
+                            without_bytes.extend(missing);
+                        }
+                        Err(PackMediaError::MissingImage(digest)) => conflict = Some(digest),
+                        Err(_) => {}
+                    }
+                }
                 wiki_model::PageRecord::Redirect(_) => counts.redirects += 1,
             }
             Ok::<(), crate::catalog::CatalogError>(())
         })
         .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
-    Ok(counts)
+    if let Some(digest) = conflict {
+        return Err(PackInstallError::Media(PackMediaError::MissingImage(
+            digest,
+        )));
+    }
+    Ok((counts, required, without_bytes))
 }
 
 /// Derive manifest v2 metadata for a snapshot-layout tree: the declared
 /// indexes come from the files present (`catalog.sqlite` required,
 /// `search.sqlite` optional) and the counts from a verified catalog scan.
 /// Source, definition hash and text licence are the builder's claims and
-/// are passed through. Media are not supported yet, so `media` is zero.
+/// are passed through. A tree with [`MEDIA_INDEX_OBJECT`] declares it as the
+/// attribution object and counts its images (PACK-003).
 pub fn snapshot_pack_metadata(
     tree: &Path,
     source: SourceSnapshot,
@@ -509,15 +555,24 @@ pub fn snapshot_pack_metadata(
             schema: FTS5_SCHEMA,
         });
     }
+    let mut counts = count_catalog_records(&catalog_path, tree)?;
+    let index = tree.join(MEDIA_INDEX_OBJECT);
+    let attribution_object = if index.is_file() {
+        let images = parse_media_index(&fs::read(&index)?).map_err(PackInstallError::Media)?;
+        counts.media = images.len() as u64;
+        Some(MEDIA_INDEX_OBJECT.to_owned())
+    } else {
+        None
+    };
     Ok(PackMetadata {
         source,
         definition_sha256: definition_sha256.into(),
         license: License {
             text_spdx: text_spdx.into(),
-            attribution_object: None,
+            attribution_object,
         },
         indexes,
-        counts: count_catalog_records(&catalog_path, tree)?,
+        counts,
     })
 }
 
@@ -795,7 +850,7 @@ pub fn installed_shard_inventory(snapshot: &Path) -> Result<ShardInventory, Pack
         if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(invalid());
         }
-        if skip.contains(&path) {
+        if skip.contains(&path) || is_media_object(path) {
             continue;
         }
         if shards
@@ -1506,7 +1561,7 @@ mod tests {
             Err(PackInstallError::MissingCatalog)
         ));
 
-        // Media need an attribution object and are not installable yet.
+        // Declared media need the canonical image index (PACK-003).
         let with_attribution = dir.0.join("attributed");
         snapshot_tree(&with_attribution, 3017, true);
         fs::write(with_attribution.join("attribution.json"), b"[]").unwrap();
@@ -1515,7 +1570,7 @@ mod tests {
         media.counts.media = 1;
         assert!(matches!(
             install(&root, &pack_with(&with_attribution, "media", media.clone())),
-            Err(PackInstallError::MediaNotSupported)
+            Err(PackInstallError::Media(PackMediaError::UndeclaredMedia))
         ));
 
         assert_eq!(fs::read_dir(root.join("snapshots")).unwrap().count(), 0);

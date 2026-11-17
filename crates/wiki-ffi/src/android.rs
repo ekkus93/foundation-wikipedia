@@ -44,8 +44,8 @@ pub enum LibraryError {
     AlreadyInstalled,
     /// No snapshot is active, or the requested one is not installed.
     NotInstalled,
-    /// Packs with media cannot be installed yet.
-    MediaNotSupported,
+    /// The pack's images are incomplete, mislabelled or damaged (PACK-003).
+    MediaInvalid,
     /// Filesystem or database failure.
     Storage,
     /// The snapshot is active; activate another before removing it.
@@ -82,7 +82,7 @@ impl From<PackInstallError> for LibraryError {
             PackInstallError::UnsignedOfficialPack => Self::UnsignedOfficialPack,
             PackInstallError::Declined => Self::ConfirmationRequired,
             PackInstallError::AlreadyInstalled => Self::AlreadyInstalled,
-            PackInstallError::MediaNotSupported => Self::MediaNotSupported,
+            PackInstallError::Media(_) => Self::MediaInvalid,
             PackInstallError::SnapshotActive => Self::SnapshotActive,
             PackInstallError::NotInstalled => Self::NotInstalled,
             PackInstallError::InvalidSnapshotId => Self::InvalidInput,
@@ -236,6 +236,14 @@ pub struct SearchHit {
     pub title: String,
 }
 
+/// One verified image of the active pack.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PackImageFile {
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ArticlePage {
     pub project: String,
@@ -245,6 +253,9 @@ pub struct ArticlePage {
     pub display_title: String,
     /// Canonical rendered article HTML from the installed snapshot.
     pub html: String,
+    /// Images the pack holds for this article: Wikimedia file name (as in
+    /// image URLs, e.g. `Hypotenuse.svg`) → SHA-256 for [`OfflineLibrary::read_image`].
+    pub images: std::collections::HashMap<String, String>,
 }
 
 impl From<&Article> for SearchHit {
@@ -433,6 +444,15 @@ impl OfflineLibrary {
         })
     }
 
+    /// One image of the active pack by SHA-256, re-hashed on every read;
+    /// `None` if the pack holds no such image (PACK-003).
+    pub fn read_image(&self, sha256: String) -> Result<Option<PackImageFile>, LibraryError> {
+        let active = self.active_snapshot()?.ok_or(LibraryError::NotInstalled)?;
+        wiki_store::pack_media::read_pack_image(&self.root.join("snapshots").join(active), &sha256)
+            .map(|found| found.map(|(mime, bytes)| PackImageFile { mime, bytes }))
+            .map_err(|_| LibraryError::VerificationFailed)
+    }
+
     /// Open one article of the active snapshot; `None` if not installed.
     pub fn open_page(
         &self,
@@ -447,6 +467,8 @@ impl OfflineLibrary {
                 .open_page(&key)
                 .map_err(|_| LibraryError::VerificationFailed)?;
             Ok(article.map(|article| ArticlePage {
+                images: wiki_source::reader_document::PackImageSources::for_article(&article, "")
+                    .by_file,
                 project: article.key.project,
                 page_id: article.key.page_id,
                 revision_id: article.revision.revision_id,

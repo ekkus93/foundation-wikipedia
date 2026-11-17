@@ -62,6 +62,28 @@ class ReaderLinksTest {
     }
 
     @Test
+    fun onlyExactPackImageRequestsAreRecognised() {
+        val digest = "ab".repeat(32)
+        assertEquals(digest, ReaderLinks.imageDigest("https://foundation.invalid/media/$digest", false))
+        assertEquals(null, ReaderLinks.imageDigest("https://foundation.invalid/media/$digest", true))
+        for (other in listOf(
+            "https://foundation.invalid/media/${"AB".repeat(32)}",
+            "https://foundation.invalid/media/$digest?x=1",
+            "https://foundation.invalid/media/$digest#x",
+            "https://foundation.invalid/media/${digest}0",
+            "https://foundation.invalid/media/../wiki/Moon",
+            "https://foundation.invalid/wiki/$digest",
+            "http://foundation.invalid/media/$digest",
+            "https://foundation.invalid:444/media/$digest",
+            "https://evil.example/media/$digest",
+            "https://user@foundation.invalid/media/$digest",
+            "not a url",
+        )) {
+            assertEquals(other, null, ReaderLinks.imageDigest(other, false))
+        }
+    }
+
+    @Test
     fun onlyTheCurrentDocumentIsServed() {
         val doc = "https://foundation.invalid/wiki/%C3%89clair"
         assertTrue(ReaderLinks.isDocumentRequest(doc, true, doc))

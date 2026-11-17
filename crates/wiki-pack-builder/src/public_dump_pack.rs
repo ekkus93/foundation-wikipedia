@@ -6,23 +6,33 @@
 //! 2. [`render_dump_article`] renders that exact revision with the free public
 //!    Action API (`action=parse&oldid=`), refuses any reply whose page,
 //!    revision or title differs from the dump, reads it into blocks, and
-//!    resolves its required images to real Commons metadata. Image bytes are
-//!    not downloaded (owner decision 2026-11-16): each image is a required
-//!    `MediaAsset` with no `sha256`, so the pack does not include images.
-//! 3. [`write_dump_pack`] writes the article shard, catalog and a custom
-//!    `.wpack` whose source is the pinned dump generation.
+//!    resolves its required images to real Commons metadata. Each image's
+//!    bytes are downloaded into a [`DumpMediaStore`] and checked (PACK-003,
+//!    see `wiki_source::media_download`); a single image that cannot be
+//!    fetched or verified fails the article, so a pack is never built with
+//!    an image missing.
+//! 3. [`write_dump_pack`] writes the article shard, catalog, the images and
+//!    their index, and a custom `.wpack` whose source is the pinned dump
+//!    generation.
 //!
 //! Paid Enterprise access is never used; network access is the caller's
-//! [`MediaWikiTransport`], which must accept only canonical Action API URLs.
+//! transport, which must accept only canonical Action API URLs
+//! ([`MediaWikiTransport`]) and canonical Wikimedia media URLs
+//! ([`MediaFileTransport`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 
 use wiki_model::{Article, ArticleKey, PageRecord};
 use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_pack_format::manifest::{SourceKind, SourceSnapshot};
+use wiki_source::media_download::{
+    parse_image_downloads, verify_image, MediaFileTransport, MAX_IMAGE_BYTES,
+};
 use wiki_source::online_article::{parse_rendered_revision_with_source, OnlineRevision};
 use wiki_source::online_fetch::MediaWikiTransport;
 use wiki_source::online_requests::{WikipediaRequests, MAX_IMAGE_TITLES};
@@ -33,6 +43,10 @@ use wiki_source::rendered_article::{assemble_article, extract_rendered_article};
 use wiki_source::rendered_media::parse_image_metadata;
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::pack_install::snapshot_pack_metadata;
+use wiki_store::pack_media::{
+    encode_media_index, media_object_path, required_images, PackImage, MEDIA_DIR,
+    MEDIA_INDEX_OBJECT,
+};
 use wiki_store::record_codec::append_record_frame;
 
 /// Articles in one dump-built pack (the builder is for curated selections).
@@ -173,15 +187,72 @@ where
     String::from_utf8(bytes).map_err(|_| "reply is not UTF-8".to_owned())
 }
 
-/// Render, read and attach image metadata for one dump-named revision.
-pub fn render_dump_article<T: MediaWikiTransport>(
+/// Downloaded, verified images, stored once each by SHA-256 in a private
+/// directory until [`write_dump_pack`] copies them into the pack.
+pub struct DumpMediaStore {
+    dir: PathBuf,
+    /// Download URL → (SHA-256, format), so a shared image is fetched once.
+    fetched: HashMap<String, (String, &'static str)>,
+}
+
+impl DumpMediaStore {
+    /// `dir` must not exist yet.
+    pub fn create(dir: &Path) -> Result<Self, DumpPackError> {
+        fs::create_dir(dir).map_err(|e| DumpPackError::Write(format!("image directory: {e}")))?;
+        Ok(Self {
+            dir: dir.to_owned(),
+            fetched: HashMap::new(),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.dir
+    }
+
+    fn fetch<T: MediaFileTransport>(
+        &mut self,
+        transport: &mut T,
+        download: &wiki_source::media_download::ImageDownload,
+    ) -> Result<(String, &'static str), String>
+    where
+        T::Error: std::fmt::Debug,
+    {
+        if let Some(found) = self.fetched.get(&download.url) {
+            return Ok(found.clone());
+        }
+        let bytes = transport
+            .get_media(&download.url, download.accept(), MAX_IMAGE_BYTES)
+            .map_err(|error| format!("{}: download failed: {error:?}", download.file_title))?;
+        let mime = verify_image(download, &bytes)
+            .map_err(|error| format!("{}: image refused: {error:?}", download.file_title))?;
+        let digest = hex_sha256(&bytes);
+        let path = self.dir.join(&digest);
+        if !path.exists() {
+            fs::write(&path, &bytes).map_err(|e| format!("image write: {e}"))?;
+        }
+        let found = (digest, mime);
+        self.fetched.insert(download.url.clone(), found.clone());
+        Ok(found)
+    }
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Render one dump-named revision, attach its image metadata, and download
+/// and verify every image it requires into `media`.
+pub fn render_dump_article<T>(
     transport: &mut T,
     project: &str,
     language: &str,
     selection: &DumpSelection,
+    media: &mut DumpMediaStore,
 ) -> Result<Article, DumpPackError>
 where
-    T::Error: std::fmt::Debug,
+    T: MediaWikiTransport + MediaFileTransport,
+    <T as MediaWikiTransport>::Error: std::fmt::Debug,
+    <T as MediaFileTransport>::Error: std::fmt::Debug,
 {
     let page = &selection.page;
     let fail = |reason: String| DumpPackError::Render {
@@ -211,18 +282,26 @@ where
         .iter()
         .map(|image| image.file_title.clone())
         .collect();
-    let mut media = Vec::with_capacity(files.len());
+    let mut images = Vec::with_capacity(files.len());
     for batch in files.chunks(MAX_IMAGE_TITLES) {
         let url = requests
             .image_metadata(batch)
             .map_err(|e| fail(format!("{e:?}")))?;
         let body = get(transport, &url, METADATA_BYTES).map_err(fail)?;
-        media.extend(
-            parse_image_metadata(&body, batch)
-                .map_err(|e| fail(format!("image metadata rejected: {e:?}")))?,
-        );
+        let assets = parse_image_metadata(&body, batch)
+            .map_err(|e| fail(format!("image metadata rejected: {e:?}")))?;
+        let downloads = parse_image_downloads(&body, batch)
+            .map_err(|e| fail(format!("image download rejected: {e:?}")))?;
+        for (mut asset, download) in assets.into_iter().zip(downloads) {
+            let (digest, mime) = media.fetch(transport, &download).map_err(fail)?;
+            // The asset now describes the stored bytes; `source_url` still
+            // names the original file.
+            asset.sha256 = Some(digest);
+            asset.mime_type = mime.to_owned();
+            images.push(asset);
+        }
     }
-    let mut article = assemble_article(&pinned, language, extracted, rendered.html, media)
+    let mut article = assemble_article(&pinned, language, extracted, rendered.html, images)
         .map_err(|e| fail(format!("{e:?}")))?;
     if !selection.aliases.is_empty() {
         article.aliases = selection.aliases.clone();
@@ -248,9 +327,11 @@ pub struct DumpPackIdentity<'a> {
 }
 
 /// Write `articles` as a pack tree under `work_dir` and the `.wpack` to
-/// `output`. `work_dir` must not exist yet.
+/// `output`. `work_dir` must not exist yet. Every image the articles
+/// require is copied from `media` and re-hashed; a missing one fails.
 pub fn write_dump_pack(
     articles: &[Article],
+    media: &DumpMediaStore,
     identity: &DumpPackIdentity<'_>,
     work_dir: &Path,
     output: &mut impl Write,
@@ -260,6 +341,31 @@ pub fn write_dump_pack(
         return Err(DumpPackError::InvalidRequest("no articles".into()));
     }
     fs::create_dir(work_dir).map_err(|e| write(format!("work directory: {e}")))?;
+    let (required, without_bytes) =
+        required_images(articles).map_err(|e| write(format!("{e:?}")))?;
+    if let Some(title) = without_bytes.first() {
+        return Err(write(format!("{title}: an image has no downloaded bytes")));
+    }
+    if !required.is_empty() {
+        fs::create_dir(work_dir.join(MEDIA_DIR)).map_err(|e| write(e.to_string()))?;
+        let mut index = Vec::with_capacity(required.len());
+        for (digest, mime) in &required {
+            let bytes = fs::read(media.path().join(digest))
+                .map_err(|e| write(format!("image {digest}: {e}")))?;
+            if hex_sha256(&bytes) != *digest {
+                return Err(write(format!("image {digest} changed after download")));
+            }
+            fs::write(work_dir.join(media_object_path(digest)), &bytes)
+                .map_err(|e| write(e.to_string()))?;
+            index.push(PackImage {
+                sha256: digest.clone(),
+                mime: mime.clone(),
+                bytes: bytes.len() as u64,
+            });
+        }
+        let encoded = encode_media_index(&index).map_err(|e| write(format!("{e:?}")))?;
+        fs::write(work_dir.join(MEDIA_INDEX_OBJECT), encoded).map_err(|e| write(e.to_string()))?;
+    }
     let mut shard = Vec::new();
     let mut frames = Vec::new();
     for article in articles {
@@ -315,8 +421,40 @@ mod tests {
         include_str!("../../../fixtures/wikimedia/enwiki/hypotenuse-1383416967.images.json");
 
     /// Replays recorded Action API replies; records every requested URL.
+    /// Images are small PNGs named after their URL; `broken` names one URL
+    /// that fails.
     struct Replay {
         requests: Vec<String>,
+        broken: Option<&'static str>,
+    }
+
+    fn replay() -> Replay {
+        Replay {
+            requests: Vec::new(),
+            broken: None,
+        }
+    }
+
+    impl MediaFileTransport for Replay {
+        type Error = String;
+        fn get_media(&mut self, url: &str, accept: &str, _max: usize) -> Result<Vec<u8>, String> {
+            assert_eq!(
+                accept,
+                wiki_source::media_download::RENDERING_ACCEPT,
+                "SVG files are fetched as renderings"
+            );
+            self.requests.push(url.to_owned());
+            assert!(
+                wiki_source::media_download::media_url_allowed(url),
+                "non-canonical media URL {url}"
+            );
+            if self.broken.is_some_and(|broken| url.contains(broken)) {
+                return Err("HTTP 404".into());
+            }
+            let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+            png.extend_from_slice(url.as_bytes());
+            Ok(png)
+        }
     }
 
     impl MediaWikiTransport for Replay {
@@ -378,28 +516,6 @@ mod tests {
         assert_eq!(selected[0].page.revision_id, 1383416967);
         assert_eq!(selected[0].aliases, ["Hypotenuses"]);
 
-        let mut replay = Replay {
-            requests: Vec::new(),
-        };
-        let article = render_dump_article(&mut replay, "enwiki", "en", &selected[0]).unwrap();
-        assert_eq!(
-            replay.requests.len(),
-            2,
-            "one render and one image-metadata request"
-        );
-        assert_eq!(article.revision.revision_id, 1383416967);
-        assert_eq!(article.aliases, ["Hypotenuses"]);
-        assert_eq!(article.media.len(), 3);
-        assert!(
-            article.media.iter().all(|m| m.sha256.is_none()),
-            "images not included"
-        );
-        assert!(matches!(
-            article.lead[0].content,
-            BlockContent::Media { media_index: 0 }
-        ));
-        article.validate().unwrap();
-
         let dir = std::env::temp_dir().join(format!(
             "dump-pack-{}-{}",
             std::process::id(),
@@ -409,6 +525,36 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
+        let mut media = DumpMediaStore::create(&dir.join("images")).unwrap();
+        let mut replay = replay();
+        let article =
+            render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media).unwrap();
+        assert_eq!(
+            replay.requests.len(),
+            5,
+            "one render, one image-metadata request and three image downloads"
+        );
+        assert_eq!(article.revision.revision_id, 1383416967);
+        assert_eq!(article.aliases, ["Hypotenuses"]);
+        assert_eq!(article.media.len(), 3);
+        for asset in &article.media {
+            assert!(asset.sha256.is_some(), "every image is downloaded");
+            assert_eq!(asset.mime_type, "image/png", "SVG stored as its rendering");
+            assert!(
+                asset.source_url.ends_with(".svg"),
+                "source names the original"
+            );
+        }
+        // A second article using the same images fetches nothing new.
+        let before = replay.requests.len();
+        render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media).unwrap();
+        assert_eq!(replay.requests.len(), before + 2);
+        assert!(matches!(
+            article.lead[0].content,
+            BlockContent::Media { media_index: 0 }
+        ));
+        article.validate().unwrap();
+
         let identity = DumpPackIdentity {
             pack_id: "hypotenuse-sample",
             project: "enwiki",
@@ -418,7 +564,14 @@ mod tests {
             definition_id: "hypotenuse",
         };
         let mut pack = Vec::new();
-        write_dump_pack(&[article], &identity, &dir.join("tree"), &mut pack).unwrap();
+        write_dump_pack(
+            std::slice::from_ref(&article),
+            &media,
+            &identity,
+            &dir.join("tree"),
+            &mut pack,
+        )
+        .unwrap();
         let manifest =
             wiki_pack_format::container::verify_container(&mut Cursor::new(&pack)).unwrap();
         assert_eq!(manifest.pack_id, "hypotenuse-sample");
@@ -427,9 +580,97 @@ mod tests {
         assert_eq!(manifest.metadata.source.snapshot_id, "enwiki-2026-11-01");
         assert_eq!(manifest.metadata.counts.articles, 1);
         assert_eq!(
-            manifest.metadata.counts.media, 0,
-            "image bytes are not in the pack"
+            manifest.metadata.counts.media, 3,
+            "every image is in the pack"
         );
+        assert_eq!(
+            manifest.metadata.license.attribution_object.as_deref(),
+            Some(MEDIA_INDEX_OBJECT)
+        );
+
+        // The pack installs, and each image reads back by its digest.
+        let root = dir.join("library");
+        fs::create_dir(&root).unwrap();
+        let installed = wiki_store::pack_install::install_custom_pack(
+            &root,
+            &mut Cursor::new(&pack),
+            pack.len() as u64,
+            |_| true,
+        )
+        .unwrap();
+        // Every required figure of the real revision is served locally, and
+        // nothing else in the document loads: the other images are page
+        // furniture (sister-project and portal icons) the extractor skips.
+        let document = wiki_source::reader_document::reader_document(
+            &article,
+            wiki_source::reader_document::ReaderTheme::Light,
+        );
+        for asset in &article.media {
+            let local = format!(
+                "src=\"https://foundation.invalid/media/{}\"",
+                asset.sha256.as_deref().unwrap()
+            );
+            assert_eq!(document.matches(&local).count(), 1, "{}", asset.source_url);
+        }
+        assert_eq!(
+            document.matches(" src=").count(),
+            article.media.len(),
+            "only pack images have a source"
+        );
+        assert_eq!(document.matches("<img").count(), 6, "3 figures, 3 icons");
+
+        // Reopening the installed snapshot (activation) sees the same article
+        // shards as the installer: images are not shards.
+        assert_eq!(
+            wiki_store::pack_install::installed_shard_inventory(&installed.path).unwrap(),
+            installed.shards
+        );
+        for asset in &article.media {
+            let digest = asset.sha256.as_deref().unwrap();
+            let (mime, bytes) = wiki_store::pack_media::read_pack_image(&installed.path, digest)
+                .unwrap()
+                .unwrap();
+            assert_eq!(mime, "image/png");
+            assert!(bytes.starts_with(b"\x89PNG"));
+        }
+
+        // An article whose image lost its bytes cannot be packed.
+        let mut incomplete = article.clone();
+        incomplete.media[1].sha256 = None;
+        assert!(matches!(
+            write_dump_pack(&[incomplete], &media, &identity, &dir.join("tree2"), &mut Vec::new()),
+            Err(DumpPackError::Write(reason)) if reason.contains("no downloaded bytes")
+        ));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_image_that_cannot_be_downloaded_fails_the_article() {
+        let (bytes, member) = dump(1383416967);
+        let selected = select(&bytes, &member, &["Hypotenuse"]).unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-broken-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut media = DumpMediaStore::create(&dir).unwrap();
+        let mut broken = Replay {
+            requests: Vec::new(),
+            broken: Some("Pythagorean.svg"),
+        };
+        match render_dump_article(&mut broken, "enwiki", "en", &selected[0], &mut media) {
+            Err(DumpPackError::Render { title, reason }) => {
+                assert_eq!(title, "Hypotenuse");
+                assert!(
+                    reason.contains("File:Pythagorean.svg: download failed"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected a failed download, got {other:?}"),
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -454,15 +695,23 @@ mod tests {
         // The API renders a different revision than the dump names: refused.
         let (older, member) = dump(1375841497);
         let selected = select(&older, &member, &["Hypotenuse"]).unwrap();
-        let mut replay = Replay {
-            requests: Vec::new(),
-        };
-        match render_dump_article(&mut replay, "enwiki", "en", &selected[0]) {
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-mismatch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut media = DumpMediaStore::create(&dir).unwrap();
+        let mut replay = replay();
+        match render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media) {
             Err(DumpPackError::Render { title, reason }) => {
                 assert_eq!(title, "Hypotenuse");
                 assert!(reason.contains("RevisionMismatch"), "{reason}");
             }
             other => panic!("expected a revision mismatch, got {other:?}"),
         }
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

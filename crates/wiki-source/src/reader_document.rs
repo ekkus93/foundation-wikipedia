@@ -11,7 +11,9 @@
 //! * in-page fragments (`#section`) are kept;
 //! * other relative URLs are removed, so nothing resolves against the origin;
 //! * absolute `http(s)` links are kept for the app to treat as external;
-//! * image sources are removed until verified offline media exists.
+//! * image sources are removed, except images the pack itself holds
+//!   (PACK-003): those point at the app's local image URL
+//!   ([`READER_IMAGE_BASE`] here, or the desktop's own scheme), by SHA-256.
 //!
 //! The document is wrapped with Wikipedia-like styling and a strict Content
 //! Security Policy. `foundation.invalid` is a reserved name that never
@@ -19,7 +21,7 @@
 //! leaves the device. Offline media is served later through the same origin.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ammonia::{Builder, UrlRelative};
 use wiki_model::Article;
@@ -62,18 +64,68 @@ fn rewrite_relative(url: &str) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(format!("{READER_ORIGIN}{ARTICLE_PATH}{title}")))
 }
 
-/// Sanitize untrusted article HTML for display.
+/// Where Android's reader loads a pack image: `<base><sha256>`, answered by
+/// the app from the installed pack.
+pub const READER_IMAGE_BASE: &str = "https://foundation.invalid/media/";
+
+/// The images a pack holds for one article: the local URL base and the
+/// SHA-256 of each Wikimedia file name (`Hypotenuse.svg`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackImageSources {
+    pub base: String,
+    pub by_file: HashMap<String, String>,
+}
+
+impl PackImageSources {
+    /// The images `article` holds, served under `base`.
+    pub fn for_article(article: &Article, base: &str) -> Self {
+        Self {
+            base: base.to_owned(),
+            by_file: article
+                .media
+                .iter()
+                .filter_map(|asset| {
+                    Some((
+                        crate::media_download::media_file_name(&asset.source_url)?,
+                        asset.sha256.clone()?,
+                    ))
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Sanitize untrusted article HTML for display; no image is loaded.
 pub fn sanitize_article_html(html: &str) -> String {
+    sanitize_with_images(html, None)
+}
+
+/// Sanitize a pack article, pointing each image the pack holds at its local
+/// URL. Other image sources are removed, and no other attribute may use the
+/// local image URL.
+pub fn sanitize_pack_article_html(html: &str, images: &PackImageSources) -> String {
+    sanitize_with_images(html, Some(images))
+}
+
+fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String {
+    let base_scheme = images
+        .and_then(|images| images.base.split_once("://"))
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
+    let filter_scheme = base_scheme.clone();
     let mut builder = Builder::default();
+    let mut schemes = HashSet::from(["http", "https"]);
+    if let Some(scheme) = base_scheme.as_deref() {
+        schemes.insert(scheme);
+    }
+    let images = images.cloned();
     builder
-        .url_schemes(HashSet::from(["http", "https"]))
+        .url_schemes(schemes)
         .url_relative(UrlRelative::Custom(Box::new(rewrite_relative)))
         // Keep heading/citation anchors and Wikipedia's presentational classes;
         // with scripts and styles removed they cannot run or restyle the app.
         .add_generic_attributes(["id", "class"])
-        // No verified offline media exists yet (PACK-003): drop image sources
-        // so no image URL is ever requested; alt text remains.
-        .rm_tag_attributes("img", ["src", "srcset"])
+        // srcset could name other files; only the mapped src is kept.
+        .rm_tag_attributes("img", ["srcset"])
         // Formulas are text (presentation MathML), so they work offline;
         // Wikipedia renders math only as MathML (SRC-003).
         .add_tags(MATHML_TAGS)
@@ -81,12 +133,31 @@ pub fn sanitize_article_html(html: &str) -> String {
         .add_clean_content_tags(["annotation", "annotation-xml"])
         .id_prefix(None)
         // The app's own anchors must not be claimed by article markup.
-        .attribute_filter(|_, attribute, value| {
+        .attribute_filter(move |element, attribute, value| {
             if attribute == "id" && value.starts_with(RESERVED_ID_PREFIX) {
-                None
-            } else {
-                Some(value.into())
+                return None;
             }
+            if element == "img" && attribute == "src" {
+                // Only an image this pack holds is ever loaded.
+                let images = images.as_ref()?;
+                let digest = images
+                    .by_file
+                    .get(&crate::media_download::media_file_name(value)?)?;
+                return Some(format!("{}{digest}", images.base).into());
+            }
+            // Local image URLs are the app's, never the article's.
+            let lower = value.trim().to_ascii_lowercase();
+            let local = lower.starts_with(READER_IMAGE_BASE)
+                || images
+                    .as_ref()
+                    .is_some_and(|images| lower.starts_with(&images.base.to_ascii_lowercase()))
+                || filter_scheme
+                    .as_deref()
+                    .is_some_and(|scheme| scheme != "https" && lower.starts_with(scheme));
+            if local {
+                return None;
+            }
+            Some(value.into())
         })
         .link_rel(Some("noopener noreferrer nofollow"));
     builder.clean(html).to_string()
@@ -241,7 +312,10 @@ pub fn reader_document(article: &Article, theme: ReaderTheme) -> String {
     wrap_document(
         article,
         theme,
-        &sanitize_article_html(&article.rendered_html),
+        &sanitize_pack_article_html(
+            &article.rendered_html,
+            &PackImageSources::for_article(article, READER_IMAGE_BASE),
+        ),
     )
 }
 
@@ -269,7 +343,10 @@ pub fn reader_document_with_citation(
 ) -> Option<(String, CitedPassage)> {
     let blocks = wiki_core::evidence::evidence_blocks(article).ok()?;
     let block = blocks.iter().find(|entry| entry.id == block_id)?;
-    let body = sanitize_article_html(&article.rendered_html);
+    let body = sanitize_pack_article_html(
+        &article.rendered_html,
+        &PackImageSources::for_article(article, READER_IMAGE_BASE),
+    );
     let text = block_text(&block.block.content);
     if let Some((start, end)) = text
         .as_deref()
@@ -465,6 +542,49 @@ fn wrap_document(article: &Article, theme: ReaderTheme, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pack_images_load_only_from_the_local_url_by_digest() {
+        let digest = "ab".repeat(32);
+        let html = concat!(
+            "<a href=\"./File:Pythagorean.svg\" class=\"mw-file-description\">",
+            "<img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Pythagorean.svg/250px-Pythagorean.svg.png\" ",
+            "srcset=\"//upload.wikimedia.org/x.png 2x\" alt=\"Proof\" width=\"250\"></a>",
+            "<img src=\"//upload.wikimedia.org/wikipedia/commons/a/ab/Other.png\" alt=\"not in pack\">",
+            "<img src=\"https://evil.example/wikipedia/commons/d/d2/Pythagorean.svg\" alt=\"evil\">",
+            "<img src=\"packimage://localhost/cdcdcd\" alt=\"forged\">",
+            "<a href=\"packimage://localhost/abab\">forged link</a>",
+            "<a href=\" PACKIMAGE://localhost/abab\">forged link 2</a>",
+            "<a href=\"https://foundation.invalid/media/abab\">forged link 3</a>",
+        );
+        for base in ["packimage://localhost/", READER_IMAGE_BASE] {
+            let images = PackImageSources {
+                base: base.into(),
+                by_file: HashMap::from([("Pythagorean.svg".to_owned(), digest.clone())]),
+            };
+            let clean = sanitize_pack_article_html(html, &images);
+            assert!(
+                clean.contains(&format!(
+                    "<img src=\"{base}{digest}\" alt=\"Proof\" width=\"250\">"
+                )),
+                "{clean}"
+            );
+            assert_eq!(clean.matches("<img src=").count(), 1, "{clean}");
+            assert!(!clean.contains("srcset"), "{clean}");
+            assert!(!clean.contains("upload.wikimedia.org"), "{clean}");
+            assert!(!clean.contains("evil.example"), "{clean}");
+            assert!(!clean.contains("cdcdcd"), "{clean}");
+            let lower = clean.to_ascii_lowercase();
+            assert!(!lower.contains("href=\"packimage"), "{clean}");
+            assert!(
+                !lower.contains("href=\"https://foundation.invalid/media"),
+                "{clean}"
+            );
+            assert!(clean.contains("alt=\"not in pack\""), "alt text stays");
+        }
+        // Without pack images nothing loads.
+        assert!(!sanitize_article_html(html).contains("src="));
+    }
 
     #[test]
     fn online_html_keeps_wikipedia_structure_and_only_wikimedia_images() {

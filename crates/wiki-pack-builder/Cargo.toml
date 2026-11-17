@@ -17,7 +17,7 @@ wiki-search = { path = "../wiki-search" }
 wiki-pack-format = { path = "../wiki-pack-format" }
 html5ever = "0.40"
 url = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 bzip2 = "0.6.1"
-sha2 = "0.10"

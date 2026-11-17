@@ -1883,6 +1883,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-platform-verifier",
+ "sha2",
  "uniffi",
  "wiki-ai",
  "wiki-core",

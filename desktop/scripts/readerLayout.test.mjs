@@ -61,7 +61,7 @@ test("sandboxed preview honors explicit and system themes without CSS injection"
 });
 
 test("online article documents load only Wikimedia images and the hash-pinned link script", async () => {
-  const { LINK_MESSAGE_KEY, LINK_SCRIPT, LINK_SCRIPT_HASH, IMAGE_SOURCES } = await import("../src/readerLayout.ts");
+  const { LINK_MESSAGE_KEY, LINK_SCRIPT, LINK_SCRIPT_HASH, IMAGE_SOURCES, PACK_IMAGE_SOURCES } = await import("../src/readerLayout.ts");
   const { createHash } = await import("node:crypto");
   const { readFileSync } = await import("node:fs");
   const digest = createHash("sha256").update(LINK_SCRIPT).digest("base64");
@@ -70,7 +70,7 @@ test("online article documents load only Wikimedia images and the hash-pinned li
   // same script hash and image hosts (and nothing broader).
   const csp = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url))).app.security.csp;
   assert.match(csp, new RegExp(`script-src 'self' ${LINK_SCRIPT_HASH.replace(/[+/=]/g, "\\$&")};`));
-  assert.ok(csp.includes(`img-src 'self' data: ${IMAGE_SOURCES};`), csp);
+  assert.ok(csp.includes(`img-src 'self' data: ${IMAGE_SOURCES} ${PACK_IMAGE_SOURCES};`), csp);
   assert.doesNotMatch(csp, /unsafe-inline'[^;]*script|script-src[^;]*unsafe/);
 
   const html = "<p>Physics</p>";
@@ -90,5 +90,12 @@ test("online article documents load only Wikimedia images and the hash-pinned li
   for (const bad of [1, "yes", null]) {
     const doc = isolatedReaderDocument(html, "standard", "standard", "light", { links: bad });
     assert.match(doc, /script-src 'none'/);
+    const images = isolatedReaderDocument(html, "standard", "standard", "light", { images: bad });
+    assert.match(images, /img-src 'none'/);
   }
+  // A pack article loads only the pack's own images, never Wikimedia's.
+  const pack = isolatedReaderDocument(html, "standard", "standard", "light", { images: "pack", links: true });
+  assert.match(pack, /img-src packimage: http:\/\/packimage\.localhost;/);
+  assert.doesNotMatch(pack, /wikimedia\.org/);
+  assert.match(pack, /img\{max-width:100%;height:auto\}/);
 });

@@ -111,15 +111,23 @@ impl MediaFileTransport for CurlTransport {
     type Error = CurlTransportError;
 
     /// Image bytes from Wikimedia's media hosts only (PACK-003).
-    fn get_media(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error> {
-        if !media_url_allowed(url) {
+    fn get_media(
+        &mut self,
+        url: &str,
+        accept: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, Self::Error> {
+        // Only image types; nothing that could inject another header.
+        let safe_accept = !accept.is_empty()
+            && accept.len() <= 128
+            && accept.starts_with("image/")
+            && accept
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b" /,;=.+-".contains(&b));
+        if !media_url_allowed(url) || !safe_accept {
             return Err(CurlTransportError::InvalidRequest);
         }
-        self.fetch(
-            url,
-            max_bytes,
-            "image/png, image/jpeg, image/gif, image/webp",
-        )
+        self.fetch(url, max_bytes, accept)
     }
 }
 
@@ -282,7 +290,7 @@ mod tests {
             "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png?x=1",
         ] {
             assert_eq!(
-                client.get_media(url, 1024),
+                client.get_media(url, "image/png", 1024),
                 Err(CurlTransportError::InvalidRequest),
                 "{url}"
             );
@@ -300,9 +308,27 @@ mod tests {
         assert!(real
             .get_media(
                 "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png",
+                "image/png",
                 1024
             )
             .is_ok());
+        // Accept carries only image types, never another header.
+        for accept in [
+            "",
+            "text/html",
+            "image/png\r\nX-Evil: 1",
+            "image/png\nCookie: a",
+        ] {
+            assert_eq!(
+                real.get_media(
+                    "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png",
+                    accept,
+                    1024
+                ),
+                Err(CurlTransportError::InvalidRequest),
+                "{accept:?}"
+            );
+        }
         fs::remove_file(path).unwrap();
         fs::remove_file(real_path).unwrap();
     }

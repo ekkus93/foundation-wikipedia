@@ -11,10 +11,14 @@
 //!   downloaded as Wikimedia's own rendering at that width. Wikimedia states
 //!   no hash for a rendering, so only TLS to the fixed media hosts, the size
 //!   cap and the file signature check it. SVG is rasterised rather than
-//!   sanitised, so no SVG markup is ever displayed from a pack.
+//!   sanitised, so no SVG markup is ever displayed from a pack. Wikimedia's
+//!   thumbnail service picks the format from `Accept` (it serves WebP behind
+//!   a `.png` URL when WebP is accepted); WebP is preferred as the smallest,
+//!   and the stored format is whatever the bytes' own signature says.
 //!
-//! Every download must start with the signature of the format it claims, so
-//! a mislabelled or substituted reply is refused.
+//! An original must start with the signature of its stated format, and any
+//! download must be PNG, JPEG, GIF or WebP, so a mislabelled or substituted
+//! reply is refused.
 
 use serde_json::Value;
 use sha1::{Digest, Sha1};
@@ -32,8 +36,17 @@ const MEDIA_HOSTS: [&str; 2] = ["upload.wikimedia.org", "thumb.wikimedia.org"];
 /// [`media_url_allowed`] holds, never follow redirects and keep TLS checks.
 pub trait MediaFileTransport {
     type Error;
-    fn get_media(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Self::Error>;
+    /// `accept` is the HTTP `Accept` value, [`ImageDownload::accept`].
+    fn get_media(
+        &mut self,
+        url: &str,
+        accept: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, Self::Error>;
 }
+
+/// `Accept` for a rendering: WebP first, any other pack format allowed.
+pub const RENDERING_ACCEPT: &str = "image/webp, image/png;q=0.9, image/jpeg;q=0.9, image/gif;q=0.9";
 
 /// One image to download for a pack.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,10 +55,25 @@ pub struct ImageDownload {
     pub file_title: String,
     /// Canonical media URL (no query or fragment).
     pub url: String,
-    /// Format of the bytes that will be downloaded.
+    /// For an original: its format, size and Wikimedia's SHA-1. `None`
+    /// for a rendering, whose format is negotiated.
+    pub expected: Option<Original>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Original {
     pub mime: &'static str,
-    /// Wikimedia's SHA-1 and size, for an original download.
-    pub expected: Option<(String, u64)>,
+    pub sha1: String,
+    pub size: u64,
+}
+
+impl ImageDownload {
+    /// The `Accept` value to request this download with.
+    pub fn accept(&self) -> &'static str {
+        self.expected
+            .as_ref()
+            .map_or(RENDERING_ACCEPT, |original| original.mime)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,8 +182,7 @@ fn choose(file: &str, info: &Value) -> Result<ImageDownload, ImageDownloadError>
             return Ok(ImageDownload {
                 file_title: file.to_owned(),
                 url,
-                mime,
-                expected: Some((sha1, size)),
+                expected: Some(Original { mime, sha1, size }),
             });
         }
     }
@@ -164,22 +191,27 @@ fn choose(file: &str, info: &Value) -> Result<ImageDownload, ImageDownloadError>
         .and_then(Value::as_str)
         .and_then(canonical_media_url)
         .ok_or_else(unusable)?;
-    let mime = rendering_mime(&url).ok_or_else(unusable)?;
+    // A rendering URL names a raster format even though the reply may differ.
+    rendering_mime(&url).ok_or_else(unusable)?;
     Ok(ImageDownload {
         file_title: file.to_owned(),
         url,
-        mime,
         expected: None,
     })
 }
 
-fn signature_matches(mime: &str, bytes: &[u8]) -> bool {
-    match mime {
-        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-        "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
-        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
-        "image/webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
-        _ => false,
+/// The pack format `bytes` start with, by file signature.
+pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
     }
 }
 
@@ -191,21 +223,25 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
-/// Check downloaded bytes against what was asked for.
-pub fn verify_image(download: &ImageDownload, bytes: &[u8]) -> Result<(), ImageDownloadError> {
+/// Check downloaded bytes against what was asked for; returns their format.
+pub fn verify_image(
+    download: &ImageDownload,
+    bytes: &[u8],
+) -> Result<&'static str, ImageDownloadError> {
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(ImageDownloadError::TooLarge);
     }
-    if !signature_matches(download.mime, bytes) {
-        return Err(ImageDownloadError::WrongFormat);
-    }
-    if let Some((sha1, size)) = &download.expected {
+    let mime = sniff_image(bytes).ok_or(ImageDownloadError::WrongFormat)?;
+    if let Some(original) = &download.expected {
+        if mime != original.mime {
+            return Err(ImageDownloadError::WrongFormat);
+        }
         let actual = hex(&Sha1::digest(bytes));
-        if bytes.len() as u64 != *size || &actual != sha1 {
+        if bytes.len() as u64 != original.size || actual != original.sha1 {
             return Err(ImageDownloadError::DigestMismatch);
         }
     }
-    Ok(())
+    Ok(mime)
 }
 
 /// The file name a Wikimedia media URL serves, with underscores, e.g.
@@ -290,8 +326,8 @@ mod tests {
         );
         for (download, file) in downloads.iter().zip(files()) {
             assert_eq!(download.file_title, file);
-            assert_eq!(download.mime, "image/png");
             assert_eq!(download.expected, None, "a rendering has no stated hash");
+            assert_eq!(download.accept(), RENDERING_ACCEPT);
             assert!(media_url_allowed(&download.url));
             assert_eq!(
                 media_file_name(&download.url),
@@ -325,7 +361,16 @@ mod tests {
         );
         assert_eq!(
             small.expected,
-            Some(("abcdefabcdefabcdefabcdefabcdefabcdefabcd".into(), 5))
+            Some(Original {
+                mime: "image/png",
+                sha1: "abcdefabcdefabcdefabcdefabcdefabcdefabcd".into(),
+                size: 5
+            })
+        );
+        assert_eq!(
+            small.accept(),
+            "image/png",
+            "an original is never converted"
         );
         let large = one(
             r#"{"mime":"image/jpeg","width":4000,"size":9000000,"sha1":"abcdefabcdefabcdefabcdefabcdefabcdefabcd",
@@ -333,7 +378,6 @@ mod tests {
                "thumburl":"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/A.jpg/1280px-A.jpg"}"#,
         )
         .unwrap();
-        assert_eq!(large.mime, "image/jpeg");
         assert_eq!(large.expected, None);
         assert!(large.url.contains("/thumb/"));
     }
@@ -364,14 +408,16 @@ mod tests {
     #[test]
     fn downloads_must_match_their_format_size_and_hash() {
         let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
-        let sha1 = hex(&Sha1::digest(&png));
         let original = ImageDownload {
             file_title: "File:A.png".into(),
             url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/A.png".into(),
-            mime: "image/png",
-            expected: Some((sha1.clone(), png.len() as u64)),
+            expected: Some(Original {
+                mime: "image/png",
+                sha1: hex(&Sha1::digest(&png)),
+                size: png.len() as u64,
+            }),
         };
-        assert_eq!(verify_image(&original, &png), Ok(()));
+        assert_eq!(verify_image(&original, &png), Ok("image/png"));
         let mut changed = png.clone();
         *changed.last_mut().unwrap() ^= 1;
         assert_eq!(
@@ -382,17 +428,29 @@ mod tests {
             verify_image(&original, b"<svg onload=alert(1)>"),
             Err(ImageDownloadError::WrongFormat)
         );
+        let webp = b"RIFF\x10\0\0\0WEBPVP8 ".to_vec();
+        assert_eq!(
+            verify_image(&original, &webp),
+            Err(ImageDownloadError::WrongFormat),
+            "an original converted to another format is refused"
+        );
+        // A rendering is stored in whichever pack format arrived.
         let rendering = ImageDownload {
             expected: None,
-            mime: "image/jpeg",
             ..original
         };
+        assert_eq!(verify_image(&rendering, &webp), Ok("image/webp"));
+        assert_eq!(verify_image(&rendering, &png), Ok("image/png"));
         assert_eq!(
-            verify_image(&rendering, &png),
-            Err(ImageDownloadError::WrongFormat),
-            "a PNG is not the JPEG that was asked for"
+            verify_image(&rendering, &[0xFF, 0xD8, 0xFF, 0xE0]),
+            Ok("image/jpeg")
         );
-        assert_eq!(verify_image(&rendering, &[0xFF, 0xD8, 0xFF, 0xE0]), Ok(()));
+        for refused in [&b"<svg/>"[..], b"<!doctype html>", b"%PDF-1.7", b""] {
+            assert_eq!(
+                verify_image(&rendering, refused),
+                Err(ImageDownloadError::WrongFormat)
+            );
+        }
         assert_eq!(
             verify_image(&rendering, &vec![0xFF; MAX_IMAGE_BYTES + 1]),
             Err(ImageDownloadError::TooLarge)

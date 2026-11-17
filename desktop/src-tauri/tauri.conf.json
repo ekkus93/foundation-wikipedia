@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: https://upload.wikimedia.org https://thumb.wikimedia.org https://wikimedia.org; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-bRzVtMkXFtSC7xo9QSiz3N4t8DA5rh4hJejWm+BG/8s='; connect-src 'self'"
+      "csp": "default-src 'self'; img-src 'self' data: https://upload.wikimedia.org https://thumb.wikimedia.org https://wikimedia.org packimage: http://packimage.localhost; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-bRzVtMkXFtSC7xo9QSiz3N4t8DA5rh4hJejWm+BG/8s='; connect-src 'self'"
     }
   },
   "bundle": {

@@ -440,12 +440,22 @@ pub async fn open_offline_citation(
             cited.page.page_id,
             cited.page.revision_id,
             cited.page.display_title,
-            body.to_owned(),
+            desktop_image_sources(body),
             cited.located,
         )))
     })
     .await
     .map_err(|_| "Chat worker stopped".to_owned())?
+}
+
+/// The shared reader document points pack images at Android's local URL;
+/// the sanitizer writes that URL only into image sources it mapped, so the
+/// desktop's `packimage` scheme can take its place exactly there.
+fn desktop_image_sources(body: &str) -> String {
+    body.replace(
+        &format!("src=\"{}", wiki_source::reader_document::READER_IMAGE_BASE),
+        &format!("src=\"{}", crate::offline_packs::PACK_IMAGE_BASE),
+    )
 }
 
 /// The sanitized article body of a shared reader document (between its
@@ -469,6 +479,16 @@ mod tests {
         );
         assert_eq!(article_body("<p>no main</p>"), None);
         assert_eq!(article_body("</main><main>"), None);
+        let digest = "ab".repeat(32);
+        assert_eq!(
+            desktop_image_sources(&format!(
+                "<img src=\"https://foundation.invalid/media/{digest}\" alt=\"x\">"
+            )),
+            format!(
+                "<img src=\"{}{digest}\" alt=\"x\">",
+                crate::offline_packs::PACK_IMAGE_BASE
+            )
+        );
     }
 
     #[test]

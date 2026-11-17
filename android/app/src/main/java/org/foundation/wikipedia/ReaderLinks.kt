@@ -27,6 +27,7 @@ object ReaderLinks {
     const val ORIGIN = "https://foundation.invalid"
     private const val HOST = "foundation.invalid"
     private const val ARTICLE_PATH = "/wiki/"
+    private const val MEDIA_PATH = "/media/"
     private const val MAX_TITLE_LENGTH = 512
 
     /**
@@ -47,6 +48,26 @@ object ReaderLinks {
                 document.host.equals(HOST, ignoreCase = true)
         } catch (_: URISyntaxException) {
             false
+        }
+    }
+
+    /**
+     * The SHA-256 of a pack image request ([ORIGIN]`/media/<sha256>`, as the
+     * Rust sanitizer writes it), or `null`. Never a main-frame navigation.
+     */
+    fun imageDigest(url: String, mainFrame: Boolean): String? {
+        if (mainFrame) return null
+        return try {
+            val request = URI(url)
+            val digest = request.rawPath?.removePrefix(MEDIA_PATH)
+            digest.takeIf {
+                request.scheme == "https" && request.host == HOST && request.port == -1 &&
+                    request.rawQuery == null && request.rawFragment == null && request.userInfo == null &&
+                    request.rawPath.startsWith(MEDIA_PATH) &&
+                    it != null && it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' }
+            }
+        } catch (_: URISyntaxException) {
+            null
         }
     }
 

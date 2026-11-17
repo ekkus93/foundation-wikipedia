@@ -4,14 +4,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use wiki_ffi::android::OfflineLibrary;
 use wiki_model::{
-    Article, ArticleKey, Block, BlockContent, PageRecord, Revision, ARTICLE_SCHEMA_VERSION,
+    Article, ArticleKey, Block, BlockContent, MediaAsset, PageRecord, Revision,
+    ARTICLE_SCHEMA_VERSION,
 };
 use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_pack_format::manifest::PackMetadata;
 use wiki_store::catalog::SnapshotCatalog;
 use wiki_store::pack_install::snapshot_pack_metadata;
+use wiki_store::pack_media::{
+    encode_media_index, media_object_path, PackImage, MEDIA_DIR, MEDIA_INDEX_OBJECT,
+};
 use wiki_store::record_codec::append_record_frame;
 
 pub struct TestDir(pub PathBuf);
@@ -138,4 +143,79 @@ pub fn build_pack_at(dir: &Path, pack_id: &str, revision_base: u64) -> PathBuf {
 
 pub fn library(dir: &Path) -> std::sync::Arc<OfflineLibrary> {
     OfflineLibrary::new(dir.join("library").to_string_lossy().into_owned()).unwrap()
+}
+
+/// A valid 32×32 solid red PNG (212, 0, 0): easy to find in a screenshot.
+pub const RED_PNG: [u8; 97] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x20, 0x08, 0x02, 0x00, 0x00, 0x00, 0xfc, 0x18, 0xed,
+    0xa3, 0x00, 0x00, 0x00, 0x28, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xcd, 0x41, 0x09, 0x00,
+    0x00, 0x08, 0x00, 0xb1, 0xeb, 0x9f, 0xcf, 0x40, 0xa6, 0xf0, 0x21, 0x0c, 0xf6, 0x5f, 0x53, 0xa7,
+    0x12, 0x08, 0x04, 0x02, 0x81, 0x40, 0x20, 0x10, 0x08, 0x04, 0x5f, 0x82, 0x05, 0x89, 0x97, 0x50,
+    0x2e, 0xe5, 0xe7, 0xaa, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+    0x82,
+];
+
+pub fn red_png_sha256() -> String {
+    format!("{:x}", Sha256::digest(RED_PNG))
+}
+
+/// A one-article pack ("Right triangle", page 3) whose figure is
+/// [`RED_PNG`], stored as a pack image (PACK-003). Deterministic.
+pub fn build_image_pack(dir: &Path, pack_id: &str) -> PathBuf {
+    let digest = red_png_sha256();
+    let mut page = article(3, "Right triangle", "A triangle with one right angle.");
+    page.revision.revision_id = 7003;
+    page.media = vec![MediaAsset {
+        source_url: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Red_square.png".into(),
+        mime_type: "image/png".into(),
+        sha256: Some(digest.clone()),
+        license: "CC0".into(),
+        creator: "Synthetic test image".into(),
+        attribution: "Synthetic test image, CC0".into(),
+        is_av_preview: false,
+    }];
+    page.rendered_html = concat!(
+        "<article><p>A triangle with one right angle.</p>",
+        "<figure><a href=\"./File:Red_square.png\" class=\"mw-file-description\">",
+        "<img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Red_square.png/220px-Red_square.png\" ",
+        "alt=\"A red square\" width=\"220\" height=\"220\"></a>",
+        "<figcaption>A red square</figcaption></figure></article>"
+    )
+    .into();
+
+    let tree = dir.join(format!("{pack_id}-tree"));
+    fs::create_dir_all(tree.join(MEDIA_DIR)).unwrap();
+    let mut shard = Vec::new();
+    append_record_frame(&mut shard, &PageRecord::Article(Box::new(page))).unwrap();
+    fs::write(tree.join("articles.shard"), &shard).unwrap();
+    let mut catalog = SnapshotCatalog::open(&tree.join("catalog.sqlite")).unwrap();
+    catalog
+        .insert_verified(&tree, "articles.shard", 0, shard.len() as u64)
+        .unwrap();
+    drop(catalog);
+    fs::write(tree.join(media_object_path(&digest)), RED_PNG).unwrap();
+    fs::write(
+        tree.join(MEDIA_INDEX_OBJECT),
+        encode_media_index(&[PackImage {
+            sha256: digest,
+            mime: "image/png".into(),
+            bytes: RED_PNG.len() as u64,
+        }])
+        .unwrap(),
+    )
+    .unwrap();
+    let metadata = snapshot_pack_metadata(
+        &tree,
+        PackMetadata::synthetic_fixture().source,
+        &"0".repeat(64),
+        "CC-BY-SA-4.0",
+    )
+    .unwrap();
+    let manifest =
+        custom_manifest_from_tree(&tree, pack_id, "enwiki", "20261101", "images", metadata)
+            .unwrap();
+    let path = dir.join(format!("{pack_id}.wpack"));
+    write_custom_tree(&tree, &manifest, &mut fs::File::create(&path).unwrap()).unwrap();
+    path
 }
