@@ -39,7 +39,7 @@ How each file is fetched:
 | PNG | 12 | 6.11 MB |
 | WebP | 32 | 2.55 MB |
 
-- **Largest file:** a 7.19 MB animated GIF. It is no wider than 1280 px, so the original was kept; see "Still open".
+- **Largest file:** a 7.19 MB animated GIF. It is no wider than 1280 px, so the original was kept; see "Raster re-encoding".
 - **Audit** (`cargo test -p wiki-ffi --test pack_images audit -- --ignored`, with `PACK003_PACK` set): for every article, every required image read back verified and was shown locally. No other image source remained (26.7 MB read back).
 - **Images left unloaded:** listed with `PACK003_SHOW_UNUSED`, these were navbox images, the Wikidata edit pencil, sister-project and portal icons, and formula fallbacks (shown as MathML).
 - **The audit found two bugs before this run, both now fixed with regression tests:**
@@ -71,6 +71,7 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
 
 - **`9fd0525a`** (images in packs): [Rust workspace 44072869103](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869103), [Platform shells 44072869163](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869163), [Desktop launch smoke 44072869043](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869043), [Android FFI bridge 44072869212](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869212), [Android install smoke 44072869057](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869057), [Android Rust ABI qualification 44072869218](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869218), [Android record codec probe 44072869040](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869040).
 - **`7cc27dee`** (Android selection test fix, after `0c4171b5` failed it): [Rust workspace 44073049532](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049532), [Platform shells 44073049451](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049451), [Android FFI bridge 44073049602](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049602), [Android install smoke 44073049688](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049688).
+- **`86d691eb`** (lossless re-encoding and labelled stills): [Rust workspace 44192888549](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888549), [Platform shells 44192888392](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888392), [Desktop launch smoke 44192888579](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888579), [Android FFI bridge 44192888403](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888403), [Android install smoke 44192888577](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888577), [Android Rust ABI qualification 44192888623](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888623), [Android record codec probe 44192888525](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888525).
 
 ## Tests added
 
@@ -88,10 +89,39 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
 - **Desktop:** frame CSP for pack images; the citation view maps image URLs to the desktop scheme.
 - **Android:** `ReaderLinksTest.onlyExactPackImageRequestsAreRecognised`, `PackImagesUiTest`.
 
+## Raster re-encoding (`86d691eb`)
+
+**Owner decision (2026-11-17):** "Lossless + still for big GIFs". Two files were 38% of the first real pack: a 7.2 MB animated GIF (*Water triple point*, 480×270, 156 frames) and a 3.5 MB PNG map (*Nile basin*). Wikimedia's own smaller renderings barely helped: the GIF is still 3.3 MB at 330 px, and renderings only come in fixed widths below the original.
+
+| Source | Packed as | Check |
+|---|---|---|
+| PNG, single-frame GIF | Lossless WebP, only when smaller (`LosslessWebp`) | Decoded again; must give exactly the same RGBA pixels |
+| PNG with an ICC profile, non-sRGB gamma or chromaticities, APNG, 16-bit | Unchanged | Lossless WebP (sRGB, 8-bit) could not reproduce it exactly. Gamma and chromaticities that only restate sRGB, as the Nile map's do, are allowed |
+| Animated GIF over 2 MiB | First frame as lossless WebP (`FirstFrameStill`) | The reader adds "Still image: the animation is online only." after it |
+| Smaller animated GIF, JPEG, WebP | Unchanged | Lossless re-encoding would only grow them |
+| Anything that will not decode within the limits (16,384 px, 256 MiB) | Unchanged | Re-encoding never drops or alters an image |
+
+- **Code:** `wiki_pack_builder::image_reencode`, run on verified bytes in `DumpMediaStore`. Only the publisher-side builder depends on the pure-Rust `image` crate, pinned to 0.25.6 because later releases need Rust 1.88. The app's reader decodes nothing new; WebP was already a pack format.
+- **Attribution:** `MediaAsset.derivation` (`lossless_webp` / `first_frame_still`) records how the stored bytes were made from the file at `source_url`. It is omitted when absent, so older records decode and encode unchanged. It is carried to `StructuredMediaNotice` and to the FFI page (`still_images`). A model check refuses a derivation on anything but stored WebP.
+- **Real pack, rebuilt:** 28,069,098 → **19,970,682 bytes (−29%)**, all 91 images still included. The audit read every image back verified and shown locally (19.6 MB of images).
+
+| Stored | Files | Bytes |
+|---|---|---|
+| JPEG (unchanged) | 44 | 11.29 MB |
+| WebP rendering (unchanged) | 32 | 2.55 MB |
+| PNG (unchanged: ICC profile) | 7 | 2.50 MB |
+| Lossless WebP | 5 | 2.52 MB (Nile map 3.51 → 2.45 MB) |
+| GIF (unchanged, small) | 2 | 0.54 MB |
+| First-frame still | 1 | 0.18 MB (was 7.19 MB) |
+
+- **Desktop, network removed** (same namespace setup, `curl` exit 6; logger: only `[::1]:1420`): the rebuilt pack imported (review: 19.0 MB, integrity verified), installed and activated. In *Water*, the hydrogen-bond diagram (lossless WebP) displayed. The triple-point figure displayed as its first frame with "Still image: the animation is online only." above its caption "Water as a solid, liquid and gas at the same time". App data was backed up and restored.
+- **Android:** bindings regenerated for `still_images`; `OK (41 tests)` on the API 35 emulator.
+- **Tests:** `image_reencode` (7): identical pixels, PNG colour chunks kept unless sRGB-equivalent, oversized chunk lengths, still versus small animation, JPEG/WebP untouched. `diagrams_are_packed_as_lossless_webp_and_say_so`: build → install → the installed record keeps the derivation → images read back as WebP. `an_animation_packed_as_a_still_is_labelled_where_it_is_shown` (reader).
+
 ## Still open (PACK-003 not complete)
 
 - **SVG stays scalable:** SVGs are stored as 1280 px renderings, which keeps labels legible when zoomed, but they are not vector. Keeping safe SVGs needs an SVG sanitiser.
-- **Raster optimisation:** originals up to 1280 px are kept as they are, including a 7.19 MB animated GIF. Re-encoding large originals is not done.
+- **Raster optimisation:** done losslessly (above). JPEGs and PNGs with an embedded ICC profile are kept as they are; the largest remaining file is a 2.45 MB lossless map.
 - **Maps:** interactive Kartographer maps (`maps.wikimedia.org` static images) are not Wikimedia files and are not packed. Static location-map files are packed.
 - **Android with a real pack in airplane mode:** shown on the emulator with the synthetic fixture only. Importing a real pack on Android waits for MOBPACK-002.
 - **Cross-pack deduplication:** images are deduplicated within a pack. The shared store across packs is STORE-002 (owner hold).
