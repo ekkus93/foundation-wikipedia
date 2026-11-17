@@ -149,6 +149,21 @@ pub struct InstalledPack {
     pub articles: u64,
 }
 
+/// The review shown for a pack about to be installed.
+fn pack_review(review: &wiki_store::pack_install::PackInstallReview<'_>) -> PackReview {
+    PackReview {
+        snapshot_id: review.manifest.pack_id.clone(),
+        project: review.manifest.project.clone(),
+        trust: review.trust.into(),
+        trust_label: review.trust.label().to_owned(),
+        articles: review.manifest.metadata.counts.articles,
+        declared_bytes: review.declared_bytes,
+        identity_sha256: wiki_pack_format::signature::transcript_digest(review.manifest)
+            .map(|digest| wiki_pack_format::signature::hex(&digest))
+            .unwrap_or_default(),
+    }
+}
+
 /// What the user reviews before an import is published.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PackReview {
@@ -160,6 +175,10 @@ pub struct PackReview {
     pub trust_label: String,
     pub articles: u64,
     pub declared_bytes: u64,
+    /// SHA-256 of the manifest identity transcript (covers every object's
+    /// digest): an installer that reviews and installs in separate passes
+    /// approves only the pack with this identity.
+    pub identity_sha256: String,
 }
 
 /// An installed snapshot as listed for the pack manager.
@@ -340,14 +359,7 @@ impl OfflineLibrary {
         }
         let mut reader = SourceReader(source);
         let installed = install_custom_pack_stream(&self.root, &mut reader, max_bytes, |review| {
-            reviewer.approve(PackReview {
-                snapshot_id: review.manifest.pack_id.clone(),
-                project: review.manifest.project.clone(),
-                trust: review.trust.into(),
-                trust_label: review.trust.label().to_owned(),
-                articles: review.manifest.metadata.counts.articles,
-                declared_bytes: review.declared_bytes,
-            })
+            reviewer.approve(pack_review(review))
         })?;
         Ok(InstalledPack {
             snapshot_id: installed.snapshot_id,
@@ -2053,16 +2065,7 @@ impl OfflineLibrary {
             &pack_id,
             &|| observer.is_cancelled(),
             &|done, total| observer.progress(done, total),
-            |review| {
-                reviewer.approve(PackReview {
-                    snapshot_id: review.manifest.pack_id.clone(),
-                    project: review.manifest.project.clone(),
-                    trust: review.trust.into(),
-                    trust_label: review.trust.label().to_owned(),
-                    articles: review.manifest.metadata.counts.articles,
-                    declared_bytes: review.declared_bytes,
-                })
-            },
+            |review| reviewer.approve(pack_review(review)),
         )?;
         Ok(InstalledPack {
             snapshot_id: installed.snapshot_id,

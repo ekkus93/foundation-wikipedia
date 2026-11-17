@@ -128,6 +128,19 @@ impl InstallReviewer for ReviewOnly {
     }
 }
 
+/// The pack the user last reviewed: its path and manifest identity.
+#[derive(Default)]
+pub struct ReviewedPack(pub Mutex<Option<(PathBuf, String)>>);
+
+/// Approves only the pack whose identity the user reviewed.
+struct SamePack(String);
+
+impl InstallReviewer for SamePack {
+    fn approve(&self, review: PackReview) -> bool {
+        !self.0.is_empty() && review.identity_sha256 == self.0
+    }
+}
+
 fn pack_path(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
     if !path.is_absolute() || !path.is_file() {
@@ -156,14 +169,21 @@ pub async fn review_offline_pack(
         );
         let review = reviewer.0.lock().ok().and_then(|mut slot| slot.take());
         match (result, review) {
-            (Err(LibraryError::ConfirmationRequired), Some(review)) => Ok(PackReviewDto {
+            (Err(LibraryError::ConfirmationRequired), Some(review)) => {
+                // Remember exactly which pack the user is shown, so install
+                // can refuse a different file at the same path.
+                if let Ok(mut reviewed) = app.state::<ReviewedPack>().0.lock() {
+                    *reviewed = Some((path.clone(), review.identity_sha256.clone()));
+                }
+                Ok(PackReviewDto {
                 trust_description: pack_trust_description(review.trust),
                 snapshot_id: review.snapshot_id,
                 project: review.project,
                 trust_label: review.trust_label,
                 articles: review.articles,
                 declared_bytes: review.declared_bytes,
-            }),
+            })
+            }
             (Err(error), _) => Err(message(error)),
             (Ok(_), _) => Err("The pack was installed without review.".to_owned()),
         }
@@ -177,9 +197,30 @@ pub async fn review_offline_pack(
 pub async fn install_offline_pack(app: tauri::AppHandle, path: String) -> Result<String, String> {
     blocking(move || {
         let path = pack_path(&path)?;
+        let reviewed = app
+            .state::<ReviewedPack>()
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let Some((reviewed_path, identity)) = reviewed.filter(|(p, _)| *p == path) else {
+            return Err("Review this pack before installing it.".to_owned());
+        };
+        let file = std::fs::File::open(&reviewed_path)
+            .map_err(|_| "The selected file could not be read.")?;
         let installed = library(&app)?
-            .install_pack(path.to_string_lossy().into_owned(), true)
-            .map_err(message)?;
+            .install_pack_stream(
+                Arc::new(FileSource(Mutex::new(file))),
+                Arc::new(SamePack(identity)),
+                MAX_PACK_BYTES,
+            )
+            .map_err(|error| match error {
+                LibraryError::ConfirmationRequired => {
+                    "The file changed after it was reviewed. Nothing was installed; review it again."
+                        .to_owned()
+                }
+                other => message(other),
+            })?;
         Ok(installed.snapshot_id)
     })
     .await

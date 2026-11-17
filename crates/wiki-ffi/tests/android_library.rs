@@ -241,6 +241,64 @@ mod streamed {
         assert_eq!(library.list_packs().unwrap().len(), 1);
     }
 
+    /// Approves only the pack with the identity the user reviewed.
+    struct SameIdentity(String);
+
+    impl InstallReviewer for SameIdentity {
+        fn approve(&self, review: PackReview) -> bool {
+            review.identity_sha256 == self.0
+        }
+    }
+
+    #[test]
+    fn a_two_pass_install_refuses_a_pack_other_than_the_reviewed_one() {
+        let dir = test_dir("swap");
+        // Same article count and size class; the content (revisions) differs.
+        let reviewed_bytes = fs::read(build_pack_at(&dir.0, "moon-pack", 7000)).unwrap();
+        let swapped_bytes = fs::read(build_pack_at(&dir.0, "moon-pack-b", 8000)).unwrap();
+        let library = library(&dir.0);
+
+        let review = Reviewer::new(false);
+        let _ = library.install_pack_stream(
+            BytesSource::new(reviewed_bytes.clone()),
+            review.clone(),
+            1 << 30,
+        );
+        let reviewed = review.seen.lock().unwrap()[0].clone();
+        assert_eq!(reviewed.identity_sha256.len(), 64);
+
+        let other = Reviewer::new(false);
+        let _ = library.install_pack_stream(
+            BytesSource::new(swapped_bytes.clone()),
+            other.clone(),
+            1 << 30,
+        );
+        assert_ne!(
+            other.seen.lock().unwrap()[0].identity_sha256,
+            reviewed.identity_sha256
+        );
+
+        // The file at the reviewed path was replaced: nothing is installed.
+        assert_eq!(
+            library.install_pack_stream(
+                BytesSource::new(swapped_bytes),
+                Arc::new(SameIdentity(reviewed.identity_sha256.clone())),
+                1 << 30
+            ),
+            Err(LibraryError::ConfirmationRequired)
+        );
+        assert!(library.list_packs().unwrap().is_empty());
+        // The reviewed pack itself installs.
+        library
+            .install_pack_stream(
+                BytesSource::new(reviewed_bytes),
+                Arc::new(SameIdentity(reviewed.identity_sha256)),
+                1 << 30,
+            )
+            .unwrap();
+        assert_eq!(library.list_packs().unwrap().len(), 1);
+    }
+
     #[test]
     fn tampered_truncated_or_overrunning_streams_are_rejected() {
         let dir = test_dir("tamper");

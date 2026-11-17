@@ -5931,6 +5931,13 @@ data class PackReview (
     var `articles`: kotlin.ULong
     , 
     var `declaredBytes`: kotlin.ULong
+    , 
+    /**
+     * SHA-256 of the manifest identity transcript (covers every object's
+     * digest): an installer that reviews and installs in separate passes
+     * approves only the pack with this identity.
+     */
+    var `identitySha256`: kotlin.String
     
 ){
     
@@ -5953,6 +5960,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -5962,7 +5970,8 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterTypePackTrust.allocationSize(value.`trust`) +
             FfiConverterString.allocationSize(value.`trustLabel`) +
             FfiConverterULong.allocationSize(value.`articles`) +
-            FfiConverterULong.allocationSize(value.`declaredBytes`)
+            FfiConverterULong.allocationSize(value.`declaredBytes`) +
+            FfiConverterString.allocationSize(value.`identitySha256`)
     )
 
     override fun write(value: PackReview, buf: ByteBuffer) {
@@ -5972,6 +5981,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterULong.write(value.`declaredBytes`, buf)
+            FfiConverterString.write(value.`identitySha256`, buf)
     }
 }
 

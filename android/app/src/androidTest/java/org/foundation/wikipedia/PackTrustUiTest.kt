@@ -78,6 +78,7 @@ class PackTrustUiTest {
         trustLabel = packTrustLabel(trust),
         articles = 2uL,
         declaredBytes = 4096uL,
+        identitySha256 = "0".repeat(64),
     )
 
     @Test

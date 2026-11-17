@@ -1619,6 +1619,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(offline_packs::OfflineLibraryState::default())
+        .manage(offline_packs::ReviewedPack::default())
         .manage(pack_chat::PackChatState::default())
         .manage(DesktopOnlineCache::default())
         .manage(DesktopPersonalDataGate::default())
