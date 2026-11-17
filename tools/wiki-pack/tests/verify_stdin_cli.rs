@@ -17,7 +17,12 @@ fn invoke(command: &str, budget: &str, bytes: &[u8]) -> std::process::Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    // A command that refuses the budget exits without reading stdin, so the
+    // write may race with its exit; a broken pipe is that refusal, not a
+    // test failure. The exit status and stderr below are what is checked.
+    if let Err(error) = child.stdin.take().unwrap().write_all(bytes) {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     child.wait_with_output().unwrap()
 }
 
