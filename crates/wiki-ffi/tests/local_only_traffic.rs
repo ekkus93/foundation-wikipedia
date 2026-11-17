@@ -114,8 +114,14 @@ fn a_local_only_provider_never_contacts_a_hosted_provider() {
 
     let supported = ask(&library, &local, "What do tides follow?").unwrap();
     assert!(matches!(supported, ChatAnswer::Supported { .. }));
-    let unsupported = ask(&library, &local, "Who was the first emperor of Rome?").unwrap();
+    // The model finds no answer in the passages it was sent.
+    let unsupported = ask(&library, &local, "When are tides highest?").unwrap();
     assert!(matches!(unsupported, ChatAnswer::InsufficientEvidence));
+    // Nothing in the article matches: refused before any request is sent.
+    assert_eq!(
+        ask(&library, &local, "Who was the first emperor of Rome?").err(),
+        Some(ChatError::NoEvidence)
+    );
     server.join().unwrap();
 
     // The local server is gone: the request fails; it is not sent elsewhere.

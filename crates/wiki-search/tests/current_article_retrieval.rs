@@ -350,3 +350,27 @@ fn the_articles_own_subject_term_is_answerable() {
         Retrieval::NoEvidence
     );
 }
+
+/// Found on a real revision (SRC-003 Hypotenuse): "who" and "the" made an
+/// unrelated question answerable, and every block containing "the" was then
+/// sent as evidence.
+#[test]
+fn question_words_neither_answer_a_question_nor_pad_the_evidence() {
+    let index = index();
+    // "who" and "the" occur in the article; nothing else of the question does.
+    assert_eq!(
+        index.retrieve(&request("Who won the football world cup?")),
+        Retrieval::NoEvidence
+    );
+    // One content word matches one block: only that block is returned,
+    // not every block that also contains "the".
+    let (blocks, _, _) = evidence(index.retrieve(&request("Which company built the tower?")));
+    assert!(blocks.iter().all(|block| {
+        let text = block.hit.excerpt.to_lowercase();
+        text.contains("company") || text.contains("built") || text.contains("tower")
+    }));
+    let (blocks, _, _) =
+        evidence(index.retrieve(&request("Who were the engineers of the company?")));
+    assert_eq!(blocks.len(), 1, "only the block with \"company\"");
+    assert!(blocks[0].hit.excerpt.contains("engineering company"));
+}

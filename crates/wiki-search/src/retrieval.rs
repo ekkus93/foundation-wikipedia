@@ -33,6 +33,17 @@ pub const MAX_RETRIEVED_BLOCKS: usize = 100;
 pub const MAX_SELECTION_BYTES: usize = 8192;
 
 /// What the caller knows about the reader when asking.
+/// English question and function words of three or more letters. They rank
+/// passages but never make a question answerable or a passage evidence:
+/// "Who won the 1998 World Cup?" must not match an article through "who"
+/// and "the". Other languages rely on the ubiquity rule below.
+const QUESTION_WORDS: [&str; 46] = [
+    "the", "and", "for", "are", "was", "were", "what", "which", "who", "whom", "whose", "when",
+    "where", "why", "how", "does", "did", "doe", "with", "from", "that", "this", "these", "those",
+    "has", "have", "had", "not", "but", "its", "into", "about", "than", "then", "there", "their",
+    "they", "them", "can", "could", "would", "should", "will", "you", "your", "any",
+];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RetrievalRequest {
     pub query: String,
@@ -152,8 +163,10 @@ impl ArticleLexicalIndex {
         // NOT everywhere; otherwise the question is about the article's
         // pervasive subject ("gravity" in Gravity) and those matches count.
         // Short and discounted terms still contribute to ranking.
-        let content_bearing =
-            |term: &str| term.chars().count() >= 3 || term.chars().any(crate::is_cjk);
+        let content_bearing = |term: &str| {
+            (term.chars().count() >= 3 || term.chars().any(crate::is_cjk))
+                && !QUESTION_WORDS.contains(&term)
+        };
         let ubiquitous =
             |term: &str| n >= MIN_BLOCKS_FOR_UBIQUITY && df.get(term).copied().unwrap_or(0) >= n;
         let has_specific_content_term = weights
@@ -209,7 +222,9 @@ impl ArticleLexicalIndex {
                     matched_informative = true;
                 }
             }
-            if score <= 0.0 && !signals.selection {
+            // A block that matched only function words ("the", "who") is
+            // not evidence for this question, however the others rank.
+            if (score <= 0.0 || !matched_informative) && !signals.selection {
                 continue;
             }
             any_informative |= matched_informative;
