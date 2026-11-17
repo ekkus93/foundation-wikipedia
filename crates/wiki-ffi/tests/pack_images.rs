@@ -24,6 +24,10 @@ fn a_pack_image_installs_activates_and_reads_back_verified() {
     library.activate("image-pack".into()).unwrap();
     let opened = library.open_page("enwiki".into(), 3).unwrap().unwrap();
     assert_eq!(opened.images.get("Red_square.png"), Some(&digest));
+    assert!(
+        opened.still_images.is_empty(),
+        "a PNG is not an animation still"
+    );
 
     let image = library.read_image(digest.clone()).unwrap().unwrap();
     assert_eq!(image.mime, "image/png");
@@ -81,6 +85,7 @@ fn committed_android_image_fixture_matches_the_builder() {
 /// `PACK003_PACK=<file.wpack>` and run with `--ignored --nocapture`. Every
 /// article's every required image must read back verified, and the reader
 /// document must load each one locally and nothing else.
+/// `PACK003_SHOW_SIZES` lists every image's size, format and source.
 #[test]
 #[ignore = "needs a built pack; see PACK-003 evidence"]
 fn audit_a_real_pack_for_complete_local_images() {
@@ -117,6 +122,15 @@ fn audit_a_real_pack_for_complete_local_images() {
             let image = library.read_image(digest.clone()).unwrap().unwrap();
             assert_eq!(image.mime, asset.mime_type);
             bytes += image.bytes.len();
+            if std::env::var_os("PACK003_SHOW_SIZES").is_some() {
+                println!(
+                    "    {:>9} {} {:?} {}",
+                    image.bytes.len(),
+                    image.mime,
+                    asset.derivation,
+                    asset.source_url
+                );
+            }
             assert!(
                 page.document.contains(&format!(
                     "src=\"https://foundation.invalid/media/{digest}\""

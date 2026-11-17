@@ -215,6 +215,7 @@ pub fn parse_image_metadata(
                 creator,
                 attribution,
                 is_av_preview: false,
+                derivation: None,
             })
         })
         .collect()

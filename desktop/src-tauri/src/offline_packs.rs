@@ -304,6 +304,7 @@ fn sanitized(page: wiki_ffi::android::ArticlePage) -> (u64, u64, String, String)
     let images = wiki_source::reader_document::PackImageSources {
         base: PACK_IMAGE_BASE.to_owned(),
         by_file: page.images,
+        stills: page.still_images.into_iter().collect(),
     };
     (
         page.page_id,

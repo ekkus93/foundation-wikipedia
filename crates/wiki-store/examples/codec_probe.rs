@@ -106,6 +106,7 @@ fn fixture(page_id: u64) -> PageRecord {
             creator: "Example contributor".into(),
             attribution: "Example contributor — CC BY-SA 4.0".into(),
             is_av_preview: false,
+            derivation: None,
         }],
         rendered_html: "<article><h1>Representative science article</h1><p>Gravity bends spacetime.</p></article>".into(),
         is_disambiguation: false,

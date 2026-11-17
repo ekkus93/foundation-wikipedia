@@ -256,6 +256,9 @@ pub struct ArticlePage {
     /// Images the pack holds for this article: Wikimedia file name (as in
     /// image URLs, e.g. `Hypotenuse.svg`) → SHA-256 for [`OfflineLibrary::read_image`].
     pub images: std::collections::HashMap<String, String>,
+    /// SHA-256 of each image that is only an animation's first frame; the
+    /// reader labels it (PACK-003).
+    pub still_images: Vec<String>,
 }
 
 impl From<&Article> for SearchHit {
@@ -466,15 +469,21 @@ impl OfflineLibrary {
                 .reader()
                 .open_page(&key)
                 .map_err(|_| LibraryError::VerificationFailed)?;
-            Ok(article.map(|article| ArticlePage {
-                images: wiki_source::reader_document::PackImageSources::for_article(&article, "")
-                    .by_file,
-                project: article.key.project,
-                page_id: article.key.page_id,
-                revision_id: article.revision.revision_id,
-                title: article.title,
-                display_title: article.display_title,
-                html: article.rendered_html,
+            Ok(article.map(|article| {
+                let sources =
+                    wiki_source::reader_document::PackImageSources::for_article(&article, "");
+                let mut still_images: Vec<String> = sources.stills.into_iter().collect();
+                still_images.sort();
+                ArticlePage {
+                    images: sources.by_file,
+                    still_images,
+                    project: article.key.project,
+                    page_id: article.key.page_id,
+                    revision_id: article.revision.revision_id,
+                    title: article.title,
+                    display_title: article.display_title,
+                    html: article.rendered_html,
+                }
             }))
         })
     }

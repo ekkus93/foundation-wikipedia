@@ -116,6 +116,7 @@ mod tests {
                 creator: "Contributor".into(),
                 attribution: "Contributor under CC BY-SA".into(),
                 is_av_preview: false,
+                derivation: None,
             }],
             rendered_html: "<p>Physics</p>".into(),
             is_disambiguation: false,
@@ -145,6 +146,7 @@ mod tests {
         let mut a = article();
         a.media.push(MediaAsset {
             is_av_preview: true,
+            derivation: None,
             ..a.media[0].clone()
         });
         let report = audit_article_media(&a, &manifest()).unwrap();

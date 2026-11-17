@@ -131,6 +131,22 @@ pub struct MediaAsset {
     pub attribution: String,
     /// Audio/video are online-on-demand; the offline asset is its preview.
     pub is_av_preview: bool,
+    /// How the pack's bytes were made from the source file, when they are
+    /// not the file itself or Wikimedia's rendering (PACK-003). Absent in
+    /// records written before derivations existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<MediaDerivation>,
+}
+
+/// A pack's own re-encoding of a Wikimedia image (PACK-003). Both are
+/// stored as WebP.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaDerivation {
+    /// The same pixels, re-encoded as lossless WebP.
+    LosslessWebp,
+    /// The first frame of an animation; the animation itself is online only.
+    FirstFrameStill,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -460,6 +476,8 @@ impl Article {
                 || media.license.trim().is_empty()
                 || media.creator.trim().is_empty()
                 || media.attribution.trim().is_empty()
+                || (media.derivation.is_some()
+                    && (media.mime_type != "image/webp" || media.sha256.is_none()))
             {
                 return Err(ModelError::InvalidMediaMetadata(index));
             }
@@ -827,6 +845,7 @@ mod tests {
             creator: "Émilie Example".into(),
             attribution: "Émilie Example — CC BY-SA 4.0".into(),
             is_av_preview: false,
+            derivation: None,
         });
         a.lead = vec![
             Block {
@@ -970,6 +989,7 @@ mod tests {
             creator: "Example contributor".into(),
             attribution: "Example contributor, CC BY-SA 4.0".into(),
             is_av_preview: false,
+            derivation: None,
         });
         a.lead[0].content = BlockContent::Media { media_index: 0 };
         assert_eq!(a.validate(), Ok(()));
@@ -997,6 +1017,7 @@ mod tests {
             creator: "Contributor".into(),
             attribution: "Contributor under CC BY-SA".into(),
             is_av_preview: true,
+            derivation: None,
         });
         assert_eq!(a.validate(), Ok(()));
         for mime in [
@@ -1216,6 +1237,7 @@ mod tests {
             creator: "Contributor".into(),
             attribution: "Contributor, CC BY-SA 4.0".into(),
             is_av_preview: false,
+            derivation: None,
         });
         assert_eq!(a.validate(), Ok(()));
         a.media[0].source_url = "javascript:alert(1)".into();

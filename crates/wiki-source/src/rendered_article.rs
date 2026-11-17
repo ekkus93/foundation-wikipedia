@@ -942,6 +942,7 @@ mod tests {
                 creator: "Example".into(),
                 attribution: "Example, CC BY-SA 3.0".into(),
                 is_av_preview: false,
+                derivation: None,
             })
             .collect::<Vec<_>>();
         let article = assemble_article(

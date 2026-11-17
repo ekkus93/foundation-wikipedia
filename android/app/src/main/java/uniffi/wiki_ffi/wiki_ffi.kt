@@ -5179,6 +5179,12 @@ data class ArticlePage (
      * image URLs, e.g. `Hypotenuse.svg`) → SHA-256 for [`OfflineLibrary::read_image`].
      */
     var `images`: Map<kotlin.String, kotlin.String>
+    , 
+    /**
+     * SHA-256 of each image that is only an animation's first frame; the
+     * reader labels it (PACK-003).
+     */
+    var `stillImages`: List<kotlin.String>
     
 ){
     
@@ -5202,6 +5208,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterMapStringString.read(buf),
+            FfiConverterSequenceString.read(buf),
         )
     }
 
@@ -5212,7 +5219,8 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.allocationSize(value.`title`) +
             FfiConverterString.allocationSize(value.`displayTitle`) +
             FfiConverterString.allocationSize(value.`html`) +
-            FfiConverterMapStringString.allocationSize(value.`images`)
+            FfiConverterMapStringString.allocationSize(value.`images`) +
+            FfiConverterSequenceString.allocationSize(value.`stillImages`)
     )
 
     override fun write(value: ArticlePage, buf: ByteBuffer) {
@@ -5223,6 +5231,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.write(value.`displayTitle`, buf)
             FfiConverterString.write(value.`html`, buf)
             FfiConverterMapStringString.write(value.`images`, buf)
+            FfiConverterSequenceString.write(value.`stillImages`, buf)
     }
 }
 

@@ -97,6 +97,7 @@ function wikipediaStyle(dark: boolean): string {
     ".mwe-math-fallback-image-inline{display:inline-block;vertical-align:middle}",
     `.foundation-cited{background:${dark ? "#3b3220" : "#fef6e7"};border-left:4px solid ${link};padding:.05em .7em;margin:0 -.7em}`,
     `.foundation-cited-note{color:${muted};font-size:.85em;margin:0}`,
+    `.foundation-still-note{display:block;color:${muted};font-size:.85em}`,
     ".mwe-math-fallback-image-display{display:block;margin:.5em auto}",
     "@media (max-width:720px){.infobox,.sidebar,.thumb,figure[typeof]{float:none;width:auto;max-width:100%;margin:1em 0}}",
   ].join("");

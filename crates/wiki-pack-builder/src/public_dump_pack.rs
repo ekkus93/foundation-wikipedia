@@ -27,7 +27,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use wiki_model::{Article, ArticleKey, PageRecord};
+use crate::image_reencode::pack_image;
+use wiki_model::{Article, ArticleKey, MediaDerivation, PageRecord};
 use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_pack_format::manifest::{SourceKind, SourceSnapshot};
 use wiki_source::media_download::{
@@ -191,8 +192,8 @@ where
 /// directory until [`write_dump_pack`] copies them into the pack.
 pub struct DumpMediaStore {
     dir: PathBuf,
-    /// Download URL → (SHA-256, format), so a shared image is fetched once.
-    fetched: HashMap<String, (String, &'static str)>,
+    /// Download URL → what was stored, so a shared image is fetched once.
+    fetched: HashMap<String, StoredImage>,
 }
 
 impl DumpMediaStore {
@@ -213,7 +214,7 @@ impl DumpMediaStore {
         &mut self,
         transport: &mut T,
         download: &wiki_source::media_download::ImageDownload,
-    ) -> Result<(String, &'static str), String>
+    ) -> Result<StoredImage, String>
     where
         T::Error: std::fmt::Debug,
     {
@@ -225,15 +226,29 @@ impl DumpMediaStore {
             .map_err(|error| format!("{}: download failed: {error:?}", download.file_title))?;
         let mime = verify_image(download, &bytes)
             .map_err(|error| format!("{}: image refused: {error:?}", download.file_title))?;
-        let digest = hex_sha256(&bytes);
+        // Only verified bytes are re-encoded; see `image_reencode`.
+        let packed = pack_image(bytes, mime);
+        let digest = hex_sha256(&packed.bytes);
         let path = self.dir.join(&digest);
         if !path.exists() {
-            fs::write(&path, &bytes).map_err(|e| format!("image write: {e}"))?;
+            fs::write(&path, &packed.bytes).map_err(|e| format!("image write: {e}"))?;
         }
-        let found = (digest, mime);
+        let found = StoredImage {
+            sha256: digest,
+            mime: packed.mime,
+            derivation: packed.derivation,
+        };
         self.fetched.insert(download.url.clone(), found.clone());
         Ok(found)
     }
+}
+
+/// One image as stored for a pack.
+#[derive(Clone, Debug)]
+struct StoredImage {
+    sha256: String,
+    mime: &'static str,
+    derivation: Option<MediaDerivation>,
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -293,11 +308,13 @@ where
         let downloads = parse_image_downloads(&body, batch)
             .map_err(|e| fail(format!("image download rejected: {e:?}")))?;
         for (mut asset, download) in assets.into_iter().zip(downloads) {
-            let (digest, mime) = media.fetch(transport, &download).map_err(fail)?;
+            let stored = media.fetch(transport, &download).map_err(fail)?;
             // The asset now describes the stored bytes; `source_url` still
-            // names the original file.
-            asset.sha256 = Some(digest);
-            asset.mime_type = mime.to_owned();
+            // names the original file, and `derivation` says how the bytes
+            // were made from it.
+            asset.sha256 = Some(stored.sha256);
+            asset.mime_type = stored.mime.to_owned();
+            asset.derivation = stored.derivation;
             images.push(asset);
         }
     }
@@ -421,18 +438,41 @@ mod tests {
         include_str!("../../../fixtures/wikimedia/enwiki/hypotenuse-1383416967.images.json");
 
     /// Replays recorded Action API replies; records every requested URL.
-    /// Images are small PNGs named after their URL; `broken` names one URL
-    /// that fails.
+    /// Images are small PNG-signed blobs named after their URL (which no
+    /// decoder accepts, so they are packed unchanged), or with `diagrams`
+    /// real PNG diagrams; `broken` names one URL that fails.
     struct Replay {
         requests: Vec<String>,
         broken: Option<&'static str>,
+        diagrams: bool,
     }
 
     fn replay() -> Replay {
         Replay {
             requests: Vec::new(),
             broken: None,
+            diagrams: false,
         }
+    }
+
+    /// A flat-colour diagram PNG, different for each URL.
+    fn diagram_png(url: &str) -> Vec<u8> {
+        use image::ImageEncoder;
+        let shade = url
+            .bytes()
+            .fold(0u8, |acc, b| acc.wrapping_mul(31).wrapping_add(b));
+        let image = image::RgbaImage::from_fn(400, 300, |x, y| {
+            if y == 150 || x % 40 == 0 {
+                image::Rgba([0, 0, 0, 255])
+            } else {
+                image::Rgba([shade, 120, 255 - shade, 255])
+            }
+        });
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(image.as_raw(), 400, 300, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        png
     }
 
     impl MediaFileTransport for Replay {
@@ -450,6 +490,9 @@ mod tests {
             );
             if self.broken.is_some_and(|broken| url.contains(broken)) {
                 return Err("HTTP 404".into());
+            }
+            if self.diagrams {
+                return Ok(diagram_png(url));
             }
             let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
             png.extend_from_slice(url.as_bytes());
@@ -645,6 +688,96 @@ mod tests {
     }
 
     #[test]
+    fn diagrams_are_packed_as_lossless_webp_and_say_so() {
+        let (bytes, member) = dump(1383416967);
+        let selected = select(&bytes, &member, &["Hypotenuse"]).unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-webp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let mut media = DumpMediaStore::create(&dir.join("images")).unwrap();
+        let mut transport = Replay {
+            diagrams: true,
+            ..replay()
+        };
+        let article =
+            render_dump_article(&mut transport, "enwiki", "en", &selected[0], &mut media).unwrap();
+        article.validate().unwrap();
+        let originals: Vec<Vec<u8>> = transport.requests[2..]
+            .iter()
+            .map(|url| diagram_png(url))
+            .collect();
+        assert_eq!(originals.len(), 3);
+        for (asset, original) in article.media.iter().zip(&originals) {
+            assert_eq!(asset.mime_type, "image/webp");
+            assert_eq!(asset.derivation, Some(MediaDerivation::LosslessWebp));
+            let stored = fs::read(media.path().join(asset.sha256.as_deref().unwrap())).unwrap();
+            assert!(stored.len() < original.len());
+            assert_eq!(
+                image::load_from_memory(&stored).unwrap().to_rgba8(),
+                image::load_from_memory(original).unwrap().to_rgba8(),
+                "the same pixels as the downloaded file"
+            );
+        }
+
+        let identity = DumpPackIdentity {
+            pack_id: "hypotenuse-webp",
+            project: "enwiki",
+            generation: "2026-11-01",
+            inventory_sha256: &"ab".repeat(32),
+            definition_sha256: &"cd".repeat(32),
+            definition_id: "hypotenuse",
+        };
+        let mut pack = Vec::new();
+        write_dump_pack(
+            std::slice::from_ref(&article),
+            &media,
+            &identity,
+            &dir.join("tree"),
+            &mut pack,
+        )
+        .unwrap();
+        let root = dir.join("library");
+        fs::create_dir(&root).unwrap();
+        let installed = wiki_store::pack_install::install_custom_pack(
+            &root,
+            &mut Cursor::new(&pack),
+            pack.len() as u64,
+            |_| true,
+        )
+        .unwrap();
+        // The installed record keeps the derivation, for attribution.
+        let catalog =
+            SnapshotCatalog::open_read_only(&installed.path.join("catalog.sqlite")).unwrap();
+        let mut stored = Vec::new();
+        catalog
+            .visit_records(&installed.path, |record| {
+                if let PageRecord::Article(article) = record {
+                    stored.push(*article);
+                }
+                Ok::<(), wiki_store::catalog::CatalogError>(())
+            })
+            .unwrap();
+        assert_eq!(stored, [article.clone()]);
+        for asset in &article.media {
+            let (mime, bytes) = wiki_store::pack_media::read_pack_image(
+                &installed.path,
+                asset.sha256.as_deref().unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(mime, "image/webp");
+            assert!(bytes.starts_with(b"RIFF"));
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn an_image_that_cannot_be_downloaded_fails_the_article() {
         let (bytes, member) = dump(1383416967);
         let selected = select(&bytes, &member, &["Hypotenuse"]).unwrap();
@@ -658,8 +791,8 @@ mod tests {
         ));
         let mut media = DumpMediaStore::create(&dir).unwrap();
         let mut broken = Replay {
-            requests: Vec::new(),
             broken: Some("Pythagorean.svg"),
+            ..replay()
         };
         match render_dump_article(&mut broken, "enwiki", "en", &selected[0], &mut media) {
             Err(DumpPackError::Render { title, reason }) => {

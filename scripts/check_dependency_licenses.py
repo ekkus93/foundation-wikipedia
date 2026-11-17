@@ -37,6 +37,10 @@ ALLOWED = {
     # rustls-platform-verifier, never compiled into the desktop/Android apps;
     # see https://spdx.org/licenses/CDLA-Permissive-2.0.html
     "CDLA-Permissive-2.0",
+    # PACK-003 image re-encoding (image -> png/flate2): choices that include
+    # MIT, which is allowed individually.
+    "0BSD OR MIT OR Apache-2.0",  # adler2
+    "MIT OR Zlib OR Apache-2.0",  # miniz_oxide
 }
 
 

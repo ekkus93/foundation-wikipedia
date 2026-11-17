@@ -174,6 +174,7 @@ pub fn build_image_pack(dir: &Path, pack_id: &str) -> PathBuf {
         creator: "Synthetic test image".into(),
         attribution: "Synthetic test image, CC0".into(),
         is_av_preview: false,
+        derivation: None,
     }];
     page.rendered_html = concat!(
         "<article><p>A triangle with one right angle.</p>",

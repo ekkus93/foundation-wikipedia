@@ -8,6 +8,7 @@ pub mod curated_preview;
 pub mod enterprise_graph;
 pub mod gif_preflight;
 pub mod graph_digest;
+pub mod image_reencode;
 pub mod joined_preview;
 pub mod joined_related;
 pub mod jpeg_preflight;

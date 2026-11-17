@@ -60,6 +60,7 @@ fn sample() -> Article {
                 creator: "Example contributor".into(),
                 attribution: "Example contributor, CC BY-SA 4.0".into(),
                 is_av_preview: false,
+                derivation: None,
             })
             .collect(),
         rendered_html: "<article>figure</article>".into(),

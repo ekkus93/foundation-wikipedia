@@ -18,6 +18,10 @@ wiki-pack-format = { path = "../wiki-pack-format" }
 html5ever = "0.40"
 url = "2"
 sha2 = "0.10"
+# PACK-003 lossless re-encoding (publisher side only; pure Rust codecs).
+# Pinned: later 0.25 releases need Rust 1.88, above the workspace toolchain.
+image = { version = "=0.25.6", default-features = false, features = ["png", "gif", "webp"] }
 
 [dev-dependencies]
 bzip2 = "0.6.1"
+crc32fast = "1"

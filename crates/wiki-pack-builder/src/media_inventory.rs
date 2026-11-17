@@ -39,6 +39,8 @@ pub struct StructuredMediaNotice {
     pub creator: String,
     pub attribution: String,
     pub is_av_preview: bool,
+    /// Set when the pack holds a re-encoding of the file (PACK-003).
+    pub derivation: Option<wiki_model::MediaDerivation>,
 }
 
 /// Produce deterministic, de-duplicated attribution metadata for references
@@ -63,6 +65,7 @@ pub fn collect_structured_media_notices(
                 creator: media.creator.clone(),
                 attribution: media.attribution.clone(),
                 is_av_preview: media.is_av_preview,
+                derivation: media.derivation,
             }
         })
         .collect())

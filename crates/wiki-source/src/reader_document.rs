@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use ammonia::{Builder, UrlRelative};
-use wiki_model::Article;
+use wiki_model::{Article, MediaDerivation};
 
 /// The origin article documents are loaded at; never a real host.
 pub const READER_ORIGIN: &str = "https://foundation.invalid";
@@ -74,7 +74,13 @@ pub const READER_IMAGE_BASE: &str = "https://foundation.invalid/media/";
 pub struct PackImageSources {
     pub base: String,
     pub by_file: HashMap<String, String>,
+    /// SHA-256 of each image that is the first frame of an animation
+    /// ([`MediaDerivation::FirstFrameStill`]); each is labelled in the page.
+    pub stills: HashSet<String>,
 }
+
+/// Shown after an animation the pack holds only as its first frame.
+pub const STILL_IMAGE_NOTE: &str = "Still image: the animation is online only.";
 
 impl PackImageSources {
     /// The images `article` holds, served under `base`.
@@ -90,6 +96,12 @@ impl PackImageSources {
                         asset.sha256.clone()?,
                     ))
                 })
+                .collect(),
+            stills: article
+                .media
+                .iter()
+                .filter(|asset| asset.derivation == Some(MediaDerivation::FirstFrameStill))
+                .filter_map(|asset| asset.sha256.clone())
                 .collect(),
         }
     }
@@ -118,6 +130,7 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
         schemes.insert(scheme);
     }
     let images = images.cloned();
+    let label = images.clone();
     builder
         .url_schemes(schemes)
         .url_relative(UrlRelative::Custom(Box::new(rewrite_relative)))
@@ -160,7 +173,50 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
             Some(value.into())
         })
         .link_rel(Some("noopener noreferrer nofollow"));
-    builder.clean(html).to_string()
+    let clean = builder.clean(html).to_string();
+    match &label {
+        Some(images) if !images.stills.is_empty() => label_stills(clean, images),
+        _ => clean,
+    }
+}
+
+/// Insert [`STILL_IMAGE_NOTE`] after each image whose source is a still.
+/// Runs on sanitized output, where every attribute value is double-quoted
+/// with `"` escaped, so the first `>` outside quotes ends the tag.
+fn label_stills(html: String, images: &PackImageSources) -> String {
+    let note = format!("<span class=\"foundation-still-note\">{STILL_IMAGE_NOTE}</span>");
+    let sources: Vec<String> = images
+        .stills
+        .iter()
+        .map(|digest| format!(" src=\"{}{digest}\"", images.base))
+        .collect();
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    while let Some(start) = rest.find("<img ") {
+        let mut quoted = false;
+        let Some(end) = rest[start..]
+            .char_indices()
+            .find(|(_, c)| {
+                if *c == '"' {
+                    quoted = !quoted;
+                }
+                *c == '>' && !quoted
+            })
+            .map(|(at, _)| start + at + 1)
+        else {
+            break;
+        };
+        out.push_str(&rest[..end]);
+        if sources
+            .iter()
+            .any(|source| rest[start..end].contains(source))
+        {
+            out.push_str(&note);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Image hosts an online article may load from (DUI-001): Wikimedia's
@@ -305,7 +361,8 @@ img{max-width:100%;height:auto}\
 blockquote,pre{background:var(--box);padding:.5em .8em;overflow-x:auto}\
 sup{line-height:1}\
 .foundation-cited{background:var(--cite);border-left:4px solid var(--link);padding:.05em .7em;margin:0 -.7em;scroll-margin-top:16px}\
-.foundation-cited-note{color:var(--muted);font-size:.8em;margin:0}";
+.foundation-cited-note{color:var(--muted);font-size:.8em;margin:0}\
+.foundation-still-note{display:block;color:var(--muted);font-size:.8em}";
 
 /// A complete, script-free document for one verified article revision.
 pub fn reader_document(article: &Article, theme: ReaderTheme) -> String {
@@ -544,6 +601,41 @@ fn wrap_document(article: &Article, theme: ReaderTheme, body: &str) -> String {
 mod tests {
 
     #[test]
+    fn an_animation_packed_as_a_still_is_labelled_where_it_is_shown() {
+        let still = "aa".repeat(32);
+        let whole = "bb".repeat(32);
+        let html = concat!(
+            "<figure><img src=\"//upload.wikimedia.org/wikipedia/commons/5/52/Triple.gif\" ",
+            "alt=\"phase a > b\"><figcaption>Triple point</figcaption></figure>",
+            "<p>Text <img src=\"//upload.wikimedia.org/wikipedia/commons/9/94/Cycle.png\" alt=\"c\"></p>",
+            "<p><img src=\"//upload.wikimedia.org/wikipedia/commons/0/00/Missing.gif\" alt=\"m\"></p>",
+        );
+        for base in ["packimage://localhost/", READER_IMAGE_BASE] {
+            let images = PackImageSources {
+                base: base.into(),
+                by_file: HashMap::from([
+                    ("Triple.gif".to_owned(), still.clone()),
+                    ("Cycle.png".to_owned(), whole.clone()),
+                ]),
+                stills: HashSet::from([still.clone()]),
+            };
+            let clean = sanitize_pack_article_html(html, &images);
+            let note = format!("<span class=\"foundation-still-note\">{STILL_IMAGE_NOTE}</span>");
+            assert_eq!(clean.matches(&note).count(), 1, "{clean}");
+            assert!(
+                clean.contains(&format!(
+                    "<img src=\"{base}{still}\" alt=\"phase a &gt; b\">{note}<figcaption>"
+                )),
+                "{clean}"
+            );
+            assert!(
+                clean.contains(&format!("<img src=\"{base}{whole}\" alt=\"c\"></p>")),
+                "{clean}"
+            );
+        }
+    }
+
+    #[test]
     fn pack_images_load_only_from_the_local_url_by_digest() {
         let digest = "ab".repeat(32);
         let html = concat!(
@@ -561,6 +653,7 @@ mod tests {
             let images = PackImageSources {
                 base: base.into(),
                 by_file: HashMap::from([("Pythagorean.svg".to_owned(), digest.clone())]),
+                stills: HashSet::new(),
             };
             let clean = sanitize_pack_article_html(html, &images);
             assert!(
