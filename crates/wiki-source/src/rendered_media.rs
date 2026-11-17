@@ -112,8 +112,19 @@ pub(crate) fn image_infos(body: &str, files: &[String]) -> Result<Vec<Value>, Me
     if value.get("error").is_some() {
         return Err(MediaMetadataError::ApiError);
     }
-    if value.get("continue").is_some() {
-        return Err(MediaMetadataError::InvalidResponse);
+    // With a single title the API offers to continue into the file's older
+    // versions (`iistart`); the first entry is the current file, which is
+    // all that is used. Any other continuation means missing pages.
+    if let Some(next) = value.get("continue") {
+        let only_older_versions = next.as_object().is_some_and(|fields| {
+            fields.contains_key("iistart")
+                && fields
+                    .keys()
+                    .all(|key| key == "iistart" || key == "continue")
+        });
+        if !only_older_versions {
+            return Err(MediaMetadataError::InvalidResponse);
+        }
     }
     let pages = value
         .get("query")
@@ -298,6 +309,24 @@ mod tests {
                 r#"{"batchcomplete":true,"continue":{},"query":{"pages":[]}}"#,
                 &files
             ),
+            Err(MediaMetadataError::InvalidResponse)
+        );
+        // A single-file request may offer older file versions: the current
+        // version is used. Continuing to more pages is still refused.
+        let page = body(&info("https://upload.wikimedia.org/a/A.png", licence));
+        let older = page.replacen(
+            '{',
+            r#"{"continue":{"iistart":"2019-07-18T07:44:31Z","continue":"||"},"#,
+            1,
+        );
+        assert_eq!(parse_image_metadata(&older, &files).unwrap().len(), 1);
+        let more_pages = page.replacen(
+            '{',
+            r#"{"continue":{"iistart":"2019-07-18T07:44:31Z","iicontinue":"B.png","continue":"||"},"#,
+            1,
+        );
+        assert_eq!(
+            parse_image_metadata(&more_pages, &files),
             Err(MediaMetadataError::InvalidResponse)
         );
     }

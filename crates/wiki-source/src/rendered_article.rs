@@ -207,6 +207,18 @@ fn file_title(href: &str) -> Option<String> {
     valid.then(|| format!("File:{}", name.trim()))
 }
 
+/// `//upload.wikimedia.org/…/thumb/a/ab/Some_name.svg/250px-….png` →
+/// `File:Some name.svg`; `None` for anything that is not a Wikimedia file.
+fn source_file_title(src: &str) -> Option<String> {
+    let name = crate::media_download::media_file_name(src)?.replace('_', " ");
+    let valid = !name.trim().is_empty()
+        && name.len() <= 512
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '#' | '|'));
+    valid.then(|| format!("File:{}", name.trim()))
+}
+
 impl Walker {
     fn inside(&self, kind: Kind) -> bool {
         self.stack.iter().any(|element| element.kind == kind)
@@ -282,7 +294,10 @@ impl Walker {
         }
     }
 
-    fn image(&mut self, title: String) {
+    /// Record a required image; `block` also places it as a media block
+    /// (figures, infoboxes, galleries), otherwise it is required for the
+    /// rendered page only (an inline flag or symbol).
+    fn image(&mut self, title: String, block: bool) {
         let index = match self.image_index.get(&title) {
             Some(index) => *index,
             None => {
@@ -298,7 +313,7 @@ impl Walker {
                 self.images.len() - 1
             }
         };
-        if !self.pending_media.contains(&index) {
+        if block && !self.pending_media.contains(&index) {
             self.pending_media.push(index);
         }
     }
@@ -335,7 +350,19 @@ impl Walker {
                 || self.inside(Kind::Gallery))
         {
             if let Some(title) = attr(&tag, "href").and_then(file_title) {
-                self.image(title);
+                self.image(title, true);
+            }
+        }
+        // Every displayed Wikimedia file is required offline (PACK-003),
+        // including figures without a file link (`link=`) and inline images
+        // such as flags. Furniture was skipped above; formula fallback images
+        // are not Wikimedia files (the MathML is kept instead).
+        if name == "img" {
+            if let Some(title) = attr(&tag, "src").and_then(source_file_title) {
+                let block = self.inside(Kind::Figure)
+                    || self.inside(Kind::Infobox)
+                    || self.inside(Kind::Gallery);
+                self.image(title, block);
             }
         }
         // Keep exponents readable: 10<sup>20</sup> is 10^20, not 1020.
@@ -1022,6 +1049,45 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn every_displayed_wikimedia_file_is_required_even_without_a_file_link() {
+        let html = concat!(
+            // A figure set to link= has no file link, only the image.
+            "<figure typeof=\"mw:File/Thumb\"><span><img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Right_triangle.svg/250px-Right_triangle.svg.png\" alt=\"A right triangle\"></span>",
+            "<figcaption>A right triangle</figcaption></figure>",
+            "<p>The hypotenuse is the longest side.</p>",
+            // An inline flag in a table: required, not a media block.
+            "<table class=\"wikitable\"><tr><td><span class=\"flagicon\"><img src=\"//upload.wikimedia.org/wikipedia/en/thumb/a/a4/Flag_of_the_United_States.svg/23px-Flag_of_the_United_States.svg.png\" alt=\"United States\"></span> ENIAC</td><td>1945</td></tr></table>",
+            // A formula fallback image is not a Wikimedia file.
+            "<p>So <span class=\"mwe-math-element\"><img src=\"https://wikimedia.org/api/rest_v1/media/math/render/svg/abc\" class=\"mwe-math-fallback-image-inline\" alt=\"c\"></span>.</p>",
+            // Furniture icons stay skipped.
+            "<div class=\"sistersitebox\"><img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/9/99/Wiktionary-logo-en-v2.svg/40px-Wiktionary-logo-en-v2.svg.png\" alt=\"Wiktionary logo\"></div>",
+        );
+        let article = extract_rendered_article(html).unwrap();
+        let titles: Vec<&str> = article
+            .images
+            .iter()
+            .map(|image| image.file_title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "File:Right triangle.svg",
+                "File:Flag of the United States.svg"
+            ]
+        );
+        assert_eq!(
+            article.images[0].caption.as_deref(),
+            Some("A right triangle")
+        );
+        let media_blocks = article
+            .lead
+            .iter()
+            .filter(|block| matches!(block.content, BlockContent::Media { .. }))
+            .count();
+        assert_eq!(media_blocks, 1, "only the figure is a media block");
     }
 
     #[test]
