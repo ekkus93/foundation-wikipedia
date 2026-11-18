@@ -338,6 +338,10 @@ pub fn pack_image_response(
             .status(200)
             .header("Content-Type", image.mime)
             .header("X-Content-Type-Options", "nosniff")
+            .header(
+                "Content-Security-Policy",
+                wiki_store::pack_media::PACK_IMAGE_CSP,
+            )
             .header("Cache-Control", "no-store")
             .body(image.bytes)
             .unwrap_or_else(|_| not_found()),

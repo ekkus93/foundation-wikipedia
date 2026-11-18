@@ -7,7 +7,10 @@ mod support;
 use std::fs;
 use std::path::PathBuf;
 
-use support::{build_image_pack, library, red_png_sha256, test_dir, RED_PNG};
+use support::{
+    blue_svg, build_image_pack, build_image_pack_with_svg, library, red_png_sha256, test_dir,
+    RED_PNG,
+};
 use wiki_store::pack_media::media_object_path;
 
 #[test]
@@ -32,6 +35,11 @@ fn a_pack_image_installs_activates_and_reads_back_verified() {
     let image = library.read_image(digest.clone()).unwrap().unwrap();
     assert_eq!(image.mime, "image/png");
     assert_eq!(image.bytes, RED_PNG);
+    // The SVG figure is kept as a vector, in the sanitiser's exact form.
+    let svg_digest = opened.images.get("Blue_square.svg").unwrap().clone();
+    let svg = library.read_image(svg_digest.clone()).unwrap().unwrap();
+    assert_eq!(svg.mime, "image/svg+xml");
+    assert_eq!(svg.bytes, blue_svg());
     assert_eq!(library.read_image("ab".repeat(32)).unwrap(), None);
     assert_eq!(library.read_image("../manifest.json".into()).unwrap(), None);
 
@@ -42,6 +50,9 @@ fn a_pack_image_installs_activates_and_reads_back_verified() {
         .unwrap();
     assert!(reader.document.contains(&format!(
         "src=\"https://foundation.invalid/media/{digest}\""
+    )));
+    assert!(reader.document.contains(&format!(
+        "src=\"https://foundation.invalid/media/{svg_digest}\""
     )));
     assert!(!reader.document.contains("upload.wikimedia.org"));
 
@@ -54,6 +65,34 @@ fn a_pack_image_installs_activates_and_reads_back_verified() {
     swapped[60] ^= 1;
     fs::write(&installed, swapped).unwrap();
     assert!(library.read_image(digest).is_err());
+}
+
+/// A custom pack cannot carry an SVG that is not exactly what the
+/// sanitiser writes, however it is labelled.
+#[test]
+fn a_pack_with_an_unsanitised_svg_is_refused() {
+    let dir = test_dir("pack-images-hostile-svg");
+    let clean = String::from_utf8(blue_svg()).unwrap();
+    for svg in [
+        clean.replace("/></svg>", "/><script>alert(1)</script></svg>"),
+        clean.replace("<rect", "<rect onload=\"alert(1)\""),
+        clean.replace("<rect", "<image href=\"https://evil.example/x.png\"/><rect"),
+        // Harmless but not in the exact form: still refused.
+        clean.replace("<rect", "<!-- x --><rect"),
+        "<html><script>alert(1)</script></html>".to_owned(),
+    ] {
+        let pack = build_image_pack_with_svg(&dir.0, "hostile-svg", svg.as_bytes());
+        let library = library(&dir.0.join(format!("lib-{}", svg.len())));
+        assert!(
+            matches!(
+                library.install_pack(pack.to_string_lossy().into_owned(), true),
+                Err(wiki_ffi::android::LibraryError::MediaInvalid)
+            ),
+            "{svg}"
+        );
+        fs::remove_file(pack).unwrap();
+        fs::remove_dir_all(dir.0.join("hostile-svg-tree")).unwrap();
+    }
 }
 
 fn android_image_fixture_path() -> PathBuf {

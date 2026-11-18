@@ -76,10 +76,21 @@ internal fun imageResponse(library: RustOfflineLibrary?, digest: String): WebRes
         null,
         200,
         "OK",
-        mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
+        mapOf(
+            "Cache-Control" to "no-store",
+            "X-Content-Type-Options" to "nosniff",
+            "Content-Security-Policy" to PACK_IMAGE_CSP,
+        ),
         ByteArrayInputStream(image.bytes),
     )
 }
+
+/**
+ * Sent with every pack image, the same as `wiki_store::pack_media::PACK_IMAGE_CSP`:
+ * a packed SVG shown as an image runs nothing and loads nothing, and even
+ * opened as a document it could not.
+ */
+internal const val PACK_IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 
 /** The current document, served by the WebView client for its exact URL. */
 internal fun documentResponse(html: String): WebResourceResponse = WebResourceResponse(

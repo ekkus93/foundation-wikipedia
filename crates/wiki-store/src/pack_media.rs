@@ -25,8 +25,20 @@ pub const MEDIA_DIR: &str = "media";
 /// The canonical image index, declared as the manifest attribution object.
 pub const MEDIA_INDEX_OBJECT: &str = "media/index.json";
 /// Image formats a pack may carry: browsers decode them without scripts.
-pub const PACK_IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/// An SVG must also be in the sanitiser's exact form ([`crate::pack_svg`]),
+/// checked when the pack is installed.
+pub const PACK_IMAGE_TYPES: [&str; 5] = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+];
 const MAX_INDEX_BYTES: u64 = 16 * 1024 * 1024;
+/// Content-Security-Policy every app sends with a pack image. An SVG shown
+/// as an `<img>` runs nothing and loads nothing anyway; should one ever be
+/// opened as a document, this still forbids every script and every load.
+pub const PACK_IMAGE_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 /// Largest single image object.
 pub const MAX_PACK_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -57,6 +69,8 @@ pub enum PackMediaError {
     CountMismatch,
     /// Stored bytes differ from their name.
     Corrupt,
+    /// An SVG is not exactly what the sanitiser makes of it (PACK-003).
+    UnsafeSvg(String),
     Io(String),
 }
 
@@ -203,6 +217,17 @@ pub fn check_pack_media(
         if object.sha256.to_ascii_lowercase() != image.sha256 || object.bytes != image.bytes {
             return Err(PackMediaError::ObjectMismatch(path));
         }
+        if image.mime == "image/svg+xml" {
+            let limit = crate::pack_svg::MAX_PACK_SVG_BYTES as u64;
+            let clean = match read_bounded(&staged.join(&path), limit) {
+                Ok(bytes) => crate::pack_svg::is_clean_svg(&bytes),
+                Err(PackMediaError::Io(error)) => return Err(PackMediaError::Io(error)),
+                Err(_) => false,
+            };
+            if !clean {
+                return Err(PackMediaError::UnsafeSvg(image.sha256.clone()));
+            }
+        }
         listed.insert(path);
         match required.get(&image.sha256) {
             Some(mime) if *mime == image.mime => {}
@@ -265,6 +290,16 @@ pub fn read_pack_image(
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_android_app_sends_the_same_image_csp() {
+        let reader = include_str!(
+            "../../../android/app/src/main/java/org/foundation/wikipedia/ArticleReader.kt"
+        );
+        assert!(reader.contains(&format!(
+            "internal const val PACK_IMAGE_CSP = \"{PACK_IMAGE_CSP}\""
+        )));
+    }
+
     fn image(seed: u8, mime: &str) -> (PackImage, Vec<u8>) {
         let bytes = vec![seed; 10];
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -291,14 +326,21 @@ mod tests {
             parse_media_index(spaced.as_bytes()),
             Err(PackMediaError::InvalidIndex)
         );
+        // SVG may be listed; its markup is checked when installed
+        // (`check_pack_media`, wiki-ffi `a_pack_with_an_unsanitised_svg_is_refused`).
         let svg = PackImage {
             mime: "image/svg+xml".into(),
             ..a.clone()
         };
+        assert!(encode_media_index(&[svg]).is_ok());
+        let html = PackImage {
+            mime: "text/html".into(),
+            ..a.clone()
+        };
         assert_eq!(
-            encode_media_index(&[svg]),
+            encode_media_index(&[html]),
             Err(PackMediaError::InvalidIndex),
-            "no SVG markup in packs"
+            "no markup other than SVG in packs"
         );
         let conflicting = PackImage {
             mime: "image/gif".into(),

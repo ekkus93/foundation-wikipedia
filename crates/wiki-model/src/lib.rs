@@ -138,8 +138,8 @@ pub struct MediaAsset {
     pub derivation: Option<MediaDerivation>,
 }
 
-/// A pack's own re-encoding of a Wikimedia image (PACK-003). Both are
-/// stored as WebP.
+/// A pack's own re-encoding of a Wikimedia image (PACK-003). The first
+/// two are stored as WebP, the last as SVG.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaDerivation {
@@ -147,6 +147,19 @@ pub enum MediaDerivation {
     LosslessWebp,
     /// The first frame of an animation; the animation itself is online only.
     FirstFrameStill,
+    /// The SVG rebuilt from its drawing elements only, with editor metadata
+    /// removed; drawn the same.
+    SanitizedSvg,
+}
+
+impl MediaDerivation {
+    /// The format a pack stores this derivation in.
+    pub fn stored_mime(self) -> &'static str {
+        match self {
+            Self::LosslessWebp | Self::FirstFrameStill => "image/webp",
+            Self::SanitizedSvg => "image/svg+xml",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -476,8 +489,9 @@ impl Article {
                 || media.license.trim().is_empty()
                 || media.creator.trim().is_empty()
                 || media.attribution.trim().is_empty()
-                || (media.derivation.is_some()
-                    && (media.mime_type != "image/webp" || media.sha256.is_none()))
+                || media.derivation.is_some_and(|derivation| {
+                    media.mime_type != derivation.stored_mime() || media.sha256.is_none()
+                })
             {
                 return Err(ModelError::InvalidMediaMetadata(index));
             }

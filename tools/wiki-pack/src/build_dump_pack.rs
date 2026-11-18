@@ -138,6 +138,9 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     }
     file.sync_all().map_err(|e| e.to_string())?;
     let stored = fs::read_dir(media.path()).map_or(0, Iterator::count);
+    for (file, reason) in media.svg_fallbacks() {
+        eprintln!("{file}: kept as its 1280 px rendering, not as a vector ({reason})");
+    }
     fs::remove_dir_all(media.path()).map_err(|e| format!("image directory: {e}"))?;
     Ok(format!(
         "Wrote {} with {} articles from {project} {generation}. All {images} article images \

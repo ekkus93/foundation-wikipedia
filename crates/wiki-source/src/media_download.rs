@@ -7,11 +7,15 @@
 //! * a PNG, JPEG, GIF or WebP no wider than [`OFFLINE_IMAGE_WIDTH`] is
 //!   downloaded as the original, and must match Wikimedia's stated size and
 //!   SHA-1;
-//! * anything else — SVG, a wider raster, TIFF, PDF, a video still — is
-//!   downloaded as Wikimedia's own rendering at that width. Wikimedia states
-//!   no hash for a rendering, so only TLS to the fixed media hosts, the size
-//!   cap and the file signature check it. SVG is rasterised rather than
-//!   sanitised, so no SVG markup is ever displayed from a pack. Wikimedia's
+//! * an SVG up to [`MAX_SVG_SOURCE_BYTES`] is downloaded as the original,
+//!   checked against Wikimedia's size and SHA-1, so the pack builder can keep
+//!   it as a vector once sanitised (`wiki_store::pack_svg`). Its 1280 px
+//!   rendering is the [`ImageDownload::fallback`] for an SVG the sanitiser
+//!   refuses;
+//! * anything else — a larger SVG, a wider raster, TIFF, PDF, a video
+//!   still — is downloaded as Wikimedia's own rendering at that width.
+//!   Wikimedia states no hash for a rendering, so only TLS to the fixed
+//!   media hosts, the size cap and the file signature check it. Wikimedia's
 //!   thumbnail service picks the format from `Accept` (it serves WebP behind
 //!   a `.png` URL when WebP is accepted); WebP is preferred as the smallest,
 //!   and the stored format is whatever the bytes' own signature says.
@@ -28,6 +32,9 @@ use crate::rendered_media::{image_infos, MediaMetadataError};
 
 /// Largest image accepted into a pack.
 pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Largest SVG original downloaded to be kept as a vector.
+pub const MAX_SVG_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
+const SVG: &str = "image/svg+xml";
 
 /// Hosts Wikimedia serves file bytes from.
 const MEDIA_HOSTS: [&str; 2] = ["upload.wikimedia.org", "thumb.wikimedia.org"];
@@ -58,6 +65,9 @@ pub struct ImageDownload {
     /// For an original: its format, size and Wikimedia's SHA-1. `None`
     /// for a rendering, whose format is negotiated.
     pub expected: Option<Original>,
+    /// For an SVG original: its rendering's URL, used if the SVG cannot be
+    /// kept as a vector.
+    pub fallback: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +83,23 @@ impl ImageDownload {
         self.expected
             .as_ref()
             .map_or(RENDERING_ACCEPT, |original| original.mime)
+    }
+
+    /// The rendering to download instead of an SVG original.
+    pub fn fallback_download(&self) -> Option<ImageDownload> {
+        Some(ImageDownload {
+            file_title: self.file_title.clone(),
+            url: self.fallback.clone()?,
+            expected: None,
+            fallback: None,
+        })
+    }
+
+    /// Whether this is an SVG original, to be sanitised before packing.
+    pub fn is_svg_original(&self) -> bool {
+        self.expected
+            .as_ref()
+            .is_some_and(|original| original.mime == SVG)
     }
 }
 
@@ -183,20 +210,43 @@ fn choose(file: &str, info: &Value) -> Result<ImageDownload, ImageDownloadError>
                 file_title: file.to_owned(),
                 url,
                 expected: Some(Original { mime, sha1, size }),
+                fallback: None,
             });
         }
     }
-    let url = info
+    let rendering = info
         .get("thumburl")
         .and_then(Value::as_str)
         .and_then(canonical_media_url)
         .ok_or_else(unusable)?;
     // A rendering URL names a raster format even though the reply may differ.
-    rendering_mime(&url).ok_or_else(unusable)?;
+    rendering_mime(&rendering).ok_or_else(unusable)?;
+    let size = info.get("size").and_then(Value::as_u64).unwrap_or(0);
+    if mime == SVG && size > 0 && size <= MAX_SVG_SOURCE_BYTES {
+        let original = info
+            .get("url")
+            .and_then(Value::as_str)
+            .and_then(canonical_media_url)
+            .filter(|url| url.to_ascii_lowercase().ends_with(".svg"));
+        let sha1 = info.get("sha1").and_then(Value::as_str).and_then(hex_sha1);
+        if let (Some(url), Some(sha1)) = (original, sha1) {
+            return Ok(ImageDownload {
+                file_title: file.to_owned(),
+                url,
+                expected: Some(Original {
+                    mime: SVG,
+                    sha1,
+                    size,
+                }),
+                fallback: Some(rendering),
+            });
+        }
+    }
     Ok(ImageDownload {
         file_title: file.to_owned(),
-        url,
+        url: rendering,
         expected: None,
+        fallback: None,
     })
 }
 
@@ -231,7 +281,12 @@ pub fn verify_image(
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(ImageDownloadError::TooLarge);
     }
-    let mime = sniff_image(bytes).ok_or(ImageDownloadError::WrongFormat)?;
+    // An SVG has no signature; its hash identifies it, and the pack
+    // builder's sanitiser decides whether it is kept.
+    let mime = match &download.expected {
+        Some(original) if original.mime == SVG => SVG,
+        _ => sniff_image(bytes).ok_or(ImageDownloadError::WrongFormat)?,
+    };
     if let Some(original) = &download.expected {
         if mime != original.mime {
             return Err(ImageDownloadError::WrongFormat);
@@ -317,24 +372,56 @@ mod tests {
     }
 
     #[test]
-    fn real_svg_files_download_as_wikimedia_png_renderings() {
+    fn real_svg_files_download_as_originals_with_a_rendering_to_fall_back_to() {
         let downloads = parse_image_downloads(HYPOTENUSE_IMAGES, &files()).unwrap();
         assert_eq!(downloads.len(), 3);
         assert_eq!(
             downloads[0].url,
-            "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8a/Hypotenuse.svg/1280px-Hypotenuse.svg.png"
+            "https://upload.wikimedia.org/wikipedia/commons/8/8a/Hypotenuse.svg"
+        );
+        assert_eq!(
+            downloads[0].expected,
+            Some(Original {
+                mime: "image/svg+xml",
+                sha1: "d9045306eb0ba275ad86d5ba8a238cca61a3c6dd".into(),
+                size: 3328,
+            })
+        );
+        assert_eq!(
+            downloads[0].fallback.as_deref(),
+            Some("https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8a/Hypotenuse.svg/1280px-Hypotenuse.svg.png")
         );
         for (download, file) in downloads.iter().zip(files()) {
             assert_eq!(download.file_title, file);
-            assert_eq!(download.expected, None, "a rendering has no stated hash");
-            assert_eq!(download.accept(), RENDERING_ACCEPT);
-            assert!(media_url_allowed(&download.url));
-            assert_eq!(
-                media_file_name(&download.url),
-                Some(file_title_key(&file)),
-                "the rendering maps back to its file"
-            );
+            assert!(download.is_svg_original());
+            assert_eq!(download.accept(), "image/svg+xml");
+            let rendering = download.fallback_download().unwrap();
+            assert_eq!(rendering.expected, None, "a rendering has no stated hash");
+            assert_eq!(rendering.accept(), RENDERING_ACCEPT);
+            for url in [&download.url, &rendering.url] {
+                assert!(media_url_allowed(url));
+                assert_eq!(
+                    media_file_name(url),
+                    Some(file_title_key(&file)),
+                    "both map back to the file"
+                );
+            }
         }
+        // The committed original matches Wikimedia's stated hash; a changed
+        // byte does not.
+        let original = include_bytes!("../../../fixtures/wikimedia/commonswiki/Hypotenuse.svg");
+        assert_eq!(verify_image(&downloads[0], original), Ok("image/svg+xml"));
+        let mut changed = original.to_vec();
+        changed[100] ^= 1;
+        assert_eq!(
+            verify_image(&downloads[0], &changed),
+            Err(ImageDownloadError::DigestMismatch)
+        );
+        // An SVG too large to keep as a vector goes straight to its rendering.
+        let large = HYPOTENUSE_IMAGES.replace("\"size\":3328", "\"size\":4194305");
+        let downloads = parse_image_downloads(&large, &files()).unwrap();
+        assert_eq!(downloads[0].expected, None);
+        assert!(downloads[0].url.contains("1280px-Hypotenuse.svg.png"));
     }
 
     fn reply(info: &str) -> String {
@@ -416,6 +503,7 @@ mod tests {
                 sha1: hex(&Sha1::digest(&png)),
                 size: png.len() as u64,
             }),
+            fallback: None,
         };
         assert_eq!(verify_image(&original, &png), Ok("image/png"));
         let mut changed = png.clone();

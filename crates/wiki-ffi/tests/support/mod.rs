@@ -160,28 +160,61 @@ pub fn red_png_sha256() -> String {
     format!("{:x}", Sha256::digest(RED_PNG))
 }
 
-/// A one-article pack ("Right triangle", page 3) whose figure is
-/// [`RED_PNG`], stored as a pack image (PACK-003). Deterministic.
+/// A 32×32 solid blue square, in the SVG sanitiser's exact form.
+pub fn blue_svg() -> Vec<u8> {
+    wiki_store::pack_svg::sanitize_svg(
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" \
+          viewBox=\"0 0 32 32\"><rect width=\"32\" height=\"32\" fill=\"#0000d4\"/></svg>",
+    )
+    .unwrap()
+}
+
+/// A one-article pack ("Right triangle", page 3) with two figures stored as
+/// pack images (PACK-003): [`RED_PNG`] and [`blue_svg`], a vector.
+/// Deterministic.
 pub fn build_image_pack(dir: &Path, pack_id: &str) -> PathBuf {
+    build_image_pack_with_svg(dir, pack_id, &blue_svg())
+}
+
+/// [`build_image_pack`] with `svg` as the stored bytes of the SVG figure.
+pub fn build_image_pack_with_svg(dir: &Path, pack_id: &str, svg: &[u8]) -> PathBuf {
     let digest = red_png_sha256();
+    let svg_digest = format!("{:x}", Sha256::digest(svg));
     let mut page = article(3, "Right triangle", "A triangle with one right angle.");
     page.revision.revision_id = 7003;
-    page.media = vec![MediaAsset {
-        source_url: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Red_square.png".into(),
-        mime_type: "image/png".into(),
-        sha256: Some(digest.clone()),
-        license: "CC0".into(),
-        creator: "Synthetic test image".into(),
-        attribution: "Synthetic test image, CC0".into(),
-        is_av_preview: false,
-        derivation: None,
-    }];
+    page.media = vec![
+        MediaAsset {
+            source_url: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Red_square.png".into(),
+            mime_type: "image/png".into(),
+            sha256: Some(digest.clone()),
+            license: "CC0".into(),
+            creator: "Synthetic test image".into(),
+            attribution: "Synthetic test image, CC0".into(),
+            is_av_preview: false,
+            derivation: None,
+        },
+        MediaAsset {
+            source_url: "https://upload.wikimedia.org/wikipedia/commons/b/b1/Blue_square.svg"
+                .into(),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some(svg_digest.clone()),
+            license: "CC0".into(),
+            creator: "Synthetic test image".into(),
+            attribution: "Synthetic test image, CC0".into(),
+            is_av_preview: false,
+            derivation: Some(wiki_model::MediaDerivation::SanitizedSvg),
+        },
+    ];
     page.rendered_html = concat!(
         "<article><p>A triangle with one right angle.</p>",
         "<figure><a href=\"./File:Red_square.png\" class=\"mw-file-description\">",
         "<img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Red_square.png/220px-Red_square.png\" ",
         "alt=\"A red square\" width=\"220\" height=\"220\"></a>",
-        "<figcaption>A red square</figcaption></figure></article>"
+        "<figcaption>A red square</figcaption></figure>",
+        "<figure><a href=\"./File:Blue_square.svg\" class=\"mw-file-description\">",
+        "<img src=\"//upload.wikimedia.org/wikipedia/commons/thumb/b/b1/Blue_square.svg/220px-Blue_square.svg.png\" ",
+        "alt=\"A blue square\" width=\"220\" height=\"220\"></a>",
+        "<figcaption>A blue square (vector)</figcaption></figure></article>"
     )
     .into();
 
@@ -196,13 +229,21 @@ pub fn build_image_pack(dir: &Path, pack_id: &str) -> PathBuf {
         .unwrap();
     drop(catalog);
     fs::write(tree.join(media_object_path(&digest)), RED_PNG).unwrap();
+    fs::write(tree.join(media_object_path(&svg_digest)), svg).unwrap();
     fs::write(
         tree.join(MEDIA_INDEX_OBJECT),
-        encode_media_index(&[PackImage {
-            sha256: digest,
-            mime: "image/png".into(),
-            bytes: RED_PNG.len() as u64,
-        }])
+        encode_media_index(&[
+            PackImage {
+                sha256: digest,
+                mime: "image/png".into(),
+                bytes: RED_PNG.len() as u64,
+            },
+            PackImage {
+                sha256: svg_digest,
+                mime: "image/svg+xml".into(),
+                bytes: svg.len() as u64,
+            },
+        ])
         .unwrap(),
     )
     .unwrap();

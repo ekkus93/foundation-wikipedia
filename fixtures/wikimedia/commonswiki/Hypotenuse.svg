@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+<svg xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:svg="http://www.w3.org/2000/svg" xmlns="http://www.w3.org/2000/svg" version="1.0" width="180.40625" height="130.40625" id="svg1870">
+<metadata id="metadata19">
+<rdf:RDF>
+<cc:Work rdf:about="">
+<dc:format>
+image/svg+xml</dc:format>
+<dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+<dc:title>
+</dc:title>
+</cc:Work>
+</rdf:RDF>
+</metadata>
+<defs id="defs1872">
+<marker refX="0" refY="0" orient="auto" id="Arrow1Lend" style="overflow:visible">
+<path d="M 0,0 5,-5 -12.5,0 5,5 0,0 z" transform="matrix(-0.8,0,0,-0.8,-10,0)" id="path3779" style="fill-rule:evenodd;stroke:#000000;stroke-width:1pt;marker-start:none" />
+</marker>
+<marker refX="0" refY="0" orient="auto" id="Arrow1Lstart" style="overflow:visible">
+<path d="M 0,0 5,-5 -12.5,0 5,5 0,0 z" transform="matrix(0.8,0,0,0.8,10,0)" id="path3776" style="fill-rule:evenodd;stroke:#000000;stroke-width:1pt;marker-start:none" />
+</marker>
+</defs>
+<g transform="translate(-24.0625,-27.09375)" id="layer1">
+<path d="M 32,149 197,149 197,34 32,149 z" id="path4399" style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1" />
+<text x="-30.641733" y="129.8873" transform="matrix(0.81351222,-0.58154782,0.58154782,0.81351222,0,0)" id="text4401" xml:space="preserve" style="font-size:24px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:100%;writing-mode:lr-tb;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;font-family:Arial Unicode MS;-inkscape-font-specification:Arial Unicode MS">
+<tspan x="-30.641733" y="129.8873" id="tspan4403" style="font-size:24px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:100%;writing-mode:lr-tb;text-anchor:start;font-family:Arial Unicode MS;-inkscape-font-specification:Arial Unicode MS">hypotenuse</tspan>
+</text>
+<g transform="matrix(1.07694,-0.103533,0.106107,1.0508,-17.831598,-13.509687)" id="g4413">
+<text x="166.39139" y="138.42049" transform="matrix(0.98302934,0.09685571,-0.0992637,1.0074834,0,0)" id="text2997" xml:space="preserve" style="font-size:18.71011162px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:125%;letter-spacing:0px;word-spacing:0px;writing-mode:lr-tb;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;font-family:Arial Unicode MS;-inkscape-font-specification:Arial Unicode MS">
+<tspan x="166.39139" y="138.42049" id="tspan2999" style="font-size:18.71011353px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:125%;writing-mode:lr-tb;text-anchor:start;font-family:Arial Unicode MS;-inkscape-font-specification:Arial Unicode MS">90°</tspan>
+</text>
+</g>
+<path d="m 192.87628,104.15464 c -37.60588,1.35513 -44.90333,7.4795 -43.81442,40.72165" id="path3003" style="fill:none;stroke:#000000;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;marker-start:url(#Arrow1Lstart);marker-end:url(#Arrow1Lend)" />
+</g>
+</svg>

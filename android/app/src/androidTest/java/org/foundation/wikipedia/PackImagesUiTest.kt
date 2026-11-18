@@ -26,10 +26,11 @@ import org.junit.runner.RunWith
 import uniffi.wiki_ffi.LibraryException
 
 /**
- * PACK-003 on device/emulator: an article's figure is stored in the pack and
- * drawn by the reader with no network. The committed fixture pack holds one
- * article whose figure is a 32×32 solid red PNG; the reader asks for it at
- * the reserved origin and the app answers from the active pack.
+ * PACK-003 on device/emulator: an article's figures are stored in the pack
+ * and drawn by the reader with no network. The committed fixture pack holds
+ * one article with two figures: a 32×32 solid red PNG and a 32×32 solid blue
+ * SVG kept as a vector; the reader asks for them at the reserved origin and
+ * the app answers from the active pack.
  */
 @RunWith(AndroidJUnit4::class)
 class PackImagesUiTest {
@@ -37,6 +38,7 @@ class PackImagesUiTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     private lateinit var imageSha256: String
+    private lateinit var svgSha256: String
 
     @Before
     fun installImagePack(): Unit = runBlocking {
@@ -54,8 +56,9 @@ class PackImagesUiTest {
         }
         library.activate("android-images")
         pack.delete()
-        val png = library.openPage("enwiki", 3)?.images?.get("Red_square.png")
-        imageSha256 = png ?: error("the fixture article has no pack image")
+        val images = library.openPage("enwiki", 3)?.images.orEmpty()
+        imageSha256 = images["Red_square.png"] ?: error("the fixture article has no pack image")
+        svgSha256 = images["Blue_square.svg"] ?: error("the fixture article has no pack SVG")
     }
 
     private fun webView(): WebView {
@@ -70,19 +73,22 @@ class PackImagesUiTest {
         return found ?: error("no article WebView")
     }
 
-    /** Pixels of the figure's red (212, 0, 0) on screen right now. */
-    private fun redPixels(): Int {
+    /** Pixels of the figures' red (212, 0, 0) and blue (0, 0, 212) on screen right now. */
+    private fun figurePixels(): Pair<Int, Int> {
         val shot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-            ?: return 0
-        var count = 0
+            ?: return 0 to 0
+        var red = 0
+        var blue = 0
         for (y in 0 until shot.height step 2) {
             for (x in 0 until shot.width step 2) {
                 val pixel = shot.getPixel(x, y)
-                if (Color.red(pixel) in 190..230 && Color.green(pixel) < 30 && Color.blue(pixel) < 30) count++
+                if (Color.green(pixel) >= 30) continue
+                if (Color.red(pixel) in 190..230 && Color.blue(pixel) < 30) red++
+                if (Color.blue(pixel) in 190..230 && Color.red(pixel) < 30) blue++
             }
         }
         shot.recycle()
-        return count
+        return red to blue
     }
 
     @Test
@@ -99,8 +105,11 @@ class PackImagesUiTest {
             title == "Right triangle"
         }
 
-        // The figure is drawn: a 220 CSS px red square, from the pack.
-        compose.waitUntil(timeoutMillis = 15_000) { redPixels() > 2_000 }
+        // The PNG figure is drawn: a 220 CSS px red square, from the pack.
+        compose.waitUntil(timeoutMillis = 15_000) { figurePixels().first > 2_000 }
+        // The SVG figure below it, drawn as a vector, once scrolled into view.
+        compose.runOnUiThread { webView().pageDown(true) }
+        compose.waitUntil(timeoutMillis = 15_000) { figurePixels().second > 2_000 }
 
         // The app answers the image request with the verified pack bytes,
         // and nothing else at the reserved origin or elsewhere.
@@ -121,15 +130,25 @@ class PackImagesUiTest {
         )!!
         val mime = image.mimeType
         val bytes = image.data.readBytes()
+        val csp = image.responseHeaders["Content-Security-Policy"]
+        val svg = client!!.shouldInterceptRequest(
+            view, request("https://foundation.invalid/media/$svgSha256"),
+        )!!
+        val svgMime = svg.mimeType
+        val svgBytes = svg.data.readBytes()
         val statuses = listOf(
             request("https://foundation.invalid/media/${"ab".repeat(32)}"),
             request("https://foundation.invalid/media/$imageSha256", mainFrame = true),
             request("https://upload.wikimedia.org/wikipedia/commons/8/8a/Red_square.png"),
         ).map { client!!.shouldInterceptRequest(view, it)?.statusCode ?: 0 }
         assertEquals("image/png", mime)
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        fun sha256(data: ByteArray) = MessageDigest.getInstance("SHA-256").digest(data)
             .joinToString("") { "%02x".format(it) }
-        assertEquals(imageSha256, digest)
+        assertEquals(imageSha256, sha256(bytes))
+        assertEquals(PACK_IMAGE_CSP, csp)
+        assertEquals("image/svg+xml", svgMime)
+        assertEquals(svgSha256, sha256(svgBytes))
+        assertEquals(PACK_IMAGE_CSP, svg.responseHeaders["Content-Security-Policy"])
         assertTrue(statuses.toString(), statuses.all { it == 403 })
     }
 }

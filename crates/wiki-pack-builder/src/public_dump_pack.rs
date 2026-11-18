@@ -48,6 +48,7 @@ use wiki_store::pack_media::{
     encode_media_index, media_object_path, required_images, PackImage, MEDIA_DIR,
     MEDIA_INDEX_OBJECT,
 };
+use wiki_store::pack_svg::sanitize_svg;
 use wiki_store::record_codec::append_record_frame;
 
 /// Articles in one dump-built pack (the builder is for curated selections).
@@ -194,6 +195,7 @@ pub struct DumpMediaStore {
     dir: PathBuf,
     /// Download URL → what was stored, so a shared image is fetched once.
     fetched: HashMap<String, StoredImage>,
+    svg_fallbacks: Vec<(String, String)>,
 }
 
 impl DumpMediaStore {
@@ -203,6 +205,7 @@ impl DumpMediaStore {
         Ok(Self {
             dir: dir.to_owned(),
             fetched: HashMap::new(),
+            svg_fallbacks: Vec::new(),
         })
     }
 
@@ -220,6 +223,9 @@ impl DumpMediaStore {
     {
         if let Some(found) = self.fetched.get(&download.url) {
             return Ok(found.clone());
+        }
+        if download.is_svg_original() {
+            return self.fetch_svg(transport, download);
         }
         let bytes = transport
             .get_media(&download.url, download.accept(), MAX_IMAGE_BYTES)
@@ -240,6 +246,53 @@ impl DumpMediaStore {
         };
         self.fetched.insert(download.url.clone(), found.clone());
         Ok(found)
+    }
+
+    /// An SVG original, verified against Wikimedia's hash and kept as a
+    /// sanitised vector; if the sanitiser refuses it, its rendering.
+    fn fetch_svg<T: MediaFileTransport>(
+        &mut self,
+        transport: &mut T,
+        download: &wiki_source::media_download::ImageDownload,
+    ) -> Result<StoredImage, String>
+    where
+        T::Error: std::fmt::Debug,
+    {
+        let bytes = transport
+            .get_media(&download.url, download.accept(), MAX_IMAGE_BYTES)
+            .map_err(|error| format!("{}: download failed: {error:?}", download.file_title))?;
+        verify_image(download, &bytes)
+            .map_err(|error| format!("{}: image refused: {error:?}", download.file_title))?;
+        let found = match sanitize_svg(&bytes) {
+            Ok(clean) => {
+                let digest = hex_sha256(&clean);
+                let path = self.dir.join(&digest);
+                if !path.exists() {
+                    fs::write(&path, &clean).map_err(|e| format!("image write: {e}"))?;
+                }
+                StoredImage {
+                    sha256: digest,
+                    mime: "image/svg+xml",
+                    derivation: Some(MediaDerivation::SanitizedSvg),
+                }
+            }
+            Err(reason) => {
+                let rendering = download
+                    .fallback_download()
+                    .ok_or_else(|| format!("{}: SVG has no rendering", download.file_title))?;
+                self.svg_fallbacks
+                    .push((download.file_title.clone(), format!("{reason:?}")));
+                self.fetch(transport, &rendering)?
+            }
+        };
+        self.fetched.insert(download.url.clone(), found.clone());
+        Ok(found)
+    }
+
+    /// SVGs packed as their rendering because the sanitiser refused them:
+    /// `(file title, reason)`.
+    pub fn svg_fallbacks(&self) -> &[(String, String)] {
+        &self.svg_fallbacks
     }
 }
 
@@ -445,6 +498,8 @@ mod tests {
         requests: Vec<String>,
         broken: Option<&'static str>,
         diagrams: bool,
+        /// SVG originals served instead of the committed ones, by file name.
+        svg: HashMap<String, Vec<u8>>,
     }
 
     fn replay() -> Replay {
@@ -452,6 +507,7 @@ mod tests {
             requests: Vec::new(),
             broken: None,
             diagrams: false,
+            svg: HashMap::new(),
         }
     }
 
@@ -478,11 +534,6 @@ mod tests {
     impl MediaFileTransport for Replay {
         type Error = String;
         fn get_media(&mut self, url: &str, accept: &str, _max: usize) -> Result<Vec<u8>, String> {
-            assert_eq!(
-                accept,
-                wiki_source::media_download::RENDERING_ACCEPT,
-                "SVG files are fetched as renderings"
-            );
             self.requests.push(url.to_owned());
             assert!(
                 wiki_source::media_download::media_url_allowed(url),
@@ -491,6 +542,23 @@ mod tests {
             if self.broken.is_some_and(|broken| url.contains(broken)) {
                 return Err("HTTP 404".into());
             }
+            if accept == "image/svg+xml" {
+                // The SVG originals, as committed (their SHA-1 is in IMAGES).
+                let name = url.rsplit('/').next().unwrap();
+                return Ok(self.svg.get(name).cloned().unwrap_or_else(|| {
+                    fs::read(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../fixtures/wikimedia/commonswiki")
+                            .join(name),
+                    )
+                    .unwrap()
+                }));
+            }
+            assert_eq!(
+                accept,
+                wiki_source::media_download::RENDERING_ACCEPT,
+                "anything else is a rendering"
+            );
             if self.diagrams {
                 return Ok(diagram_png(url));
             }
@@ -509,6 +577,13 @@ mod tests {
             if url.contains("action=parse") {
                 // The recorded reply, whatever revision is asked for.
                 Ok(PARSE.as_bytes().to_vec())
+            } else if url.contains("prop=imageinfo") && self.diagrams {
+                // SVGs too large to keep as vectors: packed as renderings.
+                Ok(IMAGES
+                    .replace("\"size\":3328", "\"size\":4194305")
+                    .replace("\"size\":531", "\"size\":4194305")
+                    .replace("\"size\":16278", "\"size\":4194305")
+                    .into_bytes())
             } else if url.contains("prop=imageinfo") {
                 Ok(IMAGES.as_bytes().to_vec())
             } else {
@@ -582,7 +657,8 @@ mod tests {
         assert_eq!(article.media.len(), 3);
         for asset in &article.media {
             assert!(asset.sha256.is_some(), "every image is downloaded");
-            assert_eq!(asset.mime_type, "image/png", "SVG stored as its rendering");
+            assert_eq!(asset.mime_type, "image/svg+xml", "SVG kept as a vector");
+            assert_eq!(asset.derivation, Some(MediaDerivation::SanitizedSvg));
             assert!(
                 asset.source_url.ends_with(".svg"),
                 "source names the original"
@@ -673,9 +749,11 @@ mod tests {
             let (mime, bytes) = wiki_store::pack_media::read_pack_image(&installed.path, digest)
                 .unwrap()
                 .unwrap();
-            assert_eq!(mime, "image/png");
-            assert!(bytes.starts_with(b"\x89PNG"));
+            assert_eq!(mime, "image/svg+xml");
+            assert!(bytes.starts_with(b"<svg xmlns=\"http://www.w3.org/2000/svg\""));
+            assert!(wiki_store::pack_svg::is_clean_svg(&bytes));
         }
+        assert!(media.svg_fallbacks().is_empty());
 
         // An article whose image lost its bytes cannot be packed.
         let mut incomplete = article.clone();
@@ -774,6 +852,55 @@ mod tests {
             assert_eq!(mime, "image/webp");
             assert!(bytes.starts_with(b"RIFF"));
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_svg_the_sanitiser_refuses_is_packed_as_its_rendering() {
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-svg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut media = DumpMediaStore::create(&dir).unwrap();
+        // Wikimedia's hash matches, so the bytes are genuine; the script
+        // keeps them from being packed as a vector.
+        let hostile = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>x()</script></svg>";
+        let sha1 = format!("{:x}", sha1::Sha1::digest(hostile));
+        let download = wiki_source::media_download::ImageDownload {
+            file_title: "File:Hostile.svg".into(),
+            url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Hostile.svg".into(),
+            expected: Some(wiki_source::media_download::Original {
+                mime: "image/svg+xml",
+                sha1,
+                size: hostile.len() as u64,
+            }),
+            fallback: Some(
+                "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Hostile.svg/1280px-Hostile.svg.png"
+                    .into(),
+            ),
+        };
+        let mut transport = replay();
+        transport.svg.insert("Hostile.svg".into(), hostile.to_vec());
+        let stored = media.fetch(&mut transport, &download).unwrap();
+        assert_eq!(stored.mime, "image/png", "the rendering");
+        assert_eq!(stored.derivation, None);
+        assert_eq!(transport.requests.len(), 2, "original, then rendering");
+        assert_eq!(media.svg_fallbacks().len(), 1);
+        assert!(media.svg_fallbacks()[0].1.contains("script"));
+        // Changed bytes are never packed in any form.
+        let mut other = DumpMediaStore::create(&dir.join("other")).unwrap();
+        transport.svg.insert(
+            "Hostile.svg".into(),
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
+        );
+        assert!(other
+            .fetch(&mut transport, &download)
+            .unwrap_err()
+            .contains("DigestMismatch"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
