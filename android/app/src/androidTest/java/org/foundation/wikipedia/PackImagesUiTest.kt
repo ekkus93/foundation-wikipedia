@@ -106,7 +106,9 @@ class PackImagesUiTest {
         }
 
         // The PNG figure is drawn: a 220 CSS px red square, from the pack.
-        compose.waitUntil(timeoutMillis = 15_000) { figurePixels().first > 2_000 }
+        // The CI emulator once took over 15 s to draw it (f54aa7f4 run
+        // 44210789520, passed on rerun), so allow as long as the page load.
+        compose.waitUntil(timeoutMillis = 30_000) { figurePixels().first > 2_000 }
         // The SVG figure below it, drawn as a vector, once scrolled into view.
         compose.runOnUiThread { webView().pageDown(true) }
         compose.waitUntil(timeoutMillis = 15_000) { figurePixels().second > 2_000 }
