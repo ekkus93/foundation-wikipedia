@@ -146,10 +146,55 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
   - Builder: Hypotenuse builds with three sanitised SVGs; a hostile SVG with a matching hash falls back to its rendering, and changed bytes fail.
   - FFI: `a_pack_with_an_unsanitised_svg_is_refused` covers script, handler, external image, a harmless comment (not exact form), and HTML labelled as SVG.
 
+## Interactive maps (`e38bf53a`, `e99dceb6`)
+
+**Why they can't come from Wikimedia:** interactive (Kartographer) maps are drawn by Wikimedia Maps (`maps.wikimedia.org`), not stored as Commons files. Its [terms of use](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use_for_Wikimedia_Maps) say "Wikimedia Maps may not be used by third-party services outside of the Wikimedia projects". They also prohibit "Excessive downloading (such as downloading significant areas of tiles for later offline usage)". OpenStreetMap's public tile service has a similar rule.
+
+**Owner goal (2026-11-17):** the app must work with no Internet at all. Packs therefore draw their own maps from open map data, and an online-only note is only the fallback.
+
+**Stage A — drawn from Natural Earth (`e99dceb6`):**
+
+- **Base map:** `wiki_pack_builder::map_render` uses Natural Earth v5.1.2 (public domain). Its 12 GeoJSON layers are pinned by SHA-256 (`NATURAL_EARTH_FILES`) and loaded with `build-public-dump-pack --natural-earth <dir>`:
+  - land, lakes, rivers, country and state borders, and places;
+  - the 1:50m layers for zoom 0–4, the 1:10m layers beyond;
+  - place names shown by their `min_zoom`.
+- **Article map data:** markers, lines and shapes come from `prop=mapdata` through the Action API (`WikipediaRequests::map_data`), never the maps service.
+  - The request names exactly the content-hashed groups in the pinned revision's `data-overlays`, and `parse_map_data` requires exactly those groups for that page.
+  - If the article's maps changed since then, nothing is drawn and the reason is reported.
+  - Simplestyle colours and widths are validated; hostile values fall back to defaults.
+- **Drawing:** Web Mercator at the article's centre, zoom and size, the same area Kartographer shows. A map with no stated centre fits its shapes.
+  - Geometry is clipped to the frame (Sutherland–Hodgman and Liang–Barsky) and thinned below half a pixel.
+  - Markers are drawn as pins, with "Natural Earth" credited in the corner.
+  - The SVG then goes through the pack SVG sanitiser like any other.
+- **Stored:** each map is a `MediaDerivation::RenderedMap` asset (SVG, CC BY-SA for the article's shapes plus public-domain base). Assets are in document order, after the article's images; the content digest is recomputed.
+- **Shown:** the stored, sanitised HTML holds each map as a note, in document order. Any `foundation-map-note` class the article itself writes is renamed, so only real notes match.
+  - In a pack, the n-th note becomes the n-th drawn map (`map:n` in `PackImageSources`), with "Map drawn offline from Natural Earth (public domain)" under it.
+  - Without a drawing, or online, the note stays: "Map (online only)", its stated centre, and a View on OpenStreetMap link. Nothing is ever loaded from the maps service.
+- **Real run:** a 2-article simplewiki pack (*Tokyo* rev 10653989, *Eiffel Tower* rev 11033818) built with both maps drawn: Tokyo 5,050 bytes, Eiffel Tower 583 bytes (fitted to its marker at zoom 16). The CLI reported "Tokyo: 1 map shape(s) from Wikimedia Maps not drawn" (its Wikidata outline).
+  - Load time: the base map in 0.9 s; each map in about 15 ms.
+  - The audit found every image and both maps shown locally, with no note left and no maps-service reference.
+  - Renders of real data (Tokyo z8, Paris z5, world z1) were reviewed in Chromium. Coasts, bays, rivers, borders and city names are correct.
+- **Desktop, network removed:** in *Tokyo* the drawn map (Kawagoe, Hachiōji, Tokyo, Kawasaki, Yokohama, Tokyo Bay) showed under the packed "Location within Japan" map. The logger recorded only `[::1]:1420`. App data was backed up and restored.
+- **Tests:**
+  - `map_render` (4): centre, zoom, marker, labels, clipping, fitting, counted `ExternalData`, hostile styles.
+  - `map_data` (2) and `online_requests::map_data_is_read_for_exact_groups_through_the_action_api`.
+  - `interactive_maps_are_drawn_from_the_base_map_and_the_articles_data` (builder, including changed map data).
+  - `a_pack_shows_its_drawn_maps_in_place_of_the_stored_notes` (reader, including a forged note and placeholder).
+  - `interactive_maps_become_a_labelled_note_and_nothing_is_loaded` (the fallback).
+- **Not yet (Stage B):**
+  - Street-level detail at high zoom (the Eiffel Tower map is its marker on plain land).
+  - Shapes Kartographer loads from Wikimedia Maps (`ExternalData` geoshape/geoline by Wikidata ID).
+  - Both need OpenStreetMap data (ODbL) from a regional extract.
+
+**CI:**
+
+- **`e38bf53a`** (note fallback): [Rust workspace 44244817113](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817113), [Platform shells 44244817281](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817281), [Desktop launch smoke 44244817090](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817090), [Android Rust ABI qualification 44244817257](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817257). The FFI bridge ([44244817166](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817166)) failed in `PackImagesUiTest`, the intermittent CI-only figure timeout. Diagnostics were added in `76cc8b1f`, whose [Android FFI bridge 44246239285](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44246239285) passed.
+- **`e99dceb6`** (drawn maps): [Rust workspace 44248312582](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312582), [Platform shells 44248312816](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312816), [Desktop launch smoke 44248312621](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312621), [Android FFI bridge 44248312578](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312578), [Android Rust ABI qualification 44248312427](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312427), [Android record codec probe 44248312600](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312600).
+
 ## Still open (PACK-003 not complete)
 
 - **SVG:** done (above). An SVG over 1 MiB after sanitising, or one using refused features, is still a 1280 px rendering.
 - **Raster optimisation:** done losslessly (above). JPEGs and PNGs with an embedded ICC profile are kept as they are; the largest remaining file is a 2.45 MB lossless map.
-- **Maps:** interactive Kartographer maps (`maps.wikimedia.org` static images) are not Wikimedia files and are not packed. Static location-map files are packed.
+- **Maps:** drawn offline from Natural Earth (above). Street-level detail and Wikidata shapes need OpenStreetMap extracts (Stage B). A map you can pan and zoom offline is FUT-007.
 - **Android with a real pack in airplane mode:** shown on the emulator with the synthetic fixture only. Importing a real pack on Android waits for MOBPACK-002.
 - **Cross-pack deduplication:** images are deduplicated within a pack. The shared store across packs is STORE-002 (owner hold).
