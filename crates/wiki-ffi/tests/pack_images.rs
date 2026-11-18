@@ -186,11 +186,19 @@ fn audit_a_real_pack_for_complete_local_images() {
             .count();
         assert_eq!(sources, local, "{}: a non-local source", article.title);
         println!(
-            "{}: {} required images, {} shown locally, {} <img> total",
+            "{}: {} required images, {} shown locally, {} <img> total, {} interactive maps noted",
             article.title,
             article.media.len(),
             local,
-            page.document.matches("<img").count()
+            page.document.matches("<img").count(),
+            page.document
+                .matches("class=\"foundation-map-note\"")
+                .count()
+        );
+        assert!(
+            !page.document.contains("maps.wikimedia.org"),
+            "{}: a map would load",
+            article.title
         );
         if std::env::var_os("PACK003_SHOW_UNUSED").is_some() {
             for tag in page.document.split("<img").skip(1) {

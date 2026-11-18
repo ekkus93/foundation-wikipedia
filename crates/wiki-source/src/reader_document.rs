@@ -173,7 +173,7 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
             Some(value.into())
         })
         .link_rel(Some("noopener noreferrer nofollow"));
-    let clean = builder.clean(html).to_string();
+    let clean = builder.clean(&without_interactive_maps(html)).to_string();
     match &label {
         Some(images) if !images.stills.is_empty() => label_stills(clean, images),
         _ => clean,
@@ -285,6 +285,95 @@ pub(crate) const MATHML_ATTRIBUTES: [&str; 22] = [
     "largeop",
 ];
 
+/// Shown where an article has an interactive (Kartographer) map.
+pub const MAP_NOTE: &str = "Map (online only)";
+
+/// Replace each interactive map with [`MAP_NOTE`], its centre and a link
+/// to view it online, and unlink inline map links (PACK-003).
+///
+/// Kartographer maps are drawn by Wikimedia Maps (`maps.wikimedia.org`),
+/// whose terms forbid third-party apps and downloading maps for offline
+/// use (owner decision 2026-11-17), so their images are never packed or
+/// loaded. Static location maps are Commons files and are packed like any
+/// other image. Runs before sanitising; what it writes is sanitised too.
+fn without_interactive_maps(html: &str) -> Cow<'_, str> {
+    if !html.contains("mw-kartographer-") {
+        return Cow::Borrowed(html);
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<a ") {
+        let Some(tag_len) = rest[start..].find('>') else {
+            break;
+        };
+        let tag = &rest[start..start + tag_len + 1];
+        let class = attribute(tag, "class").unwrap_or_default();
+        let classes: Vec<&str> = class.split_ascii_whitespace().collect();
+        let Some(close) = rest[start..].find("</a>").map(|at| start + at) else {
+            break;
+        };
+        if classes.contains(&"mw-kartographer-map") {
+            out.push_str(&rest[..start]);
+            out.push_str(&map_note(tag));
+            rest = &rest[close + "</a>".len()..];
+        } else if classes.contains(&"mw-kartographer-maplink") {
+            // Keep the link text; the map it opens is not available here.
+            out.push_str(&rest[..start]);
+            out.push_str(&rest[start + tag.len()..close]);
+            rest = &rest[close + "</a>".len()..];
+        } else {
+            out.push_str(&rest[..start + tag.len()]);
+            rest = &rest[start + tag.len()..];
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
+}
+
+/// A double-quoted attribute's value in one start tag (as MediaWiki
+/// writes them), entity-decoded only for `&quot;` and `&amp;`.
+fn attribute(tag: &str, name: &str) -> Option<String> {
+    let needle = format!(" {name}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = start + tag[start..].find('"')?;
+    Some(
+        tag[start..end]
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&"),
+    )
+}
+
+fn map_note(tag: &str) -> String {
+    let coordinate = |name: &str, limit: f64| {
+        attribute(tag, name)
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && value.abs() <= limit)
+    };
+    let zoom = attribute(tag, "data-zoom")
+        .and_then(|value| value.parse::<u8>().ok())
+        .filter(|zoom| *zoom <= 19)
+        .unwrap_or(12);
+    let mut note = format!("<span class=\"foundation-map-note\">{MAP_NOTE}");
+    if let (Some(lat), Some(lon)) = (coordinate("data-lat", 90.0), coordinate("data-lon", 180.0)) {
+        let (lat_text, lon_text) = (trimmed(lat), trimmed(lon));
+        let north = if lat < 0.0 { "S" } else { "N" };
+        let east = if lon < 0.0 { "W" } else { "E" };
+        note.push_str(&format!(
+            " · {}° {north}, {}° {east} · <a href=\"https://www.openstreetmap.org/?mlat={lat_text}&amp;mlon={lon_text}#map={zoom}/{lat_text}/{lon_text}\">View on OpenStreetMap</a>",
+            trimmed(lat.abs()),
+            trimmed(lon.abs()),
+        ));
+    }
+    note.push_str("</span>");
+    note
+}
+
+/// At most five decimals, without trailing zeros.
+fn trimmed(value: f64) -> String {
+    let text = format!("{value:.5}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 fn online_image_source(value: &str) -> Option<String> {
     let absolute = match value.strip_prefix("//") {
         Some(rest) => format!("https://{rest}"),
@@ -326,7 +415,7 @@ pub fn sanitize_online_article_html(html: &str) -> String {
             _ => Some(value.into()),
         })
         .link_rel(Some("noopener noreferrer nofollow"));
-    builder.clean(html).to_string()
+    builder.clean(&without_interactive_maps(html)).to_string()
 }
 
 fn escape_text(text: &str) -> String {
@@ -362,7 +451,8 @@ blockquote,pre{background:var(--box);padding:.5em .8em;overflow-x:auto}\
 sup{line-height:1}\
 .foundation-cited{background:var(--cite);border-left:4px solid var(--link);padding:.05em .7em;margin:0 -.7em;scroll-margin-top:16px}\
 .foundation-cited-note{color:var(--muted);font-size:.8em;margin:0}\
-.foundation-still-note{display:block;color:var(--muted);font-size:.8em}";
+.foundation-still-note{display:block;color:var(--muted);font-size:.8em}\
+.foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}";
 
 /// A complete, script-free document for one verified article revision.
 pub fn reader_document(article: &Article, theme: ReaderTheme) -> String {
@@ -599,6 +689,59 @@ fn wrap_document(article: &Article, theme: ReaderTheme, body: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Excerpts of real enwiki mapframes (Tokyo rev 1386294178, Eiffel
+    /// Tower rev 1385997089): one with a stated centre, one whose centre
+    /// comes from its shapes, and an inline map link.
+    const TOKYO_MAP: &str = "<figure class=\"mw-halign-right\" typeof=\"mw:File/Frame\"><a class=\"mw-kartographer-map notheme noviewer mw-file-description mw-kartographer-container center\" style=\"min-width: 300px; min-height: 200px;\" data-mw-kartographer=\"mapframe\" data-style=\"osm-intl\" data-width=\"300\" data-height=\"200\" data-zoom=\"8\" data-lat=\"35.68\" data-lon=\"139.41\" data-overlays=\"[&quot;_a5ac78316acb3ce528070585824e3c65cae30b9f&quot;]\" href=\"/wiki/Special:Map/8/35.68/139.41/en\"><img class=\"mw-file-element\" src=\"https://maps.wikimedia.org/img/osm-intl,8,35.68,139.41,300x200.png?lang=en&amp;domain=en.wikipedia.org&amp;title=Tokyo&amp;revid=1386294178&amp;groups=_a5ac78316acb3ce528070585824e3c65cae30b9f&amp;parser=legacy\" width=\"300\" height=\"200\" decoding=\"async\"></a><figcaption>Map of Tokyo</figcaption></figure>";
+    const EIFFEL_MAP: &str = "<a class=\"mw-kartographer-map notheme noviewer mw-file-description mw-kartographer-container center\" style=\"min-width: 250px; min-height: 200px;\" data-mw-kartographer=\"mapframe\" data-style=\"osm-intl\" data-width=\"250\" data-height=\"200\" data-zoom=\"16\" data-overlays=\"[&quot;_c391d58e02980fe061617195986043f32c6c3bcd&quot;]\"><img class=\"mw-file-element\" src=\"https://maps.wikimedia.org/img/osm-intl,16,a,a,250x200.png?lang=en&amp;domain=en.wikipedia.org&amp;title=Eiffel_Tower\" width=\"250\" height=\"200\"></a>";
+    const MAPLINK: &str = "<p>Near <a class=\"mw-kartographer-maplink mw-kartographer-autostyled\" data-mw-kartographer=\"maplink\" data-style=\"osm-intl\" href=\"/wiki/Special:Map/13/-33.86/151.21/en\" data-zoom=\"13\" data-lat=\"-33.86\" data-lon=\"151.21\">33°52′S 151°13′E</a> and <a href=\"./Sydney\">Sydney</a>.</p>";
+
+    #[test]
+    fn interactive_maps_become_a_labelled_note_and_nothing_is_loaded() {
+        let images = PackImageSources {
+            base: READER_IMAGE_BASE.into(),
+            by_file: HashMap::new(),
+            stills: HashSet::new(),
+        };
+        for clean in [
+            sanitize_pack_article_html(&format!("{TOKYO_MAP}{EIFFEL_MAP}{MAPLINK}"), &images),
+            sanitize_online_article_html(&format!("{TOKYO_MAP}{EIFFEL_MAP}{MAPLINK}")),
+        ] {
+            assert!(!clean.contains("maps.wikimedia.org"), "{clean}");
+            assert!(!clean.contains("<img"), "{clean}");
+            assert!(!clean.contains("Special:Map"), "{clean}");
+            assert!(
+                clean.contains(
+                    "<span class=\"foundation-map-note\">Map (online only) · 35.68° N, 139.41° E · \
+                     <a href=\"https://www.openstreetmap.org/?mlat=35.68&amp;mlon=139.41#map=8/35.68/139.41\" \
+                     rel=\"noopener noreferrer nofollow\">View on OpenStreetMap</a></span>\
+                     <figcaption>Map of Tokyo</figcaption>"
+                ),
+                "{clean}"
+            );
+            // A map centred on its shapes has no stated centre to show.
+            assert!(
+                clean.contains("<span class=\"foundation-map-note\">Map (online only)</span>"),
+                "{clean}"
+            );
+            // An inline map link keeps its text; ordinary links are kept.
+            assert!(
+                clean.contains("<p>Near 33°52′S 151°13′E and <a href="),
+                "{clean}"
+            );
+            assert_eq!(clean.matches(MAP_NOTE).count(), 2, "{clean}");
+        }
+        // Out-of-range or non-numeric coordinates are never shown or linked.
+        let odd = TOKYO_MAP
+            .replace("data-lat=\"35.68\"", "data-lat=\"95\"")
+            .replace("data-lon=\"139.41\"", "data-lon=\"javascript:x\"");
+        let clean = sanitize_online_article_html(&odd);
+        assert!(clean.contains("Map (online only)</span>"), "{clean}");
+        assert!(!clean.contains("openstreetmap"), "{clean}");
+        assert_eq!(trimmed(-0.5), "-0.5");
+        assert_eq!(trimmed(48.858222), "48.85822");
+    }
 
     #[test]
     fn an_animation_packed_as_a_still_is_labelled_where_it_is_shown() {
