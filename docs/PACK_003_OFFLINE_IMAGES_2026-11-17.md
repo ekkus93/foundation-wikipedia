@@ -72,6 +72,7 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
 - **`9fd0525a`** (images in packs): [Rust workspace 44072869103](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869103), [Platform shells 44072869163](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869163), [Desktop launch smoke 44072869043](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869043), [Android FFI bridge 44072869212](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869212), [Android install smoke 44072869057](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869057), [Android Rust ABI qualification 44072869218](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869218), [Android record codec probe 44072869040](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44072869040).
 - **`7cc27dee`** (Android selection test fix, after `0c4171b5` failed it): [Rust workspace 44073049532](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049532), [Platform shells 44073049451](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049451), [Android FFI bridge 44073049602](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049602), [Android install smoke 44073049688](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44073049688).
 - **`86d691eb`** (lossless re-encoding and labelled stills): [Rust workspace 44192888549](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888549), [Platform shells 44192888392](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888392), [Desktop launch smoke 44192888579](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888579), [Android FFI bridge 44192888403](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888403), [Android install smoke 44192888577](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888577), [Android Rust ABI qualification 44192888623](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888623), [Android record codec probe 44192888525](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44192888525).
+- **`f54aa7f4`** (SVG kept as sanitised vectors): [Rust workspace 44210789505](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789505), [Platform shells 44210789445](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789445), [Desktop launch smoke 44210789473](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789473), [Android FFI bridge 44210789520](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789520), [Android install smoke 44210789499](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789499), [Android Rust ABI qualification 44210789438](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789438), [Android record codec probe 44210789459](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789459), [Dependency lock refresh probe 44210789453](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44210789453). The FFI bridge's first attempt failed: `PackImagesUiTest` waited 15 s for the red figure to be drawn on the CI emulator. It passed on rerun and 4 of 4 times locally; that wait is now 30 s, the same as the page load.
 
 ## Tests added
 
@@ -118,9 +119,36 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
 - **Android:** bindings regenerated for `still_images`; `OK (41 tests)` on the API 35 emulator.
 - **Tests:** `image_reencode` (7): identical pixels, PNG colour chunks kept unless sRGB-equivalent, oversized chunk lengths, still versus small animation, JPEG/WebP untouched. `diagrams_are_packed_as_lossless_webp_and_say_so`: build → install → the installed record keeps the derivation → images read back as WebP. `an_animation_packed_as_a_still_is_labelled_where_it_is_shown` (reader).
 
+## SVG kept as vectors (`f54aa7f4`)
+
+**Owner decision (2026-11-17):** build the SVG sanitiser so diagrams stay zoomable, rather than accept 1280 px rasters.
+
+| Stage | Code | Rule |
+|---|---|---|
+| Download | `media_download` | An SVG up to 4 MiB is fetched as the original (`Accept: image/svg+xml`) and must match Wikimedia's size and SHA-1. Its 1280 px rendering is the fallback. A larger SVG goes straight to the rendering. |
+| Sanitise | `wiki_store::pack_svg::sanitize_svg` | The SVG is rebuilt (a fresh serialisation) from an allowlist of drawing elements: shapes, text, gradients, patterns, clip paths, masks, markers, filters and `<style>`. Metadata, `title`/`desc`, editor namespaces (Inkscape, Sodipodi, RDF), comments, whitespace between elements and Inkscape `flowRoot` (drawn by no browser and not by Wikimedia) are dropped. A link `<a>` becomes a group. |
+| Refuse → raster | same | Refused, so the rendering is packed instead: `script`, `foreignObject`, `image`, animation, fonts or any unknown element; `on*` handlers; any `href` not `#id`; any `url(…)` not `url(#id)`; any scheme (`javascript:`, `data:`, `http(s):`, `//`); CSS with `@`, `\`, `expression`, `binding`, `behavior` or `image(`; `xml-stylesheet` or any processing instruction; any DTD declaration other than plain text entities (no nesting, parameter or external entities; expansion capped at 4 MiB); depth over 128, over 200,000 nodes, or over 1 MiB after sanitising. |
+| Install | `check_pack_media` | Every packed SVG must be exactly what the sanitiser makes of it (`is_clean_svg`); otherwise `PackMediaError::UnsafeSvg`, shown as `MediaInvalid`. A hostile custom pack cannot bypass the builder. |
+| Show | `<img>` only | Browsers run no script and load nothing for an SVG used as an image. Both apps also send `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and `nosniff` with every pack image (`PACK_IMAGE_CSP`; a Rust test pins the Android constant to it). |
+
+- **Attribution:** `MediaDerivation::SanitizedSvg`; `source_url` still names the original file.
+- **XML parser:** `roxmltree` 0.20 (MIT/Apache-2.0, no dependencies), with DTDs refused; the sanitiser expands plain entities itself first.
+- **Real SVGs** (the 32 required by the 10-article pack):
+  - 31 are kept as vectors. The one exception is a 1.1 MB poster that would be over 1 MiB after sanitising; the CLI reports it ("kept as its 1280 px rendering … (TooLarge)").
+  - The original first run refused 10 of them for having a DOCTYPE; plain-entity DOCTYPEs (Adobe Illustrator, SVG 1.1) are now accepted.
+  - **Fidelity:** each original and its sanitised form were rendered as `<img>` at 800 px in headless Chromium, with 0 differing pixels for all 31 (out of 3,418–600,936 drawn pixels each).
+- **Real pack, rebuilt:** 19,970,682 → **18,566,930 bytes**. The 31 SVGs total 0.91 MB, against 2.55 MB as WebP renderings. All 91 images are still included, and the audit read every image back verified and shown locally.
+- **Desktop, network removed** (loopback-only namespace, `curl` exit 6; logger: only `[::1]:1420`): the pack (review: 17.7 MB) installed, which passed the install-time SVG check for all 31, and activated. *Pythagorean theorem*'s squares diagram (`Pythagorean.svg`, now a vector) displayed with its labels. App data was backed up and restored.
+- **Android:** the committed fixture now also holds a blue 32×32 SVG figure. `PackImagesUiTest` finds both the red PNG and the blue SVG drawn on screen, and checks both responses' bytes, type and CSP; `OK (41 tests)`.
+- **Tests:**
+  - `pack_svg` (5): a real-style Inkscape drawing keeps everything drawn; scripts, handlers, foreign content, external references and unsafe CSS are refused; DTD bombs, external entities and `ATTLIST` defaults are refused; Illustrator DOCTYPE entities are expanded; values survive a round trip exactly.
+  - `media_download`: SVG originals use the committed Commons fixtures (`fixtures/wikimedia/commonswiki/`, hash-checked against the recorded imageinfo); a changed byte fails.
+  - Builder: Hypotenuse builds with three sanitised SVGs; a hostile SVG with a matching hash falls back to its rendering, and changed bytes fail.
+  - FFI: `a_pack_with_an_unsanitised_svg_is_refused` covers script, handler, external image, a harmless comment (not exact form), and HTML labelled as SVG.
+
 ## Still open (PACK-003 not complete)
 
-- **SVG stays scalable:** SVGs are stored as 1280 px renderings, which keeps labels legible when zoomed, but they are not vector. Keeping safe SVGs needs an SVG sanitiser.
+- **SVG:** done (above). An SVG over 1 MiB after sanitising, or one using refused features, is still a 1280 px rendering.
 - **Raster optimisation:** done losslessly (above). JPEGs and PNGs with an embedded ICC profile are kept as they are; the largest remaining file is a 2.45 MB lossless map.
 - **Maps:** interactive Kartographer maps (`maps.wikimedia.org` static images) are not Wikimedia files and are not packed. Static location-map files are packed.
 - **Android with a real pack in airplane mode:** shown on the emulator with the synthetic fixture only. Importing a real pack on Android waits for MOBPACK-002.
