@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -91,6 +92,36 @@ class PackImagesUiTest {
         return red to blue
     }
 
+    /** Wait for a figure's pixels; on timeout, fail with what the reader showed. */
+    private fun waitForFigure(label: String, drawn: (Pair<Int, Int>) -> Boolean) {
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) { drawn(figurePixels()) }
+        } catch (timeout: ComposeTimeoutException) {
+            var state = ""
+            compose.runOnUiThread {
+                val view = webView()
+                state = "title=${view.title} progress=${view.progress} scrollY=${view.scrollY} " +
+                    "contentHeight=${view.contentHeight} viewHeight=${view.height}"
+            }
+            val served = webView().webViewClient.shouldInterceptRequest(
+                webView(),
+                object : WebResourceRequest {
+                    override fun getUrl(): Uri = Uri.parse("https://foundation.invalid/media/$imageSha256")
+                    override fun isForMainFrame() = false
+                    override fun isRedirect() = false
+                    override fun hasGesture() = false
+                    override fun getMethod() = "GET"
+                    override fun getRequestHeaders(): Map<String, String> = emptyMap()
+                },
+            )
+            throw AssertionError(
+                "$label not drawn: (red, blue) pixels ${figurePixels()}; $state; " +
+                    "PNG request now answers ${served?.statusCode} ${served?.mimeType}",
+                timeout,
+            )
+        }
+    }
+
     @Test
     fun anArticleFigureIsDrawnFromThePack() {
         compose.onNode(hasSetTextAction()).performTextInput("triangle")
@@ -106,12 +137,12 @@ class PackImagesUiTest {
         }
 
         // The PNG figure is drawn: a 220 CSS px red square, from the pack.
-        // The CI emulator once took over 15 s to draw it (f54aa7f4 run
-        // 44210789520, passed on rerun), so allow as long as the page load.
-        compose.waitUntil(timeoutMillis = 30_000) { figurePixels().first > 2_000 }
+        // On CI this has twice timed out (f54aa7f4, e38bf53a) and otherwise
+        // passed; a timeout now reports what was on screen.
+        waitForFigure("the red PNG figure") { it.first > 2_000 }
         // The SVG figure below it, drawn as a vector, once scrolled into view.
         compose.runOnUiThread { webView().pageDown(true) }
-        compose.waitUntil(timeoutMillis = 15_000) { figurePixels().second > 2_000 }
+        waitForFigure("the blue SVG figure") { it.second > 2_000 }
 
         // The app answers the image request with the verified pack bytes,
         // and nothing else at the reserved origin or elsewhere.
