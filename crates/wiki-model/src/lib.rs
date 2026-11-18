@@ -150,6 +150,10 @@ pub enum MediaDerivation {
     /// The SVG rebuilt from its drawing elements only, with editor metadata
     /// removed; drawn the same.
     SanitizedSvg,
+    /// An interactive map drawn by the pack builder as SVG from open map
+    /// data and the article's own map data; `source_url` names the map's
+    /// place, not a file.
+    RenderedMap,
 }
 
 impl MediaDerivation {
@@ -157,7 +161,7 @@ impl MediaDerivation {
     pub fn stored_mime(self) -> &'static str {
         match self {
             Self::LosslessWebp | Self::FirstFrameStill => "image/webp",
-            Self::SanitizedSvg => "image/svg+xml",
+            Self::SanitizedSvg | Self::RenderedMap => "image/svg+xml",
         }
     }
 }

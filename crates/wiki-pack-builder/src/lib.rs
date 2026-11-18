@@ -12,6 +12,7 @@ pub mod image_reencode;
 pub mod joined_preview;
 pub mod joined_related;
 pub mod jpeg_preflight;
+pub mod map_render;
 pub mod media;
 pub mod media_inventory;
 pub mod png_crc;

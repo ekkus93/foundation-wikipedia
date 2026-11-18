@@ -90,12 +90,22 @@ impl PackImageSources {
             by_file: article
                 .media
                 .iter()
+                .filter(|asset| asset.derivation != Some(MediaDerivation::RenderedMap))
                 .filter_map(|asset| {
                     Some((
                         crate::media_download::media_file_name(&asset.source_url)?,
                         asset.sha256.clone()?,
                     ))
                 })
+                // Drawn maps, in document order (`map_data::scan_maps`).
+                .chain(
+                    article
+                        .media
+                        .iter()
+                        .filter(|asset| asset.derivation == Some(MediaDerivation::RenderedMap))
+                        .enumerate()
+                        .filter_map(|(n, asset)| Some((map_image_key(n), asset.sha256.clone()?))),
+                )
                 .collect(),
             stills: article
                 .media
@@ -153,6 +163,13 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
             if element == "img" && attribute == "src" {
                 // Only an image this pack holds is ever loaded.
                 let images = images.as_ref()?;
+                if let Some(n) = value
+                    .strip_prefix(MAP_IMAGE_SOURCE)
+                    .and_then(|n| n.parse::<usize>().ok())
+                {
+                    let digest = images.by_file.get(&map_image_key(n))?;
+                    return Some(format!("{}{digest}", images.base).into());
+                }
                 let digest = images
                     .by_file
                     .get(&crate::media_download::media_file_name(value)?)?;
@@ -173,7 +190,9 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
             Some(value.into())
         })
         .link_rel(Some("noopener noreferrer nofollow"));
-    let clean = builder.clean(&without_interactive_maps(html)).to_string();
+    let clean = builder
+        .clean(&without_interactive_maps(html, label.as_ref()))
+        .to_string();
     match &label {
         Some(images) if !images.stills.is_empty() => label_stills(clean, images),
         _ => clean,
@@ -285,76 +304,117 @@ pub(crate) const MATHML_ATTRIBUTES: [&str; 22] = [
     "largeop",
 ];
 
-/// Shown where an article has an interactive (Kartographer) map.
+/// Shown where an article has an interactive (Kartographer) map that the
+/// pack does not hold drawn (or in an online article).
 pub const MAP_NOTE: &str = "Map (online only)";
 
-/// Replace each interactive map with [`MAP_NOTE`], its centre and a link
-/// to view it online, and unlink inline map links (PACK-003).
+/// The [`PackImageSources::by_file`] key of an article's `n`-th drawn map.
+pub fn map_image_key(n: usize) -> String {
+    format!("map:{n}")
+}
+
+/// Under each map drawn from open data.
+pub const MAP_CREDIT: &str = "Map drawn offline from Natural Earth (public domain)";
+
+/// Show each interactive map as the pack's drawn copy, or as [`MAP_NOTE`]
+/// with its centre and a link to view it online; unlink inline map links
+/// (PACK-003).
 ///
 /// Kartographer maps are drawn by Wikimedia Maps (`maps.wikimedia.org`),
 /// whose terms forbid third-party apps and downloading maps for offline
-/// use (owner decision 2026-11-17), so their images are never packed or
-/// loaded. Static location maps are Commons files and are packed like any
-/// other image. Runs before sanitising; what it writes is sanitised too.
-fn without_interactive_maps(html: &str) -> Cow<'_, str> {
-    if !html.contains("mw-kartographer-") {
-        return Cow::Borrowed(html);
+/// use, so their images are never loaded. The pack builder draws each map
+/// itself from open data (`map_data`), stored like any pack image under
+/// [`map_image_key`]. Runs before sanitising; what it writes is sanitised
+/// too, and the drawn map's source is resolved by the image filter.
+fn without_interactive_maps(html: &str, images: Option<&PackImageSources>) -> String {
+    // Stored articles carry the notes this sanitiser wrote; renaming any
+    // the article itself contains keeps the n-th note the n-th map.
+    let html = if images.is_none() {
+        html.replace(MAP_NOTE_CLASS, "foundation-map-note-text")
+    } else {
+        html.to_owned()
+    };
+    let spans = crate::map_data::scan_maps(&html);
+    if spans.is_empty() {
+        return match images {
+            Some(images) => with_drawn_maps(&html, images),
+            None => html,
+        };
     }
+    // Rendered HTML (or a pack made before notes were stored).
     let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<a ") {
-        let Some(tag_len) = rest[start..].find('>') else {
-            break;
-        };
-        let tag = &rest[start..start + tag_len + 1];
-        let class = attribute(tag, "class").unwrap_or_default();
-        let classes: Vec<&str> = class.split_ascii_whitespace().collect();
-        let Some(close) = rest[start..].find("</a>").map(|at| start + at) else {
-            break;
-        };
-        if classes.contains(&"mw-kartographer-map") {
-            out.push_str(&rest[..start]);
-            out.push_str(&map_note(tag));
-            rest = &rest[close + "</a>".len()..];
-        } else if classes.contains(&"mw-kartographer-maplink") {
-            // Keep the link text; the map it opens is not available here.
-            out.push_str(&rest[..start]);
-            out.push_str(&rest[start + tag.len()..close]);
-            rest = &rest[close + "</a>".len()..];
-        } else {
-            out.push_str(&rest[..start + tag.len()]);
-            rest = &rest[start + tag.len()..];
+    let mut at = 0;
+    let mut frame = 0;
+    for span in spans {
+        match span {
+            crate::map_data::MapSpan::Frame { start, end, tag } => {
+                out.push_str(&html[at..start]);
+                match images.filter(|images| images.by_file.contains_key(&map_image_key(frame))) {
+                    Some(_) => out.push_str(&drawn_map(frame)),
+                    None => out.push_str(&map_note(tag)),
+                }
+                frame += 1;
+                at = end;
+            }
+            crate::map_data::MapSpan::Link { start, end, text } => {
+                // Keep the link text; the map page it opens is not here.
+                out.push_str(&html[at..start]);
+                out.push_str(text);
+                at = end;
+            }
         }
     }
-    out.push_str(rest);
-    Cow::Owned(out)
+    out.push_str(&html[at..]);
+    out
 }
 
-/// A double-quoted attribute's value in one start tag (as MediaWiki
-/// writes them), entity-decoded only for `&quot;` and `&amp;`.
-fn attribute(tag: &str, name: &str) -> Option<String> {
-    let needle = format!(" {name}=\"");
-    let start = tag.find(&needle)? + needle.len();
-    let end = start + tag[start..].find('"')?;
-    Some(
-        tag[start..end]
-            .replace("&quot;", "\"")
-            .replace("&amp;", "&"),
+const MAP_NOTE_CLASS: &str = "foundation-map-note";
+
+/// The pack's drawn copy of map `n`, with its credit.
+fn drawn_map(n: usize) -> String {
+    format!(
+        "<img src=\"{MAP_IMAGE_SOURCE}{n}\" alt=\"Map\">\
+         <span class=\"foundation-map-credit\">{MAP_CREDIT}</span>"
     )
 }
 
+/// Replace the n-th stored map note with the pack's drawn map `n`.
+fn with_drawn_maps(html: &str, images: &PackImageSources) -> String {
+    let open = format!("<span class=\"{MAP_NOTE_CLASS}\">");
+    if !html.contains(&open) {
+        return html.to_owned();
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    let mut n = 0;
+    while let Some(start) = rest.find(&open) {
+        // A note holds no nested span.
+        let Some(close) = rest[start..].find("</span>").map(|at| start + at) else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        if images.by_file.contains_key(&map_image_key(n)) {
+            out.push_str(&drawn_map(n));
+        } else {
+            out.push_str(&rest[start..close + "</span>".len()]);
+        }
+        rest = &rest[close + "</span>".len()..];
+        n += 1;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The source the map rewrite gives a drawn map, resolved by the image
+/// filter to the pack's local URL (and removed where there is none); an
+/// `https` URL, as the sanitiser drops other schemes before filtering.
+const MAP_IMAGE_SOURCE: &str = "https://foundation.invalid/map/";
+
 fn map_note(tag: &str) -> String {
-    let coordinate = |name: &str, limit: f64| {
-        attribute(tag, name)
-            .and_then(|value| value.parse::<f64>().ok())
-            .filter(|value| value.is_finite() && value.abs() <= limit)
-    };
-    let zoom = attribute(tag, "data-zoom")
-        .and_then(|value| value.parse::<u8>().ok())
-        .filter(|zoom| *zoom <= 19)
-        .unwrap_or(12);
+    let map = crate::map_data::map_frame(tag);
+    let zoom = map.zoom.unwrap_or(12);
     let mut note = format!("<span class=\"foundation-map-note\">{MAP_NOTE}");
-    if let (Some(lat), Some(lon)) = (coordinate("data-lat", 90.0), coordinate("data-lon", 180.0)) {
+    if let (Some(lat), Some(lon)) = (map.lat, map.lon) {
         let (lat_text, lon_text) = (trimmed(lat), trimmed(lon));
         let north = if lat < 0.0 { "S" } else { "N" };
         let east = if lon < 0.0 { "W" } else { "E" };
@@ -415,7 +475,9 @@ pub fn sanitize_online_article_html(html: &str) -> String {
             _ => Some(value.into()),
         })
         .link_rel(Some("noopener noreferrer nofollow"));
-    builder.clean(&without_interactive_maps(html)).to_string()
+    builder
+        .clean(&without_interactive_maps(html, None))
+        .to_string()
 }
 
 fn escape_text(text: &str) -> String {
@@ -452,7 +514,8 @@ sup{line-height:1}\
 .foundation-cited{background:var(--cite);border-left:4px solid var(--link);padding:.05em .7em;margin:0 -.7em;scroll-margin-top:16px}\
 .foundation-cited-note{color:var(--muted);font-size:.8em;margin:0}\
 .foundation-still-note{display:block;color:var(--muted);font-size:.8em}\
-.foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}";
+.foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}\
+.foundation-map-credit{display:block;color:var(--muted);font-size:.75em}";
 
 /// A complete, script-free document for one verified article revision.
 pub fn reader_document(article: &Article, theme: ReaderTheme) -> String {
@@ -741,6 +804,58 @@ mod tests {
         assert!(!clean.contains("openstreetmap"), "{clean}");
         assert_eq!(trimmed(-0.5), "-0.5");
         assert_eq!(trimmed(48.858222), "48.85822");
+    }
+
+    #[test]
+    fn a_pack_shows_its_drawn_maps_in_place_of_the_stored_notes() {
+        // What a pack stores: the online sanitiser's output, maps as notes
+        // in document order. A note the article itself wrote is renamed.
+        let forged = "<p><span class=\"foundation-map-note\">not a map</span></p>";
+        let stored = sanitize_online_article_html(&format!("{forged}{TOKYO_MAP}{EIFFEL_MAP}"));
+        assert_eq!(
+            stored.matches("class=\"foundation-map-note\"").count(),
+            2,
+            "{stored}"
+        );
+        assert!(stored.contains("foundation-map-note-text"), "{stored}");
+
+        let digest = "cd".repeat(32);
+        let images = PackImageSources {
+            base: READER_IMAGE_BASE.into(),
+            // Only the first map was drawn.
+            by_file: HashMap::from([(map_image_key(0), digest.clone())]),
+            stills: HashSet::new(),
+        };
+        let shown = sanitize_pack_article_html(&stored, &images);
+        assert!(
+            shown.contains(&format!(
+                "<img src=\"{READER_IMAGE_BASE}{digest}\" alt=\"Map\">\
+                 <span class=\"foundation-map-credit\">{MAP_CREDIT}</span>\
+                 <figcaption>Map of Tokyo</figcaption>"
+            )),
+            "{shown}"
+        );
+        // The second map has no drawing: its note stays.
+        assert_eq!(shown.matches(MAP_NOTE).count(), 1, "{shown}");
+        assert!(shown.contains("not a map"), "{shown}");
+        // Without drawn maps, or online, nothing is loaded for a map.
+        for html in [
+            sanitize_pack_article_html(
+                &stored,
+                &PackImageSources {
+                    base: READER_IMAGE_BASE.into(),
+                    by_file: HashMap::new(),
+                    stills: HashSet::new(),
+                },
+            ),
+            sanitize_online_article_html(&stored),
+        ] {
+            assert!(!html.contains("<img"), "{html}");
+            assert!(!html.contains("foundation.invalid/map"), "{html}");
+        }
+        // A forged placeholder source never loads anything unmapped.
+        let forged_source = "<img src=\"https://foundation.invalid/map/7\" alt=\"x\">";
+        assert!(!sanitize_pack_article_html(forged_source, &images).contains("src="));
     }
 
     #[test]

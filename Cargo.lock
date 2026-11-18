@@ -2075,6 +2075,7 @@ dependencies = [
  "crc32fast",
  "html5ever",
  "image",
+ "serde_json",
  "sha1",
  "sha2",
  "url",

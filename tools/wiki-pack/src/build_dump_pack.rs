@@ -10,6 +10,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
+use wiki_pack_builder::map_render::NaturalEarth;
 use wiki_pack_builder::public_dump_pack::{
     render_dump_article, select_dump_pages, write_dump_pack, DumpMediaStore, DumpPackIdentity,
 };
@@ -19,7 +20,7 @@ use wiki_source::public_dump::DumpChecksum;
 const MAX_TITLES_FILE_BYTES: u64 = 64 * 1024;
 const MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 
-pub const USAGE: &str = "       wiki-pack build-public-dump-pack <project> <language> <generation> <SHA256SUMS-sha256> <member.xml.bz2> <member-sha256> <titles.txt> <pack-id> <definition-id> <new-work-dir> <new-output.wpack>";
+pub const USAGE: &str = "       wiki-pack build-public-dump-pack [--natural-earth <dir>] <project> <language> <generation> <SHA256SUMS-sha256> <member.xml.bz2> <member-sha256> <titles.txt> <pack-id> <definition-id> <new-work-dir> <new-output.wpack>";
 
 fn digest(value: &str, name: &str) -> Result<String, String> {
     if value.len() == 64
@@ -52,11 +53,28 @@ fn read_titles(path: &PathBuf) -> Result<(Vec<String>, String), String> {
 }
 
 pub fn run(args: &[OsString]) -> Result<String, String> {
-    let fields: Vec<&str> = args
+    let mut fields: Vec<&str> = args
         .iter()
         .map(|value| value.to_str())
         .collect::<Option<_>>()
         .ok_or("arguments must be UTF-8")?;
+    // Interactive maps are drawn from the pinned Natural Earth files
+    // (PACK-003); without them they stay online-only notes.
+    let base_map = match fields.first() {
+        Some(&"--natural-earth") => {
+            let dir = fields
+                .get(1)
+                .ok_or(format!("--natural-earth needs a directory\n{USAGE}"))?;
+            eprintln!("Loading the Natural Earth base map from {dir}…");
+            let base = NaturalEarth::load(&PathBuf::from(dir))?;
+            fields.drain(..2);
+            Some(base)
+        }
+        _ => {
+            eprintln!("No --natural-earth directory: interactive maps will be online-only notes.");
+            None
+        }
+    };
     let [project, language, generation, inventory, member_path, member_sha, titles_path, pack_id, definition_id, work_dir, output] =
         fields.as_slice()
     else {
@@ -112,8 +130,15 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
             selection.page.page_id,
             selection.page.revision_id
         );
-        let article = render_dump_article(&mut transport, project, language, selection, &mut media)
-            .map_err(|e| e.to_string())?;
+        let article = render_dump_article(
+            &mut transport,
+            project,
+            language,
+            selection,
+            &mut media,
+            base_map.as_ref(),
+        )
+        .map_err(|e| e.to_string())?;
         images += article.media.len();
         articles.push(article);
     }
@@ -138,6 +163,15 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     }
     file.sync_all().map_err(|e| e.to_string())?;
     let stored = fs::read_dir(media.path()).map_or(0, Iterator::count);
+    for (title, reason) in media.map_notices() {
+        eprintln!("{title}: {reason}");
+    }
+    if media.maps_drawn() > 0 {
+        eprintln!(
+            "{} interactive map(s) drawn from Natural Earth.",
+            media.maps_drawn()
+        );
+    }
     for (file, reason) in media.svg_fallbacks() {
         eprintln!("{file}: kept as its 1280 px rendering, not as a vector ({reason})");
     }

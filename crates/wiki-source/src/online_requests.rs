@@ -47,6 +47,17 @@ pub enum OnlineRequestError {
 
 /// File pages per image-metadata request (the Action API's normal limit).
 pub const MAX_IMAGE_TITLES: usize = 50;
+/// Map-data groups in one request (one article's maps).
+pub const MAX_MAP_GROUPS: usize = 50;
+
+/// A Kartographer group ID as MediaWiki writes it: `_` and a SHA-1.
+pub fn map_group_id(group: &str) -> bool {
+    group.len() == 41
+        && group.starts_with('_')
+        && group[1..]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
 /// Width of the stored rendering of an SVG or a wider raster (PACK-003):
 /// enough for diagram labels to stay legible when zoomed on a phone.
 pub const OFFLINE_IMAGE_WIDTH: u32 = 1280;
@@ -134,6 +145,13 @@ impl WikipediaRequests {
                         .and_then(|limit| self.search(search, limit).ok())
                 })
             }
+            Some("query") if value("prop") == Some("mapdata") => value("pageids")
+                .and_then(|id| id.parse::<u64>().ok())
+                .zip(value("mpdgroups"))
+                .and_then(|(id, groups)| {
+                    let groups: Vec<String> = groups.split('|').map(str::to_owned).collect();
+                    self.map_data(id, &groups).ok()
+                }),
             Some("query") if value("prop") == Some("imageinfo") => value("titles")
                 .map(|titles| titles.split('|').map(str::to_owned).collect::<Vec<_>>())
                 .and_then(|files| self.image_metadata(&files).ok()),
@@ -253,6 +271,27 @@ impl WikipediaRequests {
                 "iiextmetadatafilter",
                 "LicenseShortName|Artist|Attribution|Credit|AttributionRequired".to_owned(),
             ),
+        ]))
+    }
+
+    /// The article's interactive-map data (Kartographer GeoJSON) for exactly
+    /// `groups`, the content-hashed group IDs its rendered HTML names
+    /// (`data-overlays`), so the reply can only describe those maps
+    /// (PACK-003). Read through the Action API, never the maps service.
+    pub fn map_data(&self, page_id: u64, groups: &[String]) -> Result<String, OnlineRequestError> {
+        self.valid_page(page_id)?;
+        if groups.is_empty() || groups.len() > MAX_MAP_GROUPS {
+            return Err(OnlineRequestError::InvalidLimit);
+        }
+        if !groups.iter().all(|group| map_group_id(group)) {
+            return Err(OnlineRequestError::InvalidTitle);
+        }
+        Ok(self.request(&[
+            ("action", "query".to_owned()),
+            ("prop", "mapdata".to_owned()),
+            ("pageids", page_id.to_string()),
+            ("mpdgroups", groups.join("|")),
+            ("mpdlimit", "max".to_owned()),
         ]))
     }
 
@@ -379,6 +418,38 @@ mod tests {
             .unwrap()
             .replace("srsearch=Physics", "srsearch=Physics%E2%80%AE");
         assert!(!api.accepts_transport_url(&unsafe_url));
+    }
+
+    #[test]
+    fn map_data_is_read_for_exact_groups_through_the_action_api() {
+        let api = WikipediaRequests::new("simplewiki").unwrap();
+        let group = "_477ba0a3c627b1ed526835dae69bd369beac7de4".to_owned();
+        let url = api.map_data(5246, std::slice::from_ref(&group)).unwrap();
+        let parameters = query(&url);
+        assert_eq!(parameters.get("prop").unwrap(), "mapdata");
+        assert_eq!(parameters.get("pageids").unwrap(), "5246");
+        assert_eq!(parameters.get("mpdgroups").unwrap(), &group);
+        assert!(url.starts_with("https://simple.wikipedia.org/w/api.php?"));
+        assert!(api.accepts_transport_url(&url));
+        for bad in [
+            "",
+            "_xyz",
+            "477ba0a3c627b1ed526835dae69bd369beac7de4_",
+            "_477BA0A3C627B1ED526835DAE69BD369BEAC7DE4",
+        ] {
+            assert_eq!(
+                api.map_data(5246, &[bad.to_owned()]),
+                Err(OnlineRequestError::InvalidTitle),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            api.map_data(5246, &[]),
+            Err(OnlineRequestError::InvalidLimit)
+        );
+        // Only the canonical request crosses the transport.
+        assert!(!api.accepts_transport_url(&url.replace("mpdlimit=max", "mpdlimit=1")));
+        assert!(!api.accepts_transport_url(&format!("{url}&mpdgroups=_0")));
     }
 
     #[test]

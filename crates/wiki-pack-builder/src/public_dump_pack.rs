@@ -28,9 +28,11 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::image_reencode::pack_image;
-use wiki_model::{Article, ArticleKey, MediaDerivation, PageRecord};
+use crate::map_render::{draw_map, NaturalEarth, MAP_CREATOR, MAP_LICENSE};
+use wiki_model::{Article, ArticleKey, MediaAsset, MediaDerivation, PageRecord};
 use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_pack_format::manifest::{SourceKind, SourceSnapshot};
+use wiki_source::map_data::{interactive_maps, parse_map_data, MapDataError};
 use wiki_source::media_download::{
     parse_image_downloads, verify_image, MediaFileTransport, MAX_IMAGE_BYTES,
 };
@@ -196,6 +198,8 @@ pub struct DumpMediaStore {
     /// Download URL → what was stored, so a shared image is fetched once.
     fetched: HashMap<String, StoredImage>,
     svg_fallbacks: Vec<(String, String)>,
+    map_notices: Vec<(String, String)>,
+    maps_drawn: usize,
 }
 
 impl DumpMediaStore {
@@ -206,6 +210,8 @@ impl DumpMediaStore {
             dir: dir.to_owned(),
             fetched: HashMap::new(),
             svg_fallbacks: Vec::new(),
+            map_notices: Vec::new(),
+            maps_drawn: 0,
         })
     }
 
@@ -289,6 +295,17 @@ impl DumpMediaStore {
         Ok(found)
     }
 
+    /// Maps drawn into the pack so far.
+    pub fn maps_drawn(&self) -> usize {
+        self.maps_drawn
+    }
+
+    /// Why maps were left as online-only notes, or drawn without some of
+    /// their shapes: `(article title, reason)`.
+    pub fn map_notices(&self) -> &[(String, String)] {
+        &self.map_notices
+    }
+
     /// SVGs packed as their rendering because the sanitiser refused them:
     /// `(file title, reason)`.
     pub fn svg_fallbacks(&self) -> &[(String, String)] {
@@ -316,6 +333,7 @@ pub fn render_dump_article<T>(
     language: &str,
     selection: &DumpSelection,
     media: &mut DumpMediaStore,
+    base_map: Option<&NaturalEarth>,
 ) -> Result<Article, DumpPackError>
 where
     T: MediaWikiTransport + MediaFileTransport,
@@ -371,16 +389,135 @@ where
             images.push(asset);
         }
     }
+    let maps = match base_map {
+        Some(base) => draw_article_maps(
+            transport, &requests, page,
+            // The raw parse output: map settings (`data-*`) are not kept
+            // in the stored, sanitised HTML, whose n-th note is map n.
+            &raw, base, media,
+        )?,
+        None => Vec::new(),
+    };
     let mut article = assemble_article(&pinned, language, extracted, rendered.html, images)
         .map_err(|e| fail(format!("{e:?}")))?;
+    // Drawn maps follow the article's images, in document order.
+    let changed = !maps.is_empty() || !selection.aliases.is_empty();
+    article.media.extend(maps);
     if !selection.aliases.is_empty() {
         article.aliases = selection.aliases.clone();
+    }
+    if changed {
         article.revision.content_sha256 = "0".repeat(64);
         article.revision.content_sha256 =
             wiki_source::enterprise_verified::enterprise_normalize::digest_article(&article)
                 .map_err(|e| fail(format!("{e:?}")))?;
     }
     Ok(article)
+}
+
+/// Draw every interactive map of `html` from the base map and the
+/// article's map data (PACK-003), as media assets in document order. All
+/// or none: if one map cannot be drawn, the article keeps its online-only
+/// notes and the reason is recorded in [`DumpMediaStore::map_notices`].
+fn draw_article_maps<T>(
+    transport: &mut T,
+    requests: &WikipediaRequests,
+    page: &PublicDumpPage,
+    html: &str,
+    base: &NaturalEarth,
+    media: &mut DumpMediaStore,
+) -> Result<Vec<MediaAsset>, DumpPackError>
+where
+    T: MediaWikiTransport,
+    <T as MediaWikiTransport>::Error: std::fmt::Debug,
+{
+    let fail = |reason: String| DumpPackError::Render {
+        title: page.title.clone(),
+        reason,
+    };
+    let frames = interactive_maps(html);
+    if frames.is_empty() {
+        return Ok(Vec::new());
+    }
+    let groups: Vec<String> = frames
+        .iter()
+        .flat_map(|frame| frame.groups.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let data = if groups.is_empty() {
+        BTreeMap::new()
+    } else {
+        let url = requests
+            .map_data(page.page_id, &groups)
+            .map_err(|e| fail(format!("{e:?}")))?;
+        let body = get(transport, &url, METADATA_BYTES).map_err(fail)?;
+        match parse_map_data(&body, page.page_id, &groups) {
+            Ok(data) => data,
+            // The article's maps changed since the pinned revision.
+            Err(MapDataError::GroupMismatch(group)) => {
+                media.map_notices.push((
+                    page.title.clone(),
+                    format!("map data group {group} is not the pinned revision's"),
+                ));
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(fail(format!("map data rejected: {error:?}"))),
+        }
+    };
+    let mut drawn = Vec::with_capacity(frames.len());
+    for (n, frame) in frames.iter().enumerate() {
+        let features: Vec<serde_json::Value> = frame
+            .groups
+            .iter()
+            .filter_map(|group| data.get(group))
+            .flatten()
+            .cloned()
+            .collect();
+        match draw_map(base, frame, &features) {
+            Some(map) => drawn.push(map),
+            None => {
+                media.map_notices.push((
+                    page.title.clone(),
+                    format!("map {} has no centre and nothing drawable to fit", n + 1),
+                ));
+                return Ok(Vec::new());
+            }
+        }
+    }
+    let mut assets = Vec::with_capacity(drawn.len());
+    for map in drawn {
+        if map.omitted_shapes > 0 {
+            media.map_notices.push((
+                page.title.clone(),
+                format!(
+                    "{} map shape(s) from Wikimedia Maps not drawn",
+                    map.omitted_shapes
+                ),
+            ));
+        }
+        let digest = hex_sha256(&map.svg);
+        let path = media.dir.join(&digest);
+        if !path.exists() {
+            fs::write(&path, &map.svg).map_err(|e| fail(format!("map write: {e}")))?;
+        }
+        let (lat, lon) = map.centre;
+        assets.push(MediaAsset {
+            source_url: format!(
+                "https://www.openstreetmap.org/?mlat={lat:.5}&mlon={lon:.5}#map={}/{lat:.5}/{lon:.5}",
+                map.zoom
+            ),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some(digest),
+            license: MAP_LICENSE.into(),
+            creator: MAP_CREATOR.into(),
+            attribution: format!("{MAP_CREATOR}. {MAP_LICENSE}"),
+            is_av_preview: false,
+            derivation: Some(MediaDerivation::RenderedMap),
+        });
+        media.maps_drawn += 1;
+    }
+    Ok(assets)
 }
 
 /// Identity of a dump-built pack.
@@ -646,7 +783,8 @@ mod tests {
         let mut media = DumpMediaStore::create(&dir.join("images")).unwrap();
         let mut replay = replay();
         let article =
-            render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media).unwrap();
+            render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media, None)
+                .unwrap();
         assert_eq!(
             replay.requests.len(),
             5,
@@ -666,7 +804,7 @@ mod tests {
         }
         // A second article using the same images fetches nothing new.
         let before = replay.requests.len();
-        render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media).unwrap();
+        render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media, None).unwrap();
         assert_eq!(replay.requests.len(), before + 2);
         assert!(matches!(
             article.lead[0].content,
@@ -783,8 +921,15 @@ mod tests {
             diagrams: true,
             ..replay()
         };
-        let article =
-            render_dump_article(&mut transport, "enwiki", "en", &selected[0], &mut media).unwrap();
+        let article = render_dump_article(
+            &mut transport,
+            "enwiki",
+            "en",
+            &selected[0],
+            &mut media,
+            None,
+        )
+        .unwrap();
         article.validate().unwrap();
         let originals: Vec<Vec<u8>> = transport.requests[2..]
             .iter()
@@ -904,6 +1049,111 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Serves one page's map data, as the Action API does.
+    struct MapApi {
+        reply: String,
+        requests: Vec<String>,
+    }
+
+    impl MediaWikiTransport for MapApi {
+        type Error = String;
+        fn get(&mut self, url: &str, _max: usize) -> Result<Vec<u8>, String> {
+            assert!(WikipediaRequests::new("simplewiki")
+                .unwrap()
+                .accepts_transport_url(url));
+            assert!(url.contains("prop=mapdata"), "{url}");
+            self.requests.push(url.to_owned());
+            Ok(self.reply.clone().into_bytes())
+        }
+    }
+
+    #[test]
+    fn interactive_maps_are_drawn_from_the_base_map_and_the_articles_data() {
+        let group = "_477ba0a3c627b1ed526835dae69bd369beac7de4";
+        // Real simplewiki markup and map data for Eiffel Tower (page 5246),
+        // moved to the tiny test island at (0, 0).
+        let html = format!(
+            "<p>x</p><a class=\"mw-kartographer-map\" data-zoom=\"6\" data-width=\"250\" \
+             data-height=\"200\" data-overlays=\"[&quot;{group}&quot;]\"><img src=\"x\"></a>\
+             <a class=\"mw-kartographer-map\" data-lat=\"0.2\" data-lon=\"0.2\" data-zoom=\"7\" \
+             data-width=\"300\" data-height=\"200\"><img src=\"y\"></a>"
+        );
+        let reply = format!(
+            "{{\"batchcomplete\":true,\"query\":{{\"pages\":[{{\"pageid\":5246,\"title\":\"Eiffel Tower\",\
+             \"mapdata\":[\"{{\\\"{group}\\\":[{{\\\"type\\\":\\\"Feature\\\",\\\"geometry\\\":{{\\\"coordinates\\\":[0.1,0.1],\
+             \\\"type\\\":\\\"Point\\\"}},\\\"properties\\\":{{\\\"marker-color\\\":\\\"#5E74F3\\\"}}}}]}}\"]}}]}}}}"
+        );
+        let page = PublicDumpPage {
+            page_id: 5246,
+            title: "Eiffel Tower".into(),
+            namespace: 0,
+            revision_id: 11033818,
+            timestamp: "2026-10-01T00:00:00Z".into(),
+            redirect_target: None,
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-maps-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut media = DumpMediaStore::create(&dir).unwrap();
+        let requests = WikipediaRequests::new("simplewiki").unwrap();
+        let base = crate::map_render::tests::base();
+        let mut api = MapApi {
+            reply: reply.clone(),
+            requests: Vec::new(),
+        };
+        let maps = draw_article_maps(&mut api, &requests, &page, &html, &base, &mut media).unwrap();
+        assert_eq!(api.requests.len(), 1, "one request for all groups");
+        assert_eq!(maps.len(), 2);
+        assert_eq!(media.maps_drawn(), 2);
+        for map in &maps {
+            assert_eq!(map.derivation, Some(MediaDerivation::RenderedMap));
+            assert_eq!(map.mime_type, "image/svg+xml");
+            let svg = fs::read(dir.join(map.sha256.as_deref().unwrap())).unwrap();
+            assert!(wiki_store::pack_svg::is_clean_svg(&svg));
+        }
+        // The first map fits its marker; the second is at its stated centre.
+        assert!(
+            maps[0]
+                .source_url
+                .contains("mlat=0.10000&mlon=0.10000#map=6/"),
+            "{}",
+            maps[0].source_url
+        );
+        assert!(
+            maps[1].source_url.contains("#map=7/0.20000/0.20000"),
+            "{}",
+            maps[1].source_url
+        );
+        let marker =
+            String::from_utf8(fs::read(dir.join(maps[0].sha256.as_deref().unwrap())).unwrap())
+                .unwrap();
+        assert!(marker.contains("fill=\"#5e74f3\""), "{marker}");
+
+        // Map data for other groups (the article changed since the pinned
+        // revision): nothing is drawn, and the reason is kept.
+        let mut changed = MapApi {
+            reply: reply.replace(group, "_0000000000000000000000000000000000000000"),
+            requests: Vec::new(),
+        };
+        let mut other = DumpMediaStore::create(&dir.join("other")).unwrap();
+        assert!(
+            draw_article_maps(&mut changed, &requests, &page, &html, &base, &mut other)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            other.map_notices()[0].1.contains("not the pinned revision"),
+            "{:?}",
+            other.map_notices()
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn an_image_that_cannot_be_downloaded_fails_the_article() {
         let (bytes, member) = dump(1383416967);
@@ -921,7 +1171,7 @@ mod tests {
             broken: Some("Pythagorean.svg"),
             ..replay()
         };
-        match render_dump_article(&mut broken, "enwiki", "en", &selected[0], &mut media) {
+        match render_dump_article(&mut broken, "enwiki", "en", &selected[0], &mut media, None) {
             Err(DumpPackError::Render { title, reason }) => {
                 assert_eq!(title, "Hypotenuse");
                 assert!(
@@ -965,7 +1215,7 @@ mod tests {
         ));
         let mut media = DumpMediaStore::create(&dir).unwrap();
         let mut replay = replay();
-        match render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media) {
+        match render_dump_article(&mut replay, "enwiki", "en", &selected[0], &mut media, None) {
             Err(DumpPackError::Render { title, reason }) => {
                 assert_eq!(title, "Hypotenuse");
                 assert!(reason.contains("RevisionMismatch"), "{reason}");

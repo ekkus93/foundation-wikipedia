@@ -99,6 +99,7 @@ function wikipediaStyle(dark: boolean): string {
     `.foundation-cited-note{color:${muted};font-size:.85em;margin:0}`,
     `.foundation-still-note{display:block;color:${muted};font-size:.85em}`,
     `.foundation-map-note{display:block;border:1px solid ${rule};background:${box};padding:.6em .8em;color:${muted};font-size:.9em}`,
+    `.foundation-map-credit{display:block;color:${muted};font-size:.75em}`,
     ".mwe-math-fallback-image-display{display:block;margin:.5em auto}",
     "@media (max-width:720px){.infobox,.sidebar,.thumb,figure[typeof]{float:none;width:auto;max-width:100%;margin:1em 0}}",
   ].join("");
