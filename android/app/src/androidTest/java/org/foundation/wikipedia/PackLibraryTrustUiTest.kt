@@ -66,6 +66,10 @@ class PackLibraryTrustUiTest {
             compose.onAllNodesWithContentDescription("Open reader actions").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithContentDescription("Open reader actions").performClick()
+        // The menu opens a frame later; on a slow emulator it is not there yet.
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("Settings").performClick()
         compose.onNodeWithText("Wikipedia & Offline Data").performScrollTo().performClick()
         val custom = packTrustTag(PackTrust.CUSTOM_INTEGRITY_VERIFIED)
