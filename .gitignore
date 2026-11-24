@@ -22,3 +22,6 @@ rustc-ice-*.txt
 
 # Generated native Android libraries (never commit local cross-build artifacts).
 android/app/src/main/jniLibs/
+
+# Local scratch space for large downloads and build experiments (never committed).
+/tmp/
