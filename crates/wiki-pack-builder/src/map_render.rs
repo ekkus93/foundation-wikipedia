@@ -21,6 +21,9 @@ use std::path::Path;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+
+use crate::osm_extract::{FeatureKind, OsmFeature, OsmPlace, OsmShape};
 use wiki_source::map_data::MapFrame;
 
 /// The Natural Earth v5.1.2 GeoJSON files the base map uses, with their
@@ -80,6 +83,11 @@ pub const NATURAL_EARTH_FILES: [(&str, &str); 12] = [
 pub const MAP_LICENSE: &str =
     "Base map: Natural Earth (public domain). Markers and shapes: the article's map data (CC BY-SA 4.0)";
 pub const MAP_CREATOR: &str = "Natural Earth; Wikipedia contributors";
+/// The same, for a map that also draws OpenStreetMap data (ODbL 1.0).
+pub const MAP_LICENSE_OSM: &str =
+    "Map data © OpenStreetMap contributors (ODbL 1.0, openstreetmap.org/copyright). Base map: Natural Earth (public domain). Markers and shapes: the article's map data (CC BY-SA 4.0)";
+pub const MAP_CREATOR_OSM: &str =
+    "OpenStreetMap contributors; Natural Earth; Wikipedia contributors";
 
 const WATER: &str = "#aad3df";
 const LAND: &str = "#f2efe9";
@@ -235,6 +243,8 @@ struct View {
     top: f64,
     width: f64,
     height: f64,
+    /// Simplification tolerance in pixels: finer when zoomed in.
+    tolerance: f64,
 }
 
 const MAX_LAT: f64 = 85.051_128_78;
@@ -249,6 +259,7 @@ impl View {
             top: y - f64::from(height) / 2.0,
             width: f64::from(width),
             height: f64::from(height),
+            tolerance: if zoom >= 13.0 { 0.35 } else { 0.8 },
         }
     }
 
@@ -387,25 +398,69 @@ fn clip_line(line: &[[f64; 2]], view: &View) -> Vec<Vec<[f64; 2]>> {
 }
 
 /// SVG path data for projected parts, thinned below half a pixel.
-fn path_data(parts: &[Vec<[f64; 2]>], closed: bool, out: &mut String) {
+/// The points of `line` that keep it within `tolerance` pixels
+/// (Douglas–Peucker), first and last always kept.
+fn simplify(line: &[[f64; 2]], tolerance: f64) -> Vec<[f64; 2]> {
+    if line.len() < 3 {
+        return line.to_vec();
+    }
+    let mut keep = vec![false; line.len()];
+    keep[0] = true;
+    keep[line.len() - 1] = true;
+    let mut stack = vec![(0, line.len() - 1)];
+    while let Some((first, last)) = stack.pop() {
+        let (a, b) = (line[first], line[last]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let length = (dx * dx + dy * dy).sqrt();
+        let mut farthest = (0.0, first);
+        for (index, p) in line.iter().enumerate().take(last).skip(first + 1) {
+            let distance = if length == 0.0 {
+                ((p[0] - a[0]).powi(2) + (p[1] - a[1]).powi(2)).sqrt()
+            } else {
+                ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx).abs() / length
+            };
+            if distance > farthest.0 {
+                farthest = (distance, index);
+            }
+        }
+        if farthest.0 > tolerance {
+            keep[farthest.1] = true;
+            stack.push((first, farthest.1));
+            stack.push((farthest.1, last));
+        }
+    }
+    line.iter()
+        .zip(keep)
+        .filter_map(|(point, kept)| kept.then_some(*point))
+        .collect()
+}
+
+/// SVG path data for projected parts, simplified to `tolerance` pixels.
+fn path_data(parts: &[Vec<[f64; 2]>], closed: bool, tolerance: f64, out: &mut String) {
     for part in parts {
-        let mut last: Option<[f64; 2]> = None;
-        let mut count = 0;
+        let points = simplify(part, tolerance);
+        if points.len() < 2 || (closed && points.len() < 3) {
+            continue;
+        }
+        let mut last = [f64::NAN; 2];
         let start = out.len();
-        for point in part {
-            if let Some(previous) = last {
-                if (point[0] - previous[0]).abs() < 0.5 && (point[1] - previous[1]).abs() < 0.5 {
-                    continue;
-                }
+        let mut count = 0;
+        for point in &points {
+            let rounded = [
+                (point[0] * 10.0).round() / 10.0,
+                (point[1] * 10.0).round() / 10.0,
+            ];
+            if rounded == last {
+                continue;
             }
             let _ = write!(
                 out,
                 "{}{:.1} {:.1}",
                 if count == 0 { "M" } else { "L" },
-                point[0],
-                point[1]
+                rounded[0],
+                rounded[1]
             );
-            last = Some(*point);
+            last = rounded;
             count += 1;
         }
         if count < 2 || (closed && count < 3) {
@@ -437,7 +492,7 @@ fn layer_path(shapes: &[Shape], view: &View, closed: bool) -> String {
                 .flat_map(|line| clip_line(line, view))
                 .collect()
         };
-        path_data(&clipped, closed, &mut out);
+        path_data(&clipped, closed, view.tolerance, &mut out);
     }
     out
 }
@@ -469,12 +524,42 @@ fn number(value: Option<&Value>, default: f64, max: f64) -> f64 {
         .map_or(default, |n| n.min(max))
 }
 
+/// A Kartographer `ExternalData` reference: the Wikidata IDs whose
+/// outline (`geoshape`) or line (`geoline`) Wikimedia Maps would load.
+struct External<'a> {
+    ids: Vec<String>,
+    properties: Option<&'a Value>,
+}
+
+fn external(value: &Value) -> Option<External<'_>> {
+    let service = value.get("service").and_then(Value::as_str)?;
+    if service != "geoshape" && service != "geoline" {
+        return None;
+    }
+    let url = url::Url::parse(value.get("url").and_then(Value::as_str)?).ok()?;
+    let ids: Vec<String> = url
+        .query_pairs()
+        .find(|(key, _)| key == "ids")?
+        .1
+        .split(',')
+        .map(str::trim)
+        .filter(|id| {
+            id.len() > 1 && id.starts_with('Q') && id[1..].bytes().all(|b| b.is_ascii_digit())
+        })
+        .map(str::to_owned)
+        .collect();
+    (!ids.is_empty()).then_some(External {
+        ids,
+        properties: value.get("properties"),
+    })
+}
+
 /// Each drawable GeoJSON feature in `value` (Feature, FeatureCollection or
-/// bare geometry), with its properties. `ExternalData` is counted.
+/// bare geometry), with its properties; `ExternalData` goes to `externals`.
 fn features<'a>(
     value: &'a Value,
     out: &mut Vec<(&'a Value, Option<&'a Value>)>,
-    omitted: &mut usize,
+    externals: &mut Vec<Option<External<'a>>>,
 ) {
     match value.get("type").and_then(Value::as_str) {
         Some("FeatureCollection") => {
@@ -484,7 +569,7 @@ fn features<'a>(
                 .into_iter()
                 .flatten()
             {
-                features(feature, out, omitted);
+                features(feature, out, externals);
             }
         }
         Some("Feature") => {
@@ -492,7 +577,7 @@ fn features<'a>(
                 out.push((geometry, value.get("properties")));
             }
         }
-        Some("ExternalData") => *omitted += 1,
+        Some("ExternalData") => externals.push(external(value)),
         Some(_) => out.push((value, None)),
         None => {}
     }
@@ -510,61 +595,162 @@ fn points(geometry: &Value) -> Vec<[f64; 2]> {
     }
 }
 
+/// Street-level detail for one map, from an OpenStreetMap extract.
+#[derive(Clone, Copy, Debug)]
+pub struct MapDetail<'a> {
+    /// Features in the map's area (`None` if the extract does not cover it).
+    pub features: Option<&'a [OsmFeature]>,
+    pub places: &'a [OsmPlace],
+    /// Outlines by Wikidata ID.
+    pub shapes: &'a HashMap<String, OsmShape>,
+}
+
 /// A map drawn for a pack.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawnMap {
     /// The SVG, already in the pack sanitiser's exact form.
     pub svg: Vec<u8>,
-    /// Shapes the article loads from Wikimedia Maps, not drawn.
+    /// Outlines the article loads from Wikimedia Maps that could not be
+    /// drawn (no OpenStreetMap extract holds them).
     pub omitted_shapes: usize,
+    /// Whether OpenStreetMap data was drawn (it must then be credited).
+    pub uses_openstreetmap: bool,
     /// The centre drawn, for the map's link: `(lat, lon)`.
     pub centre: (f64, f64),
     pub zoom: u8,
 }
 
-/// Draw `frame` with the article's map `data` (the features of each of its
-/// groups). `None` if it has no centre and no drawable shapes to fit.
-pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option<DrawnMap> {
+/// A map's planned centre, zoom and Wikidata outlines, before any
+/// OpenStreetMap data is read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapPlan {
+    /// `(lat, lon, zoom)`, or `None` until outlines are known.
+    pub view: Option<(f64, f64, u8)>,
+    /// `[west, south, east, north]` of the planned view.
+    pub bounds: Option<[f64; 4]>,
+    pub shapes: Vec<String>,
+}
+
+/// Plan `frame` from its stated centre or its drawable shapes.
+pub fn plan_view(frame: &MapFrame, data: &[Value]) -> MapPlan {
     let mut drawable = Vec::new();
-    let mut omitted = 0;
+    let mut externals = Vec::new();
     for value in data {
-        features(value, &mut drawable, &mut omitted);
+        features(value, &mut drawable, &mut externals);
     }
-    let mut every_point = Vec::new();
+    let shapes = externals
+        .into_iter()
+        .flatten()
+        .flat_map(|external| external.ids)
+        .collect();
+    let points: Vec<[f64; 2]> = drawable
+        .iter()
+        .flat_map(|(geometry, _)| {
+            let mut all = points(geometry);
+            if let Some(parts) = geometry_parts(geometry) {
+                all.extend(parts.into_iter().flatten());
+            }
+            all
+        })
+        .collect();
+    let view = fit(frame, &points);
+    MapPlan {
+        bounds: view.map(|(lat, lon, zoom)| {
+            View::new(lon, lat, f64::from(zoom), frame.width, frame.height).geo_bounds()
+        }),
+        view,
+        shapes,
+    }
+}
+
+/// The centre and zoom: as stated, or fitted to `points`.
+fn fit(frame: &MapFrame, points: &[[f64; 2]]) -> Option<(f64, f64, u8)> {
+    let (width, height) = (frame.width, frame.height);
+    if let (Some(lat), Some(lon)) = (frame.lat, frame.lon) {
+        return Some((lat, lon, frame.zoom.unwrap_or(12)));
+    }
+    if points.is_empty() {
+        return None;
+    }
+    let b = bounds(&[points.to_vec()]);
+    let (lon, lat) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+    let zoom = frame.zoom.unwrap_or_else(|| {
+        // The closest zoom at which the shapes fit, up to 18.
+        (0..=18u8)
+            .rev()
+            .find(|z| {
+                let v = View::new(lon, lat, f64::from(*z), width, height);
+                let (sw, ne) = (v.project([b[0], b[1]]), v.project([b[2], b[3]]));
+                sw[0] >= 8.0 && ne[0] <= v.width - 8.0 && ne[1] >= 8.0 && sw[1] <= v.height - 8.0
+            })
+            .unwrap_or(0)
+    });
+    Some((lat, lon, zoom))
+}
+
+/// Road widths at zoom 16 by class (motorway … footpath), in pixels.
+const ROAD_WIDTH: [f64; 7] = [11.0, 10.0, 9.0, 8.0, 6.0, 4.0, 1.6];
+const ROAD_FILL: [&str; 7] = [
+    "#e892a2", "#fcd6a4", "#f7fabf", "#ffffff", "#ffffff", "#ffffff", "#fa8072",
+];
+
+fn features_path(features: &[&OsmFeature], view: &View, closed: bool) -> String {
+    let shapes: Vec<Shape> = features
+        .iter()
+        .map(|feature| Shape {
+            bounds: bounds(&feature.parts),
+            parts: feature.parts.clone(),
+        })
+        .collect();
+    layer_path(&shapes, view, closed)
+}
+
+/// Draw `frame` with the article's map `data` (the features of each of its
+/// groups) and, if given, OpenStreetMap `detail`. `None` if it has no centre
+/// and no drawable shapes to fit.
+pub fn draw_map(
+    base: &NaturalEarth,
+    frame: &MapFrame,
+    data: &[Value],
+    detail: Option<&MapDetail<'_>>,
+) -> Option<DrawnMap> {
+    let mut drawable = Vec::new();
+    let mut externals = Vec::new();
+    for value in data {
+        features(value, &mut drawable, &mut externals);
+    }
+    // Outlines the extract holds, with the article's styles.
+    let mut outlines: Vec<(&OsmShape, Option<&Value>)> = Vec::new();
+    let mut omitted = 0;
+    for external in &externals {
+        let found: Vec<&OsmShape> = external
+            .iter()
+            .flat_map(|external| external.ids.iter())
+            .filter_map(|id| detail.and_then(|detail| detail.shapes.get(id)))
+            .collect();
+        match external {
+            Some(external) if found.len() == external.ids.len() => {
+                outlines.extend(found.into_iter().map(|shape| (shape, external.properties)));
+            }
+            _ => omitted += 1,
+        }
+    }
+    let mut every_point: Vec<[f64; 2]> = Vec::new();
     for (geometry, _) in &drawable {
         every_point.extend(points(geometry));
         if let Some(parts) = geometry_parts(geometry) {
             every_point.extend(parts.into_iter().flatten());
         }
     }
+    for (shape, _) in &outlines {
+        every_point.extend(shape.rings.iter().chain(&shape.lines).flatten());
+    }
+    let (lat, lon, zoom) = fit(frame, &every_point)?;
     let (width, height) = (frame.width, frame.height);
-    let (lat, lon, zoom) = match (frame.lat, frame.lon) {
-        (Some(lat), Some(lon)) => (lat, lon, frame.zoom.unwrap_or(12)),
-        _ => {
-            if every_point.is_empty() {
-                return None;
-            }
-            let b = bounds(&[every_point.clone()]);
-            let (lon, lat) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
-            let zoom = frame.zoom.unwrap_or_else(|| {
-                // The closest zoom at which the shapes fit, up to 18.
-                (0..=18u8)
-                    .rev()
-                    .find(|z| {
-                        let v = View::new(lon, lat, f64::from(*z), width, height);
-                        let (sw, ne) = (v.project([b[0], b[1]]), v.project([b[2], b[3]]));
-                        sw[0] >= 8.0
-                            && ne[0] <= v.width - 8.0
-                            && ne[1] >= 8.0
-                            && sw[1] <= v.height - 8.0
-                    })
-                    .unwrap_or(0)
-            });
-            (lat, lon, zoom)
-        }
-    };
     let view = View::new(lon, lat, f64::from(zoom), width, height);
     let layers = if zoom <= 4 { &base.coarse } else { &base.fine };
+    let osm = detail.and_then(|detail| detail.features);
+    let mut uses_openstreetmap = !outlines.is_empty();
 
     let mut svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" \
@@ -583,10 +769,78 @@ pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option
         layer_path(&layers.lakes, &view, true),
         &format!("fill=\"{WATER}\" fill-rule=\"evenodd\""),
     );
-    draw(
-        layer_path(&layers.rivers, &view, false),
-        &format!("fill=\"none\" stroke=\"{WATER}\" stroke-width=\"1.2\""),
-    );
+    if osm.is_none() {
+        draw(
+            layer_path(&layers.rivers, &view, false),
+            &format!("fill=\"none\" stroke=\"{WATER}\" stroke-width=\"1.2\""),
+        );
+    }
+    if let Some(osm) = osm {
+        uses_openstreetmap |= !osm.is_empty();
+        let of = |kind: fn(FeatureKind) -> bool| -> Vec<&OsmFeature> {
+            osm.iter().filter(|feature| kind(feature.kind)).collect()
+        };
+        let scale = 2f64.powf(f64::from(zoom) - 16.0);
+        draw(
+            features_path(&of(|k| k == FeatureKind::Green), &view, true),
+            "fill=\"#c8facc\" fill-rule=\"evenodd\"",
+        );
+        draw(
+            features_path(&of(|k| k == FeatureKind::Water), &view, true),
+            &format!("fill=\"{WATER}\" fill-rule=\"evenodd\""),
+        );
+        draw(
+            features_path(&of(|k| k == FeatureKind::River), &view, false),
+            &format!(
+                "fill=\"none\" stroke=\"{WATER}\" stroke-width=\"{:.1}\" stroke-linecap=\"round\"",
+                (6.0 * scale).clamp(1.0, 8.0)
+            ),
+        );
+        draw(
+            features_path(&of(|k| k == FeatureKind::Coastline), &view, false),
+            "fill=\"none\" stroke=\"#6a9bb0\" stroke-width=\"0.8\"",
+        );
+        draw(
+            features_path(&of(|k| k == FeatureKind::Building), &view, true),
+            "fill=\"#d9d0c9\" stroke=\"#c4b6ab\" stroke-width=\"0.5\"",
+        );
+        // Roads: casings, then fills, minor first so major roads are on top.
+        for class in (0..7u8).rev() {
+            let roads = of_class(osm, class);
+            let width = (ROAD_WIDTH[usize::from(class)] * scale).max(0.6);
+            if class < 6 && zoom >= 13 {
+                draw(
+                    features_path(&roads, &view, false),
+                    &format!(
+                        "fill=\"none\" stroke=\"#a89d93\" stroke-width=\"{:.1}\" \
+                         stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+                        width + 1.2
+                    ),
+                );
+            }
+        }
+        for class in (0..7u8).rev() {
+            let roads = of_class(osm, class);
+            let width = (ROAD_WIDTH[usize::from(class)] * scale).max(0.6);
+            let dash = if class == 6 {
+                " stroke-dasharray=\"2 2\""
+            } else {
+                ""
+            };
+            draw(
+                features_path(&roads, &view, false),
+                &format!(
+                    "fill=\"none\" stroke=\"{}\" stroke-width=\"{width:.1}\" \
+                     stroke-linecap=\"round\" stroke-linejoin=\"round\"{dash}",
+                    ROAD_FILL[usize::from(class)]
+                ),
+            );
+        }
+        draw(
+            features_path(&of(|k| k == FeatureKind::Rail), &view, false),
+            "fill=\"none\" stroke=\"#707070\" stroke-width=\"1.4\" stroke-dasharray=\"6 3\"",
+        );
+    }
     if zoom >= 3 {
         draw(
             layer_path(&layers.states, &view, false),
@@ -598,17 +852,47 @@ pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option
         "fill=\"none\" stroke=\"#9e8c9e\" stroke-width=\"1\"",
     );
 
-    // Place names that fit this zoom.
+    // Place names for this zoom, most important first and never
+    // overlapping: OpenStreetMap's close up (zoom 11+, where it has
+    // detail), Natural Earth's curated places further out.
+    let mut places: Vec<([f64; 2], &str, f64)> = match (osm, detail) {
+        (Some(_), Some(detail)) if zoom >= 11 && !detail.places.is_empty() => detail
+            .places
+            .iter()
+            .map(|place| (place.at, place.name.as_str(), f64::from(place.min_zoom)))
+            .collect(),
+        _ => layers
+            .places
+            .iter()
+            .filter(|place| place.min_zoom <= f64::from(zoom) + 0.5)
+            .map(|place| (place.at, place.name.as_str(), place.min_zoom))
+            .collect(),
+    };
+    places.sort_by(|a, b| a.2.total_cmp(&b.2).then_with(|| a.1.cmp(b.1)));
+    let mut taken: Vec<[f64; 4]> = Vec::new();
     let mut labels = String::new();
-    for place in layers
-        .places
-        .iter()
-        .filter(|place| place.min_zoom <= f64::from(zoom) + 0.5)
-    {
-        let [x, y] = view.project(place.at);
-        if !(6.0..=view.width - 6.0).contains(&x) || !(10.0..=view.height - 4.0).contains(&y) {
+    for (at, name, _) in places {
+        let [x, y] = view.project(at);
+        // Wide (CJK) characters take about a full em, others ~0.6 em.
+        let width: f64 = name
+            .chars()
+            .map(|c| if (c as u32) >= 0x2E80 { 11.0 } else { 6.6 })
+            .sum();
+        let label = [x - 3.0, y - 14.0, x + 5.0 + width, y + 3.0];
+        if label[0] < 0.0
+            || label[1] < 0.0
+            || label[2] > view.width
+            || label[3] > view.height - 12.0
+        {
             continue;
         }
+        if taken
+            .iter()
+            .any(|t| label[0] < t[2] && t[0] < label[2] && label[1] < t[3] && t[1] < label[3])
+        {
+            continue;
+        }
+        taken.push(label);
         let _ = write!(
             labels,
             "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"2\" fill=\"#333\"/>\
@@ -616,47 +900,58 @@ pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option
              stroke=\"#fff\" stroke-width=\"3\" paint-order=\"stroke\">{}</text>",
             x + 4.0,
             y - 3.0,
-            escape(&place.name)
+            escape(name)
         );
     }
-    svg.push_str(&labels);
 
-    // The article's own shapes, lines and markers, on top.
-    for (geometry, properties) in &drawable {
+    // The article's outlines, shapes, lines and markers, on top.
+    let mut overlay = String::new();
+    let mut shape_path = |parts: Vec<Vec<[f64; 2]>>, closed: bool, properties: Option<&Value>| {
         let style = |key: &str| properties.and_then(|p| p.get(key));
-        let Some(parts) = geometry_parts(geometry) else {
-            continue;
+        if parts.is_empty() {
+            return;
+        }
+        let shape = Shape {
+            bounds: bounds(&parts),
+            parts,
         };
-        if !parts.is_empty() {
+        let d = layer_path(std::slice::from_ref(&shape), &view, closed);
+        if d.is_empty() {
+            return;
+        }
+        let stroke = colour(style("stroke"), "#555555");
+        let stroke_width = number(style("stroke-width"), 2.0, 20.0);
+        let stroke_opacity = number(style("stroke-opacity"), 1.0, 1.0);
+        let fill = if closed {
+            format!(
+                "fill=\"{}\" fill-opacity=\"{}\" fill-rule=\"evenodd\"",
+                colour(style("fill"), "#555555"),
+                number(style("fill-opacity"), 0.3, 1.0)
+            )
+        } else {
+            "fill=\"none\"".to_owned()
+        };
+        let _ = write!(
+            overlay,
+            "<path d=\"{d}\" {fill} stroke=\"{stroke}\" stroke-width=\"{stroke_width}\" \
+             stroke-opacity=\"{stroke_opacity}\" stroke-linejoin=\"round\"/>"
+        );
+    };
+    for (shape, properties) in &outlines {
+        shape_path(shape.rings.clone(), true, *properties);
+        shape_path(shape.lines.clone(), false, *properties);
+    }
+    for (geometry, properties) in &drawable {
+        if let Some(parts) = geometry_parts(geometry) {
             let closed = matches!(
                 geometry.get("type").and_then(Value::as_str),
                 Some("Polygon" | "MultiPolygon")
             );
-            let shape = Shape {
-                bounds: bounds(&parts),
-                parts,
-            };
-            let d = layer_path(std::slice::from_ref(&shape), &view, closed);
-            if !d.is_empty() {
-                let stroke = colour(style("stroke"), "#555555");
-                let stroke_width = number(style("stroke-width"), 2.0, 20.0);
-                let stroke_opacity = number(style("stroke-opacity"), 1.0, 1.0);
-                let fill = if closed {
-                    format!(
-                        "fill=\"{}\" fill-opacity=\"{}\" fill-rule=\"evenodd\"",
-                        colour(style("fill"), "#555555"),
-                        number(style("fill-opacity"), 0.3, 1.0)
-                    )
-                } else {
-                    "fill=\"none\"".to_owned()
-                };
-                let _ = write!(
-                    svg,
-                    "<path d=\"{d}\" {fill} stroke=\"{stroke}\" stroke-width=\"{stroke_width}\" \
-                     stroke-opacity=\"{stroke_opacity}\" stroke-linejoin=\"round\"/>"
-                );
-            }
+            shape_path(parts, closed, *properties);
         }
+    }
+    for (geometry, properties) in &drawable {
+        let style = |key: &str| properties.and_then(|p| p.get(key));
         for point in points(geometry) {
             let [x, y] = view.project(point);
             if !(0.0..=view.width).contains(&x) || !(0.0..=view.height).contains(&y) {
@@ -665,17 +960,24 @@ pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option
             let fill = colour(style("marker-color"), "#7e7e7e");
             // A map pin: a circle on a point, outlined to show on any base.
             let _ = write!(
-                svg,
+                overlay,
                 "<path d=\"M{x:.1} {y:.1}l-6 -10a7 7 0 1 1 12 0z\" fill=\"{fill}\" \
                  stroke=\"#fff\" stroke-width=\"1.5\"/><circle cx=\"{x:.1}\" cy=\"{:.1}\" r=\"2.5\" fill=\"#fff\"/>",
                 y - 13.0
             );
         }
     }
+    svg.push_str(&labels);
+    svg.push_str(&overlay);
+    let credit = if uses_openstreetmap {
+        "© OpenStreetMap contributors · Natural Earth"
+    } else {
+        "Natural Earth"
+    };
     let _ = write!(
         svg,
         "<text x=\"{}\" y=\"{}\" text-anchor=\"end\" font-family=\"sans-serif\" font-size=\"9\" \
-         fill=\"#555\" stroke=\"#fff\" stroke-width=\"2\" paint-order=\"stroke\">Natural Earth</text></svg>",
+         fill=\"#555\" stroke=\"#fff\" stroke-width=\"2\" paint-order=\"stroke\">{credit}</text></svg>",
         width - 3,
         height - 3
     );
@@ -683,9 +985,16 @@ pub fn draw_map(base: &NaturalEarth, frame: &MapFrame, data: &[Value]) -> Option
     Some(DrawnMap {
         svg,
         omitted_shapes: omitted,
+        uses_openstreetmap,
         centre: (lat, lon),
         zoom,
     })
+}
+
+fn of_class(osm: &[OsmFeature], class: u8) -> Vec<&OsmFeature> {
+    osm.iter()
+        .filter(|feature| feature.kind == FeatureKind::Road(class))
+        .collect()
 }
 
 #[cfg(test)]
@@ -745,7 +1054,13 @@ pub(crate) mod tests {
             "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
             "properties": {"marker-color": "#5E74F3", "title": "Here"}
         });
-        let map = draw_map(&base(), &frame(Some(0.0), Some(0.0), Some(6)), &[marker]).unwrap();
+        let map = draw_map(
+            &base(),
+            &frame(Some(0.0), Some(0.0), Some(6)),
+            &[marker],
+            None,
+        )
+        .unwrap();
         let svg = String::from_utf8(map.svg.clone()).unwrap();
         assert!(wiki_store::pack_svg::is_clean_svg(&map.svg));
         assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"300\" height=\"200\" viewBox=\"0 0 300 200\">"));
@@ -782,7 +1097,7 @@ pub(crate) mod tests {
             }]}
         ]);
         let data = data.as_array().unwrap().clone();
-        let map = draw_map(&base(), &frame(None, None, None), &data).unwrap();
+        let map = draw_map(&base(), &frame(None, None, None), &data, None).unwrap();
         let svg = String::from_utf8(map.svg).unwrap();
         assert_eq!(map.omitted_shapes, 1);
         assert_eq!(map.centre, (0.25, 0.25));
@@ -794,8 +1109,101 @@ pub(crate) mod tests {
         );
         // No centre and nothing drawable: no map.
         assert_eq!(
-            draw_map(&base(), &frame(None, None, Some(5)), &data[..1]),
+            draw_map(&base(), &frame(None, None, Some(5)), &data[..1], None),
             None
+        );
+    }
+
+    #[test]
+    fn openstreetmap_detail_and_wikidata_outlines_are_drawn_and_credited() {
+        use crate::osm_extract::{FeatureKind, OsmFeature, OsmPlace, OsmShape};
+        let road = OsmFeature {
+            kind: FeatureKind::Road(1),
+            parts: vec![vec![[-0.01, 0.0], [0.01, 0.0]]],
+        };
+        let building = OsmFeature {
+            kind: FeatureKind::Building,
+            parts: vec![vec![
+                [0.001, 0.001],
+                [0.002, 0.001],
+                [0.002, 0.002],
+                [0.001, 0.001],
+            ]],
+        };
+        let places = [OsmPlace {
+            at: [0.0005, 0.0005],
+            name: "Old Town".into(),
+            min_zoom: 12,
+        }];
+        let shapes = HashMap::from([(
+            "Q42".to_owned(),
+            OsmShape {
+                rings: vec![vec![
+                    [-0.003, -0.003],
+                    [0.003, -0.003],
+                    [0.003, 0.003],
+                    [-0.003, -0.003],
+                ]],
+                lines: vec![],
+            },
+        )]);
+        let features = [road, building];
+        let detail = MapDetail {
+            features: Some(&features),
+            places: &places,
+            shapes: &shapes,
+        };
+        let data: Value = serde_json::json!({
+            "type": "ExternalData", "service": "geoshape",
+            "url": "https://maps.wikimedia.org/geoshape?getgeojson=1&ids=Q42",
+            "properties": {"stroke": "#ff0000", "fill": "#00ff00"}
+        });
+        let map = draw_map(
+            &base(),
+            &frame(Some(0.0), Some(0.0), Some(16)),
+            &[data.clone()],
+            Some(&detail),
+        )
+        .unwrap();
+        let svg = String::from_utf8(map.svg).unwrap();
+        assert_eq!(map.omitted_shapes, 0);
+        assert!(map.uses_openstreetmap);
+        assert!(svg.contains("fill=\"#d9d0c9\""), "building: {svg}");
+        assert!(svg.contains("stroke=\"#fcd6a4\""), "primary road: {svg}");
+        assert!(
+            svg.contains("fill=\"#00ff00\"") && svg.contains("stroke=\"#ff0000\""),
+            "outline: {svg}"
+        );
+        assert!(svg.contains(">Old Town</text>"), "OSM place: {svg}");
+        assert!(!svg.contains("Port &lt;"), "base places replaced: {svg}");
+        assert!(
+            svg.contains("© OpenStreetMap contributors · Natural Earth</text>"),
+            "{svg}"
+        );
+        // An outline the extract lacks is counted, not drawn.
+        let other = HashMap::new();
+        let without = MapDetail {
+            features: Some(&features),
+            places: &places,
+            shapes: &other,
+        };
+        let map = draw_map(
+            &base(),
+            &frame(Some(0.0), Some(0.0), Some(16)),
+            &[data.clone()],
+            Some(&without),
+        )
+        .unwrap();
+        assert_eq!(map.omitted_shapes, 1);
+        // A planned view names the outlines to read, and fits nothing yet.
+        let plan = plan_view(&frame(None, None, None), &[data]);
+        assert_eq!(plan.shapes, ["Q42"]);
+        assert_eq!(plan.view, None);
+        let plan = plan_view(&frame(Some(0.0), Some(0.0), Some(16)), &[]);
+        let b = plan.bounds.unwrap();
+        assert!(
+            b[0] < 0.0 && b[2] > 0.0 && b[1] < 0.0 && b[3] > 0.0,
+            "{b:?}"
         );
     }
 
@@ -806,13 +1214,61 @@ pub(crate) mod tests {
             "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
             "properties": {"marker-color": "\"/><script>alert(1)</script>", "stroke": "url(http://x/)"}
         });
-        let map = draw_map(&base(), &frame(Some(0.0), Some(0.0), Some(5)), &[data]).unwrap();
+        let map = draw_map(
+            &base(),
+            &frame(Some(0.0), Some(0.0), Some(5)),
+            &[data],
+            None,
+        )
+        .unwrap();
         let svg = String::from_utf8(map.svg).unwrap();
         assert!(
             !svg.contains("script") && !svg.contains("http://x"),
             "{svg}"
         );
         assert!(svg.contains("fill=\"#7e7e7e\""), "default colour: {svg}");
+    }
+
+    #[test]
+    fn lines_are_simplified_within_the_tolerance() {
+        // A wiggle smaller than the tolerance is dropped, a corner is kept.
+        let line = [[0.0, 0.0], [5.0, 0.2], [10.0, 0.0], [10.0, 10.0]];
+        assert_eq!(
+            simplify(&line, 0.5),
+            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]
+        );
+        assert_eq!(simplify(&line, 0.1), line.to_vec());
+        assert_eq!(simplify(&line[..2], 5.0), line[..2].to_vec());
+    }
+
+    #[test]
+    fn place_names_never_overlap_and_the_most_important_wins() {
+        let mut base = base();
+        base.fine.places = vec![
+            Place {
+                at: [0.0, 0.0],
+                name: "Minor".into(),
+                min_zoom: 6.0,
+            },
+            Place {
+                at: [0.0, 0.0],
+                name: "Capital".into(),
+                min_zoom: 2.0,
+            },
+            Place {
+                at: [0.3, -0.3],
+                name: "Elsewhere".into(),
+                min_zoom: 6.0,
+            },
+        ];
+        let map = draw_map(&base, &frame(Some(0.0), Some(0.0), Some(7)), &[], None).unwrap();
+        let svg = String::from_utf8(map.svg).unwrap();
+        assert!(svg.contains(">Capital</text>"), "{svg}");
+        assert!(
+            !svg.contains(">Minor</text>"),
+            "same spot, less important: {svg}"
+        );
+        assert!(svg.contains(">Elsewhere</text>"), "{svg}");
     }
 
     #[test]
@@ -823,6 +1279,7 @@ pub(crate) mod tests {
             top: 0.0,
             width: 100.0,
             height: 100.0,
+            tolerance: 0.5,
         };
         let ring = clip_ring(
             &[
@@ -913,7 +1370,7 @@ mod real_data {
         ];
         for (name, frame, data) in cases {
             let started = std::time::Instant::now();
-            let map = draw_map(&base, &frame, &data).unwrap();
+            let map = draw_map(&base, &frame, &data, None).unwrap();
             println!("{name}: {} bytes in {:?}", map.svg.len(), started.elapsed());
             fs::write(out.join(format!("{name}.svg")), &map.svg).unwrap();
         }

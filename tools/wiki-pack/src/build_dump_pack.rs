@@ -11,8 +11,10 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use wiki_pack_builder::map_render::NaturalEarth;
+use wiki_pack_builder::osm_extract::{OsmSource, PbfFile};
 use wiki_pack_builder::public_dump_pack::{
-    render_dump_article, select_dump_pages, write_dump_pack, DumpMediaStore, DumpPackIdentity,
+    attach_maps, render_dump_article, select_dump_pages, write_dump_pack, DumpMediaStore,
+    DumpPackIdentity, MapPlanner,
 };
 use wiki_source::online_curl::CurlTransport;
 use wiki_source::public_dump::DumpChecksum;
@@ -20,7 +22,7 @@ use wiki_source::public_dump::DumpChecksum;
 const MAX_TITLES_FILE_BYTES: u64 = 64 * 1024;
 const MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 
-pub const USAGE: &str = "       wiki-pack build-public-dump-pack [--natural-earth <dir>] <project> <language> <generation> <SHA256SUMS-sha256> <member.xml.bz2> <member-sha256> <titles.txt> <pack-id> <definition-id> <new-work-dir> <new-output.wpack>";
+pub const USAGE: &str = "       wiki-pack build-public-dump-pack [--natural-earth <dir> [--osm <extract.osm.pbf>]...] <project> <language> <generation> <SHA256SUMS-sha256> <member.xml.bz2> <member-sha256> <titles.txt> <pack-id> <definition-id> <new-work-dir> <new-output.wpack>";
 
 fn digest(value: &str, name: &str) -> Result<String, String> {
     if value.len() == 64
@@ -58,23 +60,37 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
         .map(|value| value.to_str())
         .collect::<Option<_>>()
         .ok_or("arguments must be UTF-8")?;
-    // Interactive maps are drawn from the pinned Natural Earth files
-    // (PACK-003); without them they stay online-only notes.
-    let base_map = match fields.first() {
-        Some(&"--natural-earth") => {
-            let dir = fields
-                .get(1)
-                .ok_or(format!("--natural-earth needs a directory\n{USAGE}"))?;
-            eprintln!("Loading the Natural Earth base map from {dir}…");
-            let base = NaturalEarth::load(&PathBuf::from(dir))?;
-            fields.drain(..2);
-            Some(base)
+    // Interactive maps are drawn from the pinned Natural Earth files and,
+    // for street detail and Wikidata outlines, OpenStreetMap extracts
+    // (PACK-003); without Natural Earth they stay online-only notes.
+    let mut base_map = None;
+    let mut extracts = Vec::new();
+    loop {
+        match fields.first() {
+            Some(&"--natural-earth") => {
+                let dir = fields
+                    .get(1)
+                    .ok_or(format!("--natural-earth needs a directory\n{USAGE}"))?;
+                eprintln!("Loading the Natural Earth base map from {dir}…");
+                base_map = Some(NaturalEarth::load(&PathBuf::from(dir))?);
+                fields.drain(..2);
+            }
+            Some(&"--osm") => {
+                let path = fields
+                    .get(1)
+                    .ok_or(format!("--osm needs an .osm.pbf extract\n{USAGE}"))?;
+                extracts.push(PbfFile::open(&PathBuf::from(path))?);
+                fields.drain(..2);
+            }
+            _ => break,
         }
-        _ => {
-            eprintln!("No --natural-earth directory: interactive maps will be online-only notes.");
-            None
+    }
+    if base_map.is_none() {
+        if !extracts.is_empty() {
+            return Err(format!("--osm needs --natural-earth as well\n{USAGE}"));
         }
-    };
+        eprintln!("No --natural-earth directory: interactive maps will be online-only notes.");
+    }
     let [project, language, generation, inventory, member_path, member_sha, titles_path, pack_id, definition_id, work_dir, output] =
         fields.as_slice()
     else {
@@ -121,6 +137,7 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     let mut media = DumpMediaStore::create(&image_dir).map_err(|e| e.to_string())?;
     let mut articles = Vec::with_capacity(selected.len());
     let mut images = 0;
+    let mut planner = base_map.as_ref().map(|_| MapPlanner::default());
     for (index, selection) in selected.iter().enumerate() {
         eprintln!(
             "[{}/{}] {} (page {}, revision {})",
@@ -136,11 +153,29 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
             language,
             selection,
             &mut media,
-            base_map.as_ref(),
+            planner.as_mut(),
         )
         .map_err(|e| e.to_string())?;
         images += article.media.len();
         articles.push(article);
+    }
+    if let (Some(planner), Some(base)) = (planner, &base_map) {
+        if !extracts.is_empty() {
+            eprintln!(
+                "Reading map detail from {} OpenStreetMap extract(s)…",
+                extracts.len()
+            );
+        }
+        let sources: Vec<&dyn OsmSource> = extracts.iter().map(|e| e as &dyn OsmSource).collect();
+        let mut drawn = planner
+            .draw(base, &sources, &mut media)
+            .map_err(|e| e.to_string())?;
+        for article in &mut articles {
+            if let Some(maps) = drawn.remove(&(article.key.project.clone(), article.key.page_id)) {
+                images += maps.len();
+                attach_maps(article, maps).map_err(|e| e.to_string())?;
+            }
+        }
     }
 
     let mut file = OpenOptions::new()
@@ -168,8 +203,9 @@ pub fn run(args: &[OsString]) -> Result<String, String> {
     }
     if media.maps_drawn() > 0 {
         eprintln!(
-            "{} interactive map(s) drawn from Natural Earth.",
-            media.maps_drawn()
+            "{} interactive map(s) drawn offline, {} with OpenStreetMap detail.",
+            media.maps_drawn(),
+            media.maps_with_openstreetmap()
         );
     }
     for (file, reason) in media.svg_fallbacks() {

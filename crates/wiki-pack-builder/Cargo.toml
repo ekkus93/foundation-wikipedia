@@ -19,6 +19,10 @@ html5ever = "0.40"
 url = "2"
 sha2 = "0.10"
 serde_json = "1.0"
+# PACK-003 maps: read OpenStreetMap PBF extracts (pure-Rust zlib).
+# Pinned: 0.3.8 needs Rust 1.88; its build-time `home` is pinned to 0.5.11
+# in Cargo.lock for the same reason.
+osmpbf = { version = "=0.3.7", default-features = false, features = ["rust-zlib"] }
 # PACK-003 lossless re-encoding (publisher side only; pure Rust codecs).
 # Pinned: later 0.25 releases need Rust 1.88, above the workspace toolchain.
 image = { version = "=0.25.6", default-features = false, features = ["png", "gif", "webp"] }

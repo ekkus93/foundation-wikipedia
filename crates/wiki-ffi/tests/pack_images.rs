@@ -124,7 +124,8 @@ fn committed_android_image_fixture_matches_the_builder() {
 /// `PACK003_PACK=<file.wpack>` and run with `--ignored --nocapture`. Every
 /// article's every required image must read back verified, and the reader
 /// document must load each one locally and nothing else.
-/// `PACK003_SHOW_SIZES` lists every image's size, format and source.
+/// `PACK003_SHOW_SIZES` lists every image's size, format and source;
+/// `PACK003_DUMP_MAPS=<dir>` writes each drawn map there for review.
 #[test]
 #[ignore = "needs a built pack; see PACK-003 evidence"]
 fn audit_a_real_pack_for_complete_local_images() {
@@ -161,6 +162,15 @@ fn audit_a_real_pack_for_complete_local_images() {
             let image = library.read_image(digest.clone()).unwrap().unwrap();
             assert_eq!(image.mime, asset.mime_type);
             bytes += image.bytes.len();
+            if let Some(dir) = std::env::var_os("PACK003_DUMP_MAPS") {
+                if asset.derivation == Some(wiki_model::MediaDerivation::RenderedMap) {
+                    fs::write(
+                        PathBuf::from(dir).join(format!("{digest}.svg")),
+                        &image.bytes,
+                    )
+                    .unwrap();
+                }
+            }
             if std::env::var_os("PACK003_SHOW_SIZES").is_some() {
                 println!(
                     "    {:>9} {} {:?} {}",

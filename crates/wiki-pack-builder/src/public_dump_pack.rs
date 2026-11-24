@@ -28,10 +28,15 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::image_reencode::pack_image;
-use crate::map_render::{draw_map, NaturalEarth, MAP_CREATOR, MAP_LICENSE};
+use crate::map_render::{
+    draw_map, plan_view, MapDetail, MapPlan, NaturalEarth, MAP_CREATOR, MAP_CREATOR_OSM,
+    MAP_LICENSE, MAP_LICENSE_OSM,
+};
+use crate::osm_extract::{extract, OsmFeature, OsmPlace, OsmRequest, OsmShape, OsmSource};
 use wiki_model::{Article, ArticleKey, MediaAsset, MediaDerivation, PageRecord};
 use wiki_pack_format::export::{custom_manifest_from_tree, write_custom_tree};
 use wiki_pack_format::manifest::{SourceKind, SourceSnapshot};
+use wiki_source::map_data::MapFrame;
 use wiki_source::map_data::{interactive_maps, parse_map_data, MapDataError};
 use wiki_source::media_download::{
     parse_image_downloads, verify_image, MediaFileTransport, MAX_IMAGE_BYTES,
@@ -200,6 +205,7 @@ pub struct DumpMediaStore {
     svg_fallbacks: Vec<(String, String)>,
     map_notices: Vec<(String, String)>,
     maps_drawn: usize,
+    maps_with_openstreetmap: usize,
 }
 
 impl DumpMediaStore {
@@ -212,6 +218,7 @@ impl DumpMediaStore {
             svg_fallbacks: Vec::new(),
             map_notices: Vec::new(),
             maps_drawn: 0,
+            maps_with_openstreetmap: 0,
         })
     }
 
@@ -300,6 +307,11 @@ impl DumpMediaStore {
         self.maps_drawn
     }
 
+    /// Of those, maps with OpenStreetMap detail or outlines.
+    pub fn maps_with_openstreetmap(&self) -> usize {
+        self.maps_with_openstreetmap
+    }
+
     /// Why maps were left as online-only notes, or drawn without some of
     /// their shapes: `(article title, reason)`.
     pub fn map_notices(&self) -> &[(String, String)] {
@@ -333,7 +345,7 @@ pub fn render_dump_article<T>(
     language: &str,
     selection: &DumpSelection,
     media: &mut DumpMediaStore,
-    base_map: Option<&NaturalEarth>,
+    maps: Option<&mut MapPlanner>,
 ) -> Result<Article, DumpPackError>
 where
     T: MediaWikiTransport + MediaFileTransport,
@@ -389,24 +401,18 @@ where
             images.push(asset);
         }
     }
-    let maps = match base_map {
-        Some(base) => draw_article_maps(
+    if let Some(planner) = maps {
+        collect_article_maps(
             transport, &requests, page,
             // The raw parse output: map settings (`data-*`) are not kept
             // in the stored, sanitised HTML, whose n-th note is map n.
-            &raw, base, media,
-        )?,
-        None => Vec::new(),
-    };
+            &raw, planner,
+        )?;
+    }
     let mut article = assemble_article(&pinned, language, extracted, rendered.html, images)
         .map_err(|e| fail(format!("{e:?}")))?;
-    // Drawn maps follow the article's images, in document order.
-    let changed = !maps.is_empty() || !selection.aliases.is_empty();
-    article.media.extend(maps);
     if !selection.aliases.is_empty() {
         article.aliases = selection.aliases.clone();
-    }
-    if changed {
         article.revision.content_sha256 = "0".repeat(64);
         article.revision.content_sha256 =
             wiki_source::enterprise_verified::enterprise_normalize::digest_article(&article)
@@ -415,18 +421,35 @@ where
     Ok(article)
 }
 
-/// Draw every interactive map of `html` from the base map and the
-/// article's map data (PACK-003), as media assets in document order. All
-/// or none: if one map cannot be drawn, the article keeps its online-only
-/// notes and the reason is recorded in [`DumpMediaStore::map_notices`].
-fn draw_article_maps<T>(
+/// One article's interactive maps, waiting to be drawn.
+#[derive(Debug)]
+struct ArticleMaps {
+    key: ArticleKey,
+    title: String,
+    frames: Vec<MapFrame>,
+    /// Each frame's map-data features (its groups, in order).
+    data: Vec<Vec<serde_json::Value>>,
+}
+
+/// Collects every article's interactive maps while articles render, so the
+/// OpenStreetMap extracts are read once for all of them, then draws them
+/// ([`MapPlanner::draw`]).
+#[derive(Debug, Default)]
+pub struct MapPlanner {
+    articles: Vec<ArticleMaps>,
+    notices: Vec<(String, String)>,
+}
+
+/// Fetch the article's map data for every interactive map of `html`
+/// (PACK-003) into `planner`. If the article's maps changed since the
+/// pinned revision, nothing is planned and the reason is kept.
+fn collect_article_maps<T>(
     transport: &mut T,
     requests: &WikipediaRequests,
     page: &PublicDumpPage,
     html: &str,
-    base: &NaturalEarth,
-    media: &mut DumpMediaStore,
-) -> Result<Vec<MediaAsset>, DumpPackError>
+    planner: &mut MapPlanner,
+) -> Result<(), DumpPackError>
 where
     T: MediaWikiTransport,
     <T as MediaWikiTransport>::Error: std::fmt::Debug,
@@ -437,7 +460,7 @@ where
     };
     let frames = interactive_maps(html);
     if frames.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let groups: Vec<String> = frames
         .iter()
@@ -454,70 +477,182 @@ where
         let body = get(transport, &url, METADATA_BYTES).map_err(fail)?;
         match parse_map_data(&body, page.page_id, &groups) {
             Ok(data) => data,
-            // The article's maps changed since the pinned revision.
             Err(MapDataError::GroupMismatch(group)) => {
-                media.map_notices.push((
+                planner.notices.push((
                     page.title.clone(),
                     format!("map data group {group} is not the pinned revision's"),
                 ));
-                return Ok(Vec::new());
+                return Ok(());
             }
             Err(error) => return Err(fail(format!("map data rejected: {error:?}"))),
         }
     };
-    let mut drawn = Vec::with_capacity(frames.len());
-    for (n, frame) in frames.iter().enumerate() {
-        let features: Vec<serde_json::Value> = frame
-            .groups
+    let data = frames
+        .iter()
+        .map(|frame| {
+            frame
+                .groups
+                .iter()
+                .filter_map(|group| data.get(group))
+                .flatten()
+                .cloned()
+                .collect()
+        })
+        .collect();
+    planner.articles.push(ArticleMaps {
+        key: ArticleKey {
+            project: requests.project().to_owned(),
+            page_id: page.page_id,
+        },
+        title: page.title.clone(),
+        frames,
+        data,
+    });
+    Ok(())
+}
+
+impl MapPlanner {
+    /// Draw every planned map from `base` and, where they cover it,
+    /// `extracts` (OpenStreetMap). Returns each article's map assets by
+    /// `(project, page id)`, in document order; all or none per article. Notices go to `media`.
+    pub fn draw(
+        mut self,
+        base: &NaturalEarth,
+        extracts: &[&dyn OsmSource],
+        media: &mut DumpMediaStore,
+    ) -> Result<BTreeMap<(String, u64), Vec<MediaAsset>>, DumpPackError> {
+        let write = |error: String| DumpPackError::Write(error);
+        media.map_notices.append(&mut self.notices);
+        let plans: Vec<Vec<MapPlan>> = self
+            .articles
             .iter()
-            .filter_map(|group| data.get(group))
-            .flatten()
-            .cloned()
+            .map(|article| {
+                article
+                    .frames
+                    .iter()
+                    .zip(&article.data)
+                    .map(|(frame, data)| plan_view(frame, data))
+                    .collect()
+            })
             .collect();
-        match draw_map(base, frame, &features) {
-            Some(map) => drawn.push(map),
-            None => {
-                media.map_notices.push((
-                    page.title.clone(),
-                    format!("map {} has no centre and nothing drawable to fit", n + 1),
-                ));
-                return Ok(Vec::new());
+        let requests: Vec<OsmRequest> = plans
+            .iter()
+            .flatten()
+            .map(|plan| OsmRequest {
+                bounds: plan.bounds,
+                zoom: plan.view.map_or(0, |(_, _, zoom)| zoom),
+                shapes: plan.shapes.clone(),
+            })
+            .collect();
+        // Each request takes its detail from the first extract covering it;
+        // outlines may come from any extract.
+        let mut features: Vec<Option<Vec<OsmFeature>>> = vec![None; requests.len()];
+        let mut places: Vec<Vec<OsmPlace>> = vec![Vec::new(); requests.len()];
+        let mut shapes: HashMap<String, OsmShape> = HashMap::new();
+        if !requests.is_empty() {
+            for source in extracts {
+                let data = extract(*source, &requests).map_err(write)?;
+                for (n, covers) in data.covers.iter().enumerate() {
+                    if *covers && features[n].is_none() {
+                        features[n] = Some(data.features[n].clone());
+                        places[n] = data.places[n].clone();
+                    }
+                }
+                for (id, shape) in data.shapes {
+                    shapes.entry(id).or_insert(shape);
+                }
             }
         }
-    }
-    let mut assets = Vec::with_capacity(drawn.len());
-    for map in drawn {
-        if map.omitted_shapes > 0 {
-            media.map_notices.push((
-                page.title.clone(),
-                format!(
-                    "{} map shape(s) from Wikimedia Maps not drawn",
-                    map.omitted_shapes
-                ),
-            ));
+
+        let mut drawn_maps = BTreeMap::new();
+        let mut request = 0;
+        for article in &self.articles {
+            let mut drawn = Vec::with_capacity(article.frames.len());
+            let mut complete = true;
+            for (n, (frame, data)) in article.frames.iter().zip(&article.data).enumerate() {
+                let detail = MapDetail {
+                    features: features[request + n].as_deref(),
+                    places: &places[request + n],
+                    shapes: &shapes,
+                };
+                match draw_map(base, frame, data, Some(&detail)) {
+                    Some(map) => drawn.push(map),
+                    None => {
+                        media.map_notices.push((
+                            article.title.clone(),
+                            format!("map {} has no centre and nothing drawable to fit", n + 1),
+                        ));
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            request += article.frames.len();
+            if !complete {
+                continue;
+            }
+            let mut assets = Vec::with_capacity(drawn.len());
+            for map in drawn {
+                if map.omitted_shapes > 0 {
+                    media.map_notices.push((
+                        article.title.clone(),
+                        format!(
+                            "{} map outline(s) not in any OpenStreetMap extract, not drawn",
+                            map.omitted_shapes
+                        ),
+                    ));
+                }
+                let digest = hex_sha256(&map.svg);
+                let path = media.dir.join(&digest);
+                if !path.exists() {
+                    fs::write(&path, &map.svg).map_err(|e| write(format!("map write: {e}")))?;
+                }
+                let (lat, lon) = map.centre;
+                let (license, creator) = if map.uses_openstreetmap {
+                    (MAP_LICENSE_OSM, MAP_CREATOR_OSM)
+                } else {
+                    (MAP_LICENSE, MAP_CREATOR)
+                };
+                assets.push(MediaAsset {
+                    source_url: format!(
+                        "https://www.openstreetmap.org/?mlat={lat:.5}&mlon={lon:.5}#map={}/{lat:.5}/{lon:.5}",
+                        map.zoom
+                    ),
+                    mime_type: "image/svg+xml".into(),
+                    sha256: Some(digest),
+                    license: license.into(),
+                    creator: creator.into(),
+                    attribution: format!("{creator}. {license}"),
+                    is_av_preview: false,
+                    derivation: Some(MediaDerivation::RenderedMap),
+                });
+                media.maps_drawn += 1;
+                if map.uses_openstreetmap {
+                    media.maps_with_openstreetmap += 1;
+                }
+            }
+            drawn_maps.insert((article.key.project.clone(), article.key.page_id), assets);
         }
-        let digest = hex_sha256(&map.svg);
-        let path = media.dir.join(&digest);
-        if !path.exists() {
-            fs::write(&path, &map.svg).map_err(|e| fail(format!("map write: {e}")))?;
-        }
-        let (lat, lon) = map.centre;
-        assets.push(MediaAsset {
-            source_url: format!(
-                "https://www.openstreetmap.org/?mlat={lat:.5}&mlon={lon:.5}#map={}/{lat:.5}/{lon:.5}",
-                map.zoom
-            ),
-            mime_type: "image/svg+xml".into(),
-            sha256: Some(digest),
-            license: MAP_LICENSE.into(),
-            creator: MAP_CREATOR.into(),
-            attribution: format!("{MAP_CREATOR}. {MAP_LICENSE}"),
-            is_av_preview: false,
-            derivation: Some(MediaDerivation::RenderedMap),
-        });
-        media.maps_drawn += 1;
+        Ok(drawn_maps)
     }
-    Ok(assets)
+}
+
+/// Add an article's drawn maps (after its images, in document order) and
+/// recompute its content digest.
+pub fn attach_maps(article: &mut Article, maps: Vec<MediaAsset>) -> Result<(), DumpPackError> {
+    if maps.is_empty() {
+        return Ok(());
+    }
+    article.media.extend(maps);
+    article.revision.content_sha256 = "0".repeat(64);
+    article.revision.content_sha256 =
+        wiki_source::enterprise_verified::enterprise_normalize::digest_article(article).map_err(
+            |e| DumpPackError::Render {
+                title: article.title.clone(),
+                reason: format!("{e:?}"),
+            },
+        )?;
+    Ok(())
 }
 
 /// Identity of a dump-built pack.
@@ -1106,7 +1241,10 @@ mod tests {
             reply: reply.clone(),
             requests: Vec::new(),
         };
-        let maps = draw_article_maps(&mut api, &requests, &page, &html, &base, &mut media).unwrap();
+        let mut planner = MapPlanner::default();
+        collect_article_maps(&mut api, &requests, &page, &html, &mut planner).unwrap();
+        let mut drawn = planner.draw(&base, &[], &mut media).unwrap();
+        let maps = drawn.remove(&("simplewiki".to_owned(), 5246)).unwrap();
         assert_eq!(api.requests.len(), 1, "one request for all groups");
         assert_eq!(maps.len(), 2);
         assert_eq!(media.maps_drawn(), 2);
@@ -1141,16 +1279,89 @@ mod tests {
             requests: Vec::new(),
         };
         let mut other = DumpMediaStore::create(&dir.join("other")).unwrap();
-        assert!(
-            draw_article_maps(&mut changed, &requests, &page, &html, &base, &mut other)
-                .unwrap()
-                .is_empty()
-        );
+        let mut planner = MapPlanner::default();
+        collect_article_maps(&mut changed, &requests, &page, &html, &mut planner).unwrap();
+        assert!(planner.draw(&base, &[], &mut other).unwrap().is_empty());
         assert!(
             other.map_notices()[0].1.contains("not the pinned revision"),
             "{:?}",
             other.map_notices()
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn maps_take_street_detail_from_an_extract_covering_them_and_credit_it() {
+        use crate::osm_extract::memory::{Element, Memory};
+        use crate::osm_extract::MemberKind;
+        let extract = Memory {
+            elements: vec![
+                Element::Node(1, [-0.01, 0.0], vec![]),
+                Element::Node(2, [0.01, 0.0], vec![]),
+                Element::Node(3, [0.0, -0.02], vec![]),
+                Element::Node(4, [0.02, 0.02], vec![]),
+                Element::Node(5, [-0.02, 0.02], vec![]),
+                Element::Way(10, vec![1, 2], vec![("highway", "primary")]),
+                Element::Way(11, vec![3, 4, 5, 3], vec![]),
+                Element::Relation(
+                    20,
+                    vec![(11, MemberKind::Way, "outer")],
+                    vec![("type", "boundary"), ("wikidata", "Q42")],
+                ),
+            ],
+            bounds: Some([-1.0, -1.0, 1.0, 1.0]),
+            passes: std::cell::Cell::new(0),
+        };
+        let outline: serde_json::Value = serde_json::json!({
+            "type": "ExternalData", "service": "geoshape",
+            "url": "https://maps.wikimedia.org/geoshape?getgeojson=1&ids=Q42",
+            "properties": {"stroke": "#ff0000"}
+        });
+        let mut planner = MapPlanner::default();
+        planner.articles.push(ArticleMaps {
+            key: ArticleKey {
+                project: "simplewiki".into(),
+                page_id: 7,
+            },
+            title: "Town".into(),
+            frames: vec![MapFrame {
+                lat: Some(0.0),
+                lon: Some(0.0),
+                zoom: Some(12),
+                width: 300,
+                height: 200,
+                groups: vec![],
+            }],
+            data: vec![vec![outline]],
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "dump-pack-osm-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut media = DumpMediaStore::create(&dir).unwrap();
+        let base = crate::map_render::tests::base();
+        let mut drawn = planner.draw(&base, &[&extract], &mut media).unwrap();
+        let maps = drawn.remove(&("simplewiki".to_owned(), 7)).unwrap();
+        assert_eq!(maps.len(), 1);
+        assert_eq!(maps[0].license, MAP_LICENSE_OSM);
+        assert_eq!(media.maps_with_openstreetmap(), 1);
+        assert!(media.map_notices().is_empty(), "{:?}", media.map_notices());
+        let svg =
+            String::from_utf8(fs::read(dir.join(maps[0].sha256.as_deref().unwrap())).unwrap())
+                .unwrap();
+        assert!(
+            svg.contains("stroke=\"#fcd6a4\""),
+            "the primary road: {svg}"
+        );
+        assert!(
+            svg.contains("stroke=\"#ff0000\""),
+            "the Wikidata outline: {svg}"
+        );
+        assert!(svg.contains("© OpenStreetMap contributors"), "{svg}");
         fs::remove_dir_all(&dir).unwrap();
     }
 

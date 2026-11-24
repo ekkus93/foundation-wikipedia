@@ -15,6 +15,7 @@ pub mod jpeg_preflight;
 pub mod map_render;
 pub mod media;
 pub mod media_inventory;
+pub mod osm_extract;
 pub mod png_crc;
 pub mod png_preflight;
 pub mod preview;
