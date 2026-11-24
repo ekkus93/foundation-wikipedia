@@ -313,8 +313,10 @@ pub fn map_image_key(n: usize) -> String {
     format!("map:{n}")
 }
 
-/// Under each map drawn from open data.
-pub const MAP_CREDIT: &str = "Map drawn offline from Natural Earth (public domain)";
+/// Under each map drawn from open data. The exact credit (Natural Earth,
+/// and "© OpenStreetMap contributors" where its data is drawn) is in the
+/// map itself and in its media licence.
+pub const MAP_CREDIT: &str = "Map drawn offline from open map data (credits on the map)";
 
 /// Show each interactive map as the pack's drawn copy, or as [`MAP_NOTE`]
 /// with its centre and a link to view it online; unlink inline map links
