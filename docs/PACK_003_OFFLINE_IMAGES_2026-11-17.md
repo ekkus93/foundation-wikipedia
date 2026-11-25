@@ -146,7 +146,7 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
   - Builder: Hypotenuse builds with three sanitised SVGs; a hostile SVG with a matching hash falls back to its rendering, and changed bytes fail.
   - FFI: `a_pack_with_an_unsanitised_svg_is_refused` covers script, handler, external image, a harmless comment (not exact form), and HTML labelled as SVG.
 
-## Interactive maps (`e38bf53a`, `e99dceb6`)
+## Interactive maps (`e38bf53a`, `e99dceb6`, `56ba37fb`)
 
 **Why they can't come from Wikimedia:** interactive (Kartographer) maps are drawn by Wikimedia Maps (`maps.wikimedia.org`), not stored as Commons files. Its [terms of use](https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use_for_Wikimedia_Maps) say "Wikimedia Maps may not be used by third-party services outside of the Wikimedia projects". They also prohibit "Excessive downloading (such as downloading significant areas of tiles for later offline usage)". OpenStreetMap's public tile service has a similar rule.
 
@@ -181,20 +181,62 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
   - `interactive_maps_are_drawn_from_the_base_map_and_the_articles_data` (builder, including changed map data).
   - `a_pack_shows_its_drawn_maps_in_place_of_the_stored_notes` (reader, including a forged note and placeholder).
   - `interactive_maps_become_a_labelled_note_and_nothing_is_loaded` (the fallback).
-- **Not yet (Stage B):**
-  - Street-level detail at high zoom (the Eiffel Tower map is its marker on plain land).
-  - Shapes Kartographer loads from Wikimedia Maps (`ExternalData` geoshape/geoline by Wikidata ID).
-  - Both need OpenStreetMap data (ODbL) from a regional extract.
+- **Stage A alone** draws a zoomed-in map as its marker on plain land and skips `ExternalData` outlines; Stage B adds both.
+
+**Stage B — street detail and Wikidata outlines from OpenStreetMap (`56ba37fb`, caption fix `86aa95a5`):**
+
+- **Input:** `build-public-dump-pack --natural-earth <dir> --osm <extract.osm.pbf> [--osm …]`. The publisher downloads regional extracts once (OpenStreetMap data, ODbL 1.0), for example from Geofabrik. No tile or map service is used.
+- **Reading:** `wiki_pack_builder::osm_extract` reads each extract in four streaming passes, for every planned map of the build at once (`osmpbf` 0.3.7, pure Rust):
+  1. Wikidata-tagged relations named by the articles' outlines, and water/green multipolygons;
+  2. nodes inside each map's area, and named places;
+  3. roads, buildings, water, green areas, rail and coastline touching an area, plus every member of a relevant relation;
+  4. the remaining nodes those ways need.
+- **What is used:**
+  - A map uses an extract's detail only if the extract's header bounds cover its whole area. Otherwise it stays Natural Earth only.
+  - Outlines may come from any extract.
+  - Tunnels are skipped. Each class has a minimum zoom: buildings 14, footpaths 15, motorways 5.
+- **Assembly:**
+  - Ways are joined into chains by shared end nodes (end-indexed, near-linear).
+  - Multipolygons and outlines become closed rings. An outline the extract cuts off is drawn as lines.
+  - Lines of one class are merged before drawing.
+  - Order is fixed (ordered maps, relations by id), so the same inputs give byte-identical maps; this was checked by building twice.
+- **Drawing (`map_render`):**
+  - OSM green areas, water, rivers, coastline and buildings, and roads cased from zoom 13, coloured and sized by class and zoom; rail dashed.
+  - OSM place names from zoom 11, Natural Earth's curated places further out. Names are placed most important first and never overlap.
+  - Kartographer `ExternalData` (`geoshape`/`geoline`, by Wikidata ID) is drawn with the article's simplestyle when an extract holds the tagged relation or way; otherwise it is counted and reported.
+  - Lines are simplified with Douglas–Peucker: 0.35 px from zoom 13, 0.8 px further out.
+- **Credit:** a map that draws any OSM data says "© OpenStreetMap contributors · Natural Earth" in its corner and carries `MAP_LICENSE_OSM` (ODbL 1.0 with openstreetmap.org/copyright, Natural Earth public domain, article shapes CC BY-SA 4.0). The caption under every drawn map is now "Map drawn offline from open map data (credits on the map)" (`86aa95a5`); it previously named only Natural Earth.
+- **Real run:** the same 2-article simplewiki pack, built with extracts downloaded 2026-11-24 from Geofabrik, both MD5-verified:
+  - `ile-de-france-latest.osm.pbf`: 340,791,242 bytes, SHA-256 `528def54…`.
+  - `kanto-latest.osm.pbf`: 525,441,156 bytes, SHA-256 `5a9928d1…`.
+
+  Results:
+  - Both maps were drawn with OpenStreetMap detail.
+  - *Eiffel Tower*, zoom 16: 21,354 bytes. The Champ de Mars with its paths and ponds, the tower's footprint, buildings, avenues and the Seine.
+  - *Tokyo*, zoom 8: 179,436 bytes. Motorways, primary roads, rivers and the Tokyo Bay coastline, with Kawagoe, Hachiōji, Tokyo, Kawasaki and Yokohama labelled.
+  - About 3 minutes for the whole build.
+  - *Tokyo*'s `ExternalData` outline is Wikidata Q7473516. No OSM element carries that ID in the Kantō extract (Tokyo Metropolis is tagged Q1490, the 23 wards Q308891), and Wikidata records no OSM relation for it. The CLI reports it as not drawn.
+- **Size, first attempt:**
+  - The *Tokyo* map was 935 KB, near the 1 MiB SVG limit: about 33,000 separate short road ways, plus overlapping labels (every OSM city from zoom 6).
+  - Merging lines, Douglas–Peucker, casings only from zoom 13 and label placement brought it to 179 KB.
+- **Desktop, network removed:** the pack (review: 4.1 MB, integrity verified) installed and activated, and *Eiffel Tower*'s infobox showed the OSM-detailed map with its in-map credit. The logger recorded only `[::1]:1420`. App data was backed up and restored.
+- **Tests:**
+  - `osm_extract` (5): an area's features for its zoom, assembled multipolygons, place names, outlines wherever their nodes are, cut-off outlines as lines, coverage, merged road ways, chain joining, tunnels.
+  - `map_render`: `openstreetmap_detail_and_wikidata_outlines_are_drawn_and_credited`, `lines_are_simplified_within_the_tolerance`, `place_names_never_overlap_and_the_most_important_wins`.
+  - Builder: `maps_take_street_detail_from_an_extract_covering_them_and_credit_it`.
+  - The audit gained `PACK003_DUMP_MAPS=<dir>` to write each drawn map for review.
 
 **CI:**
 
 - **`e38bf53a`** (note fallback): [Rust workspace 44244817113](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817113), [Platform shells 44244817281](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817281), [Desktop launch smoke 44244817090](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817090), [Android Rust ABI qualification 44244817257](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817257). The FFI bridge ([44244817166](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44244817166)) failed in `PackImagesUiTest`, the intermittent CI-only figure timeout. Diagnostics were added in `76cc8b1f`, whose [Android FFI bridge 44246239285](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44246239285) passed.
 - **`e99dceb6`** (drawn maps): [Rust workspace 44248312582](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312582), [Platform shells 44248312816](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312816), [Desktop launch smoke 44248312621](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312621), [Android FFI bridge 44248312578](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312578), [Android Rust ABI qualification 44248312427](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312427), [Android record codec probe 44248312600](https://github.com/ekkus93/foundation-wikipedia/actions/runs/44248312600).
+- **`56ba37fb`** (OpenStreetMap detail and outlines): [Rust workspace 45371905557](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905557), [Platform shells 45371905591](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905591), [Android FFI bridge 45371905666](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905666), [Android Rust ABI qualification 45371905544](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905544), [Android record codec probe 45371905628](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905628)
+- **`86aa95a5`** (map caption names no single data source): [Rust workspace 45372528991](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528991), [Platform shells 45372528210](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528210), [Android FFI bridge 45372528323](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528323)
 
 ## Still open (PACK-003 not complete)
 
 - **SVG:** done (above). An SVG over 1 MiB after sanitising, or one using refused features, is still a 1280 px rendering.
 - **Raster optimisation:** done losslessly (above). JPEGs and PNGs with an embedded ICC profile are kept as they are; the largest remaining file is a 2.45 MB lossless map.
-- **Maps:** drawn offline from Natural Earth (above). Street-level detail and Wikidata shapes need OpenStreetMap extracts (Stage B). A map you can pan and zoom offline is FUT-007.
+- **Maps:** drawn offline from Natural Earth, with OpenStreetMap detail and outlines where a publisher supplies extracts (above). Outlines whose Wikidata ID no OSM element carries are reported, not drawn. A map you can pan and zoom offline is FUT-007.
 - **Android with a real pack in airplane mode:** shown on the emulator with the synthetic fixture only. Importing a real pack on Android waits for MOBPACK-002.
 - **Cross-pack deduplication:** images are deduplicated within a pack. The shared store across packs is STORE-002 (owner hold).
