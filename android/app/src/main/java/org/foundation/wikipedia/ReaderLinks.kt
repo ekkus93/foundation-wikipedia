@@ -28,6 +28,7 @@ object ReaderLinks {
     private const val HOST = "foundation.invalid"
     private const val ARTICLE_PATH = "/wiki/"
     private const val MEDIA_PATH = "/media/"
+    private const val VIEWER_PATH = "/viewer/"
     private const val MAX_TITLE_LENGTH = 512
 
     /**
@@ -69,6 +70,29 @@ object ReaderLinks {
         } catch (_: URISyntaxException) {
             null
         }
+    }
+
+    /** Where the full-screen viewer page for one pack image is served. */
+    fun viewerUrl(digest: String): String = "$ORIGIN$VIEWER_PATH$digest"
+
+    /**
+     * The full-screen viewer page: one pack image at the full width of the
+     * screen (sized by width only: heights in percent or `vh` resolve to
+     * nothing in this WebView, which left the image unseen), on
+     * white in both themes (diagrams are often black lines on transparency),
+     * and allowed to load nothing but images of the reserved origin.
+     */
+    fun viewerDocument(digest: String): String {
+        require(digest.length == 64 && digest.all { it in '0'..'9' || it in 'a'..'f' })
+        return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=10">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src $ORIGIN; style-src 'unsafe-inline'">
+<title>Image</title>
+<style>
+html,body{margin:0;background:#fff}
+img{display:block;width:100%;height:auto}
+</style></head><body><img src="$ORIGIN$MEDIA_PATH$digest" alt="Image"></body></html>
+"""
     }
 
     fun classify(url: String, currentDocumentUrl: String?): ReaderLink {

@@ -9,12 +9,14 @@ import android.webkit.WebView
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.runBlocking
@@ -122,8 +124,54 @@ class PackImagesUiTest {
         }
     }
 
+    /** The middle of the red figure on screen, to tap it. */
+    private fun redCentre(): Pair<Int, Int> {
+        val shot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()!!
+        var sumX = 0L
+        var sumY = 0L
+        var count = 0L
+        for (y in 0 until shot.height step 2) {
+            for (x in 0 until shot.width step 2) {
+                val pixel = shot.getPixel(x, y)
+                if (Color.red(pixel) in 190..230 && Color.green(pixel) < 30 && Color.blue(pixel) < 30) {
+                    sumX += x
+                    sumY += y
+                    count++
+                }
+            }
+        }
+        shot.recycle()
+        return (sumX / count).toInt() to (sumY / count).toInt()
+    }
+
+    private fun viewerShown() =
+        compose.onAllNodesWithTag(IMAGE_VIEWER_TAG).fetchSemanticsNodes().isNotEmpty()
+
+    /** MOB-002: a tapped figure opens alone, full screen, and Close returns. */
     @Test
-    fun anArticleFigureIsDrawnFromThePack() {
+    fun aTappedFigureOpensFullScreenSurvivesRotationAndCloses() {
+        openRightTriangle()
+        waitForFigure("the red PNG figure") { it.first > 2_000 }
+        assertTrue(!viewerShown())
+        val (x, y) = redCentre()
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).click(x, y)
+        compose.waitUntil(timeoutMillis = 15_000) { viewerShown() }
+        // Only the tapped image is drawn there: red, and no blue SVG.
+        compose.waitUntil(timeoutMillis = 30_000) { figurePixels().first > 2_000 }
+        assertEquals(0, figurePixels().second)
+
+        // The open image is kept when the activity is recreated (rotation).
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(timeoutMillis = 30_000) { viewerShown() && figurePixels().first > 2_000 }
+
+        compose.onNodeWithText("Close").performClick()
+        compose.waitUntil(timeoutMillis = 15_000) { !viewerShown() }
+        var title: String? = null
+        compose.runOnUiThread { title = webView().title }
+        assertEquals("Right triangle", title)
+    }
+
+    private fun openRightTriangle() {
         compose.onNode(hasSetTextAction()).performTextInput("triangle")
         compose.onNodeWithText("Search").performClick()
         compose.waitUntil(timeoutMillis = 15_000) {
@@ -135,6 +183,11 @@ class PackImagesUiTest {
             compose.runOnUiThread { title = webView().title }
             title == "Right triangle"
         }
+    }
+
+    @Test
+    fun anArticleFigureIsDrawnFromThePack() {
+        openRightTriangle()
 
         // The PNG figure is drawn: a 220 CSS px red square, from the pack.
         // On CI this has twice timed out (f54aa7f4, e38bf53a) and otherwise

@@ -1,5 +1,8 @@
 package org.foundation.wikipedia
 
+import android.annotation.SuppressLint
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -92,6 +95,17 @@ internal fun imageResponse(library: RustOfflineLibrary?, digest: String): WebRes
  */
 internal const val PACK_IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 
+/** The pack image under the last touch (its SHA-256), linked or not, or `null`. */
+internal fun tappedImage(view: WebView): String? {
+    val hit = view.hitTestResult
+    if (hit.type != WebView.HitTestResult.IMAGE_TYPE &&
+        hit.type != WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+    ) {
+        return null
+    }
+    return ReaderLinks.imageDigest(hit.extra ?: return null, mainFrame = false)
+}
+
 /** The current document, served by the WebView client for its exact URL. */
 internal fun documentResponse(html: String): WebResourceResponse = WebResourceResponse(
     "text/html",
@@ -123,6 +137,7 @@ Online reading is not available on Android yet.</p>
  * article in a locked-down WebView, follow article links within the pack and
  * go Back through the articles opened.
  */
+@SuppressLint("ClickableViewAccessibility") // taps only open an image; TalkBack double-tap sends the same tap
 @Composable
 fun ArticleReader(
     dark: Boolean,
@@ -168,6 +183,8 @@ fun ArticleReader(
     val imageLibrary = remember { AtomicReference<RustOfflineLibrary?>(null) }
     // The chat citation to highlight while its article is the current entry.
     var highlight by remember { mutableStateOf<CitationRequest?>(null) }
+    // The pack image opened full screen (its SHA-256); survives rotation.
+    var zoomed by rememberSaveable { mutableStateOf<String?>(null) }
 
     // A saved page chosen in Settings › History & Saved Content.
     LaunchedEffect(openEntry) {
@@ -363,6 +380,25 @@ fun ArticleReader(
                         settings.blockNetworkLoads = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         settings.setSupportMultipleWindows(false)
+                        // A tap on a pack image opens it full screen. The
+                        // reader runs no scripts, so the WebView's own hit
+                        // test says what was tapped.
+                        val taps = GestureDetector(
+                            viewContext,
+                            object : GestureDetector.SimpleOnGestureListener() {
+                                // "Confirmed", a moment after the finger lifts:
+                                // the hit test of a very quick tap is not
+                                // ready when it lifts.
+                                override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
+                                    tappedImage(this@apply)?.let { zoomed = it }
+                                    return false
+                                }
+                            },
+                        )
+                        setOnTouchListener { _, event ->
+                            taps.onTouchEvent(event)
+                            false
+                        }
                         setOnScrollChangeListener { view, _, y, _, _ ->
                             val page = (shownContent.get() as? ReaderContent.Article)?.page ?: return@setOnScrollChangeListener
                             if (loading.get()) return@setOnScrollChangeListener
@@ -421,6 +457,9 @@ fun ArticleReader(
                             request: WebResourceRequest?,
                         ): Boolean {
                             val url = request?.url?.toString() ?: return true
+                            // A linked image opens full screen (the tap
+                            // listener does that); its link is not followed.
+                            if (view != null && tappedImage(view) != null) return true
                             val current = (content as? ReaderContent.Article)?.page?.baseUrl
                             return when (val link = ReaderLinks.classify(url, current)) {
                                 is ReaderLink.InPage -> false
@@ -485,6 +524,9 @@ fun ArticleReader(
                     }
                 },
             )
+            zoomed?.let { digest ->
+                ImageViewer(digest, library) { zoomed = null }
+            }
             val hits = results
             if (!hidden && hits != null) {
                 LazyColumn(

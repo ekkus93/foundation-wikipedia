@@ -3,6 +3,7 @@ package org.foundation.wikipedia
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -125,5 +126,29 @@ class ReaderLinksTest {
         assertNull(ReaderNavigation.restore(listOf("enwiki", "1")).current)
         assertNull(ReaderNavigation.restore(listOf("enwiki", "-1", "Moon")).current)
         assertNull(ReaderNavigation.restore(null).current)
+    }
+
+    @Test
+    fun theViewerPageShowsOneExactPackImageAndCanLoadNothingElse() {
+        val digest = "ab".repeat(32)
+        val url = ReaderLinks.viewerUrl(digest)
+        assertEquals("https://foundation.invalid/viewer/$digest", url)
+        // The page is served as a main-frame document, never as an image.
+        assertTrue(ReaderLinks.isDocumentRequest(url, true, url))
+        assertNull(ReaderLinks.imageDigest(url, false))
+        run {
+            val page = ReaderLinks.viewerDocument(digest)
+            assertTrue(page.contains("<img src=\"https://foundation.invalid/media/$digest\" alt=\"Image\">"))
+            assertTrue(page.contains("default-src 'none'; img-src https://foundation.invalid; style-src 'unsafe-inline'"))
+            assertEquals(1, Regex("<img\\b").findAll(page).count())
+            assertFalse(page.contains("<script"))
+            assertFalse(page.contains("<a "))
+        }
+        // Anything that is not a SHA-256 could break out of the attribute.
+        for (bad in listOf("", "abc", "AB".repeat(32), "\"><script>".padEnd(64, 'a'))) {
+            assertThrows(IllegalArgumentException::class.java) {
+                ReaderLinks.viewerDocument(bad)
+            }
+        }
     }
 }
