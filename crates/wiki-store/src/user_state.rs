@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 use wiki_model::ArticleKey;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 /// Bounds on citations stored with one assistant chat message (schema v3).
 pub const MAX_CITATIONS_PER_MESSAGE: usize = 64;
 pub const MAX_CITATION_EXCERPT_BYTES: usize = 64 * 1024;
@@ -124,6 +124,20 @@ pub struct SavedBookmark {
     pub key: ArticleKey,
     pub revision_id: u64,
     pub anchor: String,
+    /// Unix seconds (UTC) when the page was first bookmarked. `None` for
+    /// bookmarks saved before schema v4; a time is never invented for them.
+    pub saved_at: Option<i64>,
+}
+
+/// Current wall clock as Unix seconds (UTC); the default time source for
+/// bookmarks. Tests pass an explicit time to the `_at` methods instead.
+fn now_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_secs()).ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(1)
 }
 
 fn valid_pack_id(id: &str) -> bool {
@@ -225,6 +239,11 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
         if table == "chat_citations" && version < 3 {
             continue;
         }
+        // The bookmark saved time was introduced by schema version 4.
+        let mut expected = expected.to_vec();
+        if table == "bookmarks" && version >= 4 {
+            expected.push(("saved_at", "INTEGER"));
+        }
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
             params![table],
@@ -271,6 +290,7 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
                     | ("settings", "key")
                     | ("builder_jobs", "job_id")
                     | ("chat_citations", "snapshot_id")
+                    | ("bookmarks", "saved_at")
             ) {
                 0
             } else {
@@ -395,7 +415,19 @@ fn validate_schema_shape(conn: &Connection, version: i64) -> Result<(), UserStat
 // SQLite integrity_check/quick_check do not consistently report violated
 // CHECK constraints across supported SQLite builds. Inspect the persisted
 // values explicitly before trusting a database or publishing a restored copy.
-fn validate_persisted_checks(conn: &Connection) -> Result<(), UserStateError> {
+fn validate_persisted_checks(conn: &Connection, version: i64) -> Result<(), UserStateError> {
+    if version >= 4 {
+        let invalid: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM bookmarks WHERE saved_at IS NOT NULL AND saved_at <= 0 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if invalid.is_some() {
+            return Err(UserStateError::InvalidValue);
+        }
+    }
     for query in [
         "SELECT 1 FROM bookmarks WHERE page_id <= 0 OR revision_id <= 0 LIMIT 1",
         "SELECT 1 FROM reading_positions WHERE page_id <= 0 OR revision_id <= 0 OR scroll_offset < 0 LIMIT 1",
@@ -607,7 +639,7 @@ fn validate_standalone_copy(path: &Path, expected_schema: i64) -> Result<(), Use
         return Err(UserStateError::InvalidValue);
     }
     validate_schema_shape(&copy, schema)?;
-    validate_persisted_checks(&copy)?;
+    validate_persisted_checks(&copy, schema)?;
     Ok(())
 }
 
@@ -757,7 +789,7 @@ impl UserState {
             return Err(UserStateError::InvalidValue);
         }
         validate_schema_shape(&source, schema)?;
-        validate_persisted_checks(&source)?;
+        validate_persisted_checks(&source, schema)?;
         after_preflight();
 
         let mut options = OpenOptions::new();
@@ -863,7 +895,7 @@ impl UserState {
         if (1..SCHEMA_VERSION).contains(&version) {
             // Audit an older schema exactly as written before migrating it.
             validate_schema_shape(&transaction, version)?;
-            validate_persisted_checks(&transaction)?;
+            validate_persisted_checks(&transaction, version)?;
         }
         if version < 2 {
             // Indexes live in mutable user state, never in immutable article
@@ -896,9 +928,19 @@ impl UserState {
             )?;
             transaction.pragma_update(None, "user_version", 3)?;
         }
+        if version < 4 {
+            // When a bookmark was first saved (Unix seconds, UTC). Existing
+            // bookmarks keep NULL: their time was never recorded, so none is
+            // invented. Atomic with the version bump in this transaction.
+            transaction.execute_batch(
+                "ALTER TABLE bookmarks
+                   ADD COLUMN saved_at INTEGER CHECK(saved_at IS NULL OR saved_at > 0);",
+            )?;
+            transaction.pragma_update(None, "user_version", 4)?;
+        }
         // Validate even a claimed-current schema before exposing user state.
         validate_schema_shape(&transaction, SCHEMA_VERSION)?;
-        validate_persisted_checks(&transaction)?;
+        validate_persisted_checks(&transaction, SCHEMA_VERSION)?;
         transaction.commit()?;
         Ok(Self { conn })
     }
@@ -919,15 +961,30 @@ impl UserState {
         revision_id: u64,
         anchor: &str,
     ) -> Result<(), UserStateError> {
+        self.set_bookmark_at(key, revision_id, anchor, now_unix_seconds())
+    }
+
+    /// Like `set_bookmark` with an explicit clock reading (Unix seconds, UTC,
+    /// positive). Re-bookmarking keeps the original saved time; a bookmark
+    /// that predates schema v4 gains no time here, because the original is
+    /// unknown.
+    pub fn set_bookmark_at(
+        &self,
+        key: &ArticleKey,
+        revision_id: u64,
+        anchor: &str,
+        saved_at: i64,
+    ) -> Result<(), UserStateError> {
         let (page, revision) = Self::ids(key, revision_id)?;
-        if anchor.len() > 4096 || anchor.contains('\0') {
+        if anchor.len() > 4096 || anchor.contains('\0') || saved_at <= 0 {
             return Err(UserStateError::InvalidValue);
         }
         self.conn.execute(
-            "INSERT INTO bookmarks (project,page_id,revision_id,anchor) VALUES (?1,?2,?3,?4)
+            "INSERT INTO bookmarks (project,page_id,revision_id,anchor,saved_at)
+             VALUES (?1,?2,?3,?4,?5)
              ON CONFLICT(project,page_id) DO UPDATE SET
              revision_id=excluded.revision_id, anchor=excluded.anchor",
-            params![key.project, page, revision, anchor],
+            params![key.project, page, revision, anchor, saved_at],
         )?;
         Ok(())
     }
@@ -960,7 +1017,7 @@ impl UserState {
             return Err(UserStateError::InvalidValue);
         }
         let mut statement = self.conn.prepare(
-            "SELECT project,page_id,revision_id,anchor FROM bookmarks
+            "SELECT project,page_id,revision_id,anchor,saved_at FROM bookmarks
              ORDER BY project,page_id LIMIT ?1",
         )?;
         let rows = statement.query_map(params![limit as i64], |row| {
@@ -969,23 +1026,25 @@ impl UserState {
                 row.get::<_, i64>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<i64>>(4)?,
             ))
         })?;
         let mut bookmarks = Vec::new();
         for row in rows {
-            let (project, page_id, revision_id, anchor) = row?;
+            let (project, page_id, revision_id, anchor, saved_at) = row?;
             let page_id = u64::try_from(page_id).map_err(|_| UserStateError::InvalidValue)?;
             let revision_id =
                 u64::try_from(revision_id).map_err(|_| UserStateError::InvalidValue)?;
             let key = ArticleKey { project, page_id };
             Self::ids(&key, revision_id)?;
-            if anchor.len() > 4096 || anchor.contains('\0') {
+            if anchor.len() > 4096 || anchor.contains('\0') || saved_at.is_some_and(|t| t <= 0) {
                 return Err(UserStateError::InvalidValue);
             }
             bookmarks.push(SavedBookmark {
                 key,
                 revision_id,
                 anchor,
+                saved_at,
             });
         }
         Ok(bookmarks)
@@ -1217,19 +1276,50 @@ impl UserState {
         revision_id: u64,
         anchor: &str,
     ) -> Result<bool, UserStateError> {
+        self.set_bookmark_for_generation_at(
+            generation,
+            key,
+            revision_id,
+            anchor,
+            now_unix_seconds(),
+        )
+    }
+
+    /// Like `set_bookmark_for_generation` with an explicit clock reading
+    /// (Unix seconds, UTC, positive). The original saved time is kept when
+    /// the page is already bookmarked.
+    pub fn set_bookmark_for_generation_at(
+        &self,
+        generation: u64,
+        key: &ArticleKey,
+        revision_id: u64,
+        anchor: &str,
+        saved_at: i64,
+    ) -> Result<bool, UserStateError> {
         let (page, revision) = Self::ids(key, revision_id)?;
-        if generation > i64::MAX as u64 || anchor.len() > 4096 || anchor.contains('\0') {
+        if generation > i64::MAX as u64
+            || anchor.len() > 4096
+            || anchor.contains('\0')
+            || saved_at <= 0
+        {
             return Err(UserStateError::InvalidValue);
         }
         let changed = self.conn.execute(
-            "INSERT INTO bookmarks(project,page_id,revision_id,anchor)
-             SELECT ?1,?2,?3,?4
+            "INSERT INTO bookmarks(project,page_id,revision_id,anchor,saved_at)
+             SELECT ?1,?2,?3,?4,?6
              WHERE COALESCE(
                  (SELECT value FROM settings WHERE key='internal.personal_generation'), '0'
              )=?5
              ON CONFLICT(project,page_id) DO UPDATE SET
                  revision_id=excluded.revision_id,anchor=excluded.anchor",
-            params![key.project, page, revision, anchor, generation.to_string()],
+            params![
+                key.project,
+                page,
+                revision,
+                anchor,
+                generation.to_string(),
+                saved_at
+            ],
         )?;
         Ok(changed != 0)
     }
@@ -3506,7 +3596,7 @@ mod tests {
         state
             .conn
             .execute_batch(
-                "DROP TABLE chat_citations;
+                "DROP TABLE chat_citations; ALTER TABLE bookmarks DROP COLUMN saved_at;
                  DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
@@ -3691,7 +3781,7 @@ mod tests {
         // existing data, as would be found after upgrading an older install.
         old.conn
             .execute_batch(
-                "DROP TABLE chat_citations;
+                "DROP TABLE chat_citations; ALTER TABLE bookmarks DROP COLUMN saved_at;
                  DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
@@ -3986,7 +4076,7 @@ mod tests {
         old.add_pack_owner("physics", &"b".repeat(64)).unwrap();
         old.conn
             .execute_batch(
-                "DROP TABLE chat_citations;
+                "DROP TABLE chat_citations; ALTER TABLE bookmarks DROP COLUMN saved_at;
                  DROP INDEX history_recent_idx;
                  DROP INDEX chat_threads_article_idx;
                  DROP INDEX chat_messages_thread_idx;
@@ -4580,7 +4670,7 @@ mod tests {
             state.set_bookmark(&key(), 7, "kept").unwrap();
             state
                 .conn
-                .execute_batch("DROP TABLE chat_citations; PRAGMA user_version=2;")
+                .execute_batch("DROP TABLE chat_citations; ALTER TABLE bookmarks DROP COLUMN saved_at; PRAGMA user_version=2;")
                 .unwrap();
         }
         let mut state = UserState::open(&db).unwrap();
@@ -4588,7 +4678,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, SCHEMA_VERSION);
         assert_eq!(state.bookmark(&key()).unwrap(), Some((7, "kept".into())));
         let cited = [citation(7, "b0", "A comet is an icy body.")];
         let (thread, _, answer) = save_cited(&mut state, &cited).unwrap().unwrap();
@@ -4661,6 +4751,228 @@ mod tests {
             );
             assert!(!target.exists(), "{label}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // The exact v3 schema as shipped before bookmark saved times.
+    const V3_SCHEMA: &str = "
+        CREATE TABLE bookmarks (
+          project TEXT NOT NULL,
+          page_id INTEGER NOT NULL CHECK(page_id > 0),
+          revision_id INTEGER NOT NULL CHECK(revision_id > 0),
+          anchor TEXT NOT NULL,
+          PRIMARY KEY(project, page_id)
+        );
+        CREATE TABLE reading_positions (
+          project TEXT NOT NULL,
+          page_id INTEGER NOT NULL CHECK(page_id > 0),
+          revision_id INTEGER NOT NULL CHECK(revision_id > 0),
+          scroll_offset INTEGER NOT NULL CHECK(scroll_offset >= 0),
+          PRIMARY KEY(project, page_id)
+        );
+        CREATE TABLE history (
+          id INTEGER PRIMARY KEY, project TEXT NOT NULL, page_id INTEGER NOT NULL,
+          revision_id INTEGER NOT NULL, visited_at INTEGER NOT NULL
+        );
+        CREATE TABLE chat_threads (
+          id INTEGER PRIMARY KEY, project TEXT NOT NULL, page_id INTEGER NOT NULL,
+          revision_id INTEGER NOT NULL
+        );
+        CREATE TABLE chat_messages (
+          id INTEGER PRIMARY KEY,
+          thread_id INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+          role TEXT NOT NULL, content TEXT NOT NULL
+        );
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE pack_owners (
+          pack_id TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(pack_id, digest)
+        );
+        CREATE TABLE builder_jobs (job_id TEXT PRIMARY KEY, status TEXT NOT NULL);
+        CREATE INDEX history_recent_idx ON history(visited_at DESC, id DESC);
+        CREATE INDEX chat_threads_article_idx
+          ON chat_threads(project, page_id, revision_id, id DESC);
+        CREATE INDEX chat_messages_thread_idx ON chat_messages(thread_id, id);
+        CREATE INDEX pack_owners_digest_idx ON pack_owners(digest, pack_id);
+        CREATE TABLE chat_citations (
+          message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+          ordinal INTEGER NOT NULL, block_id TEXT NOT NULL, snapshot_id TEXT,
+          heading_path TEXT NOT NULL, excerpt TEXT NOT NULL, excerpt_sha256 TEXT NOT NULL,
+          PRIMARY KEY(message_id, ordinal)
+        );
+        PRAGMA user_version=3;";
+
+    fn page(id: u64) -> ArticleKey {
+        ArticleKey {
+            project: "enwiki".into(),
+            page_id: id,
+        }
+    }
+
+    fn user_version(state: &UserState) -> i64 {
+        state
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn v3_database_migrates_to_v4_keeping_bookmarks_without_a_time() {
+        let root = citation_root("bookmark-time-migrate");
+        let db = root.join("user.sqlite");
+        {
+            let old = Connection::open(&db).unwrap();
+            old.execute_batch(V3_SCHEMA).unwrap();
+            old.execute_batch(
+                "INSERT INTO bookmarks VALUES ('enwiki', 7, 70, 'Intro');
+                 INSERT INTO bookmarks VALUES ('enwiki', 8, 80, '');",
+            )
+            .unwrap();
+        }
+        let state = UserState::open(&db).unwrap();
+        assert_eq!(user_version(&state), 4);
+        let listed = state.list_bookmarks(10).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].key.page_id, 7);
+        assert_eq!(listed[0].revision_id, 70);
+        assert_eq!(listed[0].anchor, "Intro");
+        assert_eq!(listed[0].saved_at, None);
+        assert_eq!(listed[1].saved_at, None);
+        // Re-running the open is a no-op; old bookmarks stay timeless even
+        // when re-saved, because the original time is unknown.
+        state
+            .set_bookmark_at(&page(7), 71, "Intro", 1_700_000_000)
+            .unwrap();
+        state
+            .set_bookmark_at(&page(9), 90, "", 1_700_000_500)
+            .unwrap();
+        drop(state);
+        let again = UserState::open(&db).unwrap();
+        assert_eq!(user_version(&again), 4);
+        let listed = again.list_bookmarks(10).unwrap();
+        assert_eq!(listed[0].saved_at, None);
+        assert_eq!(listed[0].revision_id, 71);
+        assert_eq!(listed[2].saved_at, Some(1_700_000_500));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_v4_migration_leaves_the_v3_database_unchanged() {
+        let root = citation_root("bookmark-time-atomic");
+        let db = root.join("user.sqlite");
+        {
+            let old = Connection::open(&db).unwrap();
+            old.execute_batch(V3_SCHEMA).unwrap();
+            // A pre-existing column of that name makes the ALTER fail.
+            old.execute_batch(
+                "ALTER TABLE bookmarks ADD COLUMN saved_at TEXT;
+                 INSERT INTO bookmarks VALUES ('enwiki', 7, 70, 'Intro', NULL);",
+            )
+            .unwrap();
+        }
+        assert!(UserState::open(&db).is_err());
+        let raw = Connection::open(&db).unwrap();
+        let version: i64 = raw
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn newer_schema_is_refused_not_downgraded() {
+        let root = citation_root("bookmark-time-newer");
+        let db = root.join("user.sqlite");
+        drop(UserState::open(&db).unwrap());
+        {
+            let raw = Connection::open(&db).unwrap();
+            raw.execute_batch("PRAGMA user_version=5;").unwrap();
+        }
+        assert!(matches!(
+            UserState::open(&db),
+            Err(UserStateError::UnsupportedSchema(5))
+        ));
+        let raw = Connection::open(&db).unwrap();
+        let version: i64 = raw
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bookmark_records_time_keeps_it_on_re_add_and_clears_with_the_bookmark() {
+        let state = UserState::in_memory().unwrap();
+        let generation = state.personal_generation().unwrap();
+        assert!(state
+            .set_bookmark_for_generation_at(generation, &key(), 123, "", 1_700_000_000)
+            .unwrap());
+        assert_eq!(
+            state.list_bookmarks(10).unwrap()[0].saved_at,
+            Some(1_700_000_000)
+        );
+        // Re-bookmarking later (even at a newer revision) keeps the first time.
+        assert!(state
+            .set_bookmark_for_generation_at(generation, &key(), 124, "x", 1_800_000_000)
+            .unwrap());
+        state
+            .set_bookmark_at(&key(), 125, "", 1_900_000_000)
+            .unwrap();
+        let listed = state.list_bookmarks(10).unwrap();
+        assert_eq!(listed[0].revision_id, 125);
+        assert_eq!(listed[0].saved_at, Some(1_700_000_000));
+        // Removing and saving again is a new bookmark with a new time.
+        assert!(state.remove_bookmark(&key()).unwrap());
+        assert!(state.list_bookmarks(10).unwrap().is_empty());
+        state
+            .set_bookmark_at(&key(), 126, "", 1_950_000_000)
+            .unwrap();
+        assert_eq!(
+            state.list_bookmarks(10).unwrap()[0].saved_at,
+            Some(1_950_000_000)
+        );
+        // A non-positive clock reading is refused.
+        assert!(matches!(
+            state.set_bookmark_at(&page(2), 1, "", 0),
+            Err(UserStateError::InvalidValue)
+        ));
+        // The default clock records a real, positive time.
+        state.set_bookmark(&page(3), 1, "").unwrap();
+        let listed = state.list_bookmarks(10).unwrap();
+        let fresh = listed.iter().find(|b| b.key.page_id == 3).unwrap();
+        assert!(fresh.saved_at.unwrap() > 1_700_000_000);
+    }
+
+    #[test]
+    fn bookmark_time_writes_still_respect_the_privacy_generation() {
+        let mut state = UserState::in_memory().unwrap();
+        let old = state.personal_generation().unwrap();
+        state.clear_personal_reading_data().unwrap();
+        assert!(!state
+            .set_bookmark_for_generation_at(old, &key(), 123, "", 1_700_000_000)
+            .unwrap());
+        assert!(state.list_bookmarks(10).unwrap().is_empty());
+        let fresh = state.personal_generation().unwrap();
+        assert!(state
+            .set_bookmark_for_generation_at(fresh, &key(), 123, "", 1_700_000_001)
+            .unwrap());
+        state.clear_personal_reading_data().unwrap();
+        assert!(state.list_bookmarks(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn invalid_stored_bookmark_time_is_rejected_on_open() {
+        let root = citation_root("bookmark-time-corrupt");
+        let db = root.join("user.sqlite");
+        drop(UserState::open(&db).unwrap());
+        {
+            let raw = Connection::open(&db).unwrap();
+            raw.execute_batch(
+                "PRAGMA ignore_check_constraints=ON;
+                INSERT INTO bookmarks VALUES ('enwiki', 7, 70, '', -5);",
+            )
+            .unwrap();
+        }
+        assert!(UserState::open(&db).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }
