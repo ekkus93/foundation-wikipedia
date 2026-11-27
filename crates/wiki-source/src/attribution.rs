@@ -48,6 +48,43 @@ const KNOWN_TEXT_LICENSES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The display name of a known SPDX text licence, e.g. `CC BY-SA 4.0`.
+pub fn text_license_name(spdx: &str) -> Option<&'static str> {
+    KNOWN_TEXT_LICENSES
+        .iter()
+        .find(|(id, _, _)| id.eq_ignore_ascii_case(spdx.trim()))
+        .map(|(_, name, _)| *name)
+}
+
+/// Longest SPDX identifier shown in a plain-text notice; the manifest
+/// format already refuses longer ones.
+const MAX_NOTICE_SPDX: usize = 64;
+
+/// The pack-level licence notice for an install review, as plain text
+/// (the UI escapes it): the text licence the manifest states and how many
+/// images the pack credits. Shown before anything is installed.
+pub fn pack_license_notice(text_spdx: &str, media: u64) -> String {
+    let spdx = text_spdx.trim();
+    let text = match text_license_name(spdx) {
+        Some(name) => format!("Article text: {name}."),
+        None if spdx.is_empty() => "Article text: no licence stated by this pack.".to_owned(),
+        None => {
+            let shown: String = spdx
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(MAX_NOTICE_SPDX)
+                .collect();
+            format!("Article text: licence named {shown} by this pack.")
+        }
+    };
+    let images = match media {
+        0 => " No images.".to_owned(),
+        1 => " 1 image, credited with its creator and licence.".to_owned(),
+        n => format!(" {n} images, each credited with its creator and licence."),
+    };
+    format!("{text}{images} Credits are shown at the end of every article.")
+}
+
 /// The licence sentence fragment for an SPDX identifier: a linked name for
 /// a known licence, the escaped identifier otherwise, and a plain notice
 /// when the pack states none.
@@ -291,6 +328,23 @@ mod tests {
             assert!(none.contains("a licence this pack does not state"));
             assert!(!none.contains("creativecommons.org"));
         }
+    }
+
+    #[test]
+    fn the_install_review_notice_names_the_licence_and_image_credits() {
+        assert_eq!(
+            pack_license_notice("CC-BY-SA-4.0", 12),
+            "Article text: CC BY-SA 4.0. 12 images, each credited with its creator and \
+licence. Credits are shown at the end of every article."
+        );
+        assert!(pack_license_notice("cc-by-sa-3.0", 1)
+            .starts_with("Article text: CC BY-SA 3.0. 1 image, credited"));
+        assert!(pack_license_notice("MIT", 0)
+            .starts_with("Article text: licence named MIT by this pack. No images."));
+        assert!(pack_license_notice("", 0).contains("no licence stated"));
+        let odd = pack_license_notice(&format!("a\u{7}b{}", "c".repeat(100)), 0);
+        assert!(!odd.contains('\u{7}'));
+        assert!(!odd.contains(&"c".repeat(64)));
     }
 
     #[test]

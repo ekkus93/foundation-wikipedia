@@ -36,6 +36,11 @@ import uniffi.wiki_ffi.packTrustLabel
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class PackTrustUiTest {
+    private companion object {
+        const val LICENSE_NOTICE = "Article text: CC BY-SA 4.0. No images. " +
+            "Credits are shown at the end of every article."
+    }
+
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
@@ -78,6 +83,7 @@ class PackTrustUiTest {
         trustLabel = packTrustLabel(trust),
         articles = 2uL,
         declaredBytes = 4096uL,
+        licenseNotice = LICENSE_NOTICE,
         identitySha256 = "0".repeat(64),
     )
 
@@ -88,6 +94,7 @@ class PackTrustUiTest {
         compose.setContent { PackReviewDialog(review(trust)) { decisions += it } }
 
         compose.onNodeWithText("Install custom pack?").assertIsDisplayed()
+        compose.onNodeWithText(LICENSE_NOTICE).assertIsDisplayed()
         compose.onNodeWithTag(packTrustTag(PackTrust.CUSTOM_INTEGRITY_VERIFIED)).assertIsDisplayed()
         assertFalse(
             "a custom pack never claims a publisher",

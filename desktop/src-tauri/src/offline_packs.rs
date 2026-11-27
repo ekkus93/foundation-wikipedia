@@ -97,6 +97,7 @@ pub struct PackReviewDto {
     trust_description: String,
     articles: u64,
     declared_bytes: u64,
+    license_notice: String,
 }
 
 struct FileSource(Mutex<std::fs::File>);
@@ -182,6 +183,7 @@ pub async fn review_offline_pack(
                     trust_label: review.trust_label,
                     articles: review.articles,
                     declared_bytes: review.declared_bytes,
+                    license_notice: review.license_notice,
                 })
             }
             (Err(error), _) => Err(message(error)),

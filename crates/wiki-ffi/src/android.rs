@@ -159,6 +159,10 @@ fn pack_review(review: &wiki_store::pack_install::PackInstallReview<'_>) -> Pack
         trust_label: review.trust.label().to_owned(),
         articles: review.manifest.metadata.counts.articles,
         declared_bytes: review.declared_bytes,
+        license_notice: wiki_source::attribution::pack_license_notice(
+            &review.manifest.metadata.license.text_spdx,
+            review.manifest.metadata.counts.media,
+        ),
         identity_sha256: wiki_pack_format::signature::transcript_digest(review.manifest)
             .map(|digest| wiki_pack_format::signature::hex(&digest))
             .unwrap_or_default(),
@@ -176,6 +180,8 @@ pub struct PackReview {
     pub trust_label: String,
     pub articles: u64,
     pub declared_bytes: u64,
+    /// Plain-text licence and credits notice for the pack (SEC-002).
+    pub license_notice: String,
     /// SHA-256 of the manifest identity transcript (covers every object's
     /// digest): an installer that reviews and installs in separate passes
     /// approves only the pack with this identity.

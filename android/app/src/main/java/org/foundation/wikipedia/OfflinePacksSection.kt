@@ -272,6 +272,7 @@ fun PackReviewDialog(review: PackReview, onDecision: (Boolean) -> Unit) {
                 Text("Wikipedia edition: ${review.project}")
                 Text("Articles: ${review.articles}")
                 Text("Size: ${formatBytes(review.declaredBytes)}")
+                Text(review.licenseNotice)
             }
         },
         confirmButton = {

@@ -6035,6 +6035,11 @@ data class PackReview (
     var `declaredBytes`: kotlin.ULong
     , 
     /**
+     * Plain-text licence and credits notice for the pack (SEC-002).
+     */
+    var `licenseNotice`: kotlin.String
+    , 
+    /**
      * SHA-256 of the manifest identity transcript (covers every object's
      * digest): an installer that reviews and installs in separate passes
      * approves only the pack with this identity.
@@ -6063,6 +6068,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterULong.read(buf),
             FfiConverterULong.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -6073,6 +6079,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.allocationSize(value.`trustLabel`) +
             FfiConverterULong.allocationSize(value.`articles`) +
             FfiConverterULong.allocationSize(value.`declaredBytes`) +
+            FfiConverterString.allocationSize(value.`licenseNotice`) +
             FfiConverterString.allocationSize(value.`identitySha256`)
     )
 
@@ -6083,6 +6090,7 @@ public object FfiConverterTypePackReview: FfiConverterRustBuffer<PackReview> {
             FfiConverterString.write(value.`trustLabel`, buf)
             FfiConverterULong.write(value.`articles`, buf)
             FfiConverterULong.write(value.`declaredBytes`, buf)
+            FfiConverterString.write(value.`licenseNotice`, buf)
             FfiConverterString.write(value.`identitySha256`, buf)
     }
 }

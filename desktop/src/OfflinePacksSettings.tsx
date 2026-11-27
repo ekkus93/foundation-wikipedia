@@ -10,6 +10,7 @@ interface PackReview {
   trustDescription: string;
   articles: number;
   declaredBytes: number;
+  licenseNotice: string;
 }
 
 interface InstalledPack {
@@ -47,6 +48,7 @@ export function parsePackReview(value: unknown, path: string): PackReview {
     trustDescription: text(record.trust_description),
     articles: count(record.articles),
     declaredBytes: count(record.declared_bytes),
+    licenseNotice: text(record.license_notice, 512),
   };
 }
 
@@ -170,6 +172,7 @@ export default function OfflinePacksSettings() {
             <dt>Wikipedia edition</dt><dd>{review.project}</dd>
             <dt>Articles</dt><dd>{review.articles}</dd>
             <dt>Size</dt><dd>{formatBytes(review.declaredBytes)}</dd>
+            <dt>Licence</dt><dd>{review.licenseNotice}</dd>
           </dl>
           <button type="button" disabled={busy} onClick={() => void install(review)}>Install</button>
           <button type="button" disabled={busy} onClick={() => { setReview(null); setMessage("Import cancelled. Nothing was installed."); }}>Cancel</button>
