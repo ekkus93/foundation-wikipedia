@@ -43,7 +43,7 @@ use wiki_store::pack_install::{
 };
 use wiki_store::pack_media::{
     encode_media_index, media_object_path, PackImage, PackMediaError, MAX_PACK_IMAGE_BYTES,
-    MEDIA_DIR, MEDIA_INDEX_OBJECT,
+    MEDIA_DIR, MEDIA_INDEX_OBJECT, PACK_IMAGE_CSP,
 };
 use wiki_store::record_codec::append_record_frame;
 
@@ -1739,6 +1739,62 @@ fn a_tiny_png_or_gif_declaring_a_gigapixel_canvas_is_refused() {
             "{name}: {error:?}"
         );
     }
+}
+
+/// A raster with a valid header and HTML/script after it is a valid image
+/// to a decoder and a page to a careless server. Contract: installed or
+/// refused, it is only ever handed back as its declared image type, and the
+/// readers serve that with `nosniff` and a sandbox CSP (checked on Android
+/// by `PackImagesUiTest`, on desktop by `offline_packs` tests), so it can
+/// never run as a document.
+#[test]
+fn raster_polyglots_with_valid_headers_are_only_ever_served_as_images() {
+    let lab = Lab::new("hostile-raster-polyglot");
+    let payload: &[u8] = b"<!doctype html><html><body><script>alert(document.domain)</script>\
+<iframe src=\"https://evil.example/\"></iframe></body></html>";
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0".to_vec();
+    png.extend_from_slice(payload);
+    let mut gif = b"GIF89a\x01\0\x01\0\0\0\0".to_vec();
+    gif.extend_from_slice(payload);
+    let mut jpeg = b"\xff\xd8\xff\xe0\0\x10JFIF\0".to_vec();
+    jpeg.extend_from_slice(payload);
+    for (name, mime, bytes) in [
+        ("png_html", "image/png", png),
+        ("gif_html", "image/gif", gif),
+        ("jpeg_html", "image/jpeg", jpeg),
+    ] {
+        let path = lab.dir.0.join(format!("attacks/{name}.wpack"));
+        fs::write(&path, image_pack(&lab, name, mime, &bytes)).unwrap();
+        match lab
+            .library
+            .install_pack(path.to_string_lossy().into_owned(), true)
+        {
+            Ok(_) => {
+                lab.library.activate(name.into()).unwrap();
+                let digest = hex(&bytes);
+                let image = lab
+                    .library
+                    .read_image(digest.clone())
+                    .unwrap()
+                    .expect("installed image is readable");
+                assert_eq!(image.mime, mime, "{name}: served only as its declared type");
+                assert_eq!(image.bytes, bytes, "{name}");
+                let page = lab
+                    .library
+                    .open_reader_page("enwiki".into(), 5, false)
+                    .unwrap()
+                    .unwrap();
+                assert!(!page.document.contains("alert(document.domain)"), "{name}");
+                lab.library.activate("good-pack".into()).unwrap();
+                lab.library.remove_pack(name.into()).unwrap();
+            }
+            Err(error) => assert_eq!(error, LibraryError::MediaInvalid, "{name}"),
+        }
+    }
+    for rule in ["default-src 'none'", "sandbox"] {
+        assert!(PACK_IMAGE_CSP.contains(rule));
+    }
+    lab.assert_good_pack_usable();
 }
 
 #[test]

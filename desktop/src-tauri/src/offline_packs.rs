@@ -344,19 +344,31 @@ pub fn pack_image_response(
         return not_found();
     };
     match library.read_image(digest.to_owned()) {
-        Ok(Some(image)) => tauri::http::Response::builder()
-            .status(200)
-            .header("Content-Type", image.mime)
-            .header("X-Content-Type-Options", "nosniff")
-            .header(
-                "Content-Security-Policy",
-                wiki_store::pack_media::PACK_IMAGE_CSP,
-            )
-            .header("Cache-Control", "no-store")
-            .body(image.bytes)
-            .unwrap_or_else(|_| not_found()),
+        Ok(Some(image)) => image_response(image),
         _ => not_found(),
     }
+}
+
+/// A verified pack image as served to the reader: exactly its recorded
+/// image type, never sniffed, and sandboxed so that even a polyglot (a
+/// valid image header followed by HTML) can never run as a page.
+fn image_response(image: wiki_ffi::android::PackImageFile) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(200)
+        .header("Content-Type", image.mime)
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+            "Content-Security-Policy",
+            wiki_store::pack_media::PACK_IMAGE_CSP,
+        )
+        .header("Cache-Control", "no-store")
+        .body(image.bytes)
+        .unwrap_or_else(|_| {
+            tauri::http::Response::builder()
+                .status(404)
+                .body(Vec::new())
+                .expect("static response")
+        })
 }
 
 #[tauri::command]
@@ -400,6 +412,26 @@ pub async fn open_offline_title(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pack_image_is_served_with_its_type_unsniffed_and_sandboxed() {
+        let polyglot = b"\x89PNG\r\n\x1a\n<html><script>alert(1)</script></html>".to_vec();
+        let response = image_response(wiki_ffi::android::PackImageFile {
+            mime: "image/png".into(),
+            bytes: polyglot.clone(),
+        });
+        let header = |name: &str| response.headers()[name].to_str().unwrap().to_owned();
+        assert_eq!(response.status(), 200);
+        assert_eq!(header("Content-Type"), "image/png");
+        assert_eq!(header("X-Content-Type-Options"), "nosniff");
+        assert_eq!(
+            header("Content-Security-Policy"),
+            wiki_store::pack_media::PACK_IMAGE_CSP
+        );
+        assert!(header("Content-Security-Policy").contains("sandbox"));
+        assert_eq!(header("Cache-Control"), "no-store");
+        assert_eq!(response.body(), &polyglot);
+    }
 
     #[test]
     fn the_desktop_page_ends_with_the_attribution_section() {
