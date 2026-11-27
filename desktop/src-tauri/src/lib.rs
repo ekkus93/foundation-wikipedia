@@ -581,11 +581,15 @@ async fn toggle_reader_bookmark(
 }
 
 
-fn saved_bookmark_rows(state: &UserState) -> Result<Vec<(String, u64, u64)>, UserStateError> {
+/// `(project, page_id, revision_id, saved_at)`; `saved_at` is Unix seconds
+/// (UTC), or `None` for a bookmark saved before dates were kept.
+type BookmarkRow = (String, u64, u64, Option<i64>);
+
+fn saved_bookmark_rows(state: &UserState) -> Result<Vec<BookmarkRow>, UserStateError> {
     Ok(state
         .list_bookmarks(100)?
         .into_iter()
-        .map(|item| (item.key.project, item.key.page_id, item.revision_id))
+        .map(|item| (item.key.project, item.key.page_id, item.revision_id, item.saved_at))
         .collect())
 }
 
@@ -594,7 +598,7 @@ fn saved_bookmark_rows(state: &UserState) -> Result<Vec<(String, u64, u64)>, Use
 async fn list_reader_bookmarks(
     app: tauri::AppHandle,
     gate: tauri::State<'_, DesktopPersonalDataGate>,
-) -> Result<Vec<(String, u64, u64)>, String> {
+) -> Result<Vec<BookmarkRow>, String> {
     let gate = (*gate).clone();
     let generation = gate.generation();
     let persistent_generation = capture_persistent_generation(&app)?;
@@ -675,13 +679,13 @@ fn reader_history_rows(state: &UserState) -> Result<Vec<(String, u64, u64, i64)>
 
 /// One generation-checked panel response prevents separate bookmark, consent
 /// and visit IPC calls from returning a mixed pre-/post-deletion snapshot.
-type SavedPanelRows = (Vec<(String, u64, u64)>, bool, Vec<(String, u64, u64, i64)>);
+type SavedPanelRows = (Vec<BookmarkRow>, bool, Vec<(String, u64, u64, i64)>);
 
 fn saved_panel_rows(state: &UserState, generation: u64) -> Result<SavedPanelRows, UserStateError> {
     let (bookmarks, consent, visits) = state.saved_panel_snapshot_for_generation(generation)?;
     Ok((
         bookmarks.into_iter()
-            .map(|item| (item.key.project, item.key.page_id, item.revision_id))
+            .map(|item| (item.key.project, item.key.page_id, item.revision_id, item.saved_at))
             .collect(),
         consent,
         visits.into_iter()
@@ -1588,9 +1592,9 @@ mod bookmark_tests {
         let reader = UserState::open(&db).unwrap();
         let key = ArticleKey { project: "enwiki".to_owned(), page_id: 42 };
         let before = reader.personal_generation().unwrap();
-        assert!(owner.set_bookmark_for_generation(before, &key, 333, "").unwrap());
+        assert!(owner.set_bookmark_for_generation_at(before, &key, 333, "", 1_795_651_200).unwrap());
         let (bookmarks, consent, visits) = saved_panel_rows(&reader, before).unwrap();
-        assert_eq!(bookmarks, vec![("enwiki".to_owned(), 42, 333)]);
+        assert_eq!(bookmarks, vec![("enwiki".to_owned(), 42, 333, Some(1_795_651_200))]);
         assert!(!consent);
         assert!(visits.is_empty());
         assert!(owner.clear_personal_reading_data_for_generation(before).unwrap());
@@ -1617,7 +1621,12 @@ mod bookmark_tests {
         };
         assert_eq!(toggle_saved_bookmark(&state, &article, 333, state.personal_generation().unwrap()).unwrap(), true);
         assert_eq!(state.bookmark(&article).unwrap(), Some((333, String::new())));
-        assert_eq!(saved_bookmark_rows(&state).unwrap(), vec![("enwiki".to_owned(), 42, 333)]);
+        let rows = saved_bookmark_rows(&state).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "enwiki");
+        assert_eq!((rows[0].1, rows[0].2), (42, 333));
+        // New bookmarks carry the time they were saved.
+        assert!(rows[0].3.is_some_and(|time| time > 1_700_000_000));
         assert_eq!(toggle_saved_bookmark(&state, &article, 334, state.personal_generation().unwrap()).unwrap(), false);
         assert!(saved_bookmark_rows(&state).unwrap().is_empty());
         assert_eq!(state.bookmark(&article).unwrap(), None);

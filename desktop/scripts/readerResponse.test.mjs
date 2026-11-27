@@ -96,13 +96,16 @@ test("online search trims ordinary outer spacing but validates the exact UTF-8 q
 });
 
 test("bounded bookmark listing validates exact identities without treating them as article bytes", () => {
-  assert.deepEqual(parseReaderBookmarks([["enwiki", 42, 333], ["frwiki", 42, 991]]),
-    [["enwiki", 42, 333], ["frwiki", 42, 991]]);
+  assert.deepEqual(parseReaderBookmarks([["enwiki", 42, 333, 1795651200], ["frwiki", 42, 991, null]]),
+    [["enwiki", 42, 333, 1795651200], ["frwiki", 42, 991, null]]);
   const sparse = Array(2);
-  sparse[1] = ["enwiki", 42, 333];
-  for (const bad of [null, {}, sparse, [["dewiki", 0, 2]],
-    [["enwiki", 42, 0]], [["untrustedwiki", 42, 3]],
-    [["enwiki", 42, 3], ["enwiki", 42, 4]], Array(101).fill(["enwiki", 42, 3])]) {
+  sparse[1] = ["enwiki", 42, 333, null];
+  for (const bad of [null, {}, sparse, [["dewiki", 0, 2, null]],
+    [["enwiki", 42, 0, null]], [["untrustedwiki", 42, 3, null]],
+    [["enwiki", 42, 3]], [["enwiki", 42, 3, 0]], [["enwiki", 42, 3, -5]],
+    [["enwiki", 42, 3, "1700000000"]], [["enwiki", 42, 3, 1.5]],
+    [["enwiki", 42, 3, 253402300800]], [["enwiki", 42, 3, Number.NaN]],
+    [["enwiki", 42, 3, null], ["enwiki", 42, 4, null]], Array(101).fill(["enwiki", 42, 3, null])]) {
     assert.throws(() => parseReaderBookmarks(bad), /Invalid bookmark|Duplicate bookmark/);
   }
 });
@@ -134,13 +137,13 @@ test("opt-in reading history IPC accepts repeated visits but rejects malformed r
 
 
 test("saved panel response rejects mixed or incomplete IPC tuples as a unit", () => {
-  const bookmarks = [["enwiki", 42, 333]];
+  const bookmarks = [["enwiki", 42, 333, 1700000000]];
   const visits = [["enwiki", 42, 333, 1700000000]];
   assert.deepEqual(parseReaderSavedPanel([bookmarks, true, visits]), [bookmarks, true, visits]);
   assert.deepEqual(parseReaderSavedPanel([[], false, []]), [[], false, []]);
   for (const invalid of [null, {}, [bookmarks, false], [bookmarks, false, visits, []],
     [bookmarks, "false", visits], [bookmarks, false, [["enwiki", 0, 333, 1700000000]]],
-    [[["enwiki", 42, 0]], false, visits], [bookmarks, false, null]]) {
+    [[["enwiki", 42, 0, null]], false, visits], [bookmarks, false, null]]) {
     assert.throws(() => parseReaderSavedPanel(invalid), /Invalid/);
   }
 });

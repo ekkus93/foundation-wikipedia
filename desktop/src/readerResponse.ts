@@ -4,7 +4,8 @@ export type ReaderSearchHit = [pageId: number, title: string];
 /** `cached`: online HTML reused from the temporary copy after a fresh check
  * that it is still the current revision (absent for pack articles). */
 export type ReaderArticle = [pageId: number, revisionId: number, title: string, html: string, cached?: boolean];
-export type ReaderBookmark = [project: string, pageId: number, revisionId: number];
+/** `savedAt`: Unix seconds (UTC) when first bookmarked; null for a bookmark saved before dates were kept. */
+export type ReaderBookmark = [project: string, pageId: number, revisionId: number, savedAt: number | null];
 export type ReaderVisit = [project: string, pageId: number, revisionId: number, visitedAt: number];
 const SUPPORTED_PROJECTS = EDITION_IDS;
 
@@ -120,15 +121,17 @@ export function parseReaderBookmarks(value: unknown): ReaderBookmark[] {
   if (!Array.isArray(value) || value.length > 100) throw new Error("Invalid bookmark list");
   const seen = new Set<string>();
   return Array.from(value, (row: unknown): ReaderBookmark => {
-    if (!Array.isArray(row) || row.length !== 3 ||
+    if (!Array.isArray(row) || row.length !== 4 ||
         typeof row[0] !== "string" || !SUPPORTED_PROJECTS.has(row[0]) ||
-        !validId(row[1]) || !validId(row[2])) {
+        !validId(row[1]) || !validId(row[2]) ||
+        !(row[3] === null || (typeof row[3] === "number" && Number.isSafeInteger(row[3]) &&
+          row[3] > 0 && row[3] <= 253402300799))) {
       throw new Error("Invalid bookmark identity");
     }
     const identity = row[0] + ":" + row[1];
     if (seen.has(identity)) throw new Error("Duplicate bookmark identity");
     seen.add(identity);
-    return [row[0], row[1], row[2]];
+    return [row[0], row[1], row[2], row[3]];
   });
 }
 

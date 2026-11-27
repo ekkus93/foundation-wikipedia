@@ -18,6 +18,7 @@ import { ReaderOfflineMode } from "./readerOfflineMode";
 import { ReaderPersonalDataSession } from "./readerPersonalDataSession";
 import { ReaderLatestPreferenceWriter } from "./readerLatestPreferenceWriter";
 import { ReaderBookmarkInFlight } from "./readerBookmarkInFlight";
+import { bookmarkSavedText } from "./bookmarkSavedText";
 import { ReaderPrivacyGenerationMonitor } from "./readerPrivacyGeneration";
 
 export default function App() {
@@ -597,8 +598,8 @@ export default function App() {
           {savedError && <p role="alert">{savedError}</p>}
           {savedResult && <p role="status">{savedResult}</p>}
           {!savedBusy && !savedError && savedBookmarks.length === 0 && <p>No saved pages.</p>}
-          <ul>{savedBookmarks.map(([project, pageId, revisionId]) => <li key={project + ":" + pageId}>
-            {project} · page {pageId} · saved revision {revisionId}{" "}
+          <ul>{savedBookmarks.map(([project, pageId, revisionId, savedAt]) => <li key={project + ":" + pageId}>
+            {project} · page {pageId} · saved revision {revisionId}{bookmarkSavedText(savedAt) ? ` · ${bookmarkSavedText(savedAt)}` : ""}{" "}
             <button type="button" disabled={savedBusy}
               aria-label={`Open latest available article for ${project} page ${pageId}`}
               onClick={() => openSavedBookmark(project, pageId)}>Open latest</button>{" "}
