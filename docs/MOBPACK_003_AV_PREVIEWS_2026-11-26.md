@@ -80,10 +80,11 @@ Owner decision (2026-11-26): play audio and video inside the app, not in the bro
 - **Video:** failed. The 480p VP9 WebM never became ready. The media server log shows why: Samsung's WebM reader alternates between the end of the 5.6 MB file (offset about 5.38 MB) and a position that advances about 300 KB at a time. Every jump is a new HTTP range request, about 3 s each, about 34 jumps in 47 s. It was slowly progressing, not stalled, but the player's 30 s no-start limit gave way to the next rendering, and that did the same. The addresses were all fine from a computer (HTTP 206).
 - **Fix:** Commons also makes a 360p MPEG-4 rendering (`.360p.mpeg4.mov`). Its index is at the start of the file (`ftyp` then `moov`), and every Android device decodes it. It is now tried first, with the VP9 renderings as fallbacks. It is larger (12.2 MB against 5.6 MB for this clip), and audio and video stream over Wi-Fi only unless mobile data is allowed.
 - **After the fix:** both tests passed on the A54 in 16 s; the video was ready in 1.1 s from the MPEG-4 rendering. Both also passed on the API 35 emulator.
+- **CI:** `e2c3ca33` (includes `e4963cec`): all four workflows passed, incl. [Android FFI bridge 46024259175](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46024259175) (`OK (48 tests)`).
+- **Seeking (`f4b1b345`):** the live test now also moves the position slider to halfway, through its accessibility action. Each clip must then report a position between 45% and 60% of its length and keep advancing from there. It passed on the A54 for both the audio and the video (27 s); it was not rerun on the emulator. Dragging the slider by hand has not been tried.
 
 ## Not done
 
-- **Seeking:** the slider is not exercised by a test or by hand.
 - **Desktop player:** the desktop app has no in-app player, and its offline message was checked by unit test only.
 - **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
 - **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page.
