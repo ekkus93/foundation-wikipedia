@@ -195,9 +195,23 @@ class PackImagesUiTest {
         compose.waitUntil(timeoutMillis = 30_000) { figurePixels().first > 2_000 }
         assertEquals(0, figurePixels().second)
 
-        // The open image is kept when the activity is recreated (rotation).
-        compose.activityRule.scenario.recreate()
-        compose.waitUntil(timeoutMillis = 30_000) { viewerShown() && figurePixels().first > 2_000 }
+        // The open image is kept when the screen really turns (the activity
+        // is recreated each time), to landscape and back.
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        try {
+            val turns: List<() -> Unit> =
+                listOf({ device.setOrientationLeft() }, { device.setOrientationNatural() })
+            for (turn in turns) {
+                turn()
+                device.waitForIdle()
+                compose.waitUntil(timeoutMillis = 30_000) {
+                    viewerShown() && figurePixels().first > 2_000
+                }
+            }
+        } finally {
+            device.setOrientationNatural()
+            device.unfreezeRotation()
+        }
 
         compose.onNodeWithText("Close").performClick()
         compose.waitUntil(timeoutMillis = 15_000) { !viewerShown() }
