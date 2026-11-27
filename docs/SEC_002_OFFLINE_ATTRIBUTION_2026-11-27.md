@@ -24,11 +24,26 @@ Seen on the API 35 emulator: *Hypotenuse* from the real simplewiki pack ends wit
 
 4 unit tests in `attribution.rs` (licence and links; every image credited with its derivation; maps credited with their own creator and licence; hostile metadata escaped, bad links dropped); the Android document carries the section in both themes; the desktop page ends with it; the pack-built article test checks the credit, licence and file page of every embedded image.
 
+## Update — the pack's own licence (2026-11-27)
+
+Code: `ddb2758d`, `0e1a40b9`. This closes the first two gaps below; the Android top bar now says Foundation Library (`bd671f34`).
+
+- **Reader:** the attribution section states the text licence the pack's manifest declares, not a constant. The installer already records `license.text_spdx` in each snapshot's `manifest.json`. `wiki_store::pack_install::installed_text_license` reads it back when the snapshot is opened, accepting only an SPDX-shaped identifier. It is cached with the open snapshot and passed to `attribution_section_for_license`, so the section follows the active pack. Known identifiers get their name and deed link: CC BY-SA 4.0 and 3.0, CC BY 4.0, CC0 1.0 and GFDL 1.3 or later. Any other identifier is shown escaped and unlinked ("the licence the pack names as MIT"). A missing or invalid record says "a licence this pack does not state" rather than guessing one.
+- **Install review:** both the Android dialog (custom and official packs) and the desktop import review now show one plain-text line before anything is installed. It is built in Rust by `pack_license_notice`, for example "Article text: CC BY-SA 4.0. 12 images, each credited with its creator and licence. Credits are shown at the end of every article."
+- **Tests:**
+  - unit tests for known, lower-case, unknown, missing and hostile identifiers and for the review notice;
+  - a `wiki-store` test that reads back the recorded licence and returns `None` once the record is tampered with, nulled or removed;
+  - the FFI test `the_attribution_states_the_licence_the_active_pack_declares`, which installs a CC-BY-SA-3.0 pack and an MIT pack and switches between them;
+  - `PackTrustUiTest` checks the notice is displayed (passed on the API 35 emulator).
+
+## Update CI
+
+On `ddb2758d` (reader licence): all five workflows passed, incl. [Rust workspace 46017894284](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46017894284) and [Android FFI bridge 46017894023](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46017894023). On `0e1a40b9` (install review): all six passed, incl. [Rust workspace 46018735656](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46018735656), [Desktop launch smoke 46018735660](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46018735660) and [Android FFI bridge 46018735760](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46018735760) (`OK (48 tests)`).
+
 ## Not done
 
-- The text licence is a constant: `Article` has no licence field, so the pack manifest's licence is not passed through.
-- Pack-level notices (the `media/index.json` attribution object) are not shown in the install review.
-- The reader's top bar on Android still says "Wikipedia".
+- The per-image notices are shown in the reader, not listed one by one in the install review (the review gives the count).
+- Internal identifiers (`org.foundation.wikipedia`, the desktop data folder, the repository name) still use the old name; renaming them is due before the first public release.
 
 ## CI
 

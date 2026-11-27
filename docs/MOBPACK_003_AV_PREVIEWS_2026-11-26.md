@@ -50,7 +50,7 @@ Owner decision (2026-11-26): play audio and video inside the app, not in the bro
 | Part | Code | Behaviour |
 |---|---|---|
 | Notice | `AvStream.kt` (`AV_STREAM_DISCLOSURE`), `MainActivity.kt` | The first tap on "Play online" shows "Play from Wikimedia?" before any request. It says the app connects to `upload.wikimedia.org`, which sees the IP address and the file played, and that nothing is saved. Playing starts only once the choice is stored. |
-| Addresses | `AvStream` | Worked out from the file name the way Wikimedia lays out its media store (two directories from the MD5 of the name), so packs need no rebuild. Video: 480p, then 360p, then 240p VP9 renderings, then the file itself. Audio: the MP3 rendering, then the file itself. Every address is on `upload.wikimedia.org`. |
+| Addresses | `AvStream` | Worked out from the file name the way Wikimedia lays out its media store (two directories from the MD5 of the name), so packs need no rebuild. Video: the 360p MPEG-4 rendering, then 480p, 360p and 240p VP9 renderings, then the file itself (order changed on 2026-11-27, see below). Audio: the MP3 rendering, then the file itself. Every address is on `upload.wikimedia.org`. |
 | Player | `AvPlayer.kt` | A full-screen `VideoView` with Play/Pause, a position slider, elapsed and total time, and Close (Back also closes). Playback stops when it closes; nothing is saved. An address that fails, or has not started within 30 seconds, gives way to the next; when none is left the reader is told "This could not be played here." and offered the browser. |
 | Policy | `OutsideLinkPolicy.kt` | Unchanged gate, applied before the notice: Offline mode, no network and the Wi-Fi-only setting each refuse with the reason. |
 | Privacy page | `PrivacyNetworkSection.kt` | Now states that audio and video stream from Wikimedia's media servers after the notice, over mobile data only if allowed. |
@@ -72,11 +72,20 @@ Owner decision (2026-11-26): play audio and video inside the app, not in the bro
 - `4ca51ac0` (desktop offline message): [Rust workspace 45954519127](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45954519127), [Platform shells 45954519204](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45954519204), [Desktop launch smoke 45954519115](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45954519115).
 - `9a0ca9d0` (live test, skipped in CI): [Rust workspace 45955098390](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45955098390), [Platform shells 45955098374](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45955098374), [Android install smoke 45955098572](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45955098572), [Android FFI bridge 45955098544](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45955098544) (`OK (48 tests)`).
 
+## On the Galaxy A54 (2026-11-27)
+
+`AvPlayerLiveTest` on the owner's A54 (Android 16), over Wi-Fi:
+
+- **Audio:** passed first time. The MP3 rendering was ready in 0.3 s; it played, paused, held its position and resumed.
+- **Video:** failed. The 480p VP9 WebM never became ready. The media server log shows why: Samsung's WebM reader alternates between the end of the 5.6 MB file (offset about 5.38 MB) and a position that advances about 300 KB at a time. Every jump is a new HTTP range request, about 3 s each, about 34 jumps in 47 s. It was slowly progressing, not stalled, but the player's 30 s no-start limit gave way to the next rendering, and that did the same. The addresses were all fine from a computer (HTTP 206).
+- **Fix:** Commons also makes a 360p MPEG-4 rendering (`.360p.mpeg4.mov`). Its index is at the start of the file (`ftyp` then `moov`), and every Android device decodes it. It is now tried first, with the VP9 renderings as fallbacks. It is larger (12.2 MB against 5.6 MB for this clip), and audio and video stream over Wi-Fi only unless mobile data is allowed.
+- **After the fix:** both tests passed on the A54 in 16 s; the video was ready in 1.1 s from the MPEG-4 rendering. Both also passed on the API 35 emulator.
+
 ## Not done
 
 - **Seeking:** the slider is not exercised by a test or by hand.
 - **Desktop player:** the desktop app has no in-app player, and its offline message was checked by unit test only.
-- **Physical phone:** the previews and the player have not been tried on the A54.
+- **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
 - **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page.
 - **No hidden requests:** shown for the reader by its request handler tests; not measured with a network log on a device.
 - **Offline audio and video:** deferred (FUT-004). A size-limited option for short clips was discussed and left deferred.
