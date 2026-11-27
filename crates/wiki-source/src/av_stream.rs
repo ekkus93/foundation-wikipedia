@@ -105,11 +105,8 @@ fn encode(name: &str) -> String {
 /// Addresses to try, in order: renderings first, then the file itself. All
 /// are on [`AV_HOST`].
 pub fn candidates(file: &AvFile, order: StreamOrder) -> Vec<String> {
-    let digest: String = Md5::digest(file.name.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let directory = format!("{}/{}", &digest[..1], &digest[..2]);
+    let digest = Md5::digest(file.name.as_bytes());
+    let directory = format!("{:x}/{:02x}", digest[0] >> 4, digest[0]);
     let name = encode(&file.name);
     let original = format!("{STORE}/{directory}/{name}");
     let renderings: &[&str] = if file.video {
