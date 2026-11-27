@@ -85,7 +85,12 @@ pub(crate) fn poster(tag: &str, name: &str) -> Option<String> {
 
 fn preview(tag: &str, video: bool) -> Option<String> {
     let name = file_name(tag)?;
-    let page = commons_page(&name)?;
+    // A file kept on the wiki itself (not Commons) has no page the reader
+    // can name here: it gets the note without a link.
+    let page = attribute(tag, "data-mwprovider")
+        .is_none_or(|provider| provider == "wikimediacommons")
+        .then(|| commons_page(&name))
+        .flatten();
     let mut out = String::new();
     if video {
         if let Some(still) = poster(tag, &name) {
@@ -107,10 +112,13 @@ fn preview(tag: &str, video: bool) -> Option<String> {
     {
         out.push_str(&format!(" · {}", length(seconds)));
     }
-    out.push_str(&format!(
-        " · <a href=\"{}\">Play online (needs Internet)</a></span>",
-        escape(&page)
-    ));
+    match page {
+        Some(page) => out.push_str(&format!(
+            " · <a href=\"{}\">Play online (needs Internet)</a></span>",
+            escape(&page)
+        )),
+        None => out.push_str(" · online only</span>"),
+    }
     Some(out)
 }
 
@@ -249,6 +257,17 @@ mod tests {
             ));
             assert!(html.contains(">Audio · <a "), "{hint}: {html}");
         }
+    }
+
+    #[test]
+    fn a_file_kept_on_the_wiki_itself_gets_a_note_without_a_link() {
+        let html = with_av_previews(
+            "<audio data-durationhint=\"30\" data-mwtitle=\"Clip.ogg\" data-mwprovider=\"local\"></audio>",
+        );
+        assert_eq!(
+            html,
+            "<span class=\"foundation-av-note\">Audio · 0:30 · online only</span>"
+        );
     }
 
     #[test]

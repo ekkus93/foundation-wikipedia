@@ -26,7 +26,11 @@ import androidx.compose.ui.unit.dp
  */
 internal val ANDROID_NETWORK_DISCLOSURES = listOf(
     "Articles: the reader shows articles only from installed packs and makes no network " +
-        "requests while you read. Audio and video are not played.",
+        "requests while you read.",
+    "Audio and video: not stored in packs. They play only when you tap Play online, and " +
+        "then stream from Wikimedia's media servers (upload.wikimedia.org), which see your " +
+        "IP address and the file played, after you agree to a notice the first time. Over " +
+        "mobile data only if allowed below. Nothing is saved.",
     "Official packs: the list and downloads come from GitHub, only after you agree to the " +
         "notice in Wikipedia & Offline Data. Over mobile data only if allowed below.",
     "AI chat: nothing is sent until you review a request and choose Send. A model server " +
@@ -77,8 +81,11 @@ fun PrivacyNetworkSection() {
         Switch(checked = allowMobileData, onCheckedChange = null)
     }
     Text(
-        if (allowMobileData) "Pack downloads may use mobile data and count toward your data plan."
-        else "Pack downloads wait for Wi-Fi or another unmetered connection.",
+        if (allowMobileData) {
+            "Pack downloads and audio or video may use mobile data and count toward your data plan."
+        } else {
+            "Pack downloads and audio or video wait for Wi-Fi or another unmetered connection."
+        },
         style = MaterialTheme.typography.bodySmall,
     )
     if (saveFailed) Text("This choice could not be saved; the previous setting stays.")

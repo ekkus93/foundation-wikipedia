@@ -57,11 +57,11 @@ class OutsideLinkPolicyTest {
                 is OutsideLink.Refuse,
         )
         assertEquals(
-            OutsideLink.Offer("This plays on Wikimedia Commons, in your browser.", film),
+            OutsideLink.Offer("This plays from Wikimedia.", film),
             outsideLinkGate(film, false, DownloadNetwork.METERED, allowMobileData = true),
         )
         assertEquals(
-            OutsideLink.Offer("This plays on Wikimedia Commons, in your browser.", film),
+            OutsideLink.Offer("This plays from Wikimedia.", film),
             outsideLinkGate(film, false, DownloadNetwork.UNMETERED, allowMobileData = false),
         )
         assertEquals(

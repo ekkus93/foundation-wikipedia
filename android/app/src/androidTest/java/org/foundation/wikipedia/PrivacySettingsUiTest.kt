@@ -112,7 +112,7 @@ class PrivacySettingsUiTest {
             assertFalse(absent, shown(absent, substring = false))
         }
         assertFalse(mobileDataAllowed())
-        assertTrue(shown("Pack downloads wait for Wi-Fi", substring = true))
+        assertTrue(shown("wait for Wi-Fi", substring = true))
 
         compose.onNodeWithText("Download packs over mobile data").performClick()
         compose.waitUntil(timeoutMillis = 5_000) { mobileDataAllowed() }

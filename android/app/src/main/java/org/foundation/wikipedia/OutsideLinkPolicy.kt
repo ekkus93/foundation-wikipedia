@@ -56,7 +56,7 @@ fun outsideLinkGate(
             "Wi-Fi only is set. Connect to Wi-Fi, or allow mobile data in " +
                 "Settings › Privacy & Network, to play this.",
         )
-        media -> OutsideLink.Offer("This plays on Wikimedia Commons, in your browser.", url)
+        media -> OutsideLink.Offer("This plays from Wikimedia.", url)
         else -> OutsideLink.Offer("This link leads outside the offline reader.", url)
     }
 }

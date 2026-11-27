@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -144,6 +145,10 @@ private fun FoundationApp() {
     var bookmarked by remember { mutableStateOf(false) }
     var lastVisit by remember { mutableStateOf<ArticleChatTarget?>(null) }
     var openEntry by remember { mutableStateOf<ReaderEntry?>(null) }
+    // MOBPACK-003: the audio or video being streamed, and the one waiting
+    // for the one-time notice about contacting Wikimedia.
+    var playing by remember { mutableStateOf<AvFile?>(null) }
+    var askToStream by remember { mutableStateOf<AvFile?>(null) }
     // Rust records visits only when its copy of the choice agrees.
     LaunchedEffect(historyEnabled) {
         try {
@@ -357,6 +362,15 @@ private fun FoundationApp() {
                             null -> requested
                         }
                         val externalUrl = (gate as? OutsideLink.Offer)?.url
+                        // Audio and video play here, after a one-time notice.
+                        val media = externalUrl?.let(AvStream::fromCommonsPage)
+                        if (media != null) {
+                            val accepted = AvPreference.disclosureAccepted(
+                                offlinePreferences.getString(AvPreference.DISCLOSURE_KEY, null),
+                            )
+                            if (accepted) playing = media else askToStream = media
+                            return@ArticleReader
+                        }
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
                                 message,
@@ -376,6 +390,52 @@ private fun FoundationApp() {
                         }
                     },
                 )
+                askToStream?.let { media ->
+                    AlertDialog(
+                        onDismissRequest = { askToStream = null },
+                        title = { Text("Play from Wikimedia?") },
+                        text = { Text(AV_STREAM_DISCLOSURE) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                // Play only once the choice is stored.
+                                val saved = offlinePreferences.edit()
+                                    .putString(
+                                        AvPreference.DISCLOSURE_KEY,
+                                        AvPreference.encodeDisclosure(),
+                                    )
+                                    .commit()
+                                askToStream = null
+                                if (saved) playing = media
+                            }) { Text("Play") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { askToStream = null }) { Text("Cancel") }
+                        },
+                    )
+                }
+                playing?.let { media ->
+                    AvPlayer(
+                        title = media.title,
+                        video = media.video,
+                        streams = AvStream.candidates(media),
+                        onOpenInBrowser = {
+                            playing = null
+                            try {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://commons.wikimedia.org/wiki/File:")
+                                            .buildUpon().appendEncodedPath(Uri.encode(media.name))
+                                            .build(),
+                                    ).addCategory(Intent.CATEGORY_BROWSABLE),
+                                )
+                            } catch (_: ActivityNotFoundException) {
+                                scope.launch { snackbarHostState.showSnackbar("No browser is available.") }
+                            }
+                        },
+                        onClose = { playing = null },
+                    )
+                }
                 if (shell.chatOpen) {
                     // Opens at half height; peek keeps the article usable, full
                     // covers it. Under Settings it stays composed but hidden, so
