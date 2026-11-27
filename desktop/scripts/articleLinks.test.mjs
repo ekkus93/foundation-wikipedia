@@ -202,3 +202,18 @@ test("installed-pack article links open within the pack", async () => {
     assert.notEqual(action?.kind, "article", bad);
   }
 });
+
+test("an outside link is not offered without a connection, and audio or video says so", async () => {
+  const { isCommonsAudioOrVideo, outsideLinkBlocked } = await import("../src/articleLinks.ts");
+  const film = "https://commons.wikimedia.org/wiki/File:Night_of_the_Living_Dead_(1968).webm";
+  const page = "https://www.openstreetmap.org/?mlat=48.85&mlon=2.29";
+  assert.equal(isCommonsAudioOrVideo(film), true);
+  assert.equal(isCommonsAudioOrVideo("https://commons.wikimedia.org/wiki/File:Speech.OGG"), true);
+  for (const other of [page, "https://commons.wikimedia.org/wiki/File:Moon.jpg", "http://commons.wikimedia.org/wiki/File:Film.webm", "https://example.org/wiki/File:Film.webm", "not a url"]) {
+    assert.equal(isCommonsAudioOrVideo(other), false, other);
+  }
+  assert.equal(outsideLinkBlocked(film, true), null);
+  assert.equal(outsideLinkBlocked(page, true), null);
+  assert.equal(outsideLinkBlocked(film, false), "Playing this needs an Internet connection.");
+  assert.equal(outsideLinkBlocked(page, false), "This link needs an Internet connection.");
+});

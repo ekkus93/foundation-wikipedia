@@ -133,3 +133,26 @@ function packArticleTitle(href: string): string | null {
   }
   return validReaderTitleInput(title) ? title : null;
 }
+
+const AUDIO_OR_VIDEO = /\.(?:webm|ogv|ogg|oga|opus|mp3|wav|flac|mid|mpg|mpeg|mp4)$/iu;
+
+/** Whether `url` is the Wikimedia Commons page of an audio or video file:
+ * the "Play online" link the readers show in place of a player (MOBPACK-003). */
+export function isCommonsAudioOrVideo(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "commons.wikimedia.org"
+      && parsed.pathname.startsWith("/wiki/File:") && AUDIO_OR_VIDEO.test(decodeURIComponent(parsed.pathname));
+  } catch {
+    return false;
+  }
+}
+
+/** Why an outside link is not offered while there is no connection; `null`
+ * when it can be offered for the browser. */
+export function outsideLinkBlocked(url: string, online: boolean): string | null {
+  if (online) return null;
+  return isCommonsAudioOrVideo(url)
+    ? "Playing this needs an Internet connection."
+    : "This link needs an Internet connection.";
+}

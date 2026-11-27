@@ -7,7 +7,7 @@ import { RequestEpoch } from "./requestEpoch";
 import { EDITIONS, isEdition, loadDefaultEdition } from "./defaultEdition";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
-import { classifyReaderLink, extractWikiArticleLinks, type WikiArticleLink } from "./articleLinks";
+import { classifyReaderLink, extractWikiArticleLinks, outsideLinkBlocked, type WikiArticleLink } from "./articleLinks";
 import { navigationTitleKey, normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
@@ -262,7 +262,10 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
         }
         void openTitle(action.title, current.project);
       } else {
-        setExternalLink(action.url);
+        // Offered for the browser only when it could work (MOBPACK-003).
+        const blocked = outsideLinkBlocked(action.url, !offlineMode.getSnapshot() && connected && navigator.onLine);
+        if (blocked) setNotice(blocked);
+        else setExternalLink(action.url);
       }
     };
     window.addEventListener("message", onMessage);
