@@ -105,8 +105,13 @@ class PackImagesUiTest {
                 state = "title=${view.title} progress=${view.progress} scrollY=${view.scrollY} " +
                     "contentHeight=${view.contentHeight} viewHeight=${view.height}"
             }
-            val served = webView().webViewClient.shouldInterceptRequest(
-                webView(),
+            // The client is read on the UI thread; WebView itself asks it on
+            // a background thread, as here.
+            val view = webView()
+            var client: android.webkit.WebViewClient? = null
+            compose.runOnUiThread { client = view.webViewClient }
+            val served = client!!.shouldInterceptRequest(
+                view,
                 object : WebResourceRequest {
                     override fun getUrl(): Uri = Uri.parse("https://foundation.invalid/media/$imageSha256")
                     override fun isForMainFrame() = false
@@ -118,7 +123,7 @@ class PackImagesUiTest {
             )
             throw AssertionError(
                 "$label not drawn: (red, blue) pixels ${figurePixels()}; $state; " +
-                    "PNG request now answers ${served?.statusCode} ${served?.mimeType}",
+                    "PNG request now answers ${served?.statusCode} ${served?.mimeType}; viewer open=${viewerShown()}",
                 timeout,
             )
         }
