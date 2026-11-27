@@ -163,9 +163,21 @@ class StreamedDraftUiTest {
 
     private fun askAboutTide(fake: FakeOllama) {
         openChatAndType(fake)
-        compose.onNodeWithText("Review request").performClick()
-        compose.waitUntil(timeoutMillis = 15_000) {
+        // On the slow CI emulator a tap made while the keyboard is still
+        // opening can miss, and building the review can take a while: tap
+        // again if nothing happened, and allow more time.
+        val sendShown = {
             compose.onAllNodesWithText("Send").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.waitForIdle()
+        compose.onNodeWithText("Review request").performClick()
+        try {
+            compose.waitUntil(timeoutMillis = 15_000) { sendShown() }
+        } catch (_: androidx.compose.ui.test.ComposeTimeoutException) {
+            if (compose.onAllNodesWithText("Review request").fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNodeWithText("Review request").performClick()
+            }
+            compose.waitUntil(timeoutMillis = 30_000) { sendShown() }
         }
         compose.onNodeWithText("Send").performClick()
     }
