@@ -36,12 +36,13 @@ class AvStreamTest {
         }
     }
 
-    /** These addresses were checked against Wikimedia on 2026-11-26. */
+    /** These addresses were checked against Wikimedia on 2026-11-26 (the MPEG-4 one on 2026-11-27). */
     @Test
     fun streamsAreSmallRenderingsFirstThenTheFileItself() {
         val film = "Night_of_the_Living_Dead_%281968%29.webm"
         assertEquals(
             listOf(
+                "$store/transcoded/2/24/$film/$film.360p.mpeg4.mov",
                 "$store/transcoded/2/24/$film/$film.480p.vp9.webm",
                 "$store/transcoded/2/24/$film/$film.360p.vp9.webm",
                 "$store/transcoded/2/24/$film/$film.240p.vp9.webm",

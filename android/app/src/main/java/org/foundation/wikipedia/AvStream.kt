@@ -25,8 +25,16 @@ object AvStream {
     private val VIDEO = setOf("webm", "ogv", "mpg", "mpeg", "mp4")
     private val AUDIO = setOf("ogg", "oga", "opus", "mp3", "wav", "flac", "mid")
 
-    /** Smaller renderings Wikimedia makes of a video, best for a phone first. */
-    private val VIDEO_RENDERINGS = listOf("480p.vp9.webm", "360p.vp9.webm", "240p.vp9.webm")
+    /**
+     * Smaller renderings Wikimedia makes of a video, best for a phone first.
+     * The 360p MPEG-4 rendering comes first: its index is at the start of
+     * the file and every Android device decodes it, so it starts at once.
+     * A WebM over HTTP can take more than a minute to start on some phones
+     * (a Galaxy A54 seeks to the end of the file and back about 30 times
+     * before playing), so the VP9 renderings are fallbacks.
+     */
+    private val VIDEO_RENDERINGS =
+        listOf("360p.mpeg4.mov", "480p.vp9.webm", "360p.vp9.webm", "240p.vp9.webm")
 
     /** The file a "Play online" link names, or `null` for any other link. */
     fun fromCommonsPage(url: String): AvFile? {
@@ -67,7 +75,8 @@ object AvStream {
 
     /**
      * Addresses to try, in order: a rendering every Android phone can play
-     * (VP9 video no larger than 480p; MP3 audio), then the file itself.
+     * (360p MPEG-4 or VP9 video no larger than 480p; MP3 audio), then the
+     * file itself.
      * All are on [HOST].
      */
     fun candidates(file: AvFile): List<String> {
