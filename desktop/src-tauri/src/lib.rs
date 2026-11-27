@@ -306,6 +306,31 @@ fn open_external_link(url: String) -> Result<(), String> {
     open::that_detached(&url).map_err(|_| "Cannot open the web browser".to_owned())
 }
 
+/// What the in-app player needs for one "Play online" link (MOBPACK-003).
+#[derive(serde::Serialize)]
+struct AvStreamInfo {
+    title: String,
+    video: bool,
+    candidates: Vec<String>,
+}
+
+fn av_stream_info(url: &str) -> Option<AvStreamInfo> {
+    use wiki_source::av_stream::{candidates, from_commons_page, StreamOrder};
+    let file = from_commons_page(url)?;
+    Some(AvStreamInfo {
+        title: file.title(),
+        video: file.video,
+        candidates: candidates(&file, StreamOrder::Desktop),
+    })
+}
+
+/// Stream addresses for a Commons audio or video page link, or `None` for
+/// any other link. Works the addresses out only; nothing is fetched here.
+#[tauri::command]
+fn av_stream(url: String) -> Option<AvStreamInfo> {
+    av_stream_info(&url)
+}
+
 fn open_private_bookmark_store(app: &tauri::AppHandle) -> Result<UserState, String> {
     let base = app.path().app_data_dir()
         .map_err(|_| "Cannot find the app data directory")?;
@@ -1656,6 +1681,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_wikipedia,
             open_external_link,
+            av_stream,
             offline_packs::pick_offline_pack,
             offline_packs::review_offline_pack,
             offline_packs::install_offline_pack,
@@ -1712,6 +1738,34 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Foundation Library desktop failed to start");
+}
+
+#[cfg(test)]
+mod av_stream_tests {
+    use super::av_stream_info;
+
+    #[test]
+    fn a_commons_video_link_gives_webm_first_on_the_media_host() {
+        let info = av_stream_info(
+            "https://commons.wikimedia.org/wiki/File:Night_of_the_Living_Dead_(1968).webm",
+        )
+        .expect("a video link");
+        assert!(info.video);
+        assert_eq!(info.title, "Night of the Living Dead (1968).webm");
+        assert_eq!(info.candidates.len(), 5);
+        assert!(info.candidates[0].ends_with(".480p.vp9.webm"));
+        assert!(info.candidates[3].ends_with(".360p.mpeg4.mov"));
+        assert!(info
+            .candidates
+            .iter()
+            .all(|c| c.starts_with("https://upload.wikimedia.org/wikipedia/commons/")));
+    }
+
+    #[test]
+    fn other_links_give_nothing() {
+        assert!(av_stream_info("https://example.org/wiki/File:A.webm").is_none());
+        assert!(av_stream_info("https://commons.wikimedia.org/wiki/File:A.jpg").is_none());
+    }
 }
 
 #[cfg(test)]
