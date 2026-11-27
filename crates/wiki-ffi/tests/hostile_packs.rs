@@ -1716,7 +1716,7 @@ fn a_raster_declared_as_a_different_raster_is_refused() {
 /// A 33-byte file whose header claims a canvas needing tens of gigabytes to
 /// decode: the image analogue of a decompression bomb.
 #[test]
-fn a_tiny_png_or_gif_declaring_a_gigapixel_canvas_is_refused() {
+fn a_tiny_raster_declaring_a_gigapixel_canvas_is_refused() {
     let lab = Lab::new("hostile-pixel-bomb");
     let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     png.extend_from_slice(&100_000u32.to_be_bytes());
@@ -1724,9 +1724,17 @@ fn a_tiny_png_or_gif_declaring_a_gigapixel_canvas_is_refused() {
     png.extend_from_slice(b"\x08\x02\0\0\0");
     let mut gif = b"GIF89a\xff\xff\xff\xff\0\0\0".to_vec();
     gif.extend_from_slice(b";");
+    // JPEG: start of image, then a baseline frame header of 65,535 squared.
+    let jpeg =
+        b"\xff\xd8\xff\xc0\0\x11\x08\xff\xff\xff\xff\x03\x01\x22\0\x02\x11\x01\x03\x11\x01\xff\xd9"
+            .to_vec();
+    // Lossless WebP declaring 16,384 squared.
+    let webp = b"RIFF\x0e\0\0\0WEBPVP8L\x05\0\0\0\x2f\xff\xff\xff\x0f\0".to_vec();
     for (name, mime, bytes) in [
         ("png_100k_by_100k", "image/png", png),
         ("gif_65535_by_65535", "image/gif", gif),
+        ("jpeg_65535_by_65535", "image/jpeg", jpeg),
+        ("webp_16384_by_16384", "image/webp", webp),
     ] {
         let pack = image_pack(&lab, "pixel-bomb", mime, &bytes);
         lab.refuse(name, &pack, LibraryError::MediaInvalid);

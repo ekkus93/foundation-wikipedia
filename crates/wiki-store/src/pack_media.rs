@@ -233,7 +233,7 @@ pub fn check_pack_media(
             }
         }
         if image.mime != "image/svg+xml" {
-            let header = read_head(&staged.join(&path), 32)?;
+            let header = read_head(&staged.join(&path), raster_head_bytes(&image.mime))?;
             if !raster_header_is(&image.mime, &header) {
                 return Err(PackMediaError::SpoofedImage(image.sha256.clone()));
             }
@@ -257,9 +257,99 @@ pub fn check_pack_media(
     Ok(())
 }
 
-/// Most pixels a packed PNG or GIF may declare. A tiny file can claim a
+/// Most pixels a packed raster image may declare. A tiny file can claim a
 /// canvas that takes gigabytes to decode; nothing a pack carries needs more.
 const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
+
+/// How much of a raster to read to find its dimensions. A JPEG's frame
+/// header follows its metadata segments (EXIF, ICC profiles), so it gets a
+/// generous window; the other formats state their size in the first bytes.
+fn raster_head_bytes(mime: &str) -> u64 {
+    if mime == "image/jpeg" {
+        JPEG_HEAD_BYTES
+    } else {
+        32
+    }
+}
+
+/// Longest prefix searched for a JPEG frame header.
+const JPEG_HEAD_BYTES: u64 = 1024 * 1024;
+
+fn sane_canvas(width: u64, height: u64) -> bool {
+    width > 0 && height > 0 && width * height <= MAX_IMAGE_PIXELS
+}
+
+/// `(width, height)` from the first frame header (SOFn) of a JPEG, walking
+/// its marker segments from the start. `None` if the markers are malformed
+/// or no frame header comes before the scan data or the end of `head`.
+fn jpeg_dimensions(head: &[u8]) -> Option<(u64, u64)> {
+    if !head.starts_with(b"\xff\xd8") {
+        return None;
+    }
+    let mut at = 2;
+    loop {
+        if *head.get(at)? != 0xff {
+            return None;
+        }
+        // Any number of 0xff fill bytes may precede a marker code.
+        while *head.get(at + 1)? == 0xff {
+            at += 1;
+        }
+        let marker = *head.get(at + 1)?;
+        at += 2;
+        match marker {
+            // Standalone markers carry no length.
+            0x01 | 0xd0..=0xd7 => continue,
+            // Start of scan or end of image before any frame header.
+            0xda | 0xd9 => return None,
+            _ => {}
+        }
+        let length = usize::from(u16::from_be_bytes([*head.get(at)?, *head.get(at + 1)?]));
+        if length < 2 {
+            return None;
+        }
+        let is_frame = matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc);
+        if is_frame {
+            if length < 7 {
+                return None;
+            }
+            let height = u16::from_be_bytes([*head.get(at + 3)?, *head.get(at + 4)?]);
+            let width = u16::from_be_bytes([*head.get(at + 5)?, *head.get(at + 6)?]);
+            return Some((u64::from(width), u64::from(height)));
+        }
+        at += length;
+    }
+}
+
+/// `(width, height)` of a WebP from its first chunk: lossy `VP8 `,
+/// lossless `VP8L` or extended `VP8X` (which states the canvas size).
+fn webp_dimensions(head: &[u8]) -> Option<(u64, u64)> {
+    let byte = |i: usize| head.get(i).copied().map(u64::from);
+    match head.get(12..16)? {
+        b"VP8 " => {
+            // Frame tag (3 bytes), start code, then 14-bit width and height.
+            if head.get(23..26)? != b"\x9d\x01\x2a" {
+                return None;
+            }
+            let width = (byte(26)? | (byte(27)? << 8)) & 0x3fff;
+            let height = (byte(28)? | (byte(29)? << 8)) & 0x3fff;
+            Some((width, height))
+        }
+        b"VP8L" => {
+            if byte(20)? != 0x2f {
+                return None;
+            }
+            let bits = byte(21)? | (byte(22)? << 8) | (byte(23)? << 16) | (byte(24)? << 24);
+            Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
+        }
+        b"VP8X" => {
+            let width = (byte(24)? | (byte(25)? << 8) | (byte(26)? << 16)) + 1;
+            let height = (byte(27)? | (byte(28)? << 8) | (byte(29)? << 16)) + 1;
+            Some((width, height))
+        }
+        _ => None,
+    }
+}
 
 fn read_head(path: &Path, count: u64) -> Result<Vec<u8>, PackMediaError> {
     let io = |error: io::Error| PackMediaError::Io(error.to_string());
@@ -289,7 +379,10 @@ fn raster_header_is(mime: &str, head: &[u8]) -> bool {
                     width > 0 && height > 0 && width * height <= MAX_IMAGE_PIXELS
                 }
         }
-        "image/jpeg" => head.starts_with(b"\xff\xd8\xff"),
+        "image/jpeg" => {
+            head.starts_with(b"\xff\xd8\xff")
+                && jpeg_dimensions(head).is_some_and(|(w, h)| sane_canvas(w, h))
+        }
         "image/gif" => {
             (head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a")) && head.len() >= 10 && {
                 let width = u64::from(u16::from_le_bytes([head[6], head[7]]));
@@ -297,7 +390,12 @@ fn raster_header_is(mime: &str, head: &[u8]) -> bool {
                 width > 0 && height > 0 && width * height <= MAX_IMAGE_PIXELS
             }
         }
-        "image/webp" => head.len() >= 12 && head.starts_with(b"RIFF") && head[8..12] == *b"WEBP",
+        "image/webp" => {
+            head.len() >= 12
+                && head.starts_with(b"RIFF")
+                && head[8..12] == *b"WEBP"
+                && webp_dimensions(head).is_some_and(|(w, h)| sane_canvas(w, h))
+        }
         _ => false,
     }
 }
@@ -391,11 +489,12 @@ mod tests {
         assert!(!raster_header_is("image/png", &png(0, 10)));
         assert!(!raster_header_is("image/png", &png(1, 1)[..23]));
         assert!(!raster_header_is("image/jpeg", &png(1, 1)));
-        assert!(raster_header_is("image/jpeg", b"\xff\xd8\xff\xe0"));
+        // A bare signature no longer passes: the frame header must be found.
+        assert!(!raster_header_is("image/jpeg", b"\xff\xd8\xff\xe0"));
         assert!(raster_header_is("image/gif", b"GIF89a\x01\0\x01\0"));
         assert!(!raster_header_is("image/gif", b"GIF89a\xff\xff\xff\xff"));
         assert!(!raster_header_is("image/gif", b"GIF89a"));
-        assert!(raster_header_is("image/webp", b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!raster_header_is("image/webp", b"RIFF\0\0\0\0WEBPVP8 "));
         assert!(!raster_header_is("image/webp", b"RIFF\0\0\0\0WAVEfmt "));
         for hostile in [
             &b"<!doctype html><script>1</script>"[..],
@@ -408,6 +507,72 @@ mod tests {
             }
         }
         assert!(!raster_header_is("text/html", b"<html>"));
+    }
+
+    /// Heads of real files from ffmpeg 7 (`-f lavfi -i color=red:s=300x200`):
+    /// a baseline JPEG up to its frame header, lossless and lossy WebP.
+    const REAL_JPEG_HEAD: &[u8] = b"\xff\xd8\xff\xe0\x00\x10\x4a\x46\x49\x46\x00\x01\x02\x00\x00\x01\x00\x01\x00\x00\xff\xfe\x00\x10\x4c\x61\x76\x63\x36\x31\x2e\x31\x39\x2e\x31\x30\x31\x00\xff\xdb\x00\x43\x00\x08\x04\x04\x04\x04\x04\x05\x05\x05\x05\x05\x05\x06\x06\x06\x06\x06\x06\x06\x06\x06\x06\x06\x06\x06\x07\x07\x07\x08\x08\x08\x07\x07\x07\x06\x06\x07\x07\x08\x08\x08\x08\x09\x09\x09\x08\x08\x08\x08\x09\x09\x0a\x0a\x0a\x0c\x0c\x0b\x0b\x0e\x0e\x0e\x11\x11\x14\xff\xc4\x00\x4d\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x06\x07\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x11\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xc0\x00\x11\x08\x00\xc8\x01\x2c\x03\x01";
+    const REAL_WEBP_LOSSLESS: &[u8] = b"\x52\x49\x46\x46\x24\x00\x00\x00\x57\x45\x42\x50\x56\x50\x38\x4c\x17\x00\x00\x00\x2f\x2b\xc1\x31\x00\x07\x10\xf5\x8f\xfe\x07\x00";
+    const REAL_WEBP_LOSSY: &[u8] = b"\x52\x49\x46\x46\xd8\x00\x00\x00\x57\x45\x42\x50\x56\x50\x38\x20\xcc\x00\x00\x00\xd0\x10\x00\x9d\x01\x2a\x2c\x01\xc8\x00\x3e\x91";
+
+    #[test]
+    fn jpeg_and_webp_dimensions_are_read_and_capped() {
+        assert_eq!(jpeg_dimensions(REAL_JPEG_HEAD), Some((300, 200)));
+        assert_eq!(webp_dimensions(REAL_WEBP_LOSSLESS), Some((300, 200)));
+        assert_eq!(webp_dimensions(REAL_WEBP_LOSSY), Some((300, 200)));
+        for (mime, head) in [
+            ("image/jpeg", REAL_JPEG_HEAD),
+            ("image/webp", REAL_WEBP_LOSSLESS),
+            ("image/webp", REAL_WEBP_LOSSY),
+        ] {
+            assert!(raster_header_is(mime, head), "{mime}");
+        }
+
+        // A JPEG whose frame header declares 65,535 x 65,535 pixels.
+        let mut bomb = REAL_JPEG_HEAD.to_vec();
+        let sof = bomb.len() - 11;
+        bomb[sof + 5..sof + 9].copy_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+        assert_eq!(jpeg_dimensions(&bomb), Some((65_535, 65_535)));
+        assert!(!raster_header_is("image/jpeg", &bomb));
+        // Zero height (defined later by a DNL marker) is refused too.
+        let mut zero = REAL_JPEG_HEAD.to_vec();
+        zero[sof + 5..sof + 7].copy_from_slice(&[0, 0]);
+        assert!(!raster_header_is("image/jpeg", &zero));
+        // Fill bytes before a marker are allowed.
+        let mut filled = REAL_JPEG_HEAD[..2].to_vec();
+        filled.extend_from_slice(&[0xff, 0xff]);
+        filled.extend_from_slice(&REAL_JPEG_HEAD[2..]);
+        assert_eq!(jpeg_dimensions(&filled), Some((300, 200)));
+        // Scan data, a broken marker or a cut-off header before any frame.
+        assert_eq!(jpeg_dimensions(b"\xff\xd8\xff\xda\0\x02"), None);
+        assert_eq!(jpeg_dimensions(b"\xff\xd8\x00\xe0"), None);
+        assert_eq!(jpeg_dimensions(b"\xff\xd8\xff\xe0\0\x01"), None);
+        assert_eq!(jpeg_dimensions(&REAL_JPEG_HEAD[..sof + 8]), None);
+        // An APP segment claiming to run past the window never finds a frame.
+        assert_eq!(jpeg_dimensions(b"\xff\xd8\xff\xe1\xff\xff"), None);
+
+        // Lossless WebP: 14-bit width-1 and height-1 at their maximum.
+        let mut big = REAL_WEBP_LOSSLESS.to_vec();
+        big[21..25].copy_from_slice(&[0xff, 0xff, 0xff, 0x0f]);
+        assert_eq!(webp_dimensions(&big), Some((16_384, 16_384)));
+        assert!(!raster_header_is("image/webp", &big));
+        // Lossy WebP at 16,383 x 16,383.
+        let mut big = REAL_WEBP_LOSSY.to_vec();
+        big[26..30].copy_from_slice(&[0xff, 0x3f, 0xff, 0x3f]);
+        assert!(!raster_header_is("image/webp", &big));
+        let mut bad_start = REAL_WEBP_LOSSY.to_vec();
+        bad_start[23] = 0;
+        assert_eq!(webp_dimensions(&bad_start), None);
+        // Extended WebP with a 16-million-pixel-wide canvas.
+        let mut vp8x = b"RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0\0\0\0\0".to_vec();
+        vp8x.extend_from_slice(&[0xff, 0xff, 0xff, 0, 0, 0]);
+        assert_eq!(webp_dimensions(&vp8x), Some((16_777_216, 1)));
+        assert!(
+            raster_header_is("image/webp", &vp8x),
+            "16.7 Mpx is within the cap"
+        );
+        vp8x[27] = 0x10;
+        assert!(!raster_header_is("image/webp", &vp8x));
     }
 
     #[test]
