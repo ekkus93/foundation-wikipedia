@@ -233,10 +233,50 @@ The full suite gives `OK (41 tests)`, and CI now expects 41.
 - **`56ba37fb`** (OpenStreetMap detail and outlines): [Rust workspace 45371905557](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905557), [Platform shells 45371905591](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905591), [Android FFI bridge 45371905666](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905666), [Android Rust ABI qualification 45371905544](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905544), [Android record codec probe 45371905628](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45371905628)
 - **`86aa95a5`** (map caption names no single data source): [Rust workspace 45372528991](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528991), [Platform shells 45372528210](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528210), [Android FFI bridge 45372528323](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45372528323)
 
-## Still open (PACK-003 not complete)
+## Android: a real pack in airplane mode (`f94474af`, `0d3bb7d6`, 2026-11-26)
 
+The last open acceptance item. `RealPackAcceptanceTest` is opt-in (`-e realPack import|offline`) and skipped in CI, because it needs a pack built from Wikipedia, which is not committed.
+
+**Packs used** (both built on the desktop by `build-public-dump-pack` from simplewiki 2026-11-01):
+
+| Pack | File SHA-256 | Size | Articles |
+|---|---|---|---|
+| `simplewiki-sample-images` | `75a3574f…0261fdf` | 18.6 MB | Pythagorean theorem, Prime number, Gravity, Moon, Tide, Water, Photosynthesis, Computer, Albert Einstein, Hypotenuse |
+| `simplewiki-maps` | `5f224065…5841164e` | 4.3 MB | Tokyo, Eiffel Tower (drawn maps with OpenStreetMap detail) |
+
+**Import (API 35 emulator):** each pack was pushed to Downloads and picked in the real system file picker from Settings › Wikipedia & Offline Data › Import a .wpack file. The review dialog showed "Install custom pack?" with the pack ID and the Custom — integrity verified badge. After Install the pack was listed as Custom — integrity verified and was activated. The maps pack was imported with airplane mode already on.
+
+**Offline:** the app was force-stopped and the emulator put in airplane mode (`ConnectivityManager.activeNetwork` is null; `ping` reports "Network is unreachable"). For every article the test searches for the title, opens it in the reader and then, for every image the reader document shows:
+
+- the source must be `https://foundation.invalid/media/<sha256>` (anything else fails the test);
+- the reader's own request handler must answer it with status 200;
+- the bytes must hash to that SHA-256, and the digest must be in the article's image list.
+
+| Pack | Images served | By type |
+|---|---|---|
+| `simplewiki-sample-images` | 108 across 10 articles | Water alone: 55 (27 JPEG, 19 SVG, 4 WebP, 3 PNG, 2 GIF) |
+| `simplewiki-maps` | 19 across 2 articles | Tokyo 13 (8 JPEG, 4 SVG, 1 WebP); Eiffel Tower 6 (3 JPEG, 3 SVG) |
+
+**Seen on screen, airplane mode on:** the Eiffel Tower photograph and its drawn street map with the in-map credit; the Pythagorean theorem proof diagram; the formula a² + b² = c² drawn from MathML. Equations need no image: the pack keeps the MathML and the WebView draws it. The reader uses only its own built-in stylesheet and system fonts, so no CSS or font is fetched.
+
+**Emulator graphics crash (not an app fault):** with the emulator's default graphics mode and with `-gpu swiftshader_indirect`, opening *Water* made the emulator process itself exit with a segmentation fault, four times (twice in each mode). With `-gpu guest` and `-gpu swangle_indirect` the same article opened and all 55 images were served. The run above used `-gpu swangle_indirect` (emulator 37.2.13). On the physical phone below it opened normally.
+
+**Suite:** the full instrumented suite passed on the emulator, `OK (43 tests)` (the two opt-in classes skipped). The first full run had one failure where a test did not find the search box; an immediate rerun passed.
+
+**Physical phone (Samsung Galaxy A54, SM-A546E, Android 16, arm64):** the same two phases with the arm64 native library (`0d3bb7d6`).
+
+- **Import:** both packs were picked in Samsung's system file picker. It opens on Recent files, so the test now opens Downloads from the side menu and scrolls the list to the pack. Each was reviewed and installed as Custom — integrity verified; the maps pack with airplane mode already on.
+- **Offline:** airplane mode on (`activeNetwork` null, `ping` "Network is unreachable"), app force-stopped. Same result as the emulator: 108 images across the 10 science articles and 19 across Tokyo and Eiffel Tower, each answered from the pack with matching bytes. *Water* (55 images) opened normally.
+- **Seen on screen:** the Eiffel Tower article with its photograph, in dark theme, with the airplane-mode icon in the status bar.
+- **Full suite on the phone:** `OK (43 tests)`.
+- **adb:** the adb connection dropped several times mid-run, so the later runs were started detached on the phone and their output read back afterwards.
+
+**CI:** `f94474af` passed Rust workspace, Platform shells and Android install smoke, but Android FFI bridge [45939977820](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45939977820) failed: the workflow expects an exact test count (`OK (41 tests)`) and the new class makes it 43. Fixed in `8b9efd03`. CI on `8b9efd03`: [Rust workspace 45941902188](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45941902188), [Platform shells 45941902084](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45941902084), [Android FFI bridge 45941902065](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45941902065) (`OK (43 tests)`, the opt-in real-pack tests skipped).
+
+## What PACK-003 does not cover
+
+- **Release qualification on devices:** one phone model was tried here. Release qualification across devices is REL-002.
 - **SVG:** done (above). An SVG over 1 MiB after sanitising, or one using refused features, is still a 1280 px rendering.
 - **Raster optimisation:** done losslessly (above). JPEGs and PNGs with an embedded ICC profile are kept as they are; the largest remaining file is a 2.45 MB lossless map.
 - **Maps:** drawn offline from Natural Earth, with OpenStreetMap detail and outlines where a publisher supplies extracts (above). Outlines whose Wikidata ID no OSM element carries are reported, not drawn. A map you can pan and zoom offline is FUT-007.
-- **Android with a real pack in airplane mode:** shown on the emulator with the synthetic fixture only. Importing a real pack on Android waits for MOBPACK-002.
 - **Cross-pack deduplication:** images are deduplicated within a pack. The shared store across packs is STORE-002 (owner hold).
