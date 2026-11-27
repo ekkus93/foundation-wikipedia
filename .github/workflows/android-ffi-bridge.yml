@@ -84,6 +84,11 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: |
+            # A system app that stalls on the slow CI emulator (the launcher did)
+            # shows an "isn't responding" dialog over every test; the image tests
+            # read screen pixels and then see only the dimmed scrim.
+            adb shell settings put global hide_error_dialogs 1
+            adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS || true
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w -r org.foundation.wikipedia.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/android-ffi-bridge.log

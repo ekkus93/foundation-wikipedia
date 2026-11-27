@@ -94,6 +94,12 @@ class PackImagesUiTest {
         return red to blue
     }
 
+    /** Titles of the windows on screen, top first: a system dialog over the app shows here. */
+    private fun windowTitles(): String =
+        InstrumentationRegistry.getInstrumentation().uiAutomation.windows
+            .sortedByDescending { it.layer }
+            .joinToString { "${it.title ?: "?"} (type ${it.type})" }
+
     /** Wait for a figure's pixels; on timeout, fail with what the reader showed. */
     private fun waitForFigure(label: String, drawn: (Pair<Int, Int>) -> Boolean) {
         try {
@@ -123,7 +129,8 @@ class PackImagesUiTest {
             )
             throw AssertionError(
                 "$label not drawn: (red, blue) pixels ${figurePixels()}; $state; " +
-                    "PNG request now answers ${served?.statusCode} ${served?.mimeType}; viewer open=${viewerShown()}",
+                    "PNG request now answers ${served?.statusCode} ${served?.mimeType}; viewer open=${viewerShown()}; " +
+                    "windows on screen: ${windowTitles()}",
                 timeout,
             )
         }
