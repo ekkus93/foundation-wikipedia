@@ -129,7 +129,91 @@ pub fn sanitize_pack_article_html(html: &str, images: &PackImageSources) -> Stri
     sanitize_with_images(html, Some(images))
 }
 
+/// Largest article HTML the readers sanitise; the same as the extractor's.
+const MAX_DISPLAY_BYTES: usize = 8 * 1024 * 1024;
+/// Deepest element nesting the readers sanitise (the extractor's limit).
+/// The sanitiser's time grows with the square of the nesting depth: in a
+/// release build 16,000 levels take 0.5 s; a real article is about 15 deep.
+const MAX_DISPLAY_NESTING: usize = 512;
+/// Most character references (`&amp;` and so on) the readers sanitise.
+/// Their cost also grows faster than linearly: 160,000 take 0.25 s in a
+/// release build, and a real 70 KB article has about 300.
+const MAX_DISPLAY_REFERENCES: usize = 262_144;
+
+/// Shown instead of an article whose HTML is beyond the limits above.
+pub const TOO_COMPLEX_NOTE: &str =
+    "This article is too large or too deeply nested to display safely.";
+
+/// Elements that never contain others, so they do not deepen nesting.
+const VOID_ELEMENTS: [&str; 14] = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
+];
+
+/// Whether `html` is within the display limits, judged by a single linear
+/// pass before any parsing (TRUST-003: a hostile pack must not hang the
+/// reader). Nesting is counted from the tags as written: closing tags the
+/// source leaves out only make the count higher, never lower.
+fn within_display_limits(html: &str) -> bool {
+    if html.len() > MAX_DISPLAY_BYTES || html.matches('&').count() > MAX_DISPLAY_REFERENCES {
+        return false;
+    }
+    let bytes = html.as_bytes();
+    let mut depth = 0usize;
+    let mut at = 0;
+    while let Some(offset) = html[at..].find('<') {
+        let start = at + offset;
+        if html[start..].starts_with("<!--") {
+            match html[start + 4..].find("-->") {
+                Some(end) => at = start + 4 + end + 3,
+                None => break,
+            }
+            continue;
+        }
+        // The end of the tag, outside quoted attribute values.
+        let mut quote = None;
+        let mut end = None;
+        for (i, &b) in bytes[start + 1..].iter().enumerate() {
+            match (quote, b) {
+                (Some(q), _) if b == q => quote = None,
+                (None, b'"' | b'\'') => quote = Some(b),
+                (None, b'>') => {
+                    end = Some(start + 1 + i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else { break };
+        let tag = &html[start + 1..end];
+        if tag.starts_with('/') {
+            depth = depth.saturating_sub(1);
+        } else if tag.starts_with(|c: char| c.is_ascii_alphabetic()) && !tag.ends_with('/') {
+            let name = tag
+                .split(|c: char| c.is_ascii_whitespace() || c == '/')
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if !VOID_ELEMENTS.contains(&name.as_str()) {
+                depth += 1;
+                if depth > MAX_DISPLAY_NESTING {
+                    return false;
+                }
+            }
+        }
+        at = end + 1;
+    }
+    true
+}
+
+fn too_complex() -> String {
+    format!("<p class=\"foundation-too-complex\">{TOO_COMPLEX_NOTE}</p>")
+}
+
 fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String {
+    if !within_display_limits(html) {
+        return too_complex();
+    }
     let base_scheme = images
         .and_then(|images| images.base.split_once("://"))
         .map(|(scheme, _)| scheme.to_ascii_lowercase());
@@ -463,6 +547,9 @@ fn online_image_source(value: &str) -> Option<String> {
 /// and math hosts, and keeps presentation MathML (without its TeX
 /// annotation) because Wikipedia now sends formulas only as MathML.
 pub fn sanitize_online_article_html(html: &str) -> String {
+    if !within_display_limits(html) {
+        return too_complex();
+    }
     let mut builder = Builder::default();
     builder
         .url_schemes(HashSet::from(["http", "https"]))
@@ -524,6 +611,7 @@ sup{line-height:1}\
 .foundation-still-note{display:block;color:var(--muted);font-size:.8em}\
 .foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}\
 .foundation-map-credit{display:block;color:var(--muted);font-size:.75em}\
+.foundation-too-complex{border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted)}\
 .foundation-attribution{border-top:1px solid var(--rule);margin-top:2em;font-size:.85em;color:var(--muted)}\
 .foundation-attribution h2{font-size:1.1em}.foundation-attribution h3{font-size:1em}\
 .foundation-attribution-note{font-size:.9em}\
@@ -1312,6 +1400,52 @@ mod tests {
         let bare = sanitize_article_html(html);
         assert!(bare.contains("<img alt=\"Video still\">"), "{bare}");
         assert!(bare.contains(note));
+    }
+
+    /// TRUST-003: HTML beyond the display limits is replaced by a notice at
+    /// once, in every sanitiser; HTML just within them is shown as usual.
+    #[test]
+    fn html_beyond_the_display_limits_gets_a_notice_quickly() {
+        let started = std::time::Instant::now();
+        let notice = format!("<p class=\"foundation-too-complex\">{TOO_COMPLEX_NOTE}</p>");
+        let images = PackImageSources {
+            base: READER_IMAGE_BASE.into(),
+            by_file: HashMap::new(),
+            stills: HashSet::new(),
+        };
+        for hostile in [
+            format!("{}x{}", "<div>".repeat(200_000), "</div>".repeat(200_000)),
+            "<div>".repeat(600),
+            format!("<p>{}</p>", "&amp;".repeat(MAX_DISPLAY_REFERENCES + 1)),
+            format!("<math>{}</math>", "<mrow>".repeat(600)),
+            "a".repeat(MAX_DISPLAY_BYTES + 1),
+        ] {
+            assert_eq!(sanitize_article_html(&hostile), notice);
+            assert_eq!(sanitize_online_article_html(&hostile), notice);
+            assert_eq!(sanitize_pack_article_html(&hostile, &images), notice);
+        }
+        // Each refusal is a linear scan, not a parse.
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+
+        // Within the limits: shown as usual. Void elements, self-closed
+        // tags, comments and quoted `<` or `>` do not count as nesting.
+        let deep = format!(
+            "{}x{}",
+            "<div>".repeat(MAX_DISPLAY_NESTING),
+            "</div>".repeat(MAX_DISPLAY_NESTING)
+        );
+        let flat = format!(
+            "<div>{}<!-- {} --><span title=\"<div><div>\">ok</span></div>",
+            "<br><img alt=\"a\"><hr/>".repeat(10_000),
+            "<div>".repeat(1_000)
+        );
+        for fine in [deep, flat, "&amp;".repeat(1_000)] {
+            assert_ne!(sanitize_article_html(&fine), notice);
+        }
     }
 
     /// SRC-003: pack articles keep their formulas (MathML), never scripts

@@ -103,6 +103,7 @@ function wikipediaStyle(dark: boolean): string {
     `.foundation-attribution{border-top:1px solid ${rule};margin-top:2em;font-size:.85em;color:${muted}}`,
     `.foundation-attribution h2{font-size:1.1em}.foundation-attribution h3{font-size:1em}`,
     `.foundation-attribution-note{font-size:.9em}`,
+    `.foundation-too-complex{border:1px solid ${rule};background:${box};padding:.6em .8em;color:${muted}}`,
     `.foundation-av-note{display:block;border:1px solid ${rule};background:${box};padding:.4em .7em;color:${muted};font-size:.9em}`,
     ".mwe-math-fallback-image-display{display:block;margin:.5em auto}",
     "@media (max-width:720px){.infobox,.sidebar,.thumb,figure[typeof]{float:none;width:auto;max-width:100%;margin:1em 0}}",

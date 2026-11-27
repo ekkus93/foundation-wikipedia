@@ -2105,10 +2105,10 @@ impl Lab {
 }
 
 /// Pathological but harmless-looking HTML: the reader must return a
-/// document (or a typed error), never overflow its stack or run away. Sizes
-/// stay modest on purpose: the display sanitiser (ammonia) is superlinear in
-/// element nesting depth and in runs of character references, so larger
-/// inputs are slow, not wrong; that is recorded as an open finding.
+/// document (or a typed error), never overflow its stack or run away. The
+/// display sanitiser is superlinear in nesting depth and in character
+/// references, so HTML beyond the display limits is shown as a notice
+/// without being parsed; the large cases below must come back promptly.
 #[test]
 fn deeply_nested_and_huge_article_html_does_not_crash_the_reader() {
     let lab = Lab::new("hostile-html-bombs");
@@ -2128,6 +2128,11 @@ fn deeply_nested_and_huge_article_html_does_not_crash_the_reader() {
         ),
         ("million_open_brackets", "<".repeat(1_000_000)),
         ("char_reference_run", "&amp;".repeat(5_000)),
+        (
+            "nested_divs_200000",
+            format!("{}x{}", "<div>".repeat(200_000), "</div>".repeat(200_000)),
+        ),
+        ("char_reference_flood", "&amp;".repeat(1_500_000)),
         ("huge_text_node", "A".repeat(8 * 1024 * 1024)),
         (
             "deep_inline_svg",
@@ -2153,6 +2158,13 @@ fn deeply_nested_and_huge_article_html_does_not_crash_the_reader() {
             if let Some(page) = page {
                 let lower = page.document.to_lowercase();
                 assert!(!lower.contains("<script"), "{name}");
+                if name.ends_with("_200000") || *name == "char_reference_flood" {
+                    assert!(
+                        page.document
+                            .contains(wiki_source::reader_document::TOO_COMPLEX_NOTE),
+                        "{name}"
+                    );
+                }
             }
             lab.library.activate("good-pack".into()).unwrap();
             lab.library.remove_pack(id).unwrap();
