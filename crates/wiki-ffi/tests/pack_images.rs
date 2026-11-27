@@ -173,10 +173,15 @@ fn audit_a_real_pack_for_complete_local_images() {
             }
             if std::env::var_os("PACK003_SHOW_SIZES").is_some() {
                 println!(
-                    "    {:>9} {} {:?} {}",
+                    "    {:>9} {} {:?}{} {}",
                     image.bytes.len(),
                     image.mime,
                     asset.derivation,
+                    if asset.is_av_preview {
+                        " video still"
+                    } else {
+                        ""
+                    },
                     asset.source_url
                 );
             }

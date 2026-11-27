@@ -125,11 +125,16 @@ class ArticleReaderUiTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         waitForTitle("Tide")
 
-        // An external link is intercepted and offered, never loaded in place.
+        // An external link is intercepted, never loaded in place: offered
+        // for the browser when there is a network, otherwise refused with
+        // the reason (the test device may have either).
         assertTrue(tap("https://en.wikipedia.org/wiki/Tide"))
         compose.waitUntil(timeoutMillis = 5_000) {
-            compose.onAllNodesWithText("This link leads outside the offline reader.")
-                .fetchSemanticsNodes().isNotEmpty()
+            listOf(
+                "This link leads outside the offline reader.",
+                "This link needs an Internet connection.",
+                "Offline mode is on. Go online to open this link.",
+            ).any { compose.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
         }
         waitForTitle("Tide")
 

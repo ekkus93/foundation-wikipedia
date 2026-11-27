@@ -336,7 +336,27 @@ private fun FoundationApp() {
                     },
                     openEntry = openEntry,
                     onOpenConsumed = { openEntry = null },
-                    onMessage = { message, externalUrl ->
+                    onMessage = { requested, requestedUrl ->
+                        // An outside link is offered only when it could work
+                        // now; otherwise the reader says what is needed.
+                        val gate = requestedUrl?.let { url ->
+                            outsideLinkGate(
+                                url,
+                                workingOffline = shell.offline,
+                                network = currentDownloadNetwork(context),
+                                allowMobileData = OfficialPackPreference.mobileDataAllowed(
+                                    offlinePreferences.getString(
+                                        OfficialPackPreference.MOBILE_DATA_KEY, null,
+                                    ),
+                                ),
+                            )
+                        }
+                        val message = when (gate) {
+                            is OutsideLink.Offer -> gate.message
+                            is OutsideLink.Refuse -> gate.message
+                            null -> requested
+                        }
+                        val externalUrl = (gate as? OutsideLink.Offer)?.url
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
                                 message,

@@ -91,13 +91,18 @@ pub(crate) fn upload_url(raw: &str) -> Option<String> {
     Some(url.into())
 }
 
+/// The type of a file an article shows: an image, or a video whose still
+/// is what a pack keeps (MOBPACK-003; Ogg video is `application/ogg`).
 fn mime(value: &str) -> bool {
-    value.starts_with("image/")
+    let Some((kind, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    (matches!(kind, "image" | "video") || value == "application/ogg")
         && value.len() <= 64
-        && value[6..]
+        && !subtype.is_empty()
+        && subtype
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'+'))
-        && value.len() > 6
 }
 
 /// The `imageinfo` object of each requested file, in `files` order. `files`

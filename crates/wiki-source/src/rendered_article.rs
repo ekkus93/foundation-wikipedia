@@ -77,6 +77,9 @@ pub struct ImageReference {
     /// `File:` page title with spaces, e.g. `File:Hypotenuse.svg`.
     pub file_title: String,
     pub caption: Option<String>,
+    /// The file is audio or video; the required image is its still
+    /// (MOBPACK-003), stored as an A/V preview.
+    pub av_preview: bool,
 }
 
 /// Blocks of one revision before image metadata is attached.
@@ -308,6 +311,7 @@ impl Walker {
                 self.images.push(ImageReference {
                     file_title: title.clone(),
                     caption: None,
+                    av_preview: false,
                 });
                 self.image_index.insert(title, self.images.len() - 1);
                 self.images.len() - 1
@@ -363,6 +367,28 @@ impl Walker {
                     || self.inside(Kind::Infobox)
                     || self.inside(Kind::Gallery);
                 self.image(title, block);
+            }
+        }
+        // A video is shown offline as its still image (MOBPACK-003): the
+        // player's own poster for the file it names.
+        if name == "video" {
+            let still = attr(&tag, "poster")
+                .and_then(|poster| poster.split(['?', '#']).next().map(str::to_owned))
+                .and_then(|poster| source_file_title(&poster))
+                .filter(|title| {
+                    attr(&tag, "data-mwtitle").is_some_and(|name| {
+                        crate::media_download::file_title_key(title)
+                            == name.trim().replace(' ', "_")
+                    })
+                });
+            if let Some(title) = still {
+                let block = self.inside(Kind::Figure)
+                    || self.inside(Kind::Infobox)
+                    || self.inside(Kind::Gallery);
+                self.image(title.clone(), block);
+                if let Some(index) = self.image_index.get(&title) {
+                    self.images[*index].av_preview = true;
+                }
             }
         }
         // Keep exponents readable: 10<sup>20</sup> is 10^20, not 1020.
@@ -765,7 +791,7 @@ pub fn assemble_article(
     language: &str,
     extracted: ExtractedArticle,
     sanitized_html: String,
-    media: Vec<MediaAsset>,
+    mut media: Vec<MediaAsset>,
 ) -> Result<Article, RenderedArticleError> {
     if media.len() != extracted.images.len() {
         return Err(RenderedArticleError::MediaMismatch);
@@ -780,6 +806,10 @@ pub fn assemble_article(
         if tail != name && tail != encoded && tail != encoded.replace("%2C", ",") {
             return Err(RenderedArticleError::MediaNotForFile(index));
         }
+    }
+    // A video's image is its still: the video itself is online only.
+    for (asset, image) in media.iter_mut().zip(&extracted.images) {
+        asset.is_av_preview = image.av_preview;
     }
     let mut article = Article {
         schema_version: ARTICLE_SCHEMA_VERSION,
@@ -1043,13 +1073,55 @@ mod tests {
                 ImageReference {
                     file_title: "File:Ceres - RC3.jpg".into(),
                     caption: Some("Ceres seen by Dawn".into()),
+                    av_preview: false,
                 },
                 ImageReference {
                     file_title: "File:Ahuna Mons.jpg".into(),
                     caption: Some("Ahuna Mons".into()),
+                    av_preview: false,
                 },
             ]
         );
+    }
+
+    /// MOBPACK-003: a video's still is a required image, marked as an A/V
+    /// preview; audio requires nothing; a poster of another file is ignored.
+    #[test]
+    fn a_video_requires_its_still_as_an_av_preview() {
+        let html = concat!(
+            "<p>Films are moving pictures.</p>",
+            "<figure typeof=\"mw:File/Thumb\"><span><video poster=\"//thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Film.webm/250px-Film.webm.jpg?utm_source=x\" ",
+            "data-durationhint=\"95\" data-mwtitle=\"Film.webm\"><source src=\"//upload.wikimedia.org/wikipedia/commons/transcoded/a/ab/Film.webm/Film.webm.240p.vp9.webm\"></video></span>",
+            "<figcaption>A film</figcaption></figure>",
+            "<audio data-mwtitle=\"Speech.ogg\"><source src=\"//upload.wikimedia.org/wikipedia/commons/transcoded/1/12/Speech.ogg/Speech.ogg.mp3\"></audio>",
+            "<video poster=\"//thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/Other.webm/250px-Other.webm.jpg\" data-mwtitle=\"Mismatch.webm\"></video>",
+        );
+        let extracted = extract_rendered_article(html).unwrap();
+        assert_eq!(
+            extracted.images,
+            vec![ImageReference {
+                file_title: "File:Film.webm".into(),
+                caption: Some("A film".into()),
+                av_preview: true,
+            }]
+        );
+        // Assembled, its image is recorded as the video's preview.
+        let still = MediaAsset {
+            source_url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Film.webm".into(),
+            mime_type: "image/jpeg".into(),
+            sha256: None,
+            license: "CC BY 3.0".into(),
+            creator: "Example".into(),
+            attribution: "Example, CC BY 3.0".into(),
+            is_av_preview: false,
+            derivation: None,
+        };
+        let stored = crate::reader_document::sanitize_online_article_html(html);
+        let article = assemble_article(&pinned(), "en", extracted, stored, vec![still]).unwrap();
+        assert!(article.media[0].is_av_preview);
+        assert!(article
+            .rendered_html
+            .contains("Play online (needs Internet)"));
     }
 
     #[test]

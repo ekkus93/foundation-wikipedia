@@ -191,7 +191,10 @@ fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String
         })
         .link_rel(Some("noopener noreferrer nofollow"));
     let clean = builder
-        .clean(&without_interactive_maps(html, label.as_ref()))
+        .clean(&without_interactive_maps(
+            &crate::av_preview::with_av_previews(html),
+            label.as_ref(),
+        ))
         .to_string();
     match &label {
         Some(images) if !images.stills.is_empty() => label_stills(clean, images),
@@ -478,7 +481,10 @@ pub fn sanitize_online_article_html(html: &str) -> String {
         })
         .link_rel(Some("noopener noreferrer nofollow"));
     builder
-        .clean(&without_interactive_maps(html, None))
+        .clean(&without_interactive_maps(
+            &crate::av_preview::with_av_previews(html),
+            None,
+        ))
         .to_string()
 }
 
@@ -517,7 +523,8 @@ sup{line-height:1}\
 .foundation-cited-note{color:var(--muted);font-size:.8em;margin:0}\
 .foundation-still-note{display:block;color:var(--muted);font-size:.8em}\
 .foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}\
-.foundation-map-credit{display:block;color:var(--muted);font-size:.75em}";
+.foundation-map-credit{display:block;color:var(--muted);font-size:.75em}\
+.foundation-av-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.4em .7em;color:var(--muted);font-size:.9em}";
 
 /// A complete, script-free document for one verified article revision.
 pub fn reader_document(article: &Article, theme: ReaderTheme) -> String {
@@ -1221,6 +1228,60 @@ mod tests {
             assert!(sanitized.contains("Launch film"));
             assert!(sanitized.contains("<p>Text</p>"));
         }
+    }
+
+    /// MOBPACK-003: a player naming its file becomes a still and a note.
+    /// Online the still loads from Wikimedia; from a pack it is the pack's
+    /// own copy; a stored (already sanitised) article reads the same.
+    #[test]
+    fn audio_and_video_players_become_local_previews_with_a_play_online_link() {
+        let html = concat!(
+            "<figure><span><video poster=\"//thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Film.webm/250px-Film.webm.jpg?utm_source=x\" ",
+            "controls=\"\" autoplay data-durationhint=\"95\" data-mwtitle=\"Film.webm\">",
+            "<source src=\"//upload.wikimedia.org/wikipedia/commons/transcoded/a/ab/Film.webm/Film.webm.240p.vp9.webm\"></video></span>",
+            "<figcaption>A film</figcaption></figure>",
+            "<audio data-durationhint=\"88\" data-mwtitle=\"Speech.ogg\"><source src=\"//upload.wikimedia.org/a.mp3\"></audio>",
+        );
+        let note = "<span class=\"foundation-av-note\">Video · 1:35 · <a href=\"https://commons.wikimedia.org/wiki/File:Film.webm\" rel=\"noopener noreferrer nofollow\">Play online (needs Internet)</a></span>";
+        let stored = sanitize_online_article_html(html);
+        assert!(stored.contains(&format!(
+            "<img src=\"https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Film.webm/250px-Film.webm.jpg\" alt=\"Video still\">{note}"
+        )), "{stored}");
+        assert!(stored.contains(
+            ">Audio · 1:28 · <a href=\"https://commons.wikimedia.org/wiki/File:Speech.ogg\""
+        ));
+        assert!(stored.contains("<figcaption>A film</figcaption>"));
+
+        let images = PackImageSources {
+            base: READER_IMAGE_BASE.into(),
+            by_file: HashMap::from([("Film.webm".to_owned(), "cd".repeat(32))]),
+            stills: HashSet::new(),
+        };
+        for source in [html, stored.as_str()] {
+            let pack = sanitize_pack_article_html(source, &images);
+            assert!(
+                pack.contains(&format!(
+                    "<img src=\"{READER_IMAGE_BASE}{}\" alt=\"Video still\">{note}",
+                    "cd".repeat(32)
+                )),
+                "{pack}"
+            );
+            for banned in [
+                "<video",
+                "<audio",
+                "<source",
+                "autoplay",
+                "transcoded",
+                ".mp3",
+                "thumb.wikimedia.org",
+            ] {
+                assert!(!pack.contains(banned), "{banned} survived: {pack}");
+            }
+        }
+        // Without images (or a pack that holds no still) nothing is loaded.
+        let bare = sanitize_article_html(html);
+        assert!(bare.contains("<img alt=\"Video still\">"), "{bare}");
+        assert!(bare.contains(note));
     }
 
     /// SRC-003: pack articles keep their formulas (MathML), never scripts

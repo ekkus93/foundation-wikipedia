@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -152,6 +153,7 @@ fun ArticleReader(
     onOpenConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var library by remember { mutableStateOf<RustOfflineLibrary?>(null) }
     var navigation by rememberSaveable(
@@ -303,6 +305,9 @@ fun ArticleReader(
     }
 
     fun openPage(project: String, pageId: Long, title: String) {
+        // Leave the search box, so the keyboard closes and the article can
+        // be scrolled.
+        focusManager.clearFocus()
         results = null
         highlight = null
         navigation = navigation.open(ReaderEntry(project, pageId, title))
