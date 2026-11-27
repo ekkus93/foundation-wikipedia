@@ -48,3 +48,7 @@ On `ddb2758d` (reader licence): all five workflows passed, incl. [Rust workspace
 ## CI
 
 CI on `65a3d685` (all of this work plus the rename): all nine workflows passed, incl. [Rust workspace 45961745860](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45961745860), [Android FFI bridge 45961745759](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45961745759), [Desktop launch smoke 45961745887](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45961745887), [Platform shells 45961745775](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45961745775) (`OK (48 tests)`).
+
+## Desktop start page branding (`be14ba15`)
+
+The desktop start page still carried the pre-rename branding: a circled serif "W" mark beside "Wikipedia", "FOUNDATION WIKIPEDIA" and the heading "Wikipedia reader preview". It now shows a neutral "FL" mark in a sans-serif rounded square, "Foundation Library" with "Independent Wikipedia reader · preview", and the heading "Foundation Library preview". "Search Wikipedia in the reader below" stays, since it only describes the content. Checked in a real WebKitGTK window under Xvfb (app data restored byte-identical afterwards). CI on `be14ba15`: [Rust workspace 46047397954](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46047397954), [Desktop launch smoke 46047397936](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46047397936), [Platform shells 46047397968](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46047397968) passed.
