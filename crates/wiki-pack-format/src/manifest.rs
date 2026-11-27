@@ -161,7 +161,9 @@ fn lowercase_sha256(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn valid_spdx(value: &str) -> bool {
+/// Whether `value` is shaped like an SPDX licence identifier (1–64 ASCII
+/// letters, digits, `.`, `-` or `+`).
+pub fn valid_spdx(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value

@@ -21,8 +21,9 @@ use wiki_store::activation::ActiveSnapshotStore;
 use wiki_store::offline_reader::VerifiedOfflineCatalogReader;
 use wiki_store::pack_install::{
     install_custom_pack, install_custom_pack_stream, installed_shard_inventory,
-    list_installed_snapshots, reclaim_abandoned_staging, remove_installed_snapshot,
-    repair_installed_search_index, PackInstallError, CATALOG_OBJECT, SEARCH_OBJECT,
+    installed_text_license, list_installed_snapshots, reclaim_abandoned_staging,
+    remove_installed_snapshot, repair_installed_search_index, PackInstallError, CATALOG_OBJECT,
+    SEARCH_OBJECT,
 };
 
 const MAX_PACK_BYTES: u64 = 8 << 30;
@@ -278,6 +279,8 @@ impl From<&Article> for SearchHit {
 struct OpenSnapshot {
     id: String,
     reader: VerifiedOfflineCatalogReader,
+    /// The text licence the installer recorded (SEC-002), read once here.
+    text_license: Option<String>,
 }
 
 /// One app-private offline library. Create a single instance per data
@@ -286,6 +289,10 @@ struct OpenSnapshot {
 pub struct OfflineLibrary {
     root: PathBuf,
     open: Mutex<Option<OpenSnapshot>>,
+}
+
+fn snapshot_license(root: &Path, id: &str) -> Option<String> {
+    installed_text_license(&root.join("snapshots").join(id))
 }
 
 fn open_snapshot(root: &Path, id: &str) -> Result<VerifiedOfflineCatalogReader, LibraryError> {
@@ -424,6 +431,7 @@ impl OfflineLibrary {
             .switch_to_prevalidated(&snapshot_id)
             .map_err(|_| LibraryError::Storage)?;
         *self.open.lock().map_err(|_| LibraryError::Storage)? = Some(OpenSnapshot {
+            text_license: snapshot_license(&self.root, &snapshot_id),
             id: snapshot_id,
             reader,
         });
@@ -467,8 +475,9 @@ impl OfflineLibrary {
     ) -> Result<Option<ArticlePage>, LibraryError> {
         let key = ArticleKey { project, page_id };
         key.validate().map_err(|_| LibraryError::InvalidInput)?;
-        self.with_active(|reader| {
-            let article = reader
+        self.with_active_snapshot(|snapshot| {
+            let article = snapshot
+                .reader
                 .reader()
                 .open_page(&key)
                 .map_err(|_| LibraryError::VerificationFailed)?;
@@ -478,7 +487,10 @@ impl OfflineLibrary {
                 let mut still_images: Vec<String> = sources.stills.into_iter().collect();
                 still_images.sort();
                 ArticlePage {
-                    attribution_html: wiki_source::attribution::attribution_section(&article),
+                    attribution_html: wiki_source::attribution::attribution_section_for_license(
+                        &article,
+                        snapshot.text_license.as_deref(),
+                    ),
                     images: sources.by_file,
                     still_images,
                     project: article.key.project,
@@ -499,15 +511,23 @@ impl OfflineLibrary {
         &self,
         run: impl FnOnce(&VerifiedOfflineCatalogReader) -> Result<T, LibraryError>,
     ) -> Result<T, LibraryError> {
+        self.with_active_snapshot(|snapshot| run(&snapshot.reader))
+    }
+
+    fn with_active_snapshot<T>(
+        &self,
+        run: impl FnOnce(&OpenSnapshot) -> Result<T, LibraryError>,
+    ) -> Result<T, LibraryError> {
         let active = self.active_snapshot()?.ok_or(LibraryError::NotInstalled)?;
         let mut open = self.open.lock().map_err(|_| LibraryError::Storage)?;
         if open.as_ref().is_none_or(|snapshot| snapshot.id != active) {
             *open = Some(OpenSnapshot {
                 reader: open_snapshot(&self.root, &active)?,
+                text_license: snapshot_license(&self.root, &active),
                 id: active,
             });
         }
-        run(&open.as_ref().expect("snapshot opened above").reader)
+        run(open.as_ref().expect("snapshot opened above"))
     }
 }
 

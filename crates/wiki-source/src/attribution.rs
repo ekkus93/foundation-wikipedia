@@ -11,10 +11,58 @@ use wiki_model::{Article, MediaAsset, MediaDerivation};
 
 use crate::reader_document::escape_text;
 
-/// Licence of Wikipedia article text. `Article` records no licence of its
-/// own; the pack manifest states it for the whole pack.
+/// Licence of Wikipedia article text, used when no pack states one.
+/// `Article` records no licence of its own; the pack manifest states it
+/// for the whole pack as an SPDX identifier.
 pub const ARTICLE_LICENSE: &str = "CC BY-SA 4.0";
-const ARTICLE_LICENSE_URL: &str = "https://creativecommons.org/licenses/by-sa/4.0/";
+/// SPDX identifier of [`ARTICLE_LICENSE`].
+pub const ARTICLE_LICENSE_SPDX: &str = "CC-BY-SA-4.0";
+
+/// Display name and deed link for the SPDX text licences a Wikipedia pack
+/// can carry. Any other identifier is shown as the pack wrote it, unlinked.
+const KNOWN_TEXT_LICENSES: &[(&str, &str, &str)] = &[
+    (
+        "CC-BY-SA-4.0",
+        "CC BY-SA 4.0",
+        "https://creativecommons.org/licenses/by-sa/4.0/",
+    ),
+    (
+        "CC-BY-SA-3.0",
+        "CC BY-SA 3.0",
+        "https://creativecommons.org/licenses/by-sa/3.0/",
+    ),
+    (
+        "CC-BY-4.0",
+        "CC BY 4.0",
+        "https://creativecommons.org/licenses/by/4.0/",
+    ),
+    (
+        "CC0-1.0",
+        "CC0 1.0",
+        "https://creativecommons.org/publicdomain/zero/1.0/",
+    ),
+    (
+        "GFDL-1.3-or-later",
+        "GFDL 1.3 or later",
+        "https://www.gnu.org/licenses/fdl-1.3.html",
+    ),
+];
+
+/// The licence sentence fragment for an SPDX identifier: a linked name for
+/// a known licence, the escaped identifier otherwise, and a plain notice
+/// when the pack states none.
+fn text_license_html(spdx: Option<&str>) -> String {
+    let Some(spdx) = spdx.map(str::trim).filter(|id| !id.is_empty()) else {
+        return "a licence this pack does not state".to_owned();
+    };
+    match KNOWN_TEXT_LICENSES
+        .iter()
+        .find(|(id, _, _)| id.eq_ignore_ascii_case(spdx))
+    {
+        Some((_, name, url)) => link(url, name),
+        None => format!("the licence the pack names as {}", escape_text(spdx)),
+    }
+}
 
 /// Shown at the end of every offline article.
 pub const NON_AFFILIATION: &str = "This app is not made by or affiliated with the Wikimedia \
@@ -127,14 +175,22 @@ fn credit(asset: &MediaAsset) -> String {
 
 /// The attribution section for `article`, as a block of HTML for the end
 /// of the page: licence, revision and history links, one credit per
-/// image the pack holds, and the non-affiliation line.
+/// image the pack holds, and the non-affiliation line. The text licence is
+/// [`ARTICLE_LICENSE`]; use [`attribution_section_for_license`] when the
+/// pack states one.
 pub fn attribution_section(article: &Article) -> String {
+    attribution_section_for_license(article, Some(ARTICLE_LICENSE_SPDX))
+}
+
+/// [`attribution_section`] with the text licence the pack manifest states
+/// (an SPDX identifier), or `None` when it states none.
+pub fn attribution_section_for_license(article: &Article, text_spdx: Option<&str>) -> String {
     let mut out = String::from("<section class=\"foundation-attribution\"><h2>Attribution</h2>");
     let title = percent_encode(&article.title);
     let wikipedia = wiki_code(&article.language).filter(|_| !article.title.is_empty());
     out.push_str(&format!(
         "<p>Text of this article is from Wikipedia and available under {}.",
-        link(ARTICLE_LICENSE_URL, ARTICLE_LICENSE)
+        text_license_html(text_spdx)
     ));
     if let Some(code) = wikipedia {
         let base = format!("https://{code}.wikipedia.org/w/index.php?title={title}");
@@ -214,6 +270,40 @@ mod tests {
 
     const COMMONS: &str =
         "https://upload.wikimedia.org/wikipedia/commons/a/ab/Hypotenuse%20%26x.svg";
+
+    #[test]
+    fn the_licence_the_pack_states_is_shown() {
+        let art = article(vec![]);
+        let html = attribution_section_for_license(&art, Some("CC-BY-SA-3.0"));
+        assert!(html.contains(">CC BY-SA 3.0</a>"));
+        assert!(html.contains("https://creativecommons.org/licenses/by-sa/3.0/"));
+        assert!(!html.contains("4.0"));
+
+        let lower = attribution_section_for_license(&art, Some("cc0-1.0"));
+        assert!(lower.contains(">CC0 1.0</a>"));
+
+        let other = attribution_section_for_license(&art, Some("MIT"));
+        assert!(other.contains("the licence the pack names as MIT."));
+        assert!(!other.contains("creativecommons.org"));
+
+        for missing in [None, Some(""), Some("  ")] {
+            let none = attribution_section_for_license(&art, missing);
+            assert!(none.contains("a licence this pack does not state"));
+            assert!(!none.contains("creativecommons.org"));
+        }
+    }
+
+    #[test]
+    fn a_hostile_licence_identifier_is_escaped_and_unlinked() {
+        let html = attribution_section_for_license(
+            &article(vec![]),
+            Some("<script>x</script><a href=\"javascript:y\">"),
+        );
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("javascript:y\">"));
+        assert!(html.contains("&lt;script&gt;"));
+        assert_eq!(html.matches("<a ").count(), 2, "revision and history only");
+    }
 
     #[test]
     fn licence_revision_history_and_non_affiliation_are_shown() {

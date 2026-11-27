@@ -818,6 +818,22 @@ fn verify_recorded_catalog(snapshot: &Path) -> Result<(), PackInstallError> {
     Ok(())
 }
 
+/// The text licence (an SPDX identifier) the installer recorded for an
+/// installed snapshot, for the attribution section (SEC-002). `None` when
+/// the record is missing, too large, unreadable or the identifier is not
+/// SPDX-shaped: the reader then says no licence is stated rather than
+/// guessing one.
+pub fn installed_text_license(snapshot: &Path) -> Option<String> {
+    let path = snapshot.join(MANIFEST_FILE);
+    let meta = fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_INSTALLED_MANIFEST_BYTES {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+    let spdx = value["license"]["text_spdx"].as_str()?;
+    wiki_pack_format::manifest::valid_spdx(spdx).then(|| spdx.to_owned())
+}
+
 /// Reopen an installed snapshot's pinned shard inventory from the
 /// installer-owned `manifest.json`, for verified opening after a restart.
 /// Index files and the attribution object are excluded exactly as at install
@@ -1592,6 +1608,34 @@ mod tests {
             "attribution.json"
         );
         assert_eq!(manifest["indexes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_recorded_text_licence_is_read_back_and_checked() {
+        let dir = test_dir("text-licence");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let tree = dir.0.join("tree");
+        snapshot_tree(&tree, 3019, true);
+        let mut metadata = metadata_for(&tree);
+        metadata.license.text_spdx = "CC-BY-SA-3.0".into();
+        let installed = install(&root, &pack_with(&tree, "licence", metadata)).unwrap();
+        assert_eq!(
+            installed_text_license(&installed.path).as_deref(),
+            Some("CC-BY-SA-3.0")
+        );
+
+        let manifest = installed.path.join(MANIFEST_FILE);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        value["license"]["text_spdx"] = "<b>free</b>".into();
+        fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(installed_text_license(&installed.path), None);
+        value["license"] = serde_json::Value::Null;
+        fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(installed_text_license(&installed.path), None);
+        fs::remove_file(&manifest).unwrap();
+        assert_eq!(installed_text_license(&installed.path), None);
     }
 
     #[test]

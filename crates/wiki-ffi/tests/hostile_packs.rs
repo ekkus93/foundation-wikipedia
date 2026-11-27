@@ -220,6 +220,17 @@ fn build_custom(
     images: &[(&str, Vec<u8>)],
     index: Option<Vec<u8>>,
 ) -> Vec<u8> {
+    build_custom_licensed(dir, pack_id, html, images, index, "CC-BY-SA-4.0")
+}
+
+fn build_custom_licensed(
+    dir: &Path,
+    pack_id: &str,
+    html: &str,
+    images: &[(&str, Vec<u8>)],
+    index: Option<Vec<u8>>,
+    text_spdx: &str,
+) -> Vec<u8> {
     let tree = dir.join(format!("{pack_id}-tree"));
     // A fresh tree every time: callers reuse ids across loop iterations.
     let _ = fs::remove_dir_all(&tree);
@@ -257,7 +268,7 @@ fn build_custom(
         &tree,
         PackMetadata::synthetic_fixture().source,
         &"0".repeat(64),
-        "CC-BY-SA-4.0",
+        text_spdx,
     )
     .unwrap();
     if !images.is_empty() || index.is_some() {
@@ -2024,6 +2035,41 @@ const HOSTILE_ARTICLE: &str = concat!(
     "<details open ontoggle=\"alert('toggle')\"><summary>s</summary></details>",
     "<p>Closing sentence.</p></article>"
 );
+
+/// SEC-002: the attribution section states the text licence each pack's
+/// manifest declares, and follows the active pack when it changes.
+#[test]
+fn the_attribution_states_the_licence_the_active_pack_declares() {
+    let lab = Lab::new("pack-licence");
+    let src = lab.dir.0.join("src");
+    for (id, spdx) in [("licence-30", "CC-BY-SA-3.0"), ("licence-mit", "MIT")] {
+        let path = lab.dir.0.join(format!("attacks/{id}.wpack"));
+        fs::write(
+            &path,
+            build_custom_licensed(&src, id, "<p>Body</p>", &[], None, spdx),
+        )
+        .unwrap();
+        lab.library
+            .install_pack(path.to_string_lossy().into_owned(), true)
+            .unwrap();
+    }
+    let attribution = |id: &str| {
+        lab.library.activate(id.into()).unwrap();
+        lab.library
+            .open_page("enwiki".into(), 5)
+            .unwrap()
+            .unwrap()
+            .attribution_html
+    };
+    let older = attribution("licence-30");
+    assert!(older.contains("https://creativecommons.org/licenses/by-sa/3.0/"));
+    assert!(older.contains(">CC BY-SA 3.0</a>"));
+    assert!(!older.contains("by-sa/4.0"));
+    let other = attribution("licence-mit");
+    assert!(other.contains("the licence the pack names as MIT."));
+    assert!(!other.contains("creativecommons.org/licenses"));
+    assert!(attribution("licence-30").contains(">CC BY-SA 3.0</a>"));
+}
 
 #[test]
 fn hostile_article_html_with_valid_hashes_is_sanitised_at_display() {
