@@ -108,6 +108,11 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
   // until the one-time notice about contacting Wikimedia's media servers is.
   const [av, setAv] = useState<{ url: string; info: AvStreamInfo; accepted: boolean } | null>(null);
   const imagesAllowed = !offline && connected;
+  // Work offline (or a lost connection) stops any stream at once: the
+  // player is closed, so nothing more is fetched from Wikimedia.
+  useEffect(() => {
+    if (offline || !connected) setAv(null);
+  }, [offline, connected]);
 
   // Apply the shared offline transition to hidden tabs too. Late responses
   // are ignored; existing in-memory text-only previews remain readable.
