@@ -83,9 +83,22 @@ Owner decision (2026-11-26): play audio and video inside the app, not in the bro
 - **CI:** `e2c3ca33` (includes `e4963cec`): all four workflows passed, incl. [Android FFI bridge 46024259175](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46024259175) (`OK (48 tests)`).
 - **Seeking (`f4b1b345`):** the live test now also moves the position slider to halfway, through its accessibility action. Each clip must then report a position between 45% and 60% of its length and keep advancing from there. It passed on the A54 for both the audio and the video (27 s); it was not rerun on the emulator. Dragging the slider by hand has not been tried.
 
+## Desktop player
+
+The desktop reader now plays a "Play online" file inside the app, as Android does.
+
+- **Shared code:** `wiki-source::av_stream` parses and validates the Commons page link (same rules as `AvStream.kt`: https only, host exactly `commons.wikimedia.org`, no port, userinfo or query, `/wiki/File:`, name at most 255, no control characters or `/#|<>"?`, the same extension lists) and derives the `upload.wikimedia.org` addresses from the MD5 of the name (`md-5` crate, RustCrypto like `sha2`). Its tests use the addresses checked against Wikimedia for the Android test, and reject traversal, encoded slashes, control characters and other hosts.
+- **Order for desktop:** desktop webviews stream WebM well and may not decode MPEG-4 Part 2, so video tries `480p.vp9.webm`, `360p.vp9.webm`, `240p.vp9.webm`, then `360p.mpeg4.mov`, then the original. Audio tries the `mp3` rendering (not for an MP3 file), then the original. Android keeps its own order.
+- **Command and CSP:** the `av_stream` Tauri command only works the addresses out; Rust makes no request. The CSP gained `media-src https://upload.wikimedia.org` and nothing else.
+- **Player:** `AvPlayer.tsx` uses a plain `<video>` or `<audio>` element with its own Play/Pause, a position slider, an `m:ss / m:ss` clock and Close (Escape also closes). An address that errors, or has not loaded within 30 s, gives way to the next; when none is left it shows "This could not be played here." with a button to open the file's page in the browser (the existing `open_external_link`).
+- **First use:** a notice (the Android wording) is shown before the first contact with Wikimedia's media servers; playing starts only once it is accepted, and the choice is kept in `localStorage` (`foundation-wikipedia.avStreamDisclosure`, value `v1:accepted`), like the other small desktop preferences. If storage fails, the notice is shown again next time.
+- **Offline:** with offline mode on or no connection, the reader still says "Playing this needs an Internet connection." and the player and command are never reached.
+- **Tests:** `desktop/scripts/avPlayer.test.mjs` (clock, candidate stepping, disclosure value, address check), the `av_stream` unit tests in `desktop/src-tauri`, and the `wiki-source` tests.
+- **Limits:** which codecs play depends on the operating system's webview (WebView2, WebKitGTK, WKWebView); a WebKitGTK without GStreamer's VP9 plugins may fail every rendering and fall to the "could not be played here" offer. Not tried by hand in a window. WebM seeking over HTTP may be as slow as on Android's Samsung player; the 30 s fall-through applies equally.
+
 ## Not done
 
-- **Desktop player:** the desktop app has no in-app player, and its offline message was checked by unit test only.
+- **Desktop player, by hand:** see "Desktop player" below. It was built and unit-tested but never run in a real window, so no WebView2, WebKitGTK or WKWebView has been seen playing anything, and the first-use notice has not been tried by hand. Its offline message was checked by unit test only.
 - **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
 - **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page.
 - **No hidden requests:** shown for the reader by its request handler tests; not measured with a network log on a device.

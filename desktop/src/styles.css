@@ -105,6 +105,13 @@ body { color: var(--reader-text); background: var(--reader-bg); }
 .external-link-confirm p { margin: 0 0 8px; }
 .external-link-confirm .external-link-url { font-family: ui-monospace, monospace; font-size: .85em; overflow-wrap: anywhere; color: var(--reader-muted); }
 .external-link-confirm button { margin-right: 8px; }
+.av-player { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .75); }
+.av-player-body { box-sizing: border-box; width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 16px; border: 1px solid var(--reader-border); border-radius: 8px; background: var(--reader-surface); color: var(--reader-text); }
+.av-player-title { margin: 0 0 12px; font-size: 1.05rem; overflow-wrap: anywhere; }
+.av-player-video { display: block; width: 100%; max-height: 60vh; background: #000; }
+.av-player-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.av-player-controls input[type="range"] { flex: 1; min-width: 0; }
+.av-player-controls span { font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* DUI-001: offline packs in Settings. */
 .offline-packs .pack-trust { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; padding: 6px 10px; border-left: 4px solid var(--reader-link); background: var(--reader-surface); }
 .offline-packs .pack-trust span { color: var(--reader-muted); font-size: .9em; }

@@ -7,7 +7,9 @@ import { RequestEpoch } from "./requestEpoch";
 import { EDITIONS, isEdition, loadDefaultEdition } from "./defaultEdition";
 import { ReaderOfflineMode } from "./readerOfflineMode";
 import { backReaderArticle, emptyReaderNavigation, forwardReaderArticle, mountedReaderFrames, openBookmarkedReaderArticle, openReaderArticle, type ReaderNavigation } from "./readerHistory";
-import { classifyReaderLink, extractWikiArticleLinks, outsideLinkBlocked, type WikiArticleLink } from "./articleLinks";
+import { AvPlayer } from "./AvPlayer";
+import { AV_STREAM_DISCLOSURE, loadDisclosureAccepted, parseAvStreamInfo, saveDisclosureAccepted, type AvStreamInfo } from "./avPlayer";
+import { classifyReaderLink, extractWikiArticleLinks, isCommonsAudioOrVideo, outsideLinkBlocked, type WikiArticleLink } from "./articleLinks";
 import { navigationTitleKey, normalizedReaderSearchQuery, parseReaderArticle, parseReaderSearchHits, validReaderTitleInput, type ReaderSearchHit } from "./readerResponse";
 
 
@@ -102,6 +104,9 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
   // frame is recreated (older history, theme or offline changes).
   const scrollPositions = useRef(new Map<number, number>());
   const [externalLink, setExternalLink] = useState<string | null>(null);
+  // MOBPACK-003: the audio/video being played in the app; `accepted` is false
+  // until the one-time notice about contacting Wikimedia's media servers is.
+  const [av, setAv] = useState<{ url: string; info: AvStreamInfo; accepted: boolean } | null>(null);
   const imagesAllowed = !offline && connected;
 
   // Apply the shared offline transition to hidden tabs too. Late responses
@@ -265,6 +270,7 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
         // Offered for the browser only when it could work (MOBPACK-003).
         const blocked = outsideLinkBlocked(action.url, !offlineMode.getSnapshot() && connected && navigator.onLine);
         if (blocked) setNotice(blocked);
+        else if (isCommonsAudioOrVideo(action.url)) void startAv(action.url);
         else setExternalLink(action.url);
       }
     };
@@ -272,8 +278,31 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
     return () => window.removeEventListener("message", onMessage);
   });
 
+  async function startAv(url: string) {
+    let info: AvStreamInfo | null = null;
+    try {
+      info = parseAvStreamInfo(await invoke<unknown>("av_stream", { url }));
+    } catch {
+      info = null;
+    }
+    // Not a file the player can stream: today's offer to open the browser.
+    if (!info) setExternalLink(url);
+    else setAv({ url, info, accepted: loadDisclosureAccepted() });
+  }
+
+  function acceptAvDisclosure() {
+    if (offlineMode.getSnapshot() || !connected || !navigator.onLine) {
+      setAv(null);
+      setNotice("Playing this needs an Internet connection.");
+      return;
+    }
+    saveDisclosureAccepted();
+    setAv((current) => (current ? { ...current, accepted: true } : null));
+  }
+
   async function openExternalLink(url: string) {
     setExternalLink(null);
+    setAv(null);
     try {
       await invoke("open_external_link", { url });
     } catch {
@@ -459,6 +488,16 @@ export default function OnlineReader({ onArticleChange, bookmarkRequest, citatio
           <button type="button" onClick={() => void openExternalLink(externalLink)}>Open in browser</button>
           <button type="button" autoFocus onClick={() => setExternalLink(null)}>Cancel</button>
         </div>
+      )}
+      {av && !av.accepted && (
+        <div className="external-link-confirm" role="alertdialog" aria-label="Connect to Wikimedia to play this">
+          <p>{AV_STREAM_DISCLOSURE}</p>
+          <button type="button" onClick={acceptAvDisclosure}>Accept and play</button>
+          <button type="button" autoFocus onClick={() => setAv(null)}>Cancel</button>
+        </div>
+      )}
+      {av && av.accepted && (
+        <AvPlayer info={av.info} onClose={() => setAv(null)} onOpenInBrowser={() => void openExternalLink(av.url)} />
       )}
       {busy && <p role="status">Loading Wikipedia…</p>}
       {!article && navigation.forward.length > 0 && <button type="button" disabled={busy} onClick={() => setNavigation(forwardReaderArticle)}>→ Forward to article</button>}
