@@ -5,7 +5,10 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
@@ -17,7 +20,8 @@ import org.junit.runner.RunWith
 /**
  * MOBPACK-003 live check of the in-app player against Wikimedia's media
  * servers. Skipped unless run with `-e avLive true`; CI never runs it. It
- * streams the start of two short files named by real "Play online" links.
+ * streams two short files named by real "Play online" links, pauses and
+ * resumes each, and seeks to halfway.
  */
 @RunWith(AndroidJUnit4::class)
 class AvPlayerLiveTest {
@@ -51,7 +55,24 @@ class AvPlayerLiveTest {
         assertTrue("still at $paused while paused", clock() == paused)
         compose.onNodeWithText("Play").performClick()
         compose.waitUntil(timeoutMillis = 30_000) { shown("Pause") && clock() != paused }
+
+        // Seeking: move the slider to halfway; the player must report a
+        // position near the middle and keep playing from there.
+        val total = seconds(length)
+        compose.onNodeWithContentDescription("Position")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(0.5f) }
+        compose.waitUntil(timeoutMillis = 30_000) {
+            elapsed()?.let { it in (total * 45 / 100)..(total * 60 / 100) } == true
+        }
+        val sought = elapsed()!!
+        compose.waitUntil(timeoutMillis = 30_000) { (elapsed() ?: 0) > sought }
     }
+
+    private fun seconds(clock: String): Int =
+        clock.split(':').fold(0) { total, part -> total * 60 + part.trim().toInt() }
+
+    /** Elapsed seconds from the clock text. */
+    private fun elapsed(): Int? = clock()?.substringBefore(" / ")?.let(::seconds)
 
     @Test
     fun audioStreamsPausesAndResumes() = playsPausesAndResumes(
