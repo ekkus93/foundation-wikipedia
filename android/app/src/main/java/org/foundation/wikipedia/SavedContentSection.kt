@@ -55,6 +55,14 @@ fun readerStateErrorMessage(error: Throwable): String = when (error) {
     else -> "Could not read or save bookmarks and history on this device."
 }
 
+/**
+ * "Saved 26 Nov 2026" for a bookmark with a saved time (Unix seconds); null
+ * for one saved before dates were kept, so nothing is shown. The date text
+ * comes from [formatDate] (the platform's locale formatter in the app).
+ */
+fun bookmarkSavedText(savedAtSeconds: Long?, formatDate: (Long) -> String): String? =
+    savedAtSeconds?.takeIf { it > 0 }?.let { "Saved ${formatDate(it * 1000)}" }
+
 private fun SavedPage.label(): String = title ?: "Page $pageId (not in the active offline pack)"
 
 /**
@@ -190,5 +198,13 @@ private fun PageRow(page: SavedPage, modifier: Modifier, onOpen: (ReaderEntry) -
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        val context = LocalContext.current
+        bookmarkSavedText(page.savedAt) { millis ->
+            DateUtils.formatDateTime(
+                context,
+                millis,
+                DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_YEAR or DateUtils.FORMAT_ABBREV_MONTH,
+            )
+        }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }

@@ -57,6 +57,10 @@ pub struct SavedPage {
     pub title: Option<String>,
     /// Seconds since the Unix epoch, for history visits; `None` for bookmarks.
     pub visited_at: Option<i64>,
+    /// Seconds since the Unix epoch (UTC) when a bookmark was first saved;
+    /// `None` for history visits and for bookmarks saved before dates were
+    /// kept.
+    pub saved_at: Option<i64>,
 }
 
 /// Bookmarks, the history choice and recent visits, read from one snapshot.
@@ -305,6 +309,7 @@ impl ReaderState {
                     page_id: saved.key.page_id,
                     revision_id: saved.revision_id,
                     visited_at: None,
+                    saved_at: saved.saved_at,
                 })
                 .collect(),
             history_enabled,
@@ -316,6 +321,7 @@ impl ReaderState {
                     page_id: visit.key.page_id,
                     revision_id: visit.revision_id,
                     visited_at: Some(visit.visited_at),
+                    saved_at: None,
                 })
                 .collect(),
         })

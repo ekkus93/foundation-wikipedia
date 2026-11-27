@@ -1092,6 +1092,11 @@ mod reader_state {
             vec![(2, 7002, Some("Tide".to_owned())), (99, 7099, None)]
         );
         assert!(saved.bookmarks.iter().all(|page| page.visited_at.is_none()));
+        // New bookmarks carry the time they were saved (a real, recent one).
+        assert!(saved
+            .bookmarks
+            .iter()
+            .all(|page| page.saved_at.is_some_and(|time| time > 1_700_000_000)));
         assert!(!state.toggle_bookmark("enwiki".into(), 2, 7002).unwrap());
         assert!(state.remove_bookmark("enwiki".into(), 99).unwrap());
         assert!(!state.remove_bookmark("enwiki".into(), 99).unwrap());
@@ -1118,6 +1123,7 @@ mod reader_state {
             .history
             .iter()
             .all(|page| page.visited_at.unwrap() > 0));
+        assert!(saved.history.iter().all(|page| page.saved_at.is_none()));
         assert!(saved
             .history
             .iter()

@@ -6272,6 +6272,13 @@ data class SavedPage (
      * Seconds since the Unix epoch, for history visits; `None` for bookmarks.
      */
     var `visitedAt`: kotlin.Long?
+    , 
+    /**
+     * Seconds since the Unix epoch (UTC) when a bookmark was first saved;
+     * `None` for history visits and for bookmarks saved before dates were
+     * kept.
+     */
+    var `savedAt`: kotlin.Long?
     
 ){
     
@@ -6293,6 +6300,7 @@ public object FfiConverterTypeSavedPage: FfiConverterRustBuffer<SavedPage> {
             FfiConverterULong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -6301,7 +6309,8 @@ public object FfiConverterTypeSavedPage: FfiConverterRustBuffer<SavedPage> {
             FfiConverterULong.allocationSize(value.`pageId`) +
             FfiConverterULong.allocationSize(value.`revisionId`) +
             FfiConverterOptionalString.allocationSize(value.`title`) +
-            FfiConverterOptionalLong.allocationSize(value.`visitedAt`)
+            FfiConverterOptionalLong.allocationSize(value.`visitedAt`) +
+            FfiConverterOptionalLong.allocationSize(value.`savedAt`)
     )
 
     override fun write(value: SavedPage, buf: ByteBuffer) {
@@ -6310,6 +6319,7 @@ public object FfiConverterTypeSavedPage: FfiConverterRustBuffer<SavedPage> {
             FfiConverterULong.write(value.`revisionId`, buf)
             FfiConverterOptionalString.write(value.`title`, buf)
             FfiConverterOptionalLong.write(value.`visitedAt`, buf)
+            FfiConverterOptionalLong.write(value.`savedAt`, buf)
     }
 }
 
