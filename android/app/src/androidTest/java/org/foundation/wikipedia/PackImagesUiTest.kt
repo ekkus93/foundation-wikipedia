@@ -94,11 +94,34 @@ class PackImagesUiTest {
         return red to blue
     }
 
-    /** Titles of the windows on screen, top first: a system dialog over the app shows here. */
-    private fun windowTitles(): String =
-        InstrumentationRegistry.getInstrumentation().uiAutomation.windows
-            .sortedByDescending { it.layer }
-            .joinToString { "${it.title ?: "?"} (type ${it.type})" }
+    /**
+     * What was on screen when a figure was not drawn: the five commonest
+     * colours (sampled, rounded), and the screenshot saved where CI collects
+     * it (`…/org.foundation.wikipedia.test/cache/figure-not-drawn-*.png`).
+     */
+    private fun screenReport(label: String): String {
+        val shot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            ?: return "no screenshot"
+        val counts = HashMap<Int, Int>()
+        for (y in 0 until shot.height step 8) {
+            for (x in 0 until shot.width step 8) {
+                counts.merge(shot.getPixel(x, y) and 0xF0F0F0, 1, Int::plus)
+            }
+        }
+        val colours = counts.entries.sortedByDescending { it.value }.take(5)
+            .joinToString { "#%06x×%d".format(it.key, it.value) }
+        val file = InstrumentationRegistry.getInstrumentation().context.externalCacheDir
+            ?.resolve("figure-not-drawn-${label.replace(' ', '-')}.png")
+        val saved = try {
+            file?.outputStream()?.use { shot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            file?.path
+        } catch (_: java.io.IOException) {
+            null
+        }
+        val size = "${shot.width}x${shot.height}"
+        shot.recycle()
+        return "screen $size, commonest colours $colours, saved to $saved"
+    }
 
     /** Wait for a figure's pixels; on timeout, fail with what the reader showed. */
     private fun waitForFigure(label: String, drawn: (Pair<Int, Int>) -> Boolean) {
@@ -130,7 +153,7 @@ class PackImagesUiTest {
             throw AssertionError(
                 "$label not drawn: (red, blue) pixels ${figurePixels()}; $state; " +
                     "PNG request now answers ${served?.statusCode} ${served?.mimeType}; viewer open=${viewerShown()}; " +
-                    "windows on screen: ${windowTitles()}",
+                    screenReport(label),
                 timeout,
             )
         }
