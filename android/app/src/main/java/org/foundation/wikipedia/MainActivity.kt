@@ -59,6 +59,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.launch
 
 /** Native Compose application shell; Wikimedia loading will be bound through Rust. */
@@ -229,7 +230,7 @@ private fun FoundationApp() {
                     title = {
                         Text(
                             if (shell.settingsOpen) shell.settingsCategory?.title ?: "Settings"
-                            else "Wikipedia"
+                            else stringResource(R.string.app_name)
                         )
                     },
                     navigationIcon = {
