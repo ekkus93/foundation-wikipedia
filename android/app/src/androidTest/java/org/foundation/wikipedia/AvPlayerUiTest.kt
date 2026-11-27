@@ -15,8 +15,8 @@ import org.junit.runner.RunWith
 
 /**
  * MOBPACK-003: the in-app player says so when nothing can be played, and
- * offers the browser. The streams here are on the reserved `.invalid`
- * domain, which never resolves, so the test contacts no server.
+ * offers the browser. The streams here are files that do not exist, which
+ * fail at once and contact no server.
  */
 @RunWith(AndroidJUnit4::class)
 class AvPlayerUiTest {
@@ -34,8 +34,8 @@ class AvPlayerUiTest {
                 title = "Launch film.webm",
                 video = true,
                 streams = listOf(
-                    "https://foundation.invalid/first.webm",
-                    "https://foundation.invalid/second.webm",
+                    "file:///nonexistent/first.webm",
+                    "file:///nonexistent/second.webm",
                 ),
                 onOpenInBrowser = { events += "browser" },
                 onClose = { events += "close" },

@@ -44,6 +44,9 @@ internal const val AV_PLAYER_TAG = "av-player"
 private const val STREAM_USER_AGENT =
     "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)"
 
+/** How long one address may take to start playing before it is given up. */
+internal const val CONNECT_TIMEOUT_MILLIS = 30_000L
+
 /** `95000` → `1:35`, `5753000` → `1:35:53`. */
 internal fun playbackClock(millis: Int): String {
     val seconds = (millis.coerceAtLeast(0) / 1000)
@@ -83,6 +86,15 @@ fun AvPlayer(
                 playing = view.isPlaying
             }
             delay(500)
+        }
+    }
+    // A stream that neither starts nor fails (a stalled connection) is
+    // given up after a while: the next address is tried, or the reader told.
+    LaunchedEffect(attempt) {
+        delay(CONNECT_TIMEOUT_MILLIS)
+        if (!prepared && !failed) {
+            player?.stopPlayback()
+            if (attempt + 1 < streams.size) attempt += 1 else failed = true
         }
     }
     DisposableEffect(Unit) {
