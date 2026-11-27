@@ -4,8 +4,8 @@ body { margin: 0; }
 button, input { font: inherit; }
 .topbar { border-bottom: 1px solid #eaecf0; display: flex; gap: 28px; align-items: center; padding: 15px 28px; }
 .brand { min-width: 250px; display: flex; align-items: center; gap: 12px; }
-.brandmark { font: bold 34px Georgia, serif; width: 49px; height: 49px; text-align: center; border: 2px solid #54595d; border-radius: 50%; }
-.brand strong { font: 22px Georgia, serif; display: block; }
+.brandmark { font: 600 18px/45px system-ui, sans-serif; letter-spacing: 1px; width: 49px; height: 49px; text-align: center; border: 2px solid #54595d; border-radius: 10px; }
+.brand strong { font: 600 20px system-ui, sans-serif; display: block; }
 .brand small { font-size: 11px; color: #54595d; display: block; }
 .search { flex: 1; max-width: 520px; padding: 11px; border: 1px solid #a2a9b1; background: #f8f9fa; }
 .status { font-size: 12px; color: #54595d; }

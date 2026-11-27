@@ -487,8 +487,8 @@ export default function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <div className="brand"><span aria-hidden="true" className="brandmark">W</span><span>
-          <strong>Wikipedia</strong><small>Foundation reader · preview</small>
+        <div className="brand"><span aria-hidden="true" className="brandmark">FL</span><span>
+          <strong>Foundation Library</strong><small>Independent Wikipedia reader · preview</small>
         </span></div>
         <span className="search-hint">Search Wikipedia in the reader below</span>
         <span className="status">Development preview</span>
@@ -500,8 +500,8 @@ export default function App() {
           <a href="#roadmap">Development</a>
         </nav>
         <main>
-          <p className="eyebrow">FOUNDATION WIKIPEDIA</p>
-          <h1 id="overview">Wikipedia reader preview</h1>
+          <p className="eyebrow">FOUNDATION LIBRARY</p>
+          <h1 id="overview">Foundation Library preview</h1>
           <nav className="reader-tabs" role="tablist" aria-label="Open article tabs" onKeyDown={(event) => {
             if (!(event.target instanceof HTMLButtonElement)) return;
             const idText = event.target.dataset.readerTabId;
