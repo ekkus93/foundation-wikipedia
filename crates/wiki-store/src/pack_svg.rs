@@ -148,6 +148,12 @@ pub fn sanitize_svg(source: &[u8]) -> Result<Vec<u8>, SvgRejected> {
         std::str::from_utf8(source).map_err(|_| SvgRejected::Malformed("not UTF-8".into()))?;
     let text = without_doctype(text)?;
     let text = text.as_ref();
+    // Bound the nesting before the parser sees it: a deeply nested document
+    // must be refused, not allowed to exhaust the stack of the (possibly
+    // small, app-owned) installing thread.
+    if element_nesting_exceeds(text.as_bytes(), MAX_DEPTH) {
+        return Err(SvgRejected::TooDeep);
+    }
     let options = roxmltree::ParsingOptions {
         allow_dtd: false,
         nodes_limit: MAX_NODES,
@@ -169,6 +175,59 @@ pub fn sanitize_svg(source: &[u8]) -> Result<Vec<u8>, SvgRejected> {
         return Err(SvgRejected::TooLarge);
     }
     Ok(out.into_bytes())
+}
+
+/// Whether the markup nests elements deeper than `limit`, counted without
+/// building a tree. Comments, CDATA, processing instructions and quoted
+/// attribute values are skipped, so the count is exact for any document the
+/// parser would accept; for anything else the parser refuses it anyway.
+fn element_nesting_exceeds(markup: &[u8], limit: usize) -> bool {
+    fn after(markup: &[u8], from: usize, end: &[u8]) -> usize {
+        markup[from..]
+            .windows(end.len())
+            .position(|window| window == end)
+            .map_or(markup.len(), |at| from + at + end.len())
+    }
+    let (mut depth, mut at) = (0usize, 0usize);
+    while at < markup.len() {
+        if markup[at] != b'<' {
+            at += 1;
+            continue;
+        }
+        let rest = &markup[at..];
+        if rest.starts_with(b"<!--") {
+            at = after(markup, at + 4, b"-->");
+        } else if rest.starts_with(b"<![CDATA[") {
+            at = after(markup, at + 9, b"]]>");
+        } else if rest.starts_with(b"<?") {
+            at = after(markup, at + 2, b"?>");
+        } else if rest.starts_with(b"<!") {
+            at = after(markup, at + 2, b">");
+        } else if rest.starts_with(b"</") {
+            depth = depth.saturating_sub(1);
+            at = after(markup, at + 2, b">");
+        } else {
+            let mut quote = None;
+            let mut end = at + 1;
+            while end < markup.len() {
+                match (quote, markup[end]) {
+                    (None, b'"' | b'\'') => quote = Some(markup[end]),
+                    (Some(open), byte) if byte == open => quote = None,
+                    (None, b'>') => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            if !(end > at + 1 && markup[end - 1] == b'/' && quote.is_none()) {
+                depth += 1;
+                if depth > limit + 1 {
+                    return true;
+                }
+            }
+            at = end + 1;
+        }
+    }
+    false
 }
 
 /// Whether `bytes` are exactly what [`sanitize_svg`] makes of them.
@@ -642,6 +701,26 @@ mod tests {
             "</g>".repeat(MAX_DEPTH + 2)
         );
         assert_eq!(sanitize_svg(deep.as_bytes()), Err(SvgRejected::TooDeep));
+        // TRUST-003: far deeper nesting is refused before parsing; it used to
+        // overflow the installing thread's stack.
+        for depth in [800, 5_000, 200_000] {
+            let bomb = format!(
+                "<svg xmlns=\"{SVG_NS}\">{}{}</svg>",
+                "<g>".repeat(depth),
+                "</g>".repeat(depth)
+            );
+            assert_eq!(sanitize_svg(bomb.as_bytes()), Err(SvgRejected::TooDeep));
+            let unclosed = format!("<svg xmlns=\"{SVG_NS}\">{}", "<g>".repeat(depth));
+            assert_eq!(sanitize_svg(unclosed.as_bytes()), Err(SvgRejected::TooDeep));
+        }
+        // Comments, CDATA and quoted attribute text that merely look like markup
+        // do not count as nesting.
+        let decoys = format!(
+            "<svg xmlns=\"{SVG_NS}\"><!-- {} --><desc><![CDATA[{}]]></desc><g id=\"a>b\" class='c>d'/></svg>",
+            "<g>".repeat(500),
+            "<g>".repeat(500)
+        );
+        assert!(sanitize_svg(decoys.as_bytes()).is_ok());
         let huge = vec![b' '; MAX_SVG_SOURCE_BYTES + 1];
         assert_eq!(sanitize_svg(&huge), Err(SvgRejected::TooLarge));
     }

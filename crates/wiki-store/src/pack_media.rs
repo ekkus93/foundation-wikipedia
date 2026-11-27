@@ -71,6 +71,10 @@ pub enum PackMediaError {
     Corrupt,
     /// An SVG is not exactly what the sanitiser makes of it (PACK-003).
     UnsafeSvg(String),
+    /// A raster image's bytes are not the format the index declares, or its
+    /// header claims an absurd pixel count (TRUST-003: MIME spoofing and
+    /// decompression bombs).
+    SpoofedImage(String),
     Io(String),
 }
 
@@ -228,6 +232,12 @@ pub fn check_pack_media(
                 return Err(PackMediaError::UnsafeSvg(image.sha256.clone()));
             }
         }
+        if image.mime != "image/svg+xml" {
+            let header = read_head(&staged.join(&path), 32)?;
+            if !raster_header_is(&image.mime, &header) {
+                return Err(PackMediaError::SpoofedImage(image.sha256.clone()));
+            }
+        }
         listed.insert(path);
         match required.get(&image.sha256) {
             Some(mime) if *mime == image.mime => {}
@@ -245,6 +255,51 @@ pub fn check_pack_media(
         return Err(PackMediaError::MissingImage(missing.clone()));
     }
     Ok(())
+}
+
+/// Most pixels a packed PNG or GIF may declare. A tiny file can claim a
+/// canvas that takes gigabytes to decode; nothing a pack carries needs more.
+const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
+
+fn read_head(path: &Path, count: u64) -> Result<Vec<u8>, PackMediaError> {
+    let io = |error: io::Error| PackMediaError::Io(error.to_string());
+    let mut head = Vec::new();
+    File::open(path)
+        .map_err(io)?
+        .take(count)
+        .read_to_end(&mut head)
+        .map_err(io)?;
+    Ok(head)
+}
+
+/// Whether `head` (the first bytes of an object) is the file signature of
+/// the declared raster `mime`, with a sane pixel count where the header
+/// states one. Browsers sniff and decode by content, so the declared type
+/// alone cannot be trusted.
+fn raster_header_is(mime: &str, head: &[u8]) -> bool {
+    match mime {
+        "image/png" => {
+            // Signature, then a 13-byte IHDR chunk with the dimensions.
+            head.len() >= 24
+                && head.starts_with(b"\x89PNG\r\n\x1a\n")
+                && head[8..16] == *b"\0\0\0\x0dIHDR"
+                && {
+                    let width = u64::from(u32::from_be_bytes(head[16..20].try_into().unwrap()));
+                    let height = u64::from(u32::from_be_bytes(head[20..24].try_into().unwrap()));
+                    width > 0 && height > 0 && width * height <= MAX_IMAGE_PIXELS
+                }
+        }
+        "image/jpeg" => head.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => {
+            (head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a")) && head.len() >= 10 && {
+                let width = u64::from(u16::from_le_bytes([head[6], head[7]]));
+                let height = u64::from(u16::from_le_bytes([head[8], head[9]]));
+                width > 0 && height > 0 && width * height <= MAX_IMAGE_PIXELS
+            }
+        }
+        "image/webp" => head.len() >= 12 && head.starts_with(b"RIFF") && head[8..12] == *b"WEBP",
+        _ => false,
+    }
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, PackMediaError> {
@@ -301,16 +356,58 @@ mod tests {
     }
 
     fn image(seed: u8, mime: &str) -> (PackImage, Vec<u8>) {
-        let bytes = vec![seed; 10];
+        // A real file signature (the installer sniffs raster formats), then
+        // seed-specific padding so each image has its own digest.
+        let mut bytes = match mime {
+            "image/png" => b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01".to_vec(),
+            "image/jpeg" => b"\xff\xd8\xff\xe0".to_vec(),
+            _ => Vec::new(),
+        };
+        bytes.extend_from_slice(&[seed; 10]);
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
         (
             PackImage {
                 sha256,
                 mime: mime.into(),
-                bytes: 10,
+                bytes: bytes.len() as u64,
             },
             bytes,
         )
+    }
+
+    #[test]
+    fn raster_bytes_must_be_the_declared_format_with_sane_dimensions() {
+        let png = |w: u32, h: u32| {
+            let mut head = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            head.extend_from_slice(&w.to_be_bytes());
+            head.extend_from_slice(&h.to_be_bytes());
+            head
+        };
+        assert!(raster_header_is("image/png", &png(1, 1)));
+        assert!(raster_header_is("image/png", &png(8192, 8192)));
+        // A header-sized file declaring a canvas that needs gigabytes.
+        assert!(!raster_header_is("image/png", &png(100_000, 100_000)));
+        assert!(!raster_header_is("image/png", &png(u32::MAX, u32::MAX)));
+        assert!(!raster_header_is("image/png", &png(0, 10)));
+        assert!(!raster_header_is("image/png", &png(1, 1)[..23]));
+        assert!(!raster_header_is("image/jpeg", &png(1, 1)));
+        assert!(raster_header_is("image/jpeg", b"\xff\xd8\xff\xe0"));
+        assert!(raster_header_is("image/gif", b"GIF89a\x01\0\x01\0"));
+        assert!(!raster_header_is("image/gif", b"GIF89a\xff\xff\xff\xff"));
+        assert!(!raster_header_is("image/gif", b"GIF89a"));
+        assert!(raster_header_is("image/webp", b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!raster_header_is("image/webp", b"RIFF\0\0\0\0WAVEfmt "));
+        for hostile in [
+            &b"<!doctype html><script>1</script>"[..],
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+            b"#!/bin/sh\n",
+            b"",
+        ] {
+            for mime in ["image/png", "image/jpeg", "image/gif", "image/webp"] {
+                assert!(!raster_header_is(mime, hostile));
+            }
+        }
+        assert!(!raster_header_is("text/html", b"<html>"));
     }
 
     #[test]
