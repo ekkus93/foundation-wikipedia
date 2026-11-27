@@ -1,6 +1,7 @@
 //! Authoritative Wikimedia snapshot metadata validation.
 //! Download transport and checksum verification are separate SRC-001 steps.
 
+pub mod attribution;
 mod av_preview;
 pub mod enterprise;
 pub mod enterprise_integrity;

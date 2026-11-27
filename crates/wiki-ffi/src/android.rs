@@ -259,6 +259,9 @@ pub struct ArticlePage {
     /// SHA-256 of each image that is only an animation's first frame; the
     /// reader labels it (PACK-003).
     pub still_images: Vec<String>,
+    /// The article's attribution section (licence, revision and history
+    /// links, media credits), ready to append to the sanitized page (SEC-002).
+    pub attribution_html: String,
 }
 
 impl From<&Article> for SearchHit {
@@ -475,6 +478,7 @@ impl OfflineLibrary {
                 let mut still_images: Vec<String> = sources.stills.into_iter().collect();
                 still_images.sort();
                 ArticlePage {
+                    attribution_html: wiki_source::attribution::attribution_section(&article),
                     images: sources.by_file,
                     still_images,
                     project: article.key.project,

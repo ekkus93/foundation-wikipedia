@@ -5185,6 +5185,12 @@ data class ArticlePage (
      * reader labels it (PACK-003).
      */
     var `stillImages`: List<kotlin.String>
+    , 
+    /**
+     * The article's attribution section (licence, revision and history
+     * links, media credits), ready to append to the sanitized page (SEC-002).
+     */
+    var `attributionHtml`: kotlin.String
     
 ){
     
@@ -5209,6 +5215,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.read(buf),
             FfiConverterMapStringString.read(buf),
             FfiConverterSequenceString.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -5220,7 +5227,8 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.allocationSize(value.`displayTitle`) +
             FfiConverterString.allocationSize(value.`html`) +
             FfiConverterMapStringString.allocationSize(value.`images`) +
-            FfiConverterSequenceString.allocationSize(value.`stillImages`)
+            FfiConverterSequenceString.allocationSize(value.`stillImages`) +
+            FfiConverterString.allocationSize(value.`attributionHtml`)
     )
 
     override fun write(value: ArticlePage, buf: ByteBuffer) {
@@ -5232,6 +5240,7 @@ public object FfiConverterTypeArticlePage: FfiConverterRustBuffer<ArticlePage> {
             FfiConverterString.write(value.`html`, buf)
             FfiConverterMapStringString.write(value.`images`, buf)
             FfiConverterSequenceString.write(value.`stillImages`, buf)
+            FfiConverterString.write(value.`attributionHtml`, buf)
     }
 }
 

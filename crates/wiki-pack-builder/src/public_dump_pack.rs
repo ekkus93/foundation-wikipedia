@@ -1004,6 +1004,22 @@ mod tests {
             );
             assert_eq!(document.matches(&local).count(), 1, "{}", asset.source_url);
         }
+        // Attribution (SEC-002): each embedded image is credited offline,
+        // with its creator, licence and file page.
+        assert!(document.contains("foundation-attribution"), "{document}");
+        assert!(document.contains("oldid="), "{document}");
+        for asset in &article.media {
+            let name = wiki_source::media_download::media_file_name(&asset.source_url).unwrap();
+            assert!(
+                document.contains(&format!("<strong>{name}</strong>")),
+                "{name} not credited"
+            );
+            assert!(document.contains(&asset.license), "{name}");
+            assert!(
+                document.contains(&format!("/wiki/File:{}\"", name.replace(' ', "_"))),
+                "{name} has no file page link"
+            );
+        }
         assert_eq!(
             document.matches(" src=").count(),
             article.media.len(),

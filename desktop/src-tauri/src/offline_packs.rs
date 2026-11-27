@@ -176,13 +176,13 @@ pub async fn review_offline_pack(
                     *reviewed = Some((path.clone(), review.identity_sha256.clone()));
                 }
                 Ok(PackReviewDto {
-                trust_description: pack_trust_description(review.trust),
-                snapshot_id: review.snapshot_id,
-                project: review.project,
-                trust_label: review.trust_label,
-                articles: review.articles,
-                declared_bytes: review.declared_bytes,
-            })
+                    trust_description: pack_trust_description(review.trust),
+                    snapshot_id: review.snapshot_id,
+                    project: review.project,
+                    trust_label: review.trust_label,
+                    articles: review.articles,
+                    declared_bytes: review.declared_bytes,
+                })
             }
             (Err(error), _) => Err(message(error)),
             (Ok(_), _) => Err("The pack was installed without review.".to_owned()),
@@ -310,8 +310,16 @@ fn sanitized(page: wiki_ffi::android::ArticlePage) -> (u64, u64, String, String)
         page.page_id,
         page.revision_id,
         page.display_title,
-        wiki_source::reader_document::sanitize_pack_article_html(&page.html, &images),
+        with_attribution(
+            wiki_source::reader_document::sanitize_pack_article_html(&page.html, &images),
+            &page.attribution_html,
+        ),
     )
+}
+
+/// The page body followed by its attribution section (SEC-002).
+fn with_attribution(body: String, attribution: &str) -> String {
+    format!("{body}{attribution}")
 }
 
 /// Serve `packimage://localhost/<sha256>` from the active pack, re-hashed;
@@ -390,6 +398,27 @@ pub async fn open_offline_title(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_desktop_page_ends_with_the_attribution_section() {
+        let page = wiki_ffi::android::ArticlePage {
+            project: "enwiki".into(),
+            page_id: 1,
+            revision_id: 2,
+            title: "T".into(),
+            display_title: "T".into(),
+            html: "<p>Body</p>".into(),
+            images: Default::default(),
+            still_images: vec![],
+            attribution_html: "<section class=\"foundation-attribution\">credits</section>".into(),
+        };
+        let (_, _, _, html) = sanitized(page);
+        assert!(html.starts_with("<p>Body</p>"), "{html}");
+        assert!(
+            html.ends_with("<section class=\"foundation-attribution\">credits</section>"),
+            "{html}"
+        );
+    }
 
     #[test]
     fn tree_sizes_count_files_without_following_links() {

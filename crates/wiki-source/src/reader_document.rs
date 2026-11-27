@@ -488,7 +488,7 @@ pub fn sanitize_online_article_html(html: &str) -> String {
         .to_string()
 }
 
-fn escape_text(text: &str) -> String {
+pub(crate) fn escape_text(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -524,6 +524,9 @@ sup{line-height:1}\
 .foundation-still-note{display:block;color:var(--muted);font-size:.8em}\
 .foundation-map-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.6em .8em;color:var(--muted);font-size:.9em}\
 .foundation-map-credit{display:block;color:var(--muted);font-size:.75em}\
+.foundation-attribution{border-top:1px solid var(--rule);margin-top:2em;font-size:.85em;color:var(--muted)}\
+.foundation-attribution h2{font-size:1.1em}.foundation-attribution h3{font-size:1em}\
+.foundation-attribution-note{font-size:.9em}\
 .foundation-av-note{display:block;border:1px solid var(--rule);background:var(--box);padding:.4em .7em;color:var(--muted);font-size:.9em}";
 
 /// A complete, script-free document for one verified article revision.
@@ -749,13 +752,14 @@ fn wrap_document(article: &Article, theme: ReaderTheme, body: &str) -> String {
 <meta name=\"color-scheme\" content=\"{scheme}\">\
 <title>{title}</title><style>{STYLE}</style></head><body>\
 <h1>{title}</h1><p class=\"revision\">Revision {revision} · offline copy</p>\
-<main>{body}</main></body></html>",
+<main>{body}</main>{attribution}</body></html>",
         scheme = match theme {
             ReaderTheme::Light => "light",
             ReaderTheme::Dark => "dark",
         },
         title = escape_text(&article.display_title),
         revision = article.revision.revision_id,
+        attribution = crate::attribution::attribution_section(article),
     )
 }
 
@@ -1023,6 +1027,32 @@ mod tests {
             media: vec![],
             rendered_html: html.into(),
             is_disambiguation: false,
+        }
+    }
+
+    #[test]
+    fn the_android_document_carries_the_attribution_after_the_article() {
+        let mut art = article("<p>Body</p>");
+        art.media.push(wiki_model::MediaAsset {
+            source_url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Figure.svg".into(),
+            mime_type: "image/svg+xml".into(),
+            sha256: Some("b".repeat(64)),
+            license: "CC0".into(),
+            creator: "Someone <b>".into(),
+            attribution: String::new(),
+            is_av_preview: false,
+            derivation: None,
+        });
+        for theme in [ReaderTheme::Light, ReaderTheme::Dark] {
+            let doc = reader_document(&art, theme);
+            let main_end = doc.find("</main>").unwrap();
+            let section = doc
+                .find("<section class=\"foundation-attribution\">")
+                .unwrap();
+            assert!(section > main_end, "{doc}");
+            assert!(doc.contains("<strong>Figure.svg</strong>: Someone &lt;b&gt; · CC0"));
+            assert!(doc.contains("title=Physics&amp;oldid=12"));
+            assert!(doc.contains("affiliated with the Wikimedia Foundation"));
         }
     }
 
