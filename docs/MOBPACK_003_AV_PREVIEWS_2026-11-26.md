@@ -96,10 +96,14 @@ The desktop reader now plays a "Play online" file inside the app, as Android doe
 - **Tests:** `desktop/scripts/avPlayer.test.mjs` (clock, candidate stepping, disclosure value, address check), the `av_stream` unit tests in `desktop/src-tauri`, and the `wiki-source` tests.
 - **Limits:** which codecs play depends on the operating system's webview (WebView2, WebKitGTK, WKWebView); a WebKitGTK without GStreamer's VP9 plugins may fail every rendering and fall to the "could not be played here" offer. Not tried by hand in a window. WebM seeking over HTTP may be as slow as on Android's Samsung player; the 30 s fall-through applies equally.
 
+## Desktop player CI (2026-11-27)
+
+`170800ae`…`421aa22f` (player) plus `cae2479d`: Work offline, or a lost connection, closes the player at once, so nothing more is fetched. Exact-head CI on `cae2479d`: all seven workflows passed, incl. [Desktop launch smoke 46027659784](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659784), [Rust workspace 46027659679](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659679) and [Android FFI bridge 46027659689](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659689) (`OK (48 tests)`).
+
 ## Not done
 
 - **Desktop player, by hand:** see "Desktop player" below. It was built and unit-tested but never run in a real window, so no WebView2, WebKitGTK or WKWebView has been seen playing anything, and the first-use notice has not been tried by hand. Its offline message was checked by unit test only.
 - **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
-- **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page.
+- **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page, which carries both. A pack distributes no audio, so the licence asks nothing of it. A video is credited through its still, which is the video's own Commons file. Storing credit-only records would change the pack contract: every media record must have its bytes, and the builder and installer refuse one without. So this is left as is unless the owner wants it.
 - **No hidden requests:** shown for the reader by its request handler tests; not measured with a network log on a device.
 - **Offline audio and video:** deferred (FUT-004). A size-limited option for short clips was discussed and left deferred.

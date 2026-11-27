@@ -19,6 +19,10 @@ The first version sized the image by height (`height:100%`, then `100vh`). In th
 - **Emulator (API 35):** `PackImagesUiTest.aTappedFigureOpensFullScreenSurvivesRotationAndCloses` taps the red figure, waits for the viewer, checks the red image is drawn and the article's blue SVG is not, recreates the activity, and closes. Full suite `OK (44 tests)`.
 - **Samsung Galaxy A54 (Android 16):** the Eiffel Tower photograph from the real pack opened full screen and Back returned to the article at the same place. Suite: 42 of 44 passed, including both image tests; the two failures were the hosted-AI tests, which could not resolve `api.anthropic.com` because the phone was in airplane mode.
 
+## Real rotation (2026-11-27, `a392a1fe`)
+
+`aTappedFigureOpensFullScreenSurvivesRotationAndCloses` now turns the device itself to landscape and back (`UiDevice.setOrientationLeft`, then `setOrientationNatural`) instead of recreating the activity. After each turn the viewer must still be open and still drawing the red image. The test restores the natural orientation and unfreezes rotation even if it fails. It passed on the A54 (`PackImagesUiTest` `OK (2 tests)`, 14 s); the phone's rotation settings were unchanged afterwards. The test makes its own pack active, so the phone's previous active pack (`android-sample`) was restored by hand. CI on `a392a1fe`: all four workflows passed, incl. [Android FFI bridge 46026537810](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46026537810) (`OK (48 tests)`, so the real turn also passes on the CI emulator) and [Rust workspace 46026538196](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46026538196).
+
 ## CI
 
 - **`ab18579f`:** Rust workspace, Platform shells and Android install smoke passed. [Android FFI bridge 45943533852](https://github.com/ekkus93/foundation-wikipedia/actions/runs/45943533852) failed: both `PackImagesUiTest` tests timed out waiting for the article's red figure, and the test's failure report then crashed (it read the WebView client off the UI thread), so the log does not say what was on screen.
@@ -29,5 +33,4 @@ The "figure not drawn within 30 s" timeout has now happened on CI in three runs 
 ## Not verified
 
 - **Pinch zoom by hand:** enabled, but a two-finger gesture was not performed (adb cannot send one simply). Owner to try on the phone.
-- **Rotation on a device:** covered by activity recreation in the emulator test, not by turning the phone.
 - **Online reading on Android:** not built (needs a rustls Wikipedia transport).
