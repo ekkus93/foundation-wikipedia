@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Foundation Wikipedia</string>
+    <string name="app_name">Foundation Library</string>
     <string name="ask_about_selection">Ask about this</string>
-    <string name="ask_about_selection_elsewhere">Open the article in Foundation Wikipedia to ask about it.</string>
+    <string name="ask_about_selection_elsewhere">Open the article in Foundation Library to ask about it.</string>
 </resources>

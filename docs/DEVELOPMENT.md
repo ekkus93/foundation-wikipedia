@@ -1,4 +1,4 @@
-# Foundation Wikipedia development environment
+# Foundation Library development environment
 
 This document describes the bootstrapped projects. Requirements and completion are governed by [SPEC](WIKIPEDIA_AI_READER_SPEC.md) and [TODO](WIKIPEDIA_AI_READER_TODO.md).
 

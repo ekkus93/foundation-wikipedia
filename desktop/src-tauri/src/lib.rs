@@ -1711,7 +1711,7 @@ pub fn run() {
             set_reader_width
         ])
         .run(tauri::generate_context!())
-        .expect("Foundation Wikipedia desktop failed to start");
+        .expect("Foundation Library desktop failed to start");
 }
 
 #[cfg(test)]

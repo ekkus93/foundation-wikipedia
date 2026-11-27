@@ -110,7 +110,7 @@ def fetch_official(url):
         raise ExportDiscoveryError("nonofficial checksum URL")
     client = build_opener(_NoRedirect())
     with client.open(Request(url, headers={
-        "User-Agent": "FoundationWikipedia/0.1 current-content-discovery",
+        "User-Agent": "FoundationLibrary/0.1 current-content-discovery",
         "Accept-Encoding": "identity",
     }), timeout=25) as response:
         if response.geturl() != url or response.status != 200:

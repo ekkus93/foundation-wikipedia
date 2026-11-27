@@ -1,4 +1,4 @@
-# Foundation Wikipedia — Product and Technical Specification
+# Foundation Library — Product and Technical Specification
 
 **Status:** Authoritative proposed design baseline; implementation pending  
 **Version:** 1.0 — 2026-10-09  
@@ -7,7 +7,7 @@
 
 ## 1. Vision, priorities and normative terminology
 
-Foundation Wikipedia is a **Wikipedia reader first**, enhanced by optional article-aware AI. The product must preserve the recognizable Wikipedia desktop/mobile reading experience. The AI and application-owned controls appear as an overlay. **Reading, normal navigation, search, bookmarks and offline content must remain useful when AI is disabled or unavailable.**
+Foundation Library is a **Wikipedia reader first**, enhanced by optional article-aware AI. The product must preserve the recognizable Wikipedia desktop/mobile reading experience. The AI and application-owned controls appear as an overlay. **Reading, normal navigation, search, bookmarks and offline content must remain useful when AI is disabled or unavailable.**
 
 In this document **MUST** indicates required behavior, **SHOULD** a strong default requiring written justification to change, and **MAY** optional or deferred behavior. Screens, example sizes and dates are illustrative, not measured release claims. No requirement is considered implemented merely because it is described here. The accompanying TODO governs implementation completion and evidence.
 

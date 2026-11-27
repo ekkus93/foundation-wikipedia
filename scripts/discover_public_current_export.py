@@ -43,7 +43,7 @@ def discover_completed_export(project, date, output, *, opener=None):
             or output.parent.is_symlink() or not output.parent.is_dir()):
         raise DumpExtractionError("unsafe or existing inventory destination")
     opener = opener if opener is not None else build_opener(NoRedirect())
-    request = Request(url, headers={"User-Agent": "FoundationWikipedia/0.1"})
+    request = Request(url, headers={"User-Agent": "FoundationLibrary/0.1"})
     try:
         with opener.open(request, timeout=30) as response:
             if response.status != 200 or response.geturl() != url:

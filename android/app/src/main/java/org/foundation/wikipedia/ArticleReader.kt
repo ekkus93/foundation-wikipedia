@@ -126,7 +126,7 @@ body{margin:24px;font:16px/1.6 sans-serif;color:#202122;background:#fff}
 :root.dark body{color:#eaecf0;background:#101418}
 h1{font:400 28px Georgia,serif;border-bottom:1px solid #a2a9b1}
 </style></head><body>
-<h1>Foundation Wikipedia</h1>
+<h1>Foundation Library</h1>
 <p>Search above to read articles from your active offline pack.</p>
 <p>Install or activate a pack in Settings › Wikipedia &amp; Offline Data.
 Online reading is not available on Android yet.</p>

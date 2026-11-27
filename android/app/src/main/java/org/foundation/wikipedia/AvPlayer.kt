@@ -42,7 +42,7 @@ internal const val AV_PLAYER_TAG = "av-player"
 
 /** Sent with every stream request, as Wikimedia asks of automated clients. */
 private const val STREAM_USER_AGENT =
-    "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)"
+    "FoundationLibrary/0.1 (+https://github.com/ekkus93/foundation-wikipedia)"
 
 /** How long one address may take to start playing before it is given up. */
 internal const val CONNECT_TIMEOUT_MILLIS = 30_000L

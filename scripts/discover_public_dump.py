@@ -156,7 +156,7 @@ def fetch_official(url):
     if not url.startswith(HOST + "/"):
         raise DiscoveryError("nonofficial source URL")
     opener = build_opener(_NoRedirect())
-    with opener.open(Request(url, headers={"User-Agent": "FoundationWikipedia/0.1 source-discovery"}), timeout=20) as response:
+    with opener.open(Request(url, headers={"User-Agent": "FoundationLibrary/0.1 source-discovery"}), timeout=20) as response:
         if response.geturl() != url:
             raise DiscoveryError("unexpected source URL after fetch")
         data = response.read(MAX_BYTES + 1)

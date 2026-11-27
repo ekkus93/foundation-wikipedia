@@ -161,7 +161,7 @@ def _transfer(item, directory, *, opener, download_url=None, retry_sleep=time.sl
         raise ExportStagingError("oversized interrupted transfer")
 
     request = Request(url, headers={
-        "User-Agent": "FoundationWikipedia/0.1 current-content-stager",
+        "User-Agent": "FoundationLibrary/0.1 current-content-stager",
         "Accept-Encoding": "identity",
         **({"Range": f"bytes={offset}-"} if offset else {}),
     })

@@ -90,7 +90,7 @@ class GenerationStagingTests(unittest.TestCase):
                    side_effect=PublicationError("upstream mismatch")) as verify:
             with self.assertRaisesRegex(DownloadError, "revalidation failed"):
                 stage_generation(self.report, self.staging, self.manifest,
-                                 user_agent="FoundationWikipedia 0.1")
+                                 user_agent="FoundationLibrary 0.1")
             verify.assert_called_once_with(self.report)
         self.assertFalse(self.staging.exists())
         self.assertFalse(self.manifest.exists())

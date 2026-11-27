@@ -154,7 +154,7 @@ impl CurlTransport {
                     "--show-error",
                     "--globoff",
                     "--user-agent",
-                    "FoundationWikipedia/0.1 (+https://github.com/ekkus93/foundation-wikipedia)",
+                    "FoundationLibrary/0.1 (+https://github.com/ekkus93/foundation-wikipedia)",
                     "--header",
                     &format!("Accept: {accept}"),
                     "--proto",

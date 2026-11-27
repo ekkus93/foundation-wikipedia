@@ -10,7 +10,7 @@ from download_public_dump import DownloadError, fetch_dump_member
 
 BODY = b"abcde"
 URL = "https://dumps.wikimedia.org/enwiki/20261009/articles.xml"
-AGENT = "FoundationWikipedia/0.1 (https://github.com/ekkus93/foundation-wikipedia)"
+AGENT = "FoundationLibrary/0.1 (https://github.com/ekkus93/foundation-wikipedia)"
 
 
 class Response:

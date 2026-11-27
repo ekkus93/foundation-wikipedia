@@ -77,7 +77,7 @@ def _download_verified(url, target, expected, opener, member_limit, remaining):
             _publish_partial(part, target)
             return offset, "resumed"
 
-        headers = {"User-Agent": "FoundationWikipedia/0.1",
+        headers = {"User-Agent": "FoundationLibrary/0.1",
                    "Accept-Encoding": "identity"}
         if offset:
             headers["Range"] = f"bytes={offset}-"
@@ -210,7 +210,7 @@ def stage_official_verified_members(inventory, project, date, staging_dir,
     url = official_url(project, date)
     try:
         with opener.open(Request(url, headers={
-            "User-Agent": "FoundationWikipedia/0.1",
+            "User-Agent": "FoundationLibrary/0.1",
             "Accept-Encoding": "identity",
         }), timeout=30) as response:
             if response.status != 200 or response.geturl() != url:

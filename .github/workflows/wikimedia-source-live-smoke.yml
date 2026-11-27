@@ -55,7 +55,7 @@ jobs:
           request = Request(
               url,
               headers={
-                  "User-Agent": "FoundationWikipedia/0.1 live-source-smoke",
+                  "User-Agent": "FoundationLibrary/0.1 live-source-smoke",
                   "Accept-Encoding": "identity",
                   "Range": "bytes=0-0",
               },

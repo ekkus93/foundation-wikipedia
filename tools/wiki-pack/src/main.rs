@@ -36,7 +36,7 @@ use wiki_pack_builder::wiki_pack_format::stage::{
 };
 
 fn usage() {
-    println!("Foundation Wikipedia pack CLI (provisional)");
+    println!("Foundation Library pack CLI (provisional)");
     println!("Usage: wiki-pack verify [--json] <file.wpack> [max-input-bytes]");
     println!(
         "       wiki-pack verify-staged [--json] <file.wpack> <staged-directory> [max-input-bytes]"

@@ -124,7 +124,7 @@ export function AboutSettings() {
     void getVersion().then(setVersion).catch(() => {});
   }, []);
   return <section aria-label="About">
-    <p>Foundation Wikipedia reader {version ? `version ${version}` : ""} — development preview.</p>
+    <p>Foundation Library reader {version ? `version ${version}` : ""} — development preview.</p>
     <p>An independent reader for Wikipedia; it is not made by or affiliated with the Wikimedia Foundation.
       Wikipedia is a trademark of the Wikimedia Foundation.</p>
     <p>Article text is available under the Creative Commons Attribution-ShareAlike licence (CC BY-SA 4.0)

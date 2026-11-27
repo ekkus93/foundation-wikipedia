@@ -24,7 +24,7 @@ ABSOLUTE_MAX_HTML_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_RECORDS = 100_000
 MAX_RETRY_AFTER_SECONDS = 30
 RETRYABLE_STATUS = {429, 503}
-USER_AGENT = "FoundationWikipedia/0.1 (public-dump revision renderer)"
+USER_AGENT = "FoundationLibrary/0.1 (public-dump revision renderer)"
 
 
 class RenderError(ValueError):

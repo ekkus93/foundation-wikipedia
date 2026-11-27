@@ -1,4 +1,6 @@
-# Foundation Wikipedia
+# Foundation Library
+
+The app was called Foundation Wikipedia until 2026-11-26. It is not made by or affiliated with the Wikimedia Foundation; Wikipedia is a trademark of the Wikimedia Foundation. Internal identifiers (the Android package `org.foundation.wikipedia`, the desktop data folder, the repository name) still use the old name and will change once, before the first public release.
 
 A Wikipedia-first reader with optional grounded AI, offline topic packs and a shared Rust core.
 

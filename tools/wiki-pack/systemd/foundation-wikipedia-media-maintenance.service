@@ -1,7 +1,7 @@
 # Opt-in user unit. Install manually; never enabled by a package build.
 # The executable must be installed at ~/.local/bin/wiki-pack.
 [Unit]
-Description=Foundation Wikipedia bounded media garbage collection
+Description=Foundation Library bounded media garbage collection
 Documentation=man:systemd.service(5)
 
 [Service]
