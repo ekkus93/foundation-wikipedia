@@ -120,7 +120,7 @@ class RealPackAcceptanceTest {
             compose.onAllNodesWithContentDescription("Open reader actions")
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         compose.waitUntil(timeoutMillis = 10_000) { shown("Settings") }
         compose.onNodeWithText("Settings").performClick()
         compose.onNodeWithText("Wikipedia & Offline Data").performScrollTo().performClick()

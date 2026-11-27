@@ -87,7 +87,7 @@ class SavedContentUiTest {
     }
 
     private fun action(label: String) {
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         compose.onNodeWithText(label).performClick()
     }
 
@@ -107,7 +107,7 @@ class SavedContentUiTest {
         open("tide", "Tide")
         action("Bookmark")
         compose.waitUntil(timeoutMillis = 10_000) { shown("Bookmarked “Tide”.") }
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         assertTrue("the action now removes it", shown("Remove bookmark"))
         compose.onNodeWithContentDescription("Close reader actions").performClick()
 
@@ -133,7 +133,7 @@ class SavedContentUiTest {
         compose.waitUntil(timeoutMillis = 30_000) {
             !shown("History & Saved Content")
         }
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         compose.waitUntil(timeoutMillis = 10_000) { shown("Remove bookmark") }
         compose.onNodeWithContentDescription("Close reader actions").performClick()
 

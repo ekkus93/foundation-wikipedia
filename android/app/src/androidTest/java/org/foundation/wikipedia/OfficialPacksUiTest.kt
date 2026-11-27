@@ -91,7 +91,7 @@ class OfficialPacksUiTest {
             compose.onAllNodesWithContentDescription("Open reader actions")
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         // The menu opens a frame later; on a slow emulator it is not there yet.
         compose.waitUntil(timeoutMillis = 10_000) {
             compose.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()

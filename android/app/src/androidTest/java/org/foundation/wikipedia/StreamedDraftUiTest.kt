@@ -153,7 +153,7 @@ class StreamedDraftUiTest {
         compose.waitUntil(timeoutMillis = 30_000) {
             compose.onAllNodesWithContentDescription("Open reader actions").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithContentDescription("Open reader actions").performClick()
+        compose.openReaderActions()
         compose.onNodeWithText("Chat").performClick()
         compose.waitUntil(timeoutMillis = 15_000) {
             compose.onAllNodesWithText("Model fake:1b", substring = true).fetchSemanticsNodes().isNotEmpty()
