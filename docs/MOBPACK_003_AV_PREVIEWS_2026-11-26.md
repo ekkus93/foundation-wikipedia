@@ -100,9 +100,21 @@ The desktop reader now plays a "Play online" file inside the app, as Android doe
 
 `170800ae`…`421aa22f` (player) plus `cae2479d`: Work offline, or a lost connection, closes the player at once, so nothing more is fetched. Exact-head CI on `cae2479d`: all seven workflows passed, incl. [Desktop launch smoke 46027659784](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659784), [Rust workspace 46027659679](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659679) and [Android FFI bridge 46027659689](https://github.com/ekkus93/foundation-wikipedia/actions/runs/46027659689) (`OK (48 tests)`).
 
+## Desktop player in a real window (2026-11-27)
+
+Tauri dev build of `c7dd6ab9` on Linux (WebKitGTK), on a virtual X display (Xvfb), with live Wikipedia. The desktop app's data folder was backed up first and restored byte for byte afterwards.
+
+- **Video:** enwiki *Night of the Living Dead* shows the film's still and "Video · 1:35:53 · Play online (needs Internet)".
+  - The first click showed the notice, with the same wording as Android. After "Accept and play" the film was playing in the app within about 20 s (0:20 / 1:35:52).
+  - Pause stopped it at 0:28, with the button changing to Play. Clicking halfway along the slider and pressing Play resumed at 49:24, still playing.
+  - Escape closed the player and returned to the article.
+- **Offline:** with Work offline on, the same link gave "Playing this needs an Internet connection." No notice or player appeared.
+- **Audio:** simplewiki *Latin*, "Audio · 1:14 · Play online". The compact audio player opened straight away, because the notice is shown once. *Pronunciation Latin (Specials).ogg* was playing (0:11 / 1:13), and Close closed it.
+- **Found on the way:** an enwiki musical score (*Gymnopédies*) has its own generated recording ("download the audio file"). That is not a Commons file, so it gets no "Play online" note and is treated as an ordinary outside link.
+
 ## Not done
 
-- **Desktop player, by hand:** see "Desktop player" below. It was built and unit-tested but never run in a real window, so no WebView2, WebKitGTK or WKWebView has been seen playing anything, and the first-use notice has not been tried by hand. Its offline message was checked by unit test only.
+- **Desktop player on Windows and macOS:** played in a real window on Linux (WebKitGTK) only, see above. WebView2 and WKWebView may differ in the formats they play. Which address played was not logged. Closing the player when Work offline is switched on while it is open was not tried by hand, because the player covers that switch.
 - **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
 - **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page, which carries both. A pack distributes no audio, so the licence asks nothing of it. A video is credited through its still, which is the video's own Commons file. Storing credit-only records would change the pack contract: every media record must have its bytes, and the builder and installer refuse one without. So this is left as is unless the owner wants it.
 - **No hidden requests:** shown for the reader by its request handler tests; not measured with a network log on a device.
