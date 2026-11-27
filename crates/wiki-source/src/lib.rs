@@ -3,6 +3,7 @@
 
 pub mod attribution;
 mod av_preview;
+pub mod av_stream;
 pub mod enterprise;
 pub mod enterprise_integrity;
 pub mod enterprise_ndjson;
