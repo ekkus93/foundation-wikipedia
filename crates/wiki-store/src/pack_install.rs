@@ -108,6 +108,10 @@ pub enum PackInstallError {
     NotInstalled,
     /// The pack's images are incomplete, unused, mislabelled or damaged.
     Media(PackMediaError),
+    /// An article's HTML is beyond the readers' display limits (too large,
+    /// too deeply nested or too many character references), so it could
+    /// never be shown; the title is the first such article (TRUST-003).
+    ArticleTooComplex(String),
     /// Declared article/redirect counts disagree with the verified catalog.
     CountMismatch {
         declared: Counts,
@@ -492,11 +496,17 @@ fn scan_catalog_records(catalog_path: &Path, root: &Path) -> Result<CatalogScan,
     let mut required = BTreeMap::new();
     let mut without_bytes = Vec::new();
     let mut conflict = None;
+    let mut too_complex = None;
     catalog
         .visit_records(root, |record| {
             match record {
                 wiki_model::PageRecord::Article(article) => {
                     counts.articles += 1;
+                    if too_complex.is_none()
+                        && !wiki_model::html_within_display_limits(&article.rendered_html)
+                    {
+                        too_complex = Some(article.title.clone());
+                    }
                     match required_images([&*article]) {
                         Ok((images, missing)) => {
                             for (digest, mime) in images {
@@ -519,6 +529,9 @@ fn scan_catalog_records(catalog_path: &Path, root: &Path) -> Result<CatalogScan,
             Ok::<(), crate::catalog::CatalogError>(())
         })
         .map_err(|error| PackInstallError::Reader(ReaderError::Catalog(error)))?;
+    if let Some(title) = too_complex {
+        return Err(PackInstallError::ArticleTooComplex(title));
+    }
     if let Some(digest) = conflict {
         return Err(PackInstallError::Media(PackMediaError::MissingImage(
             digest,
@@ -992,6 +1005,10 @@ mod tests {
 
     /// Build a snapshot-layout tree (catalog, one shard, optional index).
     fn snapshot_tree(dir: &Path, revision_id: u64, with_index: bool) {
+        snapshot_tree_with_html(dir, revision_id, with_index, "<article>Mars</article>");
+    }
+
+    fn snapshot_tree_with_html(dir: &Path, revision_id: u64, with_index: bool, html: &str) {
         fs::create_dir_all(dir).unwrap();
         let article = Article {
             schema_version: ARTICLE_SCHEMA_VERSION,
@@ -1015,7 +1032,7 @@ mod tests {
             references: vec![],
             links: vec![],
             media: vec![],
-            rendered_html: "<article>Mars</article>".into(),
+            rendered_html: html.into(),
             is_disambiguation: false,
         };
         let mut shard = Vec::new();
@@ -1523,6 +1540,57 @@ mod tests {
         // Published snapshots are never touched.
         assert_eq!(open_revision(&installed), 3015);
         assert_eq!(reclaim_abandoned_staging(&root).unwrap().0, 0);
+    }
+
+    /// TRUST-003: an article the readers could not display is refused by
+    /// the builder and by both install paths, leaving nothing behind; one
+    /// exactly at the nesting limit installs.
+    #[test]
+    fn an_article_beyond_the_display_limits_is_refused_at_install() {
+        let dir = test_dir("too-complex");
+        let root = dir.0.join("root");
+        fs::create_dir_all(&root).unwrap();
+        let nested = |depth: usize| format!("{}x{}", "<div>".repeat(depth), "</div>".repeat(depth));
+
+        let within = dir.0.join("within");
+        snapshot_tree_with_html(
+            &within,
+            3020,
+            true,
+            &nested(wiki_model::MAX_DISPLAY_NESTING),
+        );
+        install(&root, &pack_bytes(&within, "within")).unwrap();
+
+        let beyond = dir.0.join("beyond");
+        snapshot_tree_with_html(
+            &beyond,
+            3021,
+            true,
+            &nested(wiki_model::MAX_DISPLAY_NESTING + 1),
+        );
+        assert!(matches!(
+            snapshot_pack_metadata(
+                &beyond,
+                PackMetadata::synthetic_fixture().source,
+                &"0".repeat(64),
+                "CC-BY-SA-4.0",
+            ),
+            Err(PackInstallError::ArticleTooComplex(title)) if title == "Mars"
+        ));
+        // Declared counts are honest; only the article is refused.
+        let mut metadata = metadata_for(&within);
+        metadata.counts.articles = 1;
+        let bytes = pack_with(&beyond, "beyond", metadata);
+        assert!(matches!(
+            install(&root, &bytes),
+            Err(PackInstallError::ArticleTooComplex(title)) if title == "Mars"
+        ));
+        assert!(matches!(
+            install_custom_pack_stream(&root, &mut Cursor::new(&bytes), 1 << 30, |_| true),
+            Err(PackInstallError::ArticleTooComplex(_))
+        ));
+        assert!(!root.join("snapshots/beyond").exists());
+        assert_eq!(staging_entries(&root), 0);
     }
 
     #[test]

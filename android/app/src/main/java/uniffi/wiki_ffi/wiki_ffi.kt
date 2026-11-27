@@ -7201,6 +7201,16 @@ sealed class LibraryException: kotlin.Exception() {
     }
     
     /**
+     * An article is too large or too deeply nested to display safely, so
+     * the pack was refused (TRUST-003).
+     */
+    class ArticleTooComplex(
+        ) : LibraryException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
      * Filesystem or database failure.
      */
     class Storage(
@@ -7282,12 +7292,13 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
             5 -> LibraryException.AlreadyInstalled()
             6 -> LibraryException.NotInstalled()
             7 -> LibraryException.MediaInvalid()
-            8 -> LibraryException.Storage()
-            9 -> LibraryException.SnapshotActive()
-            10 -> LibraryException.SourceFailed()
-            11 -> LibraryException.Network()
-            12 -> LibraryException.Cancelled()
-            13 -> LibraryException.CatalogRejected()
+            8 -> LibraryException.ArticleTooComplex()
+            9 -> LibraryException.Storage()
+            10 -> LibraryException.SnapshotActive()
+            11 -> LibraryException.SourceFailed()
+            12 -> LibraryException.Network()
+            13 -> LibraryException.Cancelled()
+            14 -> LibraryException.CatalogRejected()
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -7319,6 +7330,10 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
                 4UL
             )
             is LibraryException.MediaInvalid -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is LibraryException.ArticleTooComplex -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
@@ -7379,28 +7394,32 @@ public object FfiConverterTypeLibraryError : FfiConverterRustBuffer<LibraryExcep
                 buf.putInt(7)
                 Unit
             }
-            is LibraryException.Storage -> {
+            is LibraryException.ArticleTooComplex -> {
                 buf.putInt(8)
                 Unit
             }
-            is LibraryException.SnapshotActive -> {
+            is LibraryException.Storage -> {
                 buf.putInt(9)
                 Unit
             }
-            is LibraryException.SourceFailed -> {
+            is LibraryException.SnapshotActive -> {
                 buf.putInt(10)
                 Unit
             }
-            is LibraryException.Network -> {
+            is LibraryException.SourceFailed -> {
                 buf.putInt(11)
                 Unit
             }
-            is LibraryException.Cancelled -> {
+            is LibraryException.Network -> {
                 buf.putInt(12)
                 Unit
             }
-            is LibraryException.CatalogRejected -> {
+            is LibraryException.Cancelled -> {
                 buf.putInt(13)
+                Unit
+            }
+            is LibraryException.CatalogRejected -> {
+                buf.putInt(14)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

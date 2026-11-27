@@ -47,6 +47,9 @@ pub enum LibraryError {
     NotInstalled,
     /// The pack's images are incomplete, mislabelled or damaged (PACK-003).
     MediaInvalid,
+    /// An article is too large or too deeply nested to display safely, so
+    /// the pack was refused (TRUST-003).
+    ArticleTooComplex,
     /// Filesystem or database failure.
     Storage,
     /// The snapshot is active; activate another before removing it.
@@ -84,6 +87,7 @@ impl From<PackInstallError> for LibraryError {
             PackInstallError::Declined => Self::ConfirmationRequired,
             PackInstallError::AlreadyInstalled => Self::AlreadyInstalled,
             PackInstallError::Media(_) => Self::MediaInvalid,
+            PackInstallError::ArticleTooComplex(_) => Self::ArticleTooComplex,
             PackInstallError::SnapshotActive => Self::SnapshotActive,
             PackInstallError::NotInstalled => Self::NotInstalled,
             PackInstallError::InvalidSnapshotId => Self::InvalidInput,

@@ -254,23 +254,42 @@ fn build_custom_licensed(
         });
         fs::write(tree.join(media_object_path(&hex(bytes))), bytes).unwrap();
     }
-    let mut shard = Vec::new();
-    append_record_frame(&mut shard, &PageRecord::Article(Box::new(page))).unwrap();
-    fs::write(tree.join("articles.shard"), &shard).unwrap();
-    let mut catalog = SnapshotCatalog::open(&tree.join("catalog.sqlite")).unwrap();
-    catalog
-        .insert_verified(&tree, "articles.shard", 0, shard.len() as u64)
-        .unwrap();
-    drop(catalog);
+    let write_records = |tree: &Path, page: &wiki_model::Article| {
+        let mut shard = Vec::new();
+        append_record_frame(&mut shard, &PageRecord::Article(Box::new(page.clone()))).unwrap();
+        fs::write(tree.join("articles.shard"), &shard).unwrap();
+        let mut catalog = SnapshotCatalog::open(&tree.join("catalog.sqlite")).unwrap();
+        catalog
+            .insert_verified(tree, "articles.shard", 0, shard.len() as u64)
+            .unwrap();
+    };
+    write_records(&tree, &page);
     // Metadata first, without the index: a hostile index would be refused by
     // the builder's own parser, which is not the path under test.
-    let mut metadata: PackMetadata = snapshot_pack_metadata(
-        &tree,
-        PackMetadata::synthetic_fixture().source,
-        &"0".repeat(64),
-        text_spdx,
-    )
-    .unwrap();
+    let derive = |tree: &Path| {
+        snapshot_pack_metadata(
+            tree,
+            PackMetadata::synthetic_fixture().source,
+            &"0".repeat(64),
+            text_spdx,
+        )
+    };
+    let mut metadata: PackMetadata = match derive(&tree) {
+        Ok(metadata) => metadata,
+        // The builder refuses HTML the readers cannot display; an attacker
+        // writes the manifest by hand, so derive it from a harmless twin
+        // with the same counts.
+        Err(PackInstallError::ArticleTooComplex(_)) => {
+            let twin = dir.join(format!("{pack_id}-twin"));
+            let _ = fs::remove_dir_all(&twin);
+            fs::create_dir_all(&twin).unwrap();
+            let mut harmless = page.clone();
+            harmless.rendered_html = "<p>x</p>".into();
+            write_records(&twin, &harmless);
+            derive(&twin).unwrap()
+        }
+        Err(error) => panic!("{pack_id}: {error:?}"),
+    };
     if !images.is_empty() || index.is_some() {
         let index = index.unwrap_or_else(|| {
             encode_media_index(
@@ -2254,27 +2273,31 @@ fn deeply_nested_and_huge_article_html_does_not_crash_the_reader() {
         let pack = build_custom(&lab.dir.0.join("src"), &id, html, &[], None);
         let path = lab.dir.0.join(format!("attacks/{id}.wpack"));
         fs::write(&path, &pack).unwrap();
-        // The pack may be refused or installed, but must not take the
-        // process down; if installed, so must reading it.
+        // HTML the readers could not display is refused at install
+        // (TRUST-003); anything else installs, and reading it must not take
+        // the process down or let a script through.
+        let before = tree(&lab.root());
         let installed = lab
             .library
             .install_pack(path.to_string_lossy().into_owned(), true);
-        if installed.is_ok() {
+        if !wiki_model::html_within_display_limits(html) {
+            assert_eq!(
+                installed.unwrap_err(),
+                LibraryError::ArticleTooComplex,
+                "{name}"
+            );
+            assert_eq!(tree(&lab.root()), before, "{name}");
+            continue;
+        }
+        installed.unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        {
             lab.library.activate(id.clone()).unwrap();
             let page = lab
                 .library
                 .open_reader_page("enwiki".into(), 5, false)
                 .unwrap_or_else(|e| panic!("{name}: {e:?}"));
             if let Some(page) = page {
-                let lower = page.document.to_lowercase();
-                assert!(!lower.contains("<script"), "{name}");
-                if name.ends_with("_200000") || *name == "char_reference_flood" {
-                    assert!(
-                        page.document
-                            .contains(wiki_source::reader_document::TOO_COMPLEX_NOTE),
-                        "{name}"
-                    );
-                }
+                assert!(!page.document.to_lowercase().contains("<script"), "{name}");
             }
             lab.library.activate("good-pack".into()).unwrap();
             lab.library.remove_pack(id).unwrap();

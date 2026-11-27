@@ -129,89 +129,16 @@ pub fn sanitize_pack_article_html(html: &str, images: &PackImageSources) -> Stri
     sanitize_with_images(html, Some(images))
 }
 
-/// Largest article HTML the readers sanitise; the same as the extractor's.
-const MAX_DISPLAY_BYTES: usize = 8 * 1024 * 1024;
-/// Deepest element nesting the readers sanitise (the extractor's limit).
-/// The sanitiser's time grows with the square of the nesting depth: in a
-/// release build 16,000 levels take 0.5 s; a real article is about 15 deep.
-const MAX_DISPLAY_NESTING: usize = 512;
-/// Most character references (`&amp;` and so on) the readers sanitise.
-/// Their cost also grows faster than linearly: 160,000 take 0.25 s in a
-/// release build, and a real 70 KB article has about 300.
-const MAX_DISPLAY_REFERENCES: usize = 262_144;
-
 /// Shown instead of an article whose HTML is beyond the limits above.
 pub const TOO_COMPLEX_NOTE: &str =
     "This article is too large or too deeply nested to display safely.";
-
-/// Elements that never contain others, so they do not deepen nesting.
-const VOID_ELEMENTS: [&str; 14] = [
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
-    "track", "wbr",
-];
-
-/// Whether `html` is within the display limits, judged by a single linear
-/// pass before any parsing (TRUST-003: a hostile pack must not hang the
-/// reader). Nesting is counted from the tags as written: closing tags the
-/// source leaves out only make the count higher, never lower.
-fn within_display_limits(html: &str) -> bool {
-    if html.len() > MAX_DISPLAY_BYTES || html.matches('&').count() > MAX_DISPLAY_REFERENCES {
-        return false;
-    }
-    let bytes = html.as_bytes();
-    let mut depth = 0usize;
-    let mut at = 0;
-    while let Some(offset) = html[at..].find('<') {
-        let start = at + offset;
-        if html[start..].starts_with("<!--") {
-            match html[start + 4..].find("-->") {
-                Some(end) => at = start + 4 + end + 3,
-                None => break,
-            }
-            continue;
-        }
-        // The end of the tag, outside quoted attribute values.
-        let mut quote = None;
-        let mut end = None;
-        for (i, &b) in bytes[start + 1..].iter().enumerate() {
-            match (quote, b) {
-                (Some(q), _) if b == q => quote = None,
-                (None, b'"' | b'\'') => quote = Some(b),
-                (None, b'>') => {
-                    end = Some(start + 1 + i);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        let Some(end) = end else { break };
-        let tag = &html[start + 1..end];
-        if tag.starts_with('/') {
-            depth = depth.saturating_sub(1);
-        } else if tag.starts_with(|c: char| c.is_ascii_alphabetic()) && !tag.ends_with('/') {
-            let name = tag
-                .split(|c: char| c.is_ascii_whitespace() || c == '/')
-                .next()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if !VOID_ELEMENTS.contains(&name.as_str()) {
-                depth += 1;
-                if depth > MAX_DISPLAY_NESTING {
-                    return false;
-                }
-            }
-        }
-        at = end + 1;
-    }
-    true
-}
 
 fn too_complex() -> String {
     format!("<p class=\"foundation-too-complex\">{TOO_COMPLEX_NOTE}</p>")
 }
 
 fn sanitize_with_images(html: &str, images: Option<&PackImageSources>) -> String {
-    if !within_display_limits(html) {
+    if !wiki_model::html_within_display_limits(html) {
         return too_complex();
     }
     let base_scheme = images
@@ -547,7 +474,7 @@ fn online_image_source(value: &str) -> Option<String> {
 /// and math hosts, and keeps presentation MathML (without its TeX
 /// annotation) because Wikipedia now sends formulas only as MathML.
 pub fn sanitize_online_article_html(html: &str) -> String {
-    if !within_display_limits(html) {
+    if !wiki_model::html_within_display_limits(html) {
         return too_complex();
     }
     let mut builder = Builder::default();
@@ -1088,7 +1015,10 @@ mod tests {
     }
 
     use super::*;
-    use wiki_model::{ArticleKey, Revision, ARTICLE_SCHEMA_VERSION};
+    use wiki_model::{
+        ArticleKey, Revision, ARTICLE_SCHEMA_VERSION, MAX_DISPLAY_BYTES, MAX_DISPLAY_NESTING,
+        MAX_DISPLAY_REFERENCES,
+    };
 
     fn article(html: &str) -> Article {
         Article {

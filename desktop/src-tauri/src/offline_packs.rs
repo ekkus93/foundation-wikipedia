@@ -57,6 +57,9 @@ fn message(error: LibraryError) -> String {
         LibraryError::MediaInvalid => {
             "This pack's images are missing or damaged, so it was not installed."
         }
+        LibraryError::ArticleTooComplex => {
+            "This pack has an article too large or too deeply nested to display safely, so it was not installed."
+        }
         LibraryError::SnapshotActive => "This pack is in use. Activate another pack before removing it.",
         LibraryError::NotInstalled => "No offline pack is active.",
         LibraryError::Storage => "Storage error. Check free space and try again.",

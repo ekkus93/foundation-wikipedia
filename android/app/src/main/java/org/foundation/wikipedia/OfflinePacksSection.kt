@@ -58,6 +58,9 @@ fun packErrorMessage(error: Throwable): String = when (error) {
     is LibraryException.AlreadyInstalled -> "This pack is already installed."
     is LibraryException.MediaInvalid ->
         "This pack's images are missing or damaged, so it was not installed."
+    is LibraryException.ArticleTooComplex ->
+        "This pack has an article too large or too deeply nested to display safely, " +
+            "so it was not installed."
     is LibraryException.SnapshotActive ->
         "This pack is in use. Activate another pack before removing it."
     is LibraryException.NotInstalled -> "That pack is no longer installed."
