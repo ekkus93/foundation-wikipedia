@@ -23,10 +23,13 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import java.io.File
 import java.security.MessageDigest
+import java.util.regex.Pattern
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -126,8 +129,24 @@ class RealPackAcceptanceTest {
 
         // The system file picker (another app): pick the pack by its name.
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        val file = device.wait(Until.findObject(By.text(fileName)), 20_000)
-            ?: error("the file picker does not show $fileName; open Downloads in it first")
+        // The picker may open on Recent files: go to Downloads through its
+        // side menu when the pack is not listed.
+        val file = device.wait(Until.findObject(By.text(fileName)), 8_000) ?: run {
+            device.wait(Until.findObject(By.desc("Show roots")), 5_000)?.click()
+            // The side menu animates in: a found entry can go stale.
+            for (attempt in 1..5) {
+                try {
+                    device.wait(Until.findObject(By.text("Downloads")), 5_000)?.click()
+                    break
+                } catch (_: StaleObjectException) {
+                    Thread.sleep(500)
+                }
+            }
+            // A long Downloads list: scroll down to the pack.
+            device.wait(Until.findObject(By.text(fileName)), 5_000)
+                ?: device.wait(Until.findObject(By.res(Pattern.compile(".*:id/dir_list"))), 5_000)
+                    ?.scrollUntil(Direction.DOWN, Until.findObject(By.text(fileName)))
+        } ?: error("the file picker does not show $fileName, in Recent or in Downloads")
         file.click()
 
         // Verified in full before the review, which offers it as a custom pack.
