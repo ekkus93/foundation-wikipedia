@@ -126,6 +126,8 @@ fn committed_android_image_fixture_matches_the_builder() {
 /// document must load each one locally and nothing else.
 /// `PACK003_SHOW_SIZES` lists every image's size, format and source;
 /// `PACK003_DUMP_MAPS=<dir>` writes each drawn map there for review.
+/// MOBPACK-003: the document must also keep every formula, table,
+/// reference mark and reference entry the stored article has.
 #[test]
 #[ignore = "needs a built pack; see PACK-003 evidence"]
 fn audit_a_real_pack_for_complete_local_images() {
@@ -223,10 +225,38 @@ fn audit_a_real_pack_for_complete_local_images() {
                 }
             }
         }
+        // MOBPACK-003: nothing but images may be dropped on the way to the
+        // reader: count math, tables and references in the stored HTML and
+        // in the document shown.
+        let stored = content_counts(&article.rendered_html);
+        let shown = content_counts(&page.document);
+        println!(
+            "    revision {} stored {stored:?}\n    shown  {shown:?}",
+            article.revision.revision_id
+        );
+        assert_eq!(stored, shown, "{}: content lost on display", article.title);
         figures += article.media.len();
     }
     println!(
         "{} articles, {figures} required images, {bytes} image bytes read back verified",
         articles.len()
     );
+}
+
+/// Math, tables, reference marks and reference-list entries in `html`.
+#[derive(Debug, PartialEq, Eq)]
+struct ContentCounts {
+    math: usize,
+    tables: usize,
+    reference_marks: usize,
+    reference_entries: usize,
+}
+
+fn content_counts(html: &str) -> ContentCounts {
+    ContentCounts {
+        math: html.matches("<math").count(),
+        tables: html.matches("<table").count(),
+        reference_marks: html.matches("id=\"cite_ref-").count(),
+        reference_entries: html.matches("id=\"cite_note-").count(),
+    }
 }
