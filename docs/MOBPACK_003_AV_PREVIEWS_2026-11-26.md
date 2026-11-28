@@ -126,7 +126,7 @@ Android counts the bytes each app sends and receives. The app's counters were re
 
 | Test classes | Received | Sent |
 |---|---|---|
-| All 17 classes that read packs, show articles and images, open the player UI, save content, restore the reader, check trust, use local AI and run the Rust offline library (31 tests) | 0 | 0 |
+| All 17 classes that read packs, show articles and images, open the player UI, save content, restore the reader, check trust, use local AI and run the Rust offline library (40 tests) | 0 | 0 |
 | `RustHostedAiTest` (5): a real TLS handshake with api.anthropic.com using a deliberately invalid key | 9,808 B | 3,024 B |
 | `RustHostedChatTest` (3): a consented question to the provider, refused for its invalid key | 5,524 B | 2,431 B |
 | `AvPlayerLiveTest` with `avLive=true` (2): Commons audio and video streamed, paused, seeked (positive control) | 16.5 MB | 130 KB |
