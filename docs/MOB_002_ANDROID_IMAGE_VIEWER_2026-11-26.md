@@ -32,5 +32,5 @@ The "figure not drawn within 30 s" timeout has now happened on CI in three runs 
 
 ## Not verified
 
-- **Pinch zoom by hand:** enabled, but a two-finger gesture was not performed (adb cannot send one simply). Owner to try on the phone.
+- **Pinch zoom by hand:** confirmed working by the owner on the A54 (2026-11-28): an image opened full screen zooms with a two-finger pinch.
 - **Online reading on Android:** not built (needs a rustls Wikipedia transport).
