@@ -117,5 +117,18 @@ Tauri dev build of `c7dd6ab9` on Linux (WebKitGTK), on a virtual X display (Xvfb
 - **Desktop player on Windows and macOS:** played in a real window on Linux (WebKitGTK) only, see above. WebView2 and WKWebView may differ in the formats they play. Which address played was not logged. Closing the player when Work offline is switched on while it is open was not tried by hand, because the player covers that switch.
 - **Physical phone:** the player was qualified on the A54 by `AvPlayerLiveTest` (above). The previews in a real pack, and the first-use notice, have not been tried by hand there.
 - **Audio metadata:** nothing of an audio file is in the pack, so its licence and creator are not stored; the note links to its Commons page, which carries both. A pack distributes no audio, so the licence asks nothing of it. A video is credited through its still, which is the video's own Commons file. Storing credit-only records would change the pack contract: every media record must have its bytes, and the builder and installer refuse one without. So this is left as is unless the owner wants it.
-- **No hidden requests:** shown for the reader by its request handler tests; not measured with a network log on a device.
+- **No hidden requests:** measured on the A54 on 2026-11-28, see "Network use on the A54" below. Only the app's own byte counters were read; individual connections and their hosts were not logged (that needs a rooted phone or a proxy).
 - **Offline audio and video:** deferred (FUT-004). A size-limited option for short clips was discussed and left deferred.
+
+## Network use on the A54 (2026-11-28, build `4010c32e`)
+
+Android counts the bytes each app sends and receives. The app's counters were read with `dumpsys netstats --poll` and `dumpsys netstats detail` (untagged totals for its UID) before and after each instrumented test class, run one class at a time on the A54 over Wi-Fi. At rest the counters did not move.
+
+| Test classes | Received | Sent |
+|---|---|---|
+| All 17 classes that read packs, show articles and images, open the player UI, save content, restore the reader, check trust, use local AI and run the Rust offline library (31 tests) | 0 | 0 |
+| `RustHostedAiTest` (5): a real TLS handshake with api.anthropic.com using a deliberately invalid key | 9,808 B | 3,024 B |
+| `RustHostedChatTest` (3): a consented question to the provider, refused for its invalid key | 5,524 B | 2,431 B |
+| `AvPlayerLiveTest` with `avLive=true` (2): Commons audio and video streamed, paused, seeked (positive control) | 16.5 MB | 130 KB |
+
+The live and official-pack download tests skip themselves without their opt-in flags, which is why they show 0 in the first row. The positive control shows the counters capture the app's streaming traffic. Offline reading made no network traffic at all, and the only other traffic came from the two hosted-AI tests, which connect on purpose. The full suite also passed in one run on the A54 with this build: `OK (48 tests)` in 94 s. Afterwards the active pack was still `android-sample` and no staging was left behind.
